@@ -1,0 +1,33 @@
+<!doctype html>
+<html class="no-js" lang="">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arabic Word Map</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- <meta name="description" content=""> -->
+
+  <!-- <link rel="icon" href="/icon.svg" type="image/svg+xml"> -->
+
+  <!-- <link rel="manifest" href="site.webmanifest"> -->
+  <!-- <meta name="theme-color" content="#fafafa"> -->
+</head>
+
+<body>
+  <div id="elm"></div>
+  <script src="build/main.js"></script>
+  <script>
+    // let item;
+    // try {
+    //   item = JSON.parse(localStorage.getItem('lang-graph'));
+    // } catch {
+    //   item = null;
+    // }
+    const app = Elm.Main.init({ flags: item, node: document.getElementById('elm') });
+    // app.ports.save.subscribe(v => localStorage.setItem('lang-graph', JSON.stringify(v)));
+  </script>
+
+</body>
+
+</html>

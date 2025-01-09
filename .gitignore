@@ -1,0 +1,5 @@
+main.js
+.direnv
+node_modules
+elm-stuff
+build
