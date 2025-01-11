@@ -4,6 +4,7 @@ import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, int, list, string)
 import Test exposing (..)
 import DAWG as D
+import Fuzz exposing (stringOfLengthBetween)
 
 suite : Test
 suite =
@@ -30,7 +31,7 @@ suite =
           |> D.addNewEdge 'a' False 0
           |> Tuple.first
           |> D.addNewEdge 'b' True 1
-          |> Tuple.first |> D.debugDAWG "graph"
+          |> Tuple.first
           |> D.recognizedWords
           |> Expect.equal ["ab"]
 
@@ -43,6 +44,16 @@ suite =
           |> Tuple.first
           |> D.recognizedWords
           |> Expect.equal ["a", "b"]
+
+      , test "to a graph with one vertex gives sequential transitions and another word" <|
+        \_ ->
+          D.empty
+          |> D.addNewEdge 'a' True 0
+          |> Tuple.first
+          |> D.addNewEdge 'b' True 1
+          |> Tuple.first
+          |> D.recognizedWords
+          |> Expect.equal ["a", "ab"]
       ]
     , describe "adding a new word"
       [ test "that is empty does nothing" <|
@@ -73,11 +84,11 @@ suite =
           |> D.recognizedWords
           |> Expect.equal ["ghafūr"]
 
-      -- , fuzz string "with multiple letters works" <|
-      --   \randomlyGeneratedString ->
-      --     D.empty
-      --     |> D.addString randomlyGeneratedString
-      --     |> D.recognizedWords
-      --     |> Expect.equal [randomlyGeneratedString]
+      , fuzz (stringOfLengthBetween 1 65) "that is randomly generated works" <|
+        \randomlyGeneratedString ->
+          D.empty
+          |> D.addString randomlyGeneratedString
+          |> D.recognizedWords
+          |> Expect.equal [randomlyGeneratedString]
       ]
     ]
