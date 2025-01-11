@@ -159,8 +159,8 @@ mergeSuffixes pathHere graph lastVertices =
 
 {-| Add a new vertex to lastVertices set. Only does this if the vertex is a leaf.
 -}
-addVertexToLastVertices : Char -> UniqueIdentifier -> Dict Char (Set UniqueIdentifier) -> Graph UniqueIdentifier Transition -> Dict Char (Set UniqueIdentifier)
-addVertexToLastVertices char endVertex lastVertices graph =
+addVertexToLastVertices : Char -> UniqueIdentifier -> Graph UniqueIdentifier Transition -> Dict Char (Set UniqueIdentifier) -> Dict Char (Set UniqueIdentifier)
+addVertexToLastVertices char endVertex graph lastVertices =
   if Graph.outgoingEdges endVertex graph == [] then
     Dict.update
       char
@@ -192,7 +192,8 @@ addNewEdge char isFinal vertex dawg =
     -- actually remove it from the relevant set, lest it be considered a
     -- "real" suffix when it comes to suffix-merging.
     lastVertices =
-      Dict.map (\_ a -> Set.remove dawg.nextId a) dawg.lastVertices
+      Dict.map (\_ a -> Set.remove vertex a) dawg.lastVertices
+      |> addVertexToLastVertices char dawg.nextId graph
     nextId = dawg.nextId + 1
   in
     ( { dawg | graph = graph, nextId = nextId, lastVertices = lastVertices }
@@ -277,7 +278,7 @@ addTransition vertex char isFinal pathHere dawg =
               -- but we extend past it to the two others.  In that case, the 'd'
               -- is a termination transition, but not a genuine leaf.
               lastVertices =
-                addVertexToLastVertices char endVertex dawg.lastVertices dawg.graph
+                addVertexToLastVertices char endVertex dawg.graph dawg.lastVertices
               -- if there are no outgoing edges from here, then we can also
               -- attempt a merge
               merged =
@@ -357,6 +358,67 @@ addTransition vertex char isFinal pathHere dawg =
           else
             -- this is the situation for (a)(i) and (a)(ii)
             addNewEdge char isFinal vertex dawg
+
+type IsThisFinal a
+  = IsFinal a
+  | NotFinal a
+
+{-| Convenience method to add entire strings to the DAWG.
+-}
+addString : String -> DAWG -> DAWG
+addString str dawg =
+  case String.toList str of
+    [] -> dawg
+    characters ->
+      let
+-- addTransition : UniqueIdentifier -> Char -> Bool -> Breadcrumbs -> DAWG -> (DAWG, UniqueIdentifier)
+        proceed crumbs node g remaining =
+          case remaining of
+            [] -> dawg
+            [ch] ->
+              addTransition node ch True crumbs g
+              |> Tuple.first
+            (ch::rest) ->
+              let
+                (dawg_, node_) = addTransition node ch False crumbs dawg
+              in
+                proceed ((ch, node_)::crumbs) node_ dawg_ rest
+      in
+        proceed [] dawg.firstVertex dawg characters
+
+recognizedWords : DAWG -> List String
+recognizedWords dawg =
+  let
+    reversed = Graph.reverseEdges dawg.graph
+    addTransitionChars : UniqueIdentifier -> Transition -> List (List Char)
+    addTransitionChars src edgeSet =
+      Set.toList edgeSet
+      |> List.concatMap
+        (\(ch, isFinal) ->
+          if isFinal == 1 then
+            ([ch] :: fromRightToLeft src) ++ fromRightToLeft src
+          else
+            fromRightToLeft src
+        )
+
+    fromRightToLeft : UniqueIdentifier -> List (List Char)
+    fromRightToLeft vertex =
+      case Graph.outgoingEdgesWithData vertex reversed of
+        [] -> []
+        [(v, edgeSet)] ->
+          addTransitionChars v edgeSet
+        pathSet ->
+          List.concatMap
+            (\(v, edgeSet) -> addTransitionChars v edgeSet)
+            pathSet
+  in
+    dawg.lastVertices
+    |> Dict.values
+    |> List.concatMap
+        (\v ->
+          List.concatMap fromRightToLeft (Set.toList v)
+          |> List.map (String.fromList)
+        )
 
 {-
 {-| Change the transition-value between nodes.
