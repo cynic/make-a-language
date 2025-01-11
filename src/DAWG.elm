@@ -386,39 +386,76 @@ addString str dawg =
       in
         proceed [] dawg.firstVertex dawg characters
 
+debugDAWG : String -> DAWG -> DAWG
+debugDAWG txt dawg =
+  Debug.log txt
+    { graph = Graph.verticesAndEdges dawg.graph
+    , firstVertex = dawg.firstVertex
+    , lastVertices = dawg.lastVertices
+    , nextId = dawg.nextId
+    }
+  |> \_ -> dawg
+
+type TransitionType
+  = SameStream (Char, UniqueIdentifier)
+  | AdditionalStart (Char, UniqueIdentifier)
+
+type Following
+  = SinglePath TransitionType
+  | MultiplePaths (List TransitionType)
+  | End
+
 recognizedWords : DAWG -> List String
 recognizedWords dawg =
   let
     reversed = Graph.reverseEdges dawg.graph
-    addTransitionChars : UniqueIdentifier -> Transition -> List (List Char)
-    addTransitionChars src edgeSet =
-      Set.toList edgeSet
-      |> List.concatMap
-        (\(ch, isFinal) ->
-          if isFinal == 1 then
-            ([ch] :: fromRightToLeft src) ++ fromRightToLeft src
-          else
-            fromRightToLeft src
-        )
-
-    fromRightToLeft : UniqueIdentifier -> List (List Char)
-    fromRightToLeft vertex =
+    analyzeTransition : UniqueIdentifier -> (Char, Int) -> TransitionType
+    analyzeTransition src transition =
+      case transition of
+        (ch, 1) -> AdditionalStart (ch, src) 
+        (ch, _) -> SameStream (ch, src)
+    analyzeVertex : UniqueIdentifier -> Following
+    analyzeVertex vertex =
       case Graph.outgoingEdgesWithData vertex reversed of
-        [] -> []
-        [(v, edgeSet)] ->
-          addTransitionChars v edgeSet
-        pathSet ->
-          List.concatMap
-            (\(v, edgeSet) -> addTransitionChars v edgeSet)
-            pathSet
+        [] -> End
+        [(src, edgeSet)] ->
+          case Set.toList edgeSet of
+            [] -> End |> Debug.log "but this should never happen"
+            [x] -> SinglePath (analyzeTransition src x)
+            xs -> 
+              MultiplePaths (List.map (analyzeTransition src) xs)
+        manyPaths ->
+          MultiplePaths <|
+            List.concatMap
+              (\(src, edgeSet) -> List.map (analyzeTransition src) (Set.toList edgeSet))
+              manyPaths
+    processTransition : List Char -> UniqueIdentifier -> TransitionType -> List String
+    processTransition seen dst transition =
+      case transition of
+        SameStream (ch, nextVertex) ->
+          fromRightToLeft (ch::seen) nextVertex
+        AdditionalStart (ch, nextVertex) ->
+          -- check: is this a leaf?  If not, then kick off a new one.
+          case Graph.outgoingEdges dst dawg.graph of
+            [] -> fromRightToLeft (ch::seen) nextVertex -- we are a leaf.
+            _ -> fromRightToLeft (ch::seen) nextVertex ++ fromRightToLeft [ch] nextVertex
+    fromRightToLeft : List Char -> UniqueIdentifier -> List String
+    fromRightToLeft seen vertex =
+      case analyzeVertex vertex of
+        End -> [String.fromList seen]
+        SinglePath v ->
+          processTransition seen vertex v
+        MultiplePaths transitions ->
+          List.concatMap (processTransition seen vertex) transitions
+
   in
     dawg.lastVertices
     |> Dict.values
     |> List.concatMap
         (\v ->
-          List.concatMap fromRightToLeft (Set.toList v)
-          |> List.map (String.fromList)
+          List.concatMap (fromRightToLeft []) (Set.toList v)
         )
+    |> List.sort
 
 {-
 {-| Change the transition-value between nodes.

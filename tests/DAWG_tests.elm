@@ -23,6 +23,26 @@ suite =
           |> Tuple.first
           |> D.recognizedWords
           |> Expect.equal ["a"]
+
+      , test "to a graph with one vertex gives sequential transitions" <|
+        \_ ->
+          D.empty
+          |> D.addNewEdge 'a' False 0
+          |> Tuple.first
+          |> D.addNewEdge 'b' True 1
+          |> Tuple.first |> D.debugDAWG "graph"
+          |> D.recognizedWords
+          |> Expect.equal ["ab"]
+
+      , test "as an alternate gives two edges between two vertices" <|
+        \_ ->
+          D.empty
+          |> D.addNewEdge 'a' True 0
+          |> Tuple.first
+          |> D.addNewEdge 'b' True 0
+          |> Tuple.first
+          |> D.recognizedWords
+          |> Expect.equal ["a", "b"]
       ]
     , describe "adding a new word"
       [ test "that is empty does nothing" <|
@@ -38,6 +58,13 @@ suite =
           |> D.addString "😃"
           |> D.recognizedWords
           |> Expect.equal ["😃"]
+
+      , test "with two single letters works" <|
+        \_ ->
+          D.empty
+          |> D.addString "ab"
+          |> D.recognizedWords
+          |> Expect.equal ["ab"]
 
       , test "with a multiple letters works" <|
         \_ ->
