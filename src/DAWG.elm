@@ -2,6 +2,8 @@ module DAWG exposing (..)
 import Graph exposing (Graph)
 import Set exposing (Set)
 import Dict exposing (Dict)
+import List.Extra as List exposing (Step(..))
+import Html exposing (br)
 
 type alias UniqueIdentifier = Int
 
@@ -17,6 +19,43 @@ type alias DAWG =
   , lastVertices : Dict Char (Set UniqueIdentifier)
   }
 
+-- a list of chars, and the destination node for each one.
+-- This is stored in reverse order, e.g. a sequence of characters
+-- 'f', 'r', 'e', 'd' added sequentially might end up as
+-- [('d', 9), ('e', 8), ('r', 7), ('f', 6)].  There is no need
+-- to ever store the starting vertex—we only need to store the
+-- destination that each goes to—because we know the starting
+-- vertex already.
+type alias Breadcrumbs = List Breadcrumb
+type alias Breadcrumb = (Char, UniqueIdentifier)
+
+{-| Given breadcrumbs, return the edges from those breadcrumbs.
+
+The furthest edges are returned first.
+
+    breadcrumbsToForwardEdges [('d', 9), ('e', 8), ('r', 7), ('f', 6)]
+    --> [(8,9),(7,8),(6,7),(0,6)]
+-}
+breadcrumbsToForwardEdges : Breadcrumbs -> List (UniqueIdentifier, UniqueIdentifier)
+breadcrumbsToForwardEdges breadcrumbs =
+  List.reverse breadcrumbs
+  |> List.map (\(_, v) -> v)
+  |> List.foldl (\crumb (seen, last) -> ((last, crumb)::seen, crumb)) ([], 0)
+  |> Tuple.first
+  |> List.reverse -- not strictly necessary, but it will return them in a nice order
+
+{-| Given breadcrumbs, return the characters for each one.
+
+Just as with breadcrumbs, they are returned in order of furthest edge first.
+
+    charsOfBreadcrumbs [('d', 9), ('e', 8), ('r', 7), ('f', 6)]
+    --> ['d', 'e', 'r', 'f']
+
+-}
+charsOfBreadcrumbs : Breadcrumbs -> List Char
+charsOfBreadcrumbs breadcrumbs =
+  List.map Tuple.first breadcrumbs
+
 notFinalState : Int
 notFinalState = 0
 isFinalState : Int
@@ -30,12 +69,15 @@ empty =
   , lastVertices = Dict.empty
   }
 
-defaultTransition : Transition
-defaultTransition = Set.singleton ('❓', notFinalState)
+-- defaultTransition : Transition
+-- defaultTransition = Set.singleton ('❓', notFinalState)
 
-{-| Merges suffixes. If possible, returns the new node to transition to, and the number of transitions to remove. -}
-mergeSuffixes : Char -> List Char -> Graph UniqueIdentifier Transition -> Dict Char (Set UniqueIdentifier) -> Maybe (UniqueIdentifier, Int)
-mergeSuffixes char pathHere graph lastVertices =
+{-| Merges suffixes of the graph.
+
+`lastVertices` may or may not contain the breadcrumbs.
+-}
+mergeSuffixes : Breadcrumbs -> Graph UniqueIdentifier Transition -> Dict Char (Set UniqueIdentifier) -> Graph UniqueIdentifier Transition
+mergeSuffixes pathHere graph lastVertices =
   {- |Here we want to start at the set of leaf-common-vertices for this char.
       Then move backwards.  At the very least, we should be able to merge the
       final letter, right?  When we run out of matching vertices, then we're
@@ -46,6 +88,7 @@ mergeSuffixes char pathHere graph lastVertices =
   -}
   let
     reversed = Graph.reverseEdges graph
+    characters = charsOfBreadcrumbs pathHere
     maxPath : List Char -> UniqueIdentifier -> Int -> List (UniqueIdentifier, Int)
     maxPath remaining vertex count =
       -- stop conditions:
@@ -74,18 +117,45 @@ mergeSuffixes char pathHere graph lastVertices =
               -- go for it.
               List.filter (\(_, edgeSet) -> Set.size edgeSet == 1 && Set.member (ch, 0) edgeSet) pathSet
               |> List.concatMap (\(v, _) -> maxPath rest v (1+count))
-
+    longestPath : Maybe (UniqueIdentifier, Int)
+    longestPath =
+      List.head characters
+      |> Maybe.andThen (\char -> Dict.get char lastVertices)
+      |> Maybe.andThen
+        (\vertexSet ->
+            Set.map (\v -> maxPath characters 0 v) vertexSet
+            |> Set.toList
+            |> List.concatMap identity
+            -- if the path-length is zero, no merging is possible.
+            -- if the path-length is the same as pathHere, then we're looking
+            -- at the exact word; we can't merge into ourselves, so ignore it.
+            |> List.filter (\(_, n) -> n > 0 && n < List.length pathHere)
+            |> List.maximum
+        )
+    -- contains (those to remove, those remaining)
+    edgesToRemove =
+      Maybe.map
+        (\(_, n) -> List.take n (breadcrumbsToForwardEdges pathHere))
+        longestPath
+    joiningCrumb : Maybe (Char, UniqueIdentifier)
+    joiningCrumb =
+      Maybe.andThen
+        (\(_, n) -> List.drop n pathHere |> List.head)
+        longestPath
+    sansEdges : Maybe (Graph UniqueIdentifier Transition)
+    sansEdges =
+      Maybe.map
+        (List.foldl (\(a, b) g -> Graph.removeEdge a b g) graph)
+        edgesToRemove
+    redirectedGraph : Maybe (Graph UniqueIdentifier Transition)
+    redirectedGraph =
+      Maybe.map3
+        (\(ch, src) (dst, _) g ->
+          Graph.addEdge src dst (Set.singleton (ch, 0)) g
+        )
+        joiningCrumb longestPath sansEdges
   in
-    Dict.get char lastVertices
-    |> Maybe.andThen
-      (\vertexSet ->
-          Set.map (\v -> maxPath (char::pathHere) 0 v) vertexSet
-          |> Set.toList
-          |> List.concatMap identity
-          |> List.filter (\(_, n) -> n > 0)
-          |> List.maximum
-      )
-
+    redirectedGraph |> Maybe.withDefault graph
 
 {-| Add a new vertex to lastVertices set. Only does this if the vertex is a leaf.
 -}
@@ -129,94 +199,36 @@ addNewEdge char isFinal vertex dawg =
     , dawg.nextId
     )
 
-type ConfluenceResult
-  = NoConfluence -- only returned when we reach the start
-  | FoundConfluence (UniqueIdentifier, List Char)
-  | IncorrectPath
-
 {-| Given a starting vertex, find the earliest confluence and the nodes to be added from it -}
-findConfluence : UniqueIdentifier -> List Char -> DAWG -> Maybe (UniqueIdentifier, List Char)
-findConfluence starting_vertex pathHere dawg =
-  {- |There are a few cases to consider here as we trace back to the start,
-      dst → src.  We are to find the EARLIEST confluence, so we need to
-      trace all the way back to the start; the first vertex may present a
-      confluence issue.
-      
-      (a) There is a completely straight line; there is no confluence.
-          Every dst → src has one item only in the edgeSet.  This is the
-          best (simplest) case and we return Nothing.
-
-      (b) There is confluence dst → src where there is ONE edge and it
-          has multiple items in the edgeSet.  Because there is only one
-          edge, we select the `src` vertex and continue seeking along
-          that path.
-
-      (c) There is confluence dst → srcA, srcB, …, srcN where there is
-          more than one edge.  Even worse, the dst → srcX edgeSets may
-          each contain the appropriate character; consider nation-action-
-          nativity and you will see this.  We have to follow all paths
-          until we find the correct one.
-
-      This sounds a bit complicated and expensive—especially (c)—but we
-      typically use the discovery of confluence to figure out where to
-      split a graph.  As a result, we end up doing less work later on,
-      because we straighten the path at the earliest point.
-  -}
+findConfluence : Breadcrumbs -> DAWG -> Maybe (UniqueIdentifier, List Char)
+findConfluence pathHere dawg =
   let
+    edges = breadcrumbsToForwardEdges pathHere -- get the edges, from furthest-to-closest to start
     reversed = Graph.reverseEdges dawg.graph
-    follow : UniqueIdentifier -> List Char -> List Char -> ConfluenceResult
-    follow vertex remaining seen =
-      case (Graph.outgoingEdgesWithData vertex reversed, remaining) of
-        ([], []) -> NoConfluence -- we must be at the 1st vertex now.
-        ([(src, edgeSet)], ch::rest) ->
-          -- there is only one node that we connect back to, but we may
-          -- connect back along multiple edges.
-          if Set.size edgeSet == 1 then
-            if Set.member (ch, 0) edgeSet || Set.member (ch, 1) edgeSet then
-              -- there is only one edge back, yay!  Follow it.
-              follow src rest (ch::seen)
-            else
-              IncorrectPath -- we cannot match the forward path
-          else
-            case follow src rest (ch::seen) of
-              NoConfluence -> FoundConfluence (src, seen) -- we are the earliest
-              FoundConfluence v -> FoundConfluence v -- found an earlier one
-              IncorrectPath -> IncorrectPath
-        (paths, ch::rest) ->
-          -- there is more than one node that we connect back to.
-          -- In the ideal case, there is only one path that has our edge.
-          case List.filter (\(_, edgeSet) -> Set.member (ch, 0) edgeSet || Set.member (ch, 1) edgeSet) paths of
-            [(src, _)] ->
-              -- yay, there is only one path that has our edge.
-              -- Having said that, this is still a confluence.
-              case follow src rest (ch::seen) of
-                NoConfluence -> FoundConfluence (src, seen) -- we are the earliest
-                FoundConfluence v -> FoundConfluence v -- found an earlier one
-                IncorrectPath -> IncorrectPath
-            [] ->
-              -- no path has our edge.
-              IncorrectPath
-            possiblePaths ->
-              -- more than one path has our edge.
-              List.foldl
-                (\(vtx, _) state ->
-                  -- only one of these paths should return either NoConfluence
-                  -- or FoundConfluence.  If we get IncorrectPath, do not
-                  -- overwrite what the state is.
-                  case follow vtx rest (ch::seen) of
-                    NoConfluence -> NoConfluence
-                    FoundConfluence v -> FoundConfluence v
-                    IncorrectPath -> state
-                )
-                IncorrectPath
-                possiblePaths
-        (_, []) ->
-          IncorrectPath -- longer than it can possibly be
   in
-    case follow starting_vertex pathHere [] of
-      NoConfluence -> Nothing
-      FoundConfluence v -> Just v
-      IncorrectPath -> Debug.log "ALGORITHM FAILURE—IncorrectPath should NEVER be returned!" Nothing
+    List.reverse edges -- organize from closest-to-furthest from start
+    |> List.stoppableFoldl
+        (\(src,dst) (v, count) ->
+          case Graph.getEdge src dst dawg.graph of
+            Nothing ->
+              Debug.log ("I tried to get an edge from " ++ String.fromInt src ++ " to " ++ String.fromInt dst ++ ", but it didn't exist.  THIS SHOULD *NOT* HAPPEN!")
+                (Continue (Nothing, 0))
+            Just edgeSet ->
+              if Set.size edgeSet == 1 then
+                if List.length (Graph.outgoingEdges dst reversed) == 1 then 
+                  -- this is not a confluence node; move on.
+                  Continue (Nothing, count+1)
+                else
+                  -- this is a confluence node.  Consider: action-nation-national
+                  Stop (Just src, count)
+              else
+                -- this is the earliest confluence node.
+                Stop (Just src, count)
+        )
+        (Nothing, 0)
+    |>  (\(src, count) ->
+          Maybe.andThen (\found -> Just (found, List.drop count <| charsOfBreadcrumbs pathHere)) src
+        )
 
 {-| Add a transition from a vertex node.
 
@@ -230,10 +242,14 @@ Note that when we add a transition, we only ask about the vertex that
 we are coming FROM; and we add a new vertex after that.  This ensures
 that we cannot have cycles, because we cannot refer to previous vertices.
 -}
-addTransition : UniqueIdentifier -> Char -> Bool -> List Char -> DAWG -> (DAWG, UniqueIdentifier)
+addTransition : UniqueIdentifier -> Char -> Bool -> Breadcrumbs -> DAWG -> (DAWG, UniqueIdentifier)
 addTransition vertex char isFinal pathHere dawg =
-  -- pathHere contains the path we took to get here, IN REVERSE ORDER.
-  -- for example, it might contain ['r', 'e', 'd', 'e', 'r', 'f'] when `char` is 'i'.
+  -- pathHere contains the path we took to get here, IN REVERSE ORDER, and the
+  -- vertex identifiers that are the "forward" edges.  Since the very first
+  -- vertex is the start vertex, we can translate this into a list of edges if
+  -- we want to do so.
+  -- For example, on the character level only, `pathHere` might contain
+  -- ['r', 'e', 'd', 'e', 'r', 'f'] when `char` is 'i'.
   let
     existingEndVertex =
       Graph.outgoingEdgesWithData vertex dawg.graph
@@ -266,12 +282,7 @@ addTransition vertex char isFinal pathHere dawg =
               -- attempt a merge
               merged =
                 if Graph.outgoingEdges endVertex dawg.graph == [] then
-                  case mergeSuffixes char (char::pathHere) graph dawg.lastVertices of
-                    Just (suffixVertex, n) ->
-                      let
-                        reversed = Graph.reverseEdges graph
-                      in
-                        
+                  mergeSuffixes ((char, endVertex)::pathHere) graph lastVertices
                 else
                   graph
             in
@@ -297,7 +308,7 @@ addTransition vertex char isFinal pathHere dawg =
                       `mergeSuffixes`)
 
                   (ii) we can split to a new edge.  This is the default.
-                       behavior because of what is mentioned in (i).
+                        behavior because of what is mentioned in (i).
 
                 (b) if there are no outgoing edges, then what we do depends
                     on how we got here.  First, a definition from Watson
@@ -315,24 +326,24 @@ addTransition vertex char isFinal pathHere dawg =
                       an extension of this is valid.
 
                   (ii) if the path here included any "confluence" nodes,
-                       then we have to go backwards, to the first "confluence"
-                       node, and do a split.  Think of frod-fred-freddy.
-                       If we carried on with the 2nd "d" as a straightforward
-                       extension, we'd end up accepting "froddy" as well,
-                       incorrectly.  So we have to split along the prefix
-                       that we entered upon, and clone transitions as we go.
-                       Fortunately, because we store finality information
-                       in TRANSITIONS rather than VERTICES, we avoid very
-                       annoying problems of which vertices are final.
+                        then we have to go backwards, to the first "confluence"
+                        node, and do a split.  Think of frod-fred-freddy.
+                        If we carried on with the 2nd "d" as a straightforward
+                        extension, we'd end up accepting "froddy" as well,
+                        incorrectly.  So we have to split along the prefix
+                        that we entered upon, and clone transitions as we go.
+                        Fortunately, because we store finality information
+                        in TRANSITIONS rather than VERTICES, we avoid very
+                        annoying problems of which vertices are final.
 
-                       (a)(ii) stops new confluence nodes from forming.
-                       However, a confluence node might already exist as an
-                       existing vertex that we have traversed along the path,
-                       and this is where (b)(ii) becomes relevant.              
+                        (a)(ii) stops new confluence nodes from forming.
+                        However, a confluence node might already exist as an
+                        existing vertex that we have traversed along the path,
+                        and this is where (b)(ii) becomes relevant.              
           -}
           if Graph.outgoingEdges vertex dawg.graph == [] then
             -- we are in the situation of (b).  Check for confluence nodes.
-            case findConfluence vertex pathHere dawg of
+            case findConfluence pathHere dawg of
               Just (confluenceVertex, to_build) ->
                 -- we are in the situation of (b)(ii).  We need to build a
                 -- new path from here.
