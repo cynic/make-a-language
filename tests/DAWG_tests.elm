@@ -179,7 +179,7 @@ suite =
           D.empty
           |> D.addString "fred"
           |> D.addString "freddy"
-          |> D.addString "frederick" |> D.debugDAWG "graph"
+          |> D.addString "frederick" |> D.debugDAWG "check"
           |> D.recognizedWords
           |> Expect.equal ["fred", "freddy", "frederick"]
       , test "nation-action-nativity-activity" <|
@@ -198,9 +198,9 @@ suite =
           |> D.addString "action"
           |> D.addString "nativity"
           |> D.addString "activity"
-          |> D.addString "act"
+          |> D.addString "act" |> D.debugDAWG "check"
           |> D.recognizedWords
-          |> Expect.equal ["act", "action", "activity", "nativity", "nation"]
+          |> Expect.equal ["act", "action", "activity", "nation", "nativity"]
       , test "x-y" <|
         \_ ->
           D.empty

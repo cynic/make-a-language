@@ -192,7 +192,27 @@ addNewEdge char isFinal vertex dawg =
     -- actually remove it from the relevant set, lest it be considered a
     -- "real" suffix when it comes to suffix-merging.
     lastVertices =
-      Dict.map (\_ a -> Set.remove vertex a) dawg.lastVertices
+      -- a fair bit of code to basically remove non-leaf vertices, brute-force style
+      Dict.keys dawg.lastVertices
+      |> List.foldl
+        (\k d ->
+          Dict.update k
+            (\v ->
+              Maybe.andThen
+                (\s ->
+                  let
+                    s_ = Set.remove vertex s
+                  in
+                    if Set.isEmpty s_ then
+                      Nothing
+                    else
+                      Just s_
+                )
+                v
+            )
+            d
+        )
+        dawg.lastVertices
       |> addVertexToLastVertices char dawg.nextId graph
     nextId = dawg.nextId + 1
   in
