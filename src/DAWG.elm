@@ -380,7 +380,7 @@ addString str dawg =
               |> Tuple.first
             (ch::rest) ->
               let
-                (dawg_, node_) = addTransition node ch False crumbs dawg
+                (dawg_, node_) = addTransition node ch False crumbs g
               in
                 proceed ((ch, node_)::crumbs) node_ dawg_ rest
       in
