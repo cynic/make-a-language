@@ -84,6 +84,14 @@ suite =
           |> D.recognizedWords
           |> Expect.equal ["ghafūr"]
 
+      , test "on top of the same old word does nothing" <|
+        \_ ->
+          D.empty
+          |> D.addString "kurremkarmerruk"
+          |> D.addString "kurremkarmerruk" |> D.debugDAWG "check"
+          |> D.recognizedWords
+          |> Expect.equal ["kurremkarmerruk"]
+
       , fuzz (stringOfLengthBetween 1 65) "that is randomly generated works" <|
         \randomlyGeneratedString ->
           D.empty
