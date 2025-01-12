@@ -98,12 +98,12 @@ mergeSuffixes pathHere graph lastVertices =
       case remaining of
         [] -> [(vertex, count)]
         ch::rest ->
-          -- find the edge(s) that lead away from here.
+          -- find the edge(s) that lead "away" from here (i.e. to src)
           case Graph.outgoingEdgesWithData vertex reversed of
             [] -> [(vertex, count)]
             [(v, edgeSet)] -> -- there is only one `src` node
               if Set.size edgeSet == 1 then -- yay, only one path back
-                if Set.member (ch, 0) edgeSet then
+                if Set.member (ch, 0) edgeSet then -- I cannot proceed past a terminal.
                   -- keep going.
                   maxPath rest v (1+count)
                 else
@@ -179,7 +179,9 @@ updateExistingEdges pathHere char isFinal edgeSet src dst dawg =
     let
       -- update the graph to reflect that
       graph =
-        Graph.updateEdge src dst (\_ -> Set.insert (char, 1) edgeSet) dawg.graph
+        -- if there is an identical non-terminal transition, remove it before
+        -- adding the terminal transition.
+        Graph.updateEdge src dst (\_ -> Set.remove (char, 0) edgeSet |> Set.insert (char, 1)) dawg.graph
       -- add this to the lastVertices, using the char as the key, IF
       -- there are no outgoing edges from here.  And there may be; consider
       -- freddy-fred-frederick, where we end on the first 'd' as well,
@@ -460,32 +462,41 @@ recognizedWords dawg =
             List.concatMap
               (\(src, edgeSet) -> List.map (analyzeTransition src) (Set.toList edgeSet))
               manyPaths
-    processTransition : List Char -> UniqueIdentifier -> TransitionType -> List String
-    processTransition seen dst transition =
+    processTransition : UniqueIdentifier -> List Char -> UniqueIdentifier -> TransitionType -> (List (String, UniqueIdentifier))
+    processTransition started_at seen dst transition =
       case transition of
         SameStream (ch, nextVertex) ->
-          fromRightToLeft (ch::seen) nextVertex
+          fromRightToLeft started_at (ch::seen) nextVertex
         AdditionalStart (ch, nextVertex) ->
           -- check: is this a leaf?  If not, then kick off a new one.
           case Graph.outgoingEdges dst dawg.graph of
-            [] -> fromRightToLeft (ch::seen) nextVertex -- we are a leaf.
-            _ -> fromRightToLeft (ch::seen) nextVertex ++ fromRightToLeft [ch] nextVertex
-    fromRightToLeft : List Char -> UniqueIdentifier -> List String
-    fromRightToLeft seen vertex =
+            [] -> fromRightToLeft started_at (ch::seen) nextVertex -- we are a leaf.
+            _ -> fromRightToLeft started_at (ch::seen) nextVertex ++ fromRightToLeft dst [ch] nextVertex
+    -- we might have arrived at a particular final-node via two paths,
+    -- totally independently (e.g. fred-freddy-frederick), and we have
+    -- no idea whether we've seen this final-node or not.  So, we track
+    -- the started_at vertex—which is the final-vertex of a word—, and
+    -- we remove duplicates using it.
+    fromRightToLeft : UniqueIdentifier -> List Char -> UniqueIdentifier -> (List (String, UniqueIdentifier))
+    fromRightToLeft started_at seen vertex =
       case analyzeVertex vertex of
-        End -> [String.fromList seen]
+        End -> [(String.fromList seen, started_at)]
         SinglePath v ->
-          processTransition seen vertex v
+          processTransition started_at seen vertex v
         MultiplePaths transitions ->
-          List.concatMap (processTransition seen vertex) transitions
-
+          List.concatMap (processTransition started_at seen vertex) transitions
   in
     dawg.lastVertices
     |> Dict.values
     |> List.concatMap
         (\v ->
-          List.concatMap (fromRightToLeft []) (Set.toList v)
+          List.concatMap
+            (\lastVertex -> fromRightToLeft lastVertex [] lastVertex)
+            (Set.toList v)
         )
+    -- here's where we remove duplicates obtained via independent paths.
+    |> List.uniqueBy Tuple.second
+    |> List.map Tuple.first
     |> List.sort
 
 {-
