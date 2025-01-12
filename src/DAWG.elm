@@ -173,6 +173,35 @@ addVertexToLastVertices char endVertex graph lastVertices =
   else
     lastVertices
 
+updateExistingEdges : Breadcrumbs -> Char -> Bool -> Transition -> UniqueIdentifier -> UniqueIdentifier -> DAWG -> (DAWG, UniqueIdentifier)
+updateExistingEdges pathHere char isFinal edgeSet src dst dawg =
+  if isFinal then
+    let
+      -- update the graph to reflect that
+      graph =
+        Graph.updateEdge src dst (\_ -> Set.insert (char, 1) edgeSet) dawg.graph
+      -- add this to the lastVertices, using the char as the key, IF
+      -- there are no outgoing edges from here.  And there may be; consider
+      -- freddy-fred-frederick, where we end on the first 'd' as well,
+      -- but we extend past it to the two others.  In that case, the 'd'
+      -- is a termination transition, but not a genuine leaf.
+      lastVertices =
+        addVertexToLastVertices char dst dawg.graph dawg.lastVertices
+      -- if there are no outgoing edges from here, then we can also
+      -- attempt a merge
+      merged =
+        if Graph.outgoingEdges dst dawg.graph == [] then
+          mergeSuffixes ((char, dst)::pathHere) graph lastVertices
+        else
+          graph
+    in
+      ( { dawg | graph = merged, lastVertices = lastVertices }
+      , dst
+      )
+  else
+    ( dawg, dst )
+
+
 {-| Given a starting vertex, add a new edge & vertex to the DAWG.  Returns the updated DAWG and the new vertex.
 
 If the starting vertex is in the lastVertices set, then it is removed; it is no longer a leaf.  This does
@@ -286,32 +315,9 @@ addTransition vertex char isFinal pathHere dawg =
       case existingEndVertex of
         Just (endVertex, edgeSet) ->
           -- nothing to do; this is already here.
-          -- BUT, if the edge is specified to be final, then we should…
-          if isFinal then
-            let
-              -- update the graph to reflect that
-              graph =
-                Graph.updateEdge vertex endVertex (\_ -> Set.insert (char, 1) edgeSet) dawg.graph
-              -- add this to the lastVertices, using the char as the key, IF
-              -- there are no outgoing edges from here.  And there may be; consider
-              -- freddy-fred-frederick, where we end on the first 'd' as well,
-              -- but we extend past it to the two others.  In that case, the 'd'
-              -- is a termination transition, but not a genuine leaf.
-              lastVertices =
-                addVertexToLastVertices char endVertex dawg.graph dawg.lastVertices
-              -- if there are no outgoing edges from here, then we can also
-              -- attempt a merge
-              merged =
-                if Graph.outgoingEdges endVertex dawg.graph == [] then
-                  mergeSuffixes ((char, endVertex)::pathHere) graph lastVertices
-                else
-                  graph
-            in
-              ( { dawg | graph = merged, lastVertices = lastVertices }
-              , endVertex
-              )
-          else
-            ( dawg, endVertex )
+          -- BUT, if the edge is specified to be final, then we should
+          -- update the existing edge-set.
+          updateExistingEdges pathHere char isFinal edgeSet vertex endVertex dawg
         Nothing ->
           {- |(3) the graph is not empty, and we don't have this transition
               yet.  Therefore, we must add it.  The only question is: where?
@@ -328,8 +334,8 @@ addTransition vertex char isFinal pathHere dawg =
                       So, at the end of the word, we must do a check. (see
                       `mergeSuffixes`)
 
-                  (ii) we can split to a new edge.  This is the default.
-                        behavior because of what is mentioned in (i).
+                  (ii) we can split to a new edge.  This is the default
+                       behaviour because of what is mentioned in (i).
 
                 (b) if there are no outgoing edges, then what we do depends
                     on how we got here.  First, a definition from Watson
@@ -355,12 +361,12 @@ addTransition vertex char isFinal pathHere dawg =
                         that we entered upon, and clone transitions as we go.
                         Fortunately, because we store finality information
                         in TRANSITIONS rather than VERTICES, we avoid very
-                        annoying problems of which vertices are final.
+                        annoying problems of "which vertices are final?".
 
                         (a)(ii) stops new confluence nodes from forming.
                         However, a confluence node might already exist as an
                         existing vertex that we have traversed along the path,
-                        and this is where (b)(ii) becomes relevant.              
+                        and this is where (b)(ii) becomes relevant.
           -}
           if Graph.outgoingEdges vertex dawg.graph == [] then
             -- we are in the situation of (b).  Check for confluence nodes.
@@ -378,6 +384,7 @@ addTransition vertex char isFinal pathHere dawg =
           else
             -- this is the situation for (a)(i) and (a)(ii)
             addNewEdge char isFinal vertex dawg
+
 
 type IsThisFinal a
   = IsFinal a
@@ -415,6 +422,10 @@ debugDAWG txt dawg =
     , nextId = dawg.nextId
     }
   |> \_ -> dawg
+
+numNodes : DAWG -> Int
+numNodes dawg =
+  List.length <|Graph.vertices dawg.graph
 
 type TransitionType
   = SameStream (Char, UniqueIdentifier)
