@@ -3,6 +3,7 @@ import Graph exposing (Graph)
 import Set exposing (Set)
 import Dict exposing (Dict)
 import List.Extra as List exposing (Step(..))
+import Maybe.Extra as Maybe
 import Html exposing (br)
 
 type alias UniqueIdentifier = Int
@@ -87,75 +88,182 @@ mergeSuffixes pathHere graph lastVertices =
       handle those when I get to it…
   -}
   let
-    reversed = Graph.reverseEdges graph
-    characters = charsOfBreadcrumbs pathHere
+    reversed = Graph.reverseEdges (debugGraph "suffix-merging of" graph)
+    characters = charsOfBreadcrumbs (pathHere |> Debug.log "Breadcrumbs are")
+    pathVertices = List.map Tuple.second pathHere |> Set.fromList |> Debug.log "Received word-path vertices are"
+    commonPathToStartExists : List Char -> UniqueIdentifier -> Bool
+    commonPathToStartExists charList vertex =
+      case charList of
+        [] -> True |> Debug.log "Common path to start exists"
+        ch::rest ->
+          case Graph.outgoingEdgesWithData vertex reversed of
+            [] -> False |> Debug.log "No confluence; A"
+            [(v, edgeSet)] ->
+              if Set.member (ch, 0) edgeSet || Set.member (ch, 1) edgeSet then
+                commonPathToStartExists rest v
+              else
+                False |> Debug.log "No confluence; B"
+            paths ->
+              List.any (\(v_, _) -> commonPathToStartExists rest v_) paths
+    tryOnlyPossibleConfluence : Int -> List Char -> UniqueIdentifier -> UniqueIdentifier -> List (UniqueIdentifier, Int)
+    tryOnlyPossibleConfluence count charList dst src =
+      {- |We might be able to add this
+          transition to the existing edgeSet.  I can do that if
+          TWO conditions are met:
+
+          1. Just beyond this vertex, there MUST be a common path
+              to the start.
+          2. The destination vertex cannot be a vertex that splits.
+              (we have already covered the case of a confluence, so
+              we do not need to think about it now; but it is the
+              same sort of reasoning that forbids a splitting
+              destination.)
+        
+          However, we can only add ONE such transition for this
+          entire word, because AFTER we have added such a
+          transition, we WILL have a confluence.
+
+          So, let us see if these two conditions are met!
+      -}
+      if commonPathToStartExists charList src then -- && List.length (Graph.outgoingEdges dst graph) == 1 then
+        -- we can add this transition.
+        [(dst, 1 + count)] |> Debug.log "CAN add confluence.  Doing it"
+      else
+        -- oh well, we tried.
+        [(src, count)] |> Debug.log "Can't add confluence; oh well, we tried"
+
+    -- returns the node to join to; the number of characters "saved" (which
+    -- will be taken off from the existing path); and whether the transition
+    -- is final.
     maxPath : List Char -> UniqueIdentifier -> Int -> List (UniqueIdentifier, Int)
     maxPath remaining vertex count =
       -- stop conditions:
       -- 1. I hit a confluence.
       -- 2. I hit a terminal transition.
       -- 3. I run out of transitions.
-      case remaining of
-        [] -> [(vertex, count)]
+      case Debug.log ("(maxPath, vertex id: " ++ String.fromInt vertex ++ ") examining") remaining of
+        [] -> [(vertex, count)] |> Debug.log "I should not be here."
         ch::rest ->
           -- find the edge(s) that lead "away" from here (i.e. to src)
           case Graph.outgoingEdgesWithData vertex reversed of
-            [] -> [(vertex, count)]
+            [] -> [(0, count)] |> Debug.log "Ended at the start"
             [(v, edgeSet)] -> -- there is only one `src` node
               if Set.size edgeSet == 1 then -- yay, only one path back
-                if Set.member (ch, 0) edgeSet then -- I cannot proceed past a terminal.
+                if Set.member (ch, 0) edgeSet then
                   -- keep going.
                   maxPath rest v (1+count)
-                else
-                  -- no transitions from here; we're done.
+                else if Set.member (ch, 1) edgeSet then
+                  -- I cannot proceed past a terminal, because if I do, then
+                  -- I permit an extra word (or more) to be formed.
                   [(vertex, count)]
-              else -- more than one path back; i.e. confluence
-                [(vertex, count)]
+                  |> Debug.log ("There is a terminal at " ++ String.fromInt v ++ " that I can't proceed past")
+                else
+                  -- no transitions from here.  However, we have not yet
+                  -- reached a confluence.                    -}
+                  tryOnlyPossibleConfluence count rest vertex v
+                  |> Debug.log "No transitions from here; but we see if we can find a confluence"
+              else -- more than one path back; i.e. confluence.
+                -- we MUST stop here, in any case.
+                -- however, the same argument applies as above for this.
+                -- I can play the trick just once, IF it's applicable!
+                tryOnlyPossibleConfluence count rest vertex v
+                |> Debug.log "Must stop at confluence, but can we add to it?"                
             pathSet ->
               -- more than one path back.  HOWEVER, if one of them has a single
               -- edge that leads away, AND it matches my character, then let's
               -- go for it.
               List.filter (\(_, edgeSet) -> Set.size edgeSet == 1 && Set.member (ch, 0) edgeSet) pathSet
-              |> List.concatMap (\(v, _) -> maxPath rest v (1+count))
-    longestPath : Maybe (UniqueIdentifier, Int)
-    longestPath =
+              |> List.concatMap (\(v, _) -> maxPath rest v (1 + count))
+    mostLikelyPath : Maybe (UniqueIdentifier, Int)
+    mostLikelyPath =
       List.head characters
       |> Maybe.andThen (\char -> Dict.get char lastVertices)
       |> Maybe.andThen
         (\vertexSet ->
-            Set.map (\v -> maxPath characters 0 v) vertexSet
+            Set.map (\v -> maxPath characters v 0) vertexSet
             |> Set.toList
             |> List.concatMap identity
             -- if the path-length is zero, no merging is possible.
-            -- if the path-length is the same as pathHere, then we're looking
+            -- if the vertex is 0, we can't do anything with the start-vertex.
+            -- if the vertex is already on the path, then we're looking
             -- at the exact word; we can't merge into ourselves, so ignore it.
-            |> List.filter (\(_, n) -> n > 0 && n < List.length pathHere)
+            |> List.filter (\(v, n) -> n > 0 && v /= 0 && not (Set.member v pathVertices))
             |> List.maximum
         )
+      |> Debug.log "Most likely path"
+    longestPath : Maybe (UniqueIdentifier, Int)
+    longestPath =
+      mostLikelyPath
+      |> Maybe.orElseLazy
+        (\() ->
+          -- starting from the correct character didn't work.
+          -- that's fine; let's start from anywhere else and
+          -- see if we can merge there.
+          lastVertices
+          |> Dict.toList
+          |> List.filterMap
+            -- this lambda will get ALL the possibilities.
+            (\(_, vertexSet) ->
+              Set.map (\v -> maxPath characters v 0) vertexSet
+              |> Set.toList
+              |> List.concatMap identity
+              -- if the path-length is zero, no merging is possible.
+              -- if the path-length is the same as pathHere, then we're looking
+              -- at the exact word; we can't merge into ourselves, so ignore it.
+              |> List.filter (\(_, n) -> n > 0) -- && n < List.length pathHere)
+              |> List.maximum
+            )
+          |> Debug.log "Extended the possibilities for path"
+          |> List.maximumBy Tuple.second
+        )
+      |> Debug.log "longest path"
     -- contains (those to remove, those remaining)
     edgesToRemove =
       Maybe.map
-        (\(_, n) -> List.take n (breadcrumbsToForwardEdges pathHere))
-        longestPath
-    joiningCrumb : Maybe (Char, UniqueIdentifier)
+        (\(_, n) -> List.take n (breadcrumbsToForwardEdges pathHere |> Debug.log "Converting breadcrumbs to forward edges"))
+        longestPath |> Debug.log "Edges to remove"
+    -- this is the crumb of the original to join from.
+    joiningCrumb : Maybe (Char, UniqueIdentifier) -- isFinal
     joiningCrumb =
       Maybe.andThen
-        (\(_, n) -> List.drop n pathHere |> List.head)
+        (\(_, n) ->
+          case List.drop n pathHere of
+            [] -> -- must be all the way at the start!
+              List.last pathHere -- if this doesn't exist, something big has gone wrong!
+            x::_ ->
+              Just x
+        )
         longestPath
+      |> Debug.log "Joining at"
     sansEdges : Maybe (Graph UniqueIdentifier Transition)
     sansEdges =
       Maybe.map
-        (List.foldl (\(a, b) g -> Graph.removeEdge a b g) graph)
+        (List.foldl
+          (\(a, b) g ->
+            Graph.removeEdge a b g
+            |> Graph.removeVertex b
+            |> debugGraph ("Removing edge " ++ String.fromInt a ++ "-" ++ String.fromInt b ++ " & vertex")
+          )
+          graph
+        )
         edgesToRemove
     redirectedGraph : Maybe (Graph UniqueIdentifier Transition)
     redirectedGraph =
       Maybe.map3
         (\(ch, src) (dst, _) g ->
-          Graph.addEdge src dst (Set.singleton (ch, 0)) g
+          case Graph.getEdge src dst g of
+            Nothing ->
+              -- if there is no src-dst edge, add it.
+              Graph.addEdge src dst (Set.singleton (ch, 0)) g
+              |> debugGraph ("Adding new edge '" ++ String.fromChar ch ++ "', " ++ String.fromInt src ++ "-" ++ String.fromInt dst)
+            Just edgeSet ->
+              Graph.updateEdge src dst (\_ -> Set.insert (ch, 0) (Debug.log "Found existing edgeSet" edgeSet)) g
+              |> debugGraph ("Updating edgeSet with new edge '" ++ String.fromChar ch ++ "', " ++ String.fromInt src ++ "-" ++ String.fromInt dst)
         )
         joiningCrumb longestPath sansEdges
   in
-    redirectedGraph |> Maybe.withDefault graph
+    Debug.log "\n\n" ()
+    |> \_ -> redirectedGraph |> Maybe.withDefault graph
 
 {-| Add a new vertex to lastVertices set. Only does this if the vertex is a leaf.
 -}
@@ -209,8 +317,8 @@ updateExistingEdges pathHere char isFinal edgeSet src dst dawg =
 If the starting vertex is in the lastVertices set, then it is removed; it is no longer a leaf.  This does
 not change its status as a final vertex.
 -}
-addNewEdge : Char -> Bool -> UniqueIdentifier -> DAWG -> (DAWG, UniqueIdentifier)
-addNewEdge char isFinal vertex dawg =
+addNewEdge : Char -> Bool -> Breadcrumbs -> UniqueIdentifier -> DAWG -> (DAWG, UniqueIdentifier)
+addNewEdge char isFinal pathHere vertex dawg =
   let
     graph =
       Graph.addEdge
@@ -222,7 +330,7 @@ addNewEdge char isFinal vertex dawg =
     -- be a "last vertex" (more properly, a LEAF vertex), then we should
     -- actually remove it from the relevant set, lest it be considered a
     -- "real" suffix when it comes to suffix-merging.
-    lastVertices =
+    lastVerticesCleaned =
       -- a fair bit of code to basically remove non-leaf vertices, brute-force style
       Dict.keys dawg.lastVertices
       |> List.foldl
@@ -244,10 +352,23 @@ addNewEdge char isFinal vertex dawg =
             d
         )
         dawg.lastVertices
-      |> addVertexToLastVertices char dawg.nextId graph
+    lastVertices =
+      if isFinal then
+        addVertexToLastVertices char dawg.nextId graph lastVerticesCleaned
+      else
+        lastVerticesCleaned
+    merged =
+      if isFinal then
+        mergeSuffixes ((char, dawg.nextId)::pathHere) graph lastVertices
+      else
+        graph    
     nextId = dawg.nextId + 1
   in
-    ( { dawg | graph = graph, nextId = nextId, lastVertices = lastVertices }
+    ( { dawg
+      | graph = merged
+      , nextId = nextId
+      , lastVertices = lastVertices
+      }
     , dawg.nextId
     )
 
@@ -311,7 +432,7 @@ addTransition vertex char isFinal pathHere dawg =
     -- There are several cases to consider.
     -- (1) If the graph is empty, just add it in.
     if Graph.size dawg.graph == 1 then
-      addNewEdge char isFinal vertex dawg
+      addNewEdge char isFinal pathHere vertex dawg
     -- (2) If we already have this edge, then we're good.
     else
       case existingEndVertex of
@@ -377,15 +498,15 @@ addTransition vertex char isFinal pathHere dawg =
                 -- we are in the situation of (b)(ii).  We need to build a
                 -- new path from here.
                 List.foldl
-                  (\ch (graph, pathVertex) -> addNewEdge ch False pathVertex graph)
+                  (\ch (graph, pathVertex) -> addNewEdge ch False pathHere pathVertex graph)
                   (dawg, confluenceVertex)
                   to_build
               Nothing ->
                 -- we are in the situation of (b)(i): there is no confluence.
-                addNewEdge char isFinal vertex dawg
+                addNewEdge char isFinal pathHere vertex dawg
           else
             -- this is the situation for (a)(i) and (a)(ii)
-            addNewEdge char isFinal vertex dawg
+            addNewEdge char isFinal pathHere vertex dawg
 
 
 type IsThisFinal a
@@ -425,9 +546,15 @@ debugDAWG txt dawg =
     }
   |> \_ -> dawg
 
+debugGraph : String -> Graph UniqueIdentifier Transition -> Graph UniqueIdentifier Transition
+debugGraph txt graph =
+  Debug.log txt
+    (Graph.verticesAndEdges graph)
+  |> \_ -> graph
+
 numNodes : DAWG -> Int
 numNodes dawg =
-  List.length <|Graph.vertices dawg.graph
+  List.length <| Graph.vertices dawg.graph
 
 type TransitionType
   = SameStream (Char, UniqueIdentifier)
