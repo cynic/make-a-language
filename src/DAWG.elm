@@ -70,6 +70,216 @@ empty =
   , lastVertices = Dict.empty
   }
 
+-- 'dst' is ALWAYS further from the start.
+-- 'src' is ALWAYS closer to the start.
+-- Of course, the two indicate direction.
+type alias SingleTransition =
+  { src : UniqueIdentifier
+  , dst : UniqueIdentifier
+  , thisEdge : (Char, Int)
+  }
+
+type SuffixMergeAction
+  = RemoveCompletely SingleTransition -- remove edge AND vertex
+  | JoinVertices SingleTransition
+  | AddToExistingEdge SingleTransition
+
+type alias SuffixMergeActions = List SuffixMergeAction
+
+type NodeAnalysis
+  = SplitForward -- case (1) or (2)
+  | SplitBackward
+  | TerminalNode
+  | StartNode -- case (3)
+
+mergeSuffixes5 : Set UniqueIdentifier -> Breadcrumbs -> DAWG -> DAWG
+mergeSuffixes5 sameCharLeafVertices pathHere dawg =
+  let
+    characters = charsOfBreadcrumbs pathHere
+    reversed = Graph.reverseEdges dawg.graph
+    commonPathToStart : List Char -> List UniqueIdentifier -> UniqueIdentifier -> List UniqueIdentifier
+    commonPathToStart charList accumulator vertex =
+      case charList of
+        [] ->
+          if vertex == dawg.firstVertex then
+            List.reverse (dawg.firstVertex :: accumulator)
+          else
+            [] -- nope.  Did not lead to the start.
+        ch::rest ->
+          case Graph.outgoingEdgesWithData vertex reversed of
+            [] ->
+              -- we still have characters to match, but this is the end;
+              -- so, this is not a path to the start.
+              []
+            [(v, edgeSet)] ->
+              if Set.member (ch, 0) edgeSet || Set.member (ch, 1) edgeSet then
+                commonPathToStart rest (v::accumulator) v
+              else
+                []
+            paths ->
+              List.findMap
+                (\(v_, _) ->
+                  case commonPathToStart rest accumulator v_ of
+                    [] -> Nothing
+                    foundPath -> Just foundPath
+                )
+                paths
+              |> Maybe.withDefault []
+    -- you know what?  I don't think I'm following back nodes. 🤯.  I'm
+    -- following back TRANSITIONS and nodes.  A little subgraph!
+    -- And I should be checking: dst; src; edge-set;
+    -- to figure out what to do here.
+    -- Actually—I'm matching pairs, aren't I?  word-edges and graph-edges?
+    followBackFrom : UniqueIdentifier -> List SuffixMergeAction -> Int -> List Char -> List (SuffixMergeActions, Int)
+    followBackFrom dst actions count remainingChars =
+      {-
+        The original `dst` that I am passed is a leaf node.
+
+        I stop under these conditions:
+
+        1. I arrive at a node that is a split FORWARD.  I cannot attach here
+           because my word WILL then become part of the split.  I can only
+           attach to a later node.  I must therefore stop, NOW.
+
+        2. I arrive at a terminal node.  Similar to a split FORWARD node, if I
+           attach to a terminal node or anywhere before it, I will accept extra
+           words.  I must therefore attach after it.
+
+           (think about in future: I actually think this might be too strong.
+           I store termination on transitions, so I can surely go back—by ONE—
+           if I need to, and add to the edgeSet??)
+
+           (meh, the heck with it—I'm gonna try it out. I think it's viable!)
+        
+        3. I run out of characters, e.g. create-ate, but I am NOT at the first
+           vertex.  Note that I am NOT following the word-path to get here!
+           So, I can just join up the starting-vertex of the DAWG to the vertex
+           after this one, using the first character of the word as the
+           transition.
+
+        4. I'm at the first vertex, e.g. ate-create, but I haven't run out of
+           letters.  So, I should join from the current-edge letter, up to the
+           `dst` vertex.  If I joined up to the `src` vertex, I would create
+           a cycle, which is impermissible.
+
+        So much for the stop cases.  Now, the "complicated" cases:
+
+        5. I arrive at a node that is a confluence. I am now able to go ONE
+           level back, **IF** there is a common path back to the start.  This
+           is because adding another edge to that edgeSet does NOT result in
+           the acceptance of any other words.  However, I MUST then stop; I
+           cannot go more than ONE level back, otherwise I will accept words
+           that I should not accept.
+
+        Now, let us talk about going "backwards", i.e. going to start.  We
+        can call these _input_ paths, because the processing flows from them.
+
+        6. If there is one input-path and it contains the necessary character,
+           then we can remove the edge that we are on and continue backwards.
+           Even if we have to stop afterwards, this is certain.
+
+        7. If there is one input-path and it does not contain the correct
+           character, then we might be able to go back by ONE space—if we
+           do not have a terminal or split-forward just before—by adding to
+           the edgeSet.
+
+        8. If there are multiple input-paths, then we can pursue all of them,
+           and see which one gives us the best outcome (i.e. most consumed
+           nodes).
+      -}
+      -- let's try these one at a time.
+      -- we'll begin with the stuff we can determine immediately.
+      if List.length (Graph.outgoingEdges dst dawg.graph) > 1 then
+        -- (1)
+        -- we're at a forward-split; we cannot proceed; we're done.
+        [(actions, count - 1)]
+      else if List.isEmpty remainingChars then
+        -- (3)
+        [(actions, count)] -- do nothing is the fittest option.
+      else
+        -- oh, *poot*.  We're going to have to do some work… but is it easy
+        -- work, at least?  Well, let's see.  Everything here is actually
+        -- about the TRANSITION back, and not about the 
+       if isConfluence dst then
+        -- Try (1)(a) first
+        case commonPathToStart remainingChars dst of
+          [] -> -- I could not find a common path, so (1)(a) is not applicable.
+            -- so, none of the 
+          firstInChain::_ ->            
+            Maybe.map2
+              (\edgeSet ch ->
+                if Set.member (ch, 0) edgeSet then
+                  [(AddToExistingEdge { src = firstInChain, dst = dst, thisEdge = (ch, 0) } :: actions, count)]
+                else
+                  [(AddToExistingEdge { src = firstInChain, dst = dst, thisEdge = (ch, 1) } :: actions, count)]
+              )
+              (Graph.getEdge firstInChain dst dawg.graph)
+              (List.head remainingChars)
+            -- for the 'default' to be true, something very weird must happen.
+            -- Either the edgeSet doesn't have the edge (although, in
+            -- `commonPathToStart` we check that it does have it!) or the
+            -- `remainingChars` list is empty (although, just above this,
+            -- we do an early exit if it is empty).  So it's pretty much
+            -- assured that something wEiRd must be going on if the 'default'
+            -- is selected here.
+            |> Maybe.withDefault []
+    -- follow back to obtain the maximum number of transition-actions.
+    -- We return a list of follow-back actions and the nodes "saved" in the
+    -- process, which is a measure of their goodness (higher is better).
+    followBack : List (UniqueIdentifier, SuffixMergeActions) -> List (SuffixMergeActions, Int)
+    followBack remainingVertices =
+      List.map (\startNode -> followBackFrom startNode [] 0 characters) remainingVertices
+
+  in
+    dawg
+
+mergeSuffixes4 : DAWG -> DAWG
+mergeSuffixes4 dawg =
+  dawg -- TODO.  See mergeSuffixes3.
+
+mergeSuffixes3 : Char -> UniqueIdentifier -> Breadcrumbs -> DAWG -> DAWG
+mergeSuffixes3 char lastVertexOfWord pathHere dawg =
+  let
+    lastVerticesCleaned =
+      -- these are the lastVertices, but without the lastVertexOfWord
+      Dict.update
+        char
+        (\set ->
+          Maybe.andThen
+            (\existing ->
+              Set.remove lastVertexOfWord existing
+              |> \cleaned ->
+                if Set.isEmpty cleaned then
+                  Nothing
+                else
+                  Just cleaned
+            ) set
+        )
+        dawg.lastVertices
+    possibleLeaves =
+      Dict.values lastVerticesCleaned
+      |> List.foldl Set.union Set.empty
+  in
+    case Dict.get char lastVerticesCleaned of
+      Nothing ->
+        -- there is no leaf vertex that ends with the same transition.
+        -- I must check all the other vertices to see if I can find
+        -- a prefix-match where I can add to the final edge-set.
+        mergeSuffixes4 dawg
+      Just sameCharLeafVertices ->
+        -- there is at least one other leaf vertex that ends with this
+        -- transition.  However, if that leaf vertex is the destination
+        -- of a confluence, then it may be that we cannot use it at all.
+        margeSuffixes5 sameCharLeafVertices dawg 
+      
+
+mergeSuffixes2 : Breadcrumbs -> DAWG -> DAWG
+mergeSuffixes2 pathHere dawg =
+  case pathHere of
+    [] -> dawg -- nothing to do!
+    (lastChar, lastVertex)::rest ->
+      mergeSuffixes3 lastChar lastVertex pathHere dawg
+
 -- defaultTransition : Transition
 -- defaultTransition = Set.singleton ('❓', notFinalState)
 
@@ -310,7 +520,6 @@ updateExistingEdges pathHere char isFinal edgeSet src dst dawg =
       )
   else
     ( dawg, dst )
-
 
 {-| Given a starting vertex, add a new edge & vertex to the DAWG.  Returns the updated DAWG and the new vertex.
 
