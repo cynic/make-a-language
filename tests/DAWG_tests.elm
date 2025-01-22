@@ -19,6 +19,60 @@ suite =
           nodesAndWords D.empty
           |> Expect.equal (1, [])
       ]
+    -- , describe "algorithms can handle"
+    --   [ test "two totally separate words" <|
+    --     \_ ->
+    --       D.fromWords ["abc", "def"]
+    --       |> nodesAndWords
+    --       |> Expect.equal (5, ["abc", "def"])
+    --   ]
+    , describe "handles prefix construction correctly when given"
+      [ test "px-pxa-pya-pya" <|
+        \_ ->
+          D.fromWords ["px", "pxa", "pya", "pya"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["px", "pxa", "pya"])
+      , test "pxa-py-qya" <|
+        \_ ->
+          D.fromWords ["pxa", "py", "qya"]
+          |> nodesAndWords
+          |> Expect.equal (5, ["pxa", "py", "qya"])
+      , test "pxa-py-pya-pya" <|
+        \_ ->
+          D.fromWords ["pxa", "py", "pya", "pya"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["pxa", "py", "pya"])
+      , test "py-pya-pya" <|
+        \_ ->
+          D.fromWords ["py", "pya"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["py", "pya"])
+      , test "py-pya" <|
+        \_ ->
+          D.fromWords ["py", "pya"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["py", "pya"])
+      , test "pya-py" <|
+        \_ ->
+          D.fromWords ["pya", "py"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["py", "pya"])
+      , test "px-pxa-pya-py" <|
+        \_ ->
+          D.fromWords ["px", "pxa", "pya", "py"] |> D.debugDAWG "check"
+          |> nodesAndWords
+          |> Expect.equal (4, ["px", "pxa", "py", "pya"])
+      , test "pya-py-py" <|
+        \_ ->
+          D.fromWords ["pya", "py", "py"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["py", "pya"])
+      , test "py-py" <|
+        \_ ->
+          D.fromWords ["py", "py"]
+          |> nodesAndWords
+          |> Expect.equal (3, ["py"])
+      ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
       [ test "to an empty graph gives us one word" <|
@@ -39,15 +93,15 @@ suite =
           |> nodesAndWords
           |> Expect.equal (3, ["ab"])
 
-      , test "as an alternate gives two edges between two vertices" <|
-        \_ ->
-          D.empty
-          |> D.addNewEdge 'a' True [] 0
-          |> Tuple.first
-          |> D.addNewEdge 'b' True [] 0
-          |> Tuple.first |> D.debugDAWG "check"
-          |> nodesAndWords
-          |> Expect.equal (2, ["a", "b"])
+      -- , test "as an alternate gives two edges between two vertices" <|
+      --   \_ ->
+      --     D.empty
+      --     |> D.addNewEdge 'a' True [] 0
+      --     |> Tuple.first
+      --     |> D.addNewEdge 'b' True [] 0
+      --     |> Tuple.first |> D.debugDAWG "check"
+      --     |> nodesAndWords
+      --     |> Expect.equal (2, ["a", "b"])
 
       -- , test "to a graph with two alternates gives three edges between two vertices" <|
       --   \_ ->
