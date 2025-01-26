@@ -9,7 +9,6 @@ APPROACH:
   1. Have a normal "mousedown" event on the drag zone.
   2. When a drag begins, listen for global onMouseMove and onMouseUp events.
   3. Check which buttons are down on mouse moves to detect a weird scenario.
-
 -}
 
 
@@ -21,7 +20,7 @@ import Html.Events exposing (..)
 import Json.Decode as D
 import Svg exposing (svg)
 import Svg.Attributes as SA exposing (width, height, viewBox)
-
+import ForceDirectedGraph
 
 
 -- MAIN
@@ -43,6 +42,7 @@ main =
 type alias Model =
   { dragState : DragState
   , text : String
+  , forceDirectedGraph : ForceDirectedGraph.Model
   }
 
 
@@ -55,6 +55,7 @@ init : () -> (Model, Cmd Msg)
 init _ =
   ( { dragState = Static 0.5
     , text = ""
+    , forceDirectedGraph = ForceDirectedGraph.init () |> Tuple.first
     }
   , Cmd.none
   )
@@ -69,6 +70,7 @@ type Msg
   | DragMove Bool Float
   | DragStop Float
   | TextInput String
+  | ForceDirectedMsg ForceDirectedGraph.Msg
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -90,6 +92,11 @@ update msg model =
 
     TextInput text ->
       ( { model | text = text }
+      , Cmd.none
+      )
+
+    ForceDirectedMsg msg_ ->
+      ( { model | forceDirectedGraph = ForceDirectedGraph.update msg_ model.forceDirectedGraph }
       , Cmd.none
       )
 
@@ -134,16 +141,19 @@ view model =
         ]
     , viewDragZone fraction
     , viewPanel "#ddd" "#222" (1 - fraction) pointerEvents
-        [ svg
-            [ style "flex-grow" "1"
-            , style "background-color" "white"
-            -- , style "border-left" "2px solid #ccc"
-            , SA.width "100%"
-            , SA.height "100%"
-            , viewBox "0 0 100 100"
-            ]
-            []
+        [ ForceDirectedGraph.view model.forceDirectedGraph
+          |> Html.map ForceDirectedMsg
         ]
+        -- [ svg
+        --     [ style "flex-grow" "1"
+        --     , style "background-color" "white"
+        --     -- , style "border-left" "2px solid #ccc"
+        --     , SA.width "100%"
+        --     , SA.height "100%"
+        --     , viewBox "0 0 100 100"
+        --     ]
+        --     []
+        -- ]
     ]
 
 
@@ -226,8 +236,8 @@ This way we catch all events, even if they are not on our drag zone.
 Listening for mouse moves is costly though, so we only listen if there is an
 ongoing drag.
 -}
-subscriptions : Model -> Sub Msg
-subscriptions model =
+mainSubscriptions : Model -> Sub Msg
+mainSubscriptions model =
   case model.dragState of
     Static _ ->
       Sub.none
@@ -238,6 +248,12 @@ subscriptions model =
         , E.onMouseUp (D.map DragStop decodeFraction)
         ]
 
+subscriptions : Model -> Sub Msg
+subscriptions model =
+  Sub.batch
+    [ mainSubscriptions model
+    , ForceDirectedGraph.subscriptions model.forceDirectedGraph |> Sub.map ForceDirectedMsg
+    ]
 
 {- The goal here is to get (mouse x / window width) on each mouse event. So if
 the mouse is at 500px and the screen is 1000px wide, we should get 0.5 from this.
