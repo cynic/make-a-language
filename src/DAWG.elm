@@ -75,7 +75,8 @@ isTerminalNode node =
           conn
     )
     False
-    node.incoming
+    (node.incoming |> Debug.log ("Incoming for " ++ String.fromInt node.node.id)) 
+  |> Debug.log ("Is terminal node " ++ String.fromInt node.node.id)
 
 isSingle : Node -> Bool
 isSingle node =
@@ -177,7 +178,11 @@ startingPrefixMergeResult : DAWG -> PrefixMergeResult
 startingPrefixMergeResult dawg =
   { dawg = dawg
   , suffixMergeData = Nothing
-  , redirectNodes = Nothing
+  , redirectNodes =
+      if dawg.final == 0 then
+        Just (IntDict.empty, 0)
+      else
+        Nothing
   }
 
 updateTransitionToFinal : Char -> Node -> Node -> DAWG -> DAWG
@@ -219,11 +224,10 @@ createNewFinalTransition ch currentNode dawg =
   { dawg
     | graph =
         Graph.insert
-          { currentNode
-            | outgoing =
-                IntDict.singleton
-                  (dawg.maxId + 1)
-                  (Set.singleton (ch, 1))
+          { node = Node (dawg.maxId + 1) ()
+          , incoming =
+              IntDict.singleton currentNode.node.id (Set.singleton (ch, 1))
+          , outgoing = IntDict.empty
           }
           dawg.graph
     , maxId = dawg.maxId + 1
@@ -294,14 +298,19 @@ prefixMerge transitions currentNode accumulator =
                   | dawg = createTransitionToFinal w currentNode accumulator.dawg
                 }
           else
-            let
-              (updated_dawg, newNode) =
-                createNewTransitionReturningNode w currentNode accumulator.dawg
-            in
-              prefixMerge
-                transitions_remaining
-                newNode
-                { accumulator | dawg = updated_dawg }
+            if isFinal == 1 then
+              { accumulator
+                | dawg = createTransitionToFinal w currentNode accumulator.dawg
+              }
+            else
+              let
+                (updated_dawg, newNode) =
+                  createNewTransitionReturningNode w currentNode accumulator.dawg
+              in
+                prefixMerge
+                  transitions_remaining
+                  newNode
+                  { accumulator | dawg = updated_dawg }
 
 {-| Take all the previous incoming-connections of the old final-node and
     redirect them to the new final-node.
@@ -473,24 +482,24 @@ mergeSuffixes transitions prefixEnd currentNode dawg =
 
 -- fromWords : List String -> DAWG
 
+connectionToString : Connection -> String
+connectionToString =
+  Set.map
+    (\element ->
+      case element of
+        (ch, 0) ->
+          String.fromChar ch
+        (ch, _) ->
+          "\u{0307}" ++ String.fromChar ch
+    )
+    >> Set.toList
+    >> String.join ""
+
 graphToString : DAWGGraph -> String
 graphToString graph =
   Graph.toString
     (\_ -> Nothing)
-    (\connections ->
-      Set.map
-        (\element ->
-          case element of
-            (ch, 0) ->
-              String.fromChar ch
-            (ch, _) ->
-              "(" ++ String.fromChar ch ++ ")"
-        )
-        connections
-      |> Set.toList
-      |> String.join ""
-      |> Just
-    )
+    (Just << connectionToString)
     graph
 
 debugGraph : String -> DAWGGraph -> DAWGGraph
@@ -521,6 +530,9 @@ addString txt dawg =
     (Graph.get dawg.root dawg.graph)
   |> Maybe.withDefault dawg -- don't accept an empty-string as valid.
 
+fromWords : List String -> DAWG
+fromWords =
+  List.foldl addString empty
 
 numNodes : DAWG -> Int
 numNodes dawg =

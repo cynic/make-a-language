@@ -1,6 +1,4 @@
--- create default skeleton
 module Main exposing (main)
-
 
 {- You know how the editor on the Elm website has two side-by-side panels that
 can be resized? This is a rough implementation of that sort of thing.
@@ -21,7 +19,7 @@ import Json.Decode as D
 import Svg exposing (svg)
 import Svg.Attributes as SA exposing (width, height, viewBox)
 import ForceDirectedGraph
-
+import DAWG
 
 -- MAIN
 
@@ -55,7 +53,7 @@ init : () -> (Model, Cmd Msg)
 init _ =
   ( { dragState = Static 0.5
     , text = ""
-    , forceDirectedGraph = ForceDirectedGraph.init () |> Tuple.first
+    , forceDirectedGraph = ForceDirectedGraph.init DAWG.empty.graph |> Tuple.first
     }
   , Cmd.none
   )
@@ -91,7 +89,13 @@ update msg model =
       )
 
     TextInput text ->
-      ( { model | text = text }
+      ( { model
+          | text = text
+          , forceDirectedGraph =
+              ForceDirectedGraph.update
+                (ForceDirectedGraph.GraphUpdated <| .graph <| DAWG.fromWords <| String.split "\n" text)
+                model.forceDirectedGraph
+        }
       , Cmd.none
       )
 
