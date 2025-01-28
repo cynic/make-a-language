@@ -75,8 +75,7 @@ isTerminalNode node =
           conn
     )
     False
-    (node.incoming |> Debug.log ("Incoming for " ++ String.fromInt node.node.id)) 
-  |> Debug.log ("Is terminal node " ++ String.fromInt node.node.id)
+    (node.incoming)
 
 isSingle : Node -> Bool
 isSingle node =
@@ -274,7 +273,7 @@ prefixMerge transitions currentNode accumulator =
                 transitions_remaining
                 someNode
                 { accumulator
-                  | redirectNodes = Just (someNode.incoming, someNode.node.id)
+                  | redirectNodes = Just (IntDict.remove currentNode.node.id someNode.incoming, someNode.node.id)
                 }
           else if isBackwardSplit someNode || isConfluenceConnection currentNode someNode then
             { accumulator
@@ -291,7 +290,7 @@ prefixMerge transitions currentNode accumulator =
             case accumulator.redirectNodes of
               Just _ ->
                 { accumulator
-                  | dawg = createNewFinalTransition w currentNode accumulator.dawg
+                  | dawg = createNewFinalTransition w currentNode accumulator.dawg |> debugDAWG "createNewFinalTransition"
                 }
               Nothing ->
                 { accumulator
@@ -329,6 +328,7 @@ redirectNodes (adjacency, oldFinalNodeId) dawg =
                           | outgoing =
                               IntDict.remove oldFinalNodeId sourceNode.outgoing
                               |> IntDict.insert dawg.final conn
+                              |> Debug.log ("Redirected Outgoing connections of " ++ String.fromInt sourceNodeId)
                         }
                         graph
                     )
@@ -347,7 +347,7 @@ postPrefixCleanup prefixResult =
           prefixResult
         Just redirection ->
           { prefixResult
-            | dawg = redirectNodes redirection prefixResult.dawg
+            | dawg = redirectNodes (Debug.log ("Redirecting to " ++ String.fromInt prefixResult.dawg.final) redirection) prefixResult.dawg
             , redirectNodes = Nothing
           }
   in
