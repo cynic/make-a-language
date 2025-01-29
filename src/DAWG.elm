@@ -57,10 +57,16 @@ isConfluence : Connection -> Bool
 isConfluence connection =
   Set.size connection > 1
 
-isConfluenceConnection : Node -> Node -> Bool
-isConfluenceConnection node1 node2 =
-  IntDict.get node2.node.id node1.outgoing
-  |> Maybe.map isConfluence
+isConfluenceConnection : NodeId -> NodeId -> DAWG -> Bool
+isConfluenceConnection node1 node2 dawg =
+  Maybe.map2
+    (\a b ->
+      IntDict.get b.node.id a.outgoing
+      |> Maybe.map isConfluence
+      |> Maybe.withDefault False
+    )
+    (Graph.get node1 dawg.graph)
+    (Graph.get node2 dawg.graph)
   |> Maybe.withDefault False
 
 isForwardSplit : Node -> Bool
@@ -195,11 +201,11 @@ addTransitionToConnection transition connection =
 updateConnectionWith : Transition -> Connection -> Connection
 updateConnectionWith transition =
   case transition of
-    (ch, 0) ->
-      addTransitionToConnection transition
-    (ch, _) ->
+    (ch, 1) ->
       removeTransitionFromConnection (ch, 0)
       >> addTransitionToConnection transition
+    _ ->
+      addTransitionToConnection transition
 
 createOrUpdateOutgoingConnection : Transition -> Node -> NodeId -> IntDict.IntDict Connection
 createOrUpdateOutgoingConnection transition from to =
@@ -372,47 +378,38 @@ prefixMerge transitions currentNode dawg =
     (w, isFinal)::transitions_remaining ->
 {-
   To cover:
-  - 2.1.1 ✅
-  - 2.1.2 ✅
-  - 2.2 ✅
-  - 2.3 ✅
-  - 2.4.1 ✅
-  - 2.4.2 ✅
+  - 2.1 ✅
+  - 2.2.1 ✅
+  - 2.2.2 ✅
+  - 2.2.3 ✅
   - 3.1 ✅
   - 3.2 ✅
 -}
       case forwardsFollowable w currentNode dawg.graph of
 
         Just someNode ->
-          case (isFinalNode someNode.node.id dawg, isFinal == 1) of
-
-            (False, False) -> -- d' != d_ω; w_i is not final
-              -- there is a perfect prefix match; we can continue.
-              println ("[Prefix 2.4.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is not final.  Continuing prefix-merge.")
-              prefixMerge transitions_remaining someNode.node.id dawg
-
-            (False, True) -> -- d' ≠ d_ω; w_i is final
-              -- whether backwards-split, confluence, or straight, we merge from the end.
-              case dawg.final of 
-                Just f ->
-                  println ("[Prefix 2.2/2.3/2.4.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging with final-node #" ++ String.fromInt f)
-                  mergeSuffixes (List.reverse transitions) currentNode (MergeToExistingFinal f) dawg
-                Nothing ->
-                  println ("[Prefix 2.2/2.3/2.4.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging WITHOUT a defined final-node.")
-                  mergeSuffixes (List.reverse transitions) currentNode (CreateNewFinal (IntDict.empty, 0)) dawg
-
-            (True, False) -> -- d' = d_ω; w_i is not final
-              println ("[Prefix 2.1.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging WITHOUT a defined final-node.")
+          if isFinal == 1 then
+            println ("[Prefix 2.1.1] Created/updated terminal transition to #" ++ String.fromInt someNode.node.id ++ ".  Updating existing transition to be final & exiting unconditionally.")
+            createTransitionBetween (w, 1) currentNode someNode.node.id dawg
+          else
+            if isFinalNode someNode.node.id dawg then
+              println ("[Prefix 2.2.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is final.  Go to suffix-merging WITHOUT a defined final-node.")
               mergeSuffixes
                 (List.reverse transitions_remaining)
                 someNode.node.id
                 (CreateNewFinal (IntDict.remove currentNode someNode.incoming, someNode.node.id))
                 dawg
-
-            (True, True) -> -- d' = d_ω; w_i is final
-              println ("[Prefix 2.1.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is final; transition is final.  Updating existing transition to be final & exiting unconditionally.")
-              createOrUpdateTransitionToExistingFinal w currentNode dawg
-
+            else if isBackwardSplit someNode || isConfluenceConnection currentNode someNode.node.id dawg then
+              case dawg.final of
+                Just f ->
+                  println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the (#" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging with final-node #" ++ String.fromInt f)
+                  mergeSuffixes (List.reverse transitions) currentNode (MergeToExistingFinal f) dawg
+                Nothing ->
+                  println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the (#" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging WITHOUT a defined final-node.")
+                  mergeSuffixes (List.reverse transitions) currentNode (CreateNewFinal (IntDict.empty, 0)) dawg
+            else
+              println ("[Prefix 2.2.3] Graph node #" ++ String.fromInt someNode.node.id ++ " is single.  Continuing prefix-merge.")
+              prefixMerge transitions_remaining someNode.node.id dawg
         Nothing -> -- there is nothing to follow forward.  Start merging from the other side.
           case dawg.final of
             Just f ->
