@@ -167,13 +167,13 @@ backwardsFollowable node ch graph =
         state
     )
     []
-    node.outgoing
+    node.incoming
   |> List.filterMap (flip Graph.get graph)
 
 compatibleBackwardsFollowable : NodeId -> Transition -> DAWGGraph -> List Node
 compatibleBackwardsFollowable nodeid transition graph =
   Maybe.map
-    ( .outgoing
+    ( .incoming
       >> IntDict.foldl
         (\k conn state ->
           if Set.member transition conn then
