@@ -233,6 +233,7 @@ redirectFrom old from =
   from.outgoing
   |> IntDict.get old
   |> Maybe.map (\conn -> (from, old, conn))
+  |> Debug.log "RedirectFrom"
 
 redirectTo : NodeId -> Maybe (Node, NodeId, Connection) -> Maybe Node
 redirectTo to maybeRedirect =
@@ -245,6 +246,7 @@ redirectTo to maybeRedirect =
               |> IntDict.insert to conn
         }
     )
+  |> Debug.log "RedirectTo"
 
 {-| Create or update a transition `w` from the specified node to the final node.
 
@@ -402,8 +404,8 @@ prefixMerge transitions currentNode dawg =
             (True, False) -> -- d' = d_ω; w_i is not final
               println ("[Prefix 2.1.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging WITHOUT a defined final-node.")
               mergeSuffixes
-                (List.reverse transitions)
-                currentNode
+                (List.reverse transitions_remaining)
+                someNode.node.id
                 (CreateNewFinal (IntDict.remove currentNode someNode.incoming, someNode.node.id))
                 dawg
 
@@ -553,11 +555,13 @@ mergeSuffixes transitions prefixEnd mergeType dawg =
   case mergeType of
     CreateNewFinal (incoming, oldFinal) ->
       -- create a final-terminated chain going backwards, culminating at `prefixEnd`
+      println ("[Suffix] Creating new final, then merging back to prefix-node #" ++ String.fromInt prefixEnd)
       addFinalNode dawg
       |> \(finalnode, dawg_) ->
-        println ("New \"final\" node " ++ String.fromInt finalnode.node.id ++ " added.")
-        redirectNodes (incoming, oldFinal) dawg_
-        |> debugDAWG ("After node redirection to newly-defined final node #" ++ String.fromInt finalnode.node.id)
+        dawg_
+        |> debugDAWG ("[Suffix] New \"final\" node #" ++ String.fromInt finalnode.node.id ++ " added.  Before redirecting       ")
+        |> redirectNodes (incoming, oldFinal)
+        |> debugDAWG ("[Suffix] After node redirection to newly-defined final node #" ++ String.fromInt finalnode.node.id)
         |> createBackwardsChain transitions finalnode.node.id prefixEnd
 
     MergeToExistingFinal finalNode ->
