@@ -21,8 +21,8 @@ type alias DAWG =
   { graph : DAWGGraph
     {- The maximum ID-value in this DAWG graph -}
   , maxId : NodeId
-  , root : Node
-  , final : Maybe Node
+  , root : NodeId
+  , final : Maybe NodeId
   }
 
 notFinalState : Int
@@ -41,7 +41,7 @@ empty =
   in
     { graph = Graph.insert initial Graph.empty
     , maxId = 0
-    , root = initial
+    , root = 0
     , final = Nothing
     }
 
@@ -118,9 +118,11 @@ forAllTransitions predicate connection =
     connection
   |> Tuple.first
 
-isFinalNode : Node -> DAWG -> Bool
-isFinalNode node dawg =
-  Maybe.map (\finalNode -> node.node.id == finalNode.node.id) dawg.final
+isFinalNode : NodeId -> DAWG -> Bool
+isFinalNode nodeid dawg =
+  dawg.final
+  |> Maybe.andThen (flip Graph.get dawg.graph)
+  |> Maybe.map (\finalNode -> nodeid == finalNode.node.id)
   |> Maybe.withDefault False
   -- isLeaf node &&
   --   -- check: forall connections, forall transitions, transition is final.
@@ -128,22 +130,26 @@ isFinalNode node dawg =
   --     (forAllTransitions (\(_, isFinal) -> isFinal == 1))
   --     node.incoming
 
-forwardsFollowable : Char -> Node -> DAWGGraph -> Maybe Node
-forwardsFollowable ch node graph =
-  IntDict.foldl
-    (\k conn state ->
-      state
-      |> Maybe.orElseLazy
-        (\() ->
-          if Set.member (ch, 0) conn || Set.member (ch, 1) conn then
-            Just k
-          else
-            Nothing
+forwardsFollowable : Char -> NodeId -> DAWGGraph -> Maybe Node
+forwardsFollowable ch nodeid graph =
+  Maybe.andThen
+    (\node ->
+      IntDict.foldl
+        (\k conn state ->
+          state
+          |> Maybe.orElseLazy
+            (\() ->
+              if Set.member (ch, 0) conn || Set.member (ch, 1) conn then
+                Just k
+              else
+                Nothing
+            )
         )
+        Nothing
+        node.outgoing
+      |> Maybe.andThen (flip Graph.get graph)
     )
-    Nothing
-    node.outgoing
-  |> Maybe.andThen (flip Graph.get graph)
+    (Graph.get nodeid graph)
 
 backwardsFollowable : Node -> Char -> DAWGGraph -> List Node
 backwardsFollowable node ch graph =
@@ -158,38 +164,108 @@ backwardsFollowable node ch graph =
     node.outgoing
   |> List.filterMap (flip Graph.get graph)
 
-compatibleBackwardsFollowable : Node -> Transition -> DAWGGraph -> List Node
-compatibleBackwardsFollowable node transition graph =
-  IntDict.foldl
-    (\k conn state ->
-      if Set.member transition conn then
-        k :: state
-      else
-        state
+compatibleBackwardsFollowable : NodeId -> Transition -> DAWGGraph -> List Node
+compatibleBackwardsFollowable nodeid transition graph =
+  Maybe.map
+    ( .outgoing
+      >> IntDict.foldl
+        (\k conn state ->
+          if Set.member transition conn then
+            k :: state
+          else
+            state
+        )
+        []
+      >> List.filterMap (flip Graph.get graph)
     )
-    []
-    node.outgoing
-  |> List.filterMap (flip Graph.get graph)
-
+    (Graph.get nodeid graph)
+  |> Maybe.withDefault []
 {--
   DAWG-modification functions
 -}
 
-updateTransitionToFinal : Char -> Node -> Node -> DAWG -> DAWG
-updateTransitionToFinal ch currentNode finalNode dawg =
-  { dawg
-    | graph =
-        Graph.insert
-          { currentNode
-            | outgoing = 
-                IntDict.update finalNode.node.id
-                  -- I should not need to remove beforehand.  This node is
-                  -- final ($d_ω$), so all transitions to it should be terminal.
-                  (Maybe.map <| Set.insert (ch, 1))
-                  currentNode.outgoing
-          }
-          dawg.graph
+removeTransitionFromConnection : Transition -> Connection -> Connection
+removeTransitionFromConnection transition connection =
+  Set.remove transition connection
+
+addTransitionToConnection : Transition -> Connection -> Connection
+addTransitionToConnection transition connection =
+  Set.insert transition connection
+
+updateConnectionWith : Transition -> Connection -> Connection
+updateConnectionWith transition =
+  case transition of
+    (ch, 0) ->
+      addTransitionToConnection transition
+    (ch, _) ->
+      removeTransitionFromConnection (ch, 0)
+      >> addTransitionToConnection transition
+
+createOrUpdateOutgoingConnection : Transition -> Node -> NodeId -> IntDict.IntDict Connection
+createOrUpdateOutgoingConnection transition from to =
+  IntDict.update to
+    ( Maybe.map (updateConnectionWith transition)
+      >> Maybe.orElseLazy (\() -> Just (Set.singleton transition))
+    )
+    from.outgoing
+
+{-| Connect to a particular node with a particular transition.
+
+  This is a fairly high-level function. It will
+  - create the connection if it needs to, and update it otherwise.
+  - ensure that if the transition is final, there isn't a competing
+    non-final transition.
+-}
+connectTo : NodeId -> Transition -> Node -> Node
+connectTo to transition from =
+  { from
+    | outgoing = createOrUpdateOutgoingConnection transition from to
   }
+
+disconnectFrom : NodeId -> Node -> Node
+disconnectFrom to from =
+  { from
+    | outgoing = IntDict.remove to from.outgoing
+  }
+
+redirectFrom : NodeId -> Node -> Maybe (Node, NodeId, Connection)
+redirectFrom old from =
+  from.outgoing
+  |> IntDict.get old
+  |> Maybe.map (\conn -> (from, old, conn))
+
+redirectTo : NodeId -> Maybe (Node, NodeId, Connection) -> Maybe Node
+redirectTo to maybeRedirect =
+  maybeRedirect
+  |> Maybe.map
+    (\(from, old, conn) ->
+        { from
+          | outgoing =
+              IntDict.remove old from.outgoing 
+              |> IntDict.insert to conn
+        }
+    )
+
+{-| Create or update a transition `w` from the specified node to the final node.
+
+Assumes that the final node DOES exist; if it does not, then this does nothing.
+- If there is a non-final `w` transition, it is replaced with a final transition.
+- If there is a final transition, there is no change.
+- If there is no connection to final, a connection with a final `w`-transition is made.
+-}
+createOrUpdateTransitionToExistingFinal : Char -> NodeId -> DAWG -> DAWG
+createOrUpdateTransitionToExistingFinal ch currentNodeId dawg =
+  dawg.final
+  |> Maybe.map
+    (\finalNodeId ->
+        { dawg
+          | graph =
+              Graph.update currentNodeId
+                (Maybe.map <| connectTo finalNodeId (ch, 1))
+                dawg.graph
+        }
+    )
+  |> Maybe.withDefault dawg
 
 {-| Create a transition to a new node, returning the DAWG and the new node.
 -}
@@ -229,20 +305,20 @@ createNewPrecursorNode transition destNode dawg =
 
 {-| Create a new node which is set as the official "final" node.
 -}
-redefineFinalTransition : Char -> Node -> DAWG -> DAWG
+redefineFinalTransition : Char -> NodeId -> DAWG -> DAWG
 redefineFinalTransition ch currentNode dawg =
   let
     newFinalNode =
       { node = Node (dawg.maxId + 1) ()
       , incoming =
-          IntDict.singleton currentNode.node.id (Set.singleton (ch, 1))
+          IntDict.singleton currentNode (Set.singleton (ch, 1))
       , outgoing = IntDict.empty
       }
   in
   { dawg
     | graph = Graph.insert newFinalNode dawg.graph
     , maxId = dawg.maxId + 1
-    , final = Just newFinalNode
+    , final = Just <| dawg.maxId + 1
   }
 
 -- {-| Create a transition from the existing node to the final.
@@ -267,13 +343,14 @@ redefineFinalTransition ch currentNode dawg =
     from this node to that one.  Otherwise, create a new final node
     and transition to it.
 -}
-createOrUpdateTransitionToFinal : Char -> Node -> DAWG -> DAWG
+createOrUpdateTransitionToFinal : Char -> NodeId -> DAWG -> DAWG
 createOrUpdateTransitionToFinal ch currentNode dawg =
   case dawg.final of
-    Just finalNode ->
-      updateTransitionToFinal ch currentNode finalNode dawg
+    Just _ ->
+      createOrUpdateTransitionToExistingFinal ch currentNode dawg
     Nothing ->
       redefineFinalTransition ch currentNode dawg
+      |> createOrUpdateTransitionToExistingFinal ch currentNode
 
 println : String -> a -> a
 println txt x =
@@ -283,9 +360,9 @@ println txt x =
 
 ASSUMPTIONS: the last Transition is terminal; all others are non-terminal.
 -}
-prefixMerge : List Transition -> Node -> DAWG -> DAWG
+prefixMerge : List Transition -> NodeId -> DAWG -> DAWG
 prefixMerge transitions currentNode dawg =
-  case Debug.log ("When currentNode = " ++ String.fromInt currentNode.node.id ++ ", transitions") transitions of
+  case Debug.log ("When currentNode = " ++ String.fromInt currentNode ++ ", transitions") transitions of
 
     [] -> -- we are at the end.
       dawg
@@ -305,18 +382,18 @@ prefixMerge transitions currentNode dawg =
       case forwardsFollowable w currentNode dawg.graph of
 
         Just someNode ->
-          case (isFinalNode someNode dawg, isFinal == 1) of
+          case (isFinalNode someNode.node.id dawg, isFinal == 1) of
 
             (False, False) -> -- d' != d_ω; w_i is not final
               -- there is a perfect prefix match; we can continue.
               println ("[Prefix 2.4.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is not final.  Continuing prefix-merge.")
-              prefixMerge transitions_remaining someNode dawg
+              prefixMerge transitions_remaining someNode.node.id dawg
 
             (False, True) -> -- d' ≠ d_ω; w_i is final
               -- whether backwards-split, confluence, or straight, we merge from the end.
               case dawg.final of 
                 Just f ->
-                  println ("[Prefix 2.2/2.3/2.4.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging with final-node #" ++ String.fromInt f.node.id)
+                  println ("[Prefix 2.2/2.3/2.4.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging with final-node #" ++ String.fromInt f)
                   mergeSuffixes (List.reverse transitions) currentNode (MergeToExistingFinal f) dawg
                 Nothing ->
                   println ("[Prefix 2.2/2.3/2.4.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is not final; transition is final.  Go to suffix-merging WITHOUT a defined final-node.")
@@ -327,17 +404,17 @@ prefixMerge transitions currentNode dawg =
               mergeSuffixes
                 (List.reverse transitions)
                 currentNode
-                (CreateNewFinal (IntDict.remove currentNode.node.id someNode.incoming, someNode.node.id))
+                (CreateNewFinal (IntDict.remove currentNode someNode.incoming, someNode.node.id))
                 dawg
 
             (True, True) -> -- d' = d_ω; w_i is final
               println ("[Prefix 2.1.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is final; transition is final.  Updating existing transition to be final & exiting unconditionally.")
-              updateTransitionToFinal w currentNode someNode dawg
+              createOrUpdateTransitionToExistingFinal w currentNode dawg
 
         Nothing -> -- there is nothing to follow forward.  Start merging from the other side.
           case dawg.final of
             Just f ->
-              println ("[Prefix 3.1/3.2] No follow-forward for " ++ transitionToString (w, isFinal) ++ " exists.  Go to suffix-merging with final-node #" ++ String.fromInt f.node.id)
+              println ("[Prefix 3.1/3.2] No follow-forward for " ++ transitionToString (w, isFinal) ++ " exists.  Go to suffix-merging with final-node #" ++ String.fromInt f)
               mergeSuffixes (List.reverse transitions) currentNode (MergeToExistingFinal f) dawg
             Nothing ->
               println ("[Prefix 3.1/3.2] No follow-forward for " ++ transitionToString (w, isFinal) ++ " exists.  Go to suffix-merging WITHOUT a defined final-node.")
@@ -348,47 +425,41 @@ prefixMerge transitions currentNode dawg =
 -}
 redirectNodes : (Adjacency Connection, NodeId) -> DAWG -> DAWG
 redirectNodes (adjacency, oldFinalNodeId) dawg =
-  { dawg
-    | graph =
-        IntDict.foldl
-          (\sourceNodeId conn graph ->              
-              Maybe.map2
-                (\sourceNode finalNode ->
-                    Graph.insert
-                      { sourceNode
-                        | outgoing =
-                            IntDict.remove oldFinalNodeId sourceNode.outgoing
-                            |> IntDict.insert finalNode.node.id conn
-                            |> Debug.log ("Redirected Outgoing connections of " ++ String.fromInt sourceNodeId)
-                      }
+  dawg.final
+  |> Maybe.map
+    (\finalNode ->
+        { dawg
+          | graph =
+              IntDict.foldl
+                (\sourceNodeId _ graph ->
+                    Graph.update sourceNodeId
+                      (Maybe.andThen (redirectFrom oldFinalNodeId >> redirectTo finalNode))
                       graph
                 )
-                (Graph.get sourceNodeId graph)
-                dawg.final
-              |> Maybe.withDefault graph -- this… is an error.
-          )
-          dawg.graph
-          adjacency
-  }
+                dawg.graph
+                adjacency
+        }
+    )
+  |> Maybe.withDefault dawg
 
-outgoingConnectionBetween : Node -> Node -> Maybe Connection
-outgoingConnectionBetween prefixEnd joinPoint =
-  IntDict.get joinPoint.node.id prefixEnd.outgoing
+-- outgoingConnectionBetween : Node -> Node -> Maybe Connection
+-- outgoingConnectionBetween prefixEnd joinPoint =
+--   IntDict.get joinPoint.node.id prefixEnd.outgoing
 
-appendTransitionToOutgoingConnection : Transition -> Node -> Node -> Connection -> DAWG -> DAWG
-appendTransitionToOutgoingConnection transition prefixEnd joinPoint conn dawg =
-  { dawg
-    | graph =
-        Graph.insert
-          { prefixEnd
-            | outgoing =
-                IntDict.insert
-                  joinPoint.node.id
-                  (Set.insert transition conn)
-                  prefixEnd.outgoing
-          }
-          dawg.graph
-  }
+-- appendTransitionToOutgoingConnection : Transition -> Node -> Node -> Connection -> DAWG -> DAWG
+-- appendTransitionToOutgoingConnection transition prefixEnd joinPoint conn dawg =
+--   { dawg
+--     | graph =
+--         Graph.insert
+--           { prefixEnd
+--             | outgoing =
+--                 IntDict.insert
+--                   joinPoint.node.id
+--                   (Set.insert transition conn)
+--                   prefixEnd.outgoing
+--           }
+--           dawg.graph
+--   }
 
 {-| Create a connection between two existing nodes, with the specified
     transition.  If such a connection already exists, it is updated with
@@ -399,19 +470,7 @@ createTransitionBetween transition from to dawg =
   { dawg
     | graph =
         Graph.update from
-          (Maybe.map
-            (\fromNode ->
-                NodeContext
-                  fromNode.node
-                  fromNode.incoming
-                  ( IntDict.update to
-                    ( Maybe.map (Set.insert transition)
-                      >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
-                    )
-                    fromNode.outgoing
-                  )
-            )
-          )
+          (Maybe.map (connectTo to transition))
           dawg.graph
   }
 
@@ -422,9 +481,9 @@ type MergeSuffixesCategorisation
 
 type MergeType
   = CreateNewFinal (Adjacency Connection, NodeId) -- (incoming nodes to redirect, old final)
-  | MergeToExistingFinal Node
+  | MergeToExistingFinal NodeId
 
-followSuffixes : List Transition -> Node -> Node -> DAWG -> DAWG
+followSuffixes : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
 followSuffixes transitions prefixEnd currentNode dawg =
   case transitions of
     [] ->
@@ -432,21 +491,21 @@ followSuffixes transitions prefixEnd currentNode dawg =
     (w, isFinal)::transitions_remaining ->
       case compatibleBackwardsFollowable currentNode (w, isFinal) dawg.graph of
         [] ->
-          println ("[Suffix 3] No compatible backwards nodes from #" ++ String.fromInt currentNode.node.id ++ " for " ++ transitionToString (w, isFinal) ++ ": D_all = Ø")
-          createBackwardsChain transitions currentNode.node.id prefixEnd.node.id dawg
+          println ("[Suffix 3] No compatible backwards nodes from #" ++ String.fromInt currentNode ++ " for " ++ transitionToString (w, isFinal) ++ ": D_all = Ø")
+          createBackwardsChain transitions currentNode prefixEnd dawg
         candidateBackwardNodes ->
           case List.partition isSingle candidateBackwardNodes of
             ([single], _) ->
               println ("[Suffix 4] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
-              followSuffixes transitions_remaining prefixEnd single dawg
+              followSuffixes transitions_remaining prefixEnd single.node.id dawg
             (x::xs, _) ->
-              Debug.log ("[Suffix 4] BUG! Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode.node.id ++ ".  Why weren't they merged?")
+              Debug.log ("[Suffix 4] BUG! Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
                 (x::xs)
               |> \_ -> dawg
             ([], dcdf) ->
-              Debug.log ("[Suffix 6/7] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode.node.id ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
+              Debug.log ("[Suffix 6/7] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
                 dcdf
-              |> \_ -> createBackwardsChain transitions currentNode.node.id prefixEnd.node.id dawg
+              |> \_ -> createBackwardsChain transitions currentNode prefixEnd dawg
 
 addFinalNode : DAWG -> (Node, DAWG)
 addFinalNode dawg =
@@ -461,7 +520,7 @@ addFinalNode dawg =
     , { dawg
         | graph = Graph.insert newFinalNode dawg.graph
         , maxId = dawg.maxId + 1
-        , final = Just newFinalNode
+        , final = Just <| dawg.maxId + 1
       }
     )
 
@@ -480,7 +539,7 @@ createBackwardsChain transitions finalNode prefixEnd dawg =
       createNewPrecursorNode head finalNode dawg
       |> \(dawg_, successor) -> createBackwardsChain rest successor.node.id prefixEnd dawg_
 
-mergeSuffixes : List Transition -> Node -> MergeType -> DAWG -> DAWG
+mergeSuffixes : List Transition -> NodeId -> MergeType -> DAWG -> DAWG
 mergeSuffixes transitions prefixEnd mergeType dawg =
 {-
   To cover:
@@ -499,7 +558,7 @@ mergeSuffixes transitions prefixEnd mergeType dawg =
         println ("New \"final\" node " ++ String.fromInt finalnode.node.id ++ " added.")
         redirectNodes (incoming, oldFinal) dawg_
         |> debugDAWG ("After node redirection to newly-defined final node #" ++ String.fromInt finalnode.node.id)
-        |> createBackwardsChain transitions finalnode.node.id prefixEnd.node.id
+        |> createBackwardsChain transitions finalnode.node.id prefixEnd
 
     MergeToExistingFinal finalNode ->
       followSuffixes transitions prefixEnd finalNode dawg
