@@ -5,7 +5,9 @@ import List.Extra as List exposing (Step(..))
 import Maybe.Extra as Maybe
 import Basics.Extra exposing (..)
 import IntDict
-import Tuple.Extra
+import Set exposing (Set)
+import Dict exposing (Dict)
+
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -14,9 +16,9 @@ import Tuple.Extra
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
 type alias Transition = (Char, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
-type alias Connection = Set Transition
-type alias Node = NodeContext () Connection
-type alias DAWGGraph = Graph () Connection
+type alias Connection = Set Transition -- a Connection is a link between two nodes.
+type alias Node = NodeContext () Connection -- a Node itself does not carry any data, hence the ()
+type alias DAWGGraph = Graph () Connection -- finally, the complete directed acyclic word graph.
 type alias DAWG =
   { graph : DAWGGraph
     {- The maximum ID-value in this DAWG graph -}
@@ -637,6 +639,63 @@ numNodes dawg =
 --       |> List.filterMap terminal_transitions_of_connection
 --       |> 
 
+-- Helper function to recursively traverse the DAWG
+
+explore : Node -> String -> DAWGGraph -> List (Node, String, Bool)
+explore node s graph =
+  node.outgoing
+  |> IntDict.map
+      (\k conn ->
+          Graph.get k graph
+          |> Maybe.map
+              (\outnode ->
+                  Set.toList conn
+                  |> List.map
+                    (\(ch, isFinal) ->
+                        (outnode, s ++ String.fromChar ch, isFinal == 1)
+                    )
+              )
+      )
+  |> IntDict.values
+  |> List.filterMap identity
+  |> List.concat
+
+processStack : List (Node, String, Bool) -> List String -> DAWGGraph -> List String
+processStack stack acc graph =
+  case stack of
+    [] -> acc
+    (n, s, f)::rest ->
+      processStack
+        (explore n s graph ++ rest)
+        (if f then s::acc else acc)
+        graph
+
+-- Entry point function
+recognizedWords : DAWG -> List String
+recognizedWords dawg =
+  case Graph.checkAcyclic dawg.graph of
+    Err edge ->
+      ["Edge " ++ String.fromInt edge.from ++ "→" ++ String.fromInt edge.to ++ " creates a cycle; this is not a DAWG."]
+    Ok _ ->
+      Maybe.map
+        (\root ->
+            processStack [(root, "", False)] [] dawg.graph
+            |> List.sort
+        )
+        (Graph.get dawg.root dawg.graph)
+      |> Maybe.withDefault []
+                                                                                                                                          
+
+
+-- wordVisitor : List Node -> Int -> () -> ()
+-- wordVisitor path_to_root _ words =
+--   Debug.log "Seeing" (path_to_root |> List.map (\n -> IntDict.values n.outgoing |> List.map Set.toList))
+--   |> \_ -> ()
+
+-- wordVisitor2 : Node -> () -> ((), () -> ())
+-- wordVisitor2 node _ =
+--   Debug.log "Seeing" (node |> (\n -> IntDict.values n.incoming |> List.map Set.toList))
+--   |> \_ -> ((), \() -> ())
 
 -- recognizableWords : DAWG -> List String
 -- recognizableWords dawg =

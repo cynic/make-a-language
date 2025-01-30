@@ -19,13 +19,13 @@ suite =
           nodesAndWords D.empty
           |> Expect.equal (1, [])
       ]
-    -- , describe "algorithms can handle"
-    --   [ test "two totally separate words" <|
-    --     \_ ->
-    --       D.fromWords ["abc", "def"]
-    --       |> nodesAndWords
-    --       |> Expect.equal (5, ["abc", "def"])
-    --   ]
+    , describe "algorithms can handle"
+      [ test "two totally separate words" <|
+        \_ ->
+          D.fromWords ["abc", "def"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["abc", "def"])
+      ]
     , describe "handles prefix construction correctly when given"
       [ test "px-pxa-pya-pya" <|
         \_ ->
@@ -77,19 +77,13 @@ suite =
       -- Expect.equal is designed to be used in pipeline style, like this.
       [ test "to an empty graph gives us one word" <|
         \_ ->
-          D.empty
-          |> D.addNewEdge 'a' True [] 0
-          |> Tuple.first
+          D.addString "a" D.empty
           |> nodesAndWords
           |> Expect.equal (2, ["a"])
 
       , test "to a graph with one vertex gives sequential transitions" <|
         \_ ->
-          D.empty
-          |> D.addNewEdge 'a' False [] 0
-          |> Tuple.first
-          |> D.addNewEdge 'b' True [('a', 1)] 1
-          |> Tuple.first
+          D.addString "ab" D.empty
           |> nodesAndWords
           |> Expect.equal (3, ["ab"])
 
@@ -117,58 +111,55 @@ suite =
 
       , test "to a graph with one vertex gives sequential transitions and another word" <|
         \_ ->
-          D.empty
-          |> D.addNewEdge 'a' True [] 0
-          |> Tuple.first
-          |> D.addNewEdge 'b' True [('a', 1)] 1
-          |> Tuple.first
+          D.addString "a" D.empty
+          |> D.addString "ab"
           |> nodesAndWords
           |> Expect.equal (3, ["a", "ab"])
       ]
-    -- , describe "adding a new word"
-    --   [ test "that is empty does nothing" <|
-    --     \_ ->
-    --       D.empty
-    --       |> D.addString ""
-    --       |> nodesAndWords
-    --       |> Expect.equal (1, [])
+    , describe "adding a new word"
+      [ test "that is empty does nothing" <|
+        \_ ->
+          D.empty
+          |> D.addString ""
+          |> nodesAndWords
+          |> Expect.equal (1, [])
 
-    --   , test "with a single letter works" <|
-    --     \_ ->
-    --       D.empty
-    --       |> D.addString "😃"
-    --       |> nodesAndWords
-    --       |> Expect.equal (2, ["😃"])
+      , test "with a single letter works" <|
+        \_ ->
+          D.empty
+          |> D.addString "😃"
+          |> nodesAndWords
+          |> Expect.equal (2, ["😃"])
 
-    --   , test "with two single letters works" <|
-    --     \_ ->
-    --       D.empty
-    --       |> D.addString "ab"
-    --       |> nodesAndWords
-    --       |> Expect.equal (3, ["ab"])
+      , test "with two single letters works" <|
+        \_ ->
+          D.empty
+          |> D.addString "ab"
+          |> nodesAndWords
+          |> Expect.equal (3, ["ab"])
 
-    --   , test "with a multiple letters works" <|
-    --     \_ ->
-    --       D.empty
-    --       |> D.addString "ghafūr"
-    --       |> nodesAndWords
-    --       |> Expect.equal (7, ["ghafūr"])
+      , test "with a multiple letters works" <|
+        \_ ->
+          D.empty
+          |> D.addString "ghafūr"
+          |> nodesAndWords
+          |> Expect.equal (7, ["ghafūr"])
 
-    --   , test "on top of the same old word does nothing" <|
-    --     \_ ->
-    --       D.empty
-    --       |> D.addString "kurremkarmerruk"
-    --       |> D.addString "kurremkarmerruk" |> D.debugDAWG "check"
-    --       |> nodesAndWords
-    --       |> Expect.equal (16, ["kurremkarmerruk"])
+      , test "on top of the same old word does nothing" <|
+        \_ ->
+          D.empty
+          |> D.addString "kurremkarmerruk"
+          |> D.addString "kurremkarmerruk" |> D.debugDAWG "check"
+          |> nodesAndWords
+          |> Expect.equal (16, ["kurremkarmerruk"])
 
-    --   , fuzz (stringOfLengthBetween 1 65) "that is randomly generated works" <|
-    --     \randomlyGeneratedString ->
-    --       D.empty
-    --       |> D.addString randomlyGeneratedString
-    --       |> nodesAndWords
-    --       |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
-    --   ]
+      -- , fuzz (stringOfLengthBetween 1 65) "that is randomly generated works" <|
+      --   \randomlyGeneratedString ->
+      --     D.empty
+      --     |> D.addString randomlyGeneratedString
+      --     |> nodesAndWords
+      --     |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
+      ]
     -- , describe "is stress-tested with"
     --   [ test "what-phat" <|
     --     \_ ->
