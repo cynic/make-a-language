@@ -6,8 +6,6 @@ import Maybe.Extra as Maybe
 import Basics.Extra exposing (..)
 import IntDict
 import Set exposing (Set)
-import Dict exposing (Dict)
-
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -331,24 +329,6 @@ redefineFinalTransition ch currentNode dawg =
     , final = Just <| dawg.maxId + 1
   }
 
--- {-| Create a transition from the existing node to the final.
---     No new node is created in the process.
--- -}
--- createTransitionToFinal : Char -> Node -> DAWG -> DAWG
--- createTransitionToFinal ch currentNode dawg =
---   { dawg
---     | graph =
---         Graph.insert
---           { currentNode
---             | outgoing =
---                 IntDict.insert
---                   dawg.final
---                   (Set.singleton (ch, 1))
---                   currentNode.outgoing
---           }
---           dawg.graph
---   }
-
 {-| If there is already a defined "final" node, create a transition
     from this node to that one.  Otherwise, create a new final node
     and transition to it.
@@ -361,10 +341,6 @@ createOrUpdateTransitionToFinal ch currentNode dawg =
     Nothing ->
       redefineFinalTransition ch currentNode dawg
       |> createOrUpdateTransitionToExistingFinal ch currentNode
-
-println : String -> a -> a
-println txt x =
-  Debug.log txt () |> \_ -> x
 
 {-| Internal function.  Merges a series of transitions into the graph prefix.
 
@@ -443,25 +419,6 @@ redirectNodes (adjacency, oldFinalNodeId) dawg =
     )
   |> Maybe.withDefault dawg
 
--- outgoingConnectionBetween : Node -> Node -> Maybe Connection
--- outgoingConnectionBetween prefixEnd joinPoint =
---   IntDict.get joinPoint.node.id prefixEnd.outgoing
-
--- appendTransitionToOutgoingConnection : Transition -> Node -> Node -> Connection -> DAWG -> DAWG
--- appendTransitionToOutgoingConnection transition prefixEnd joinPoint conn dawg =
---   { dawg
---     | graph =
---         Graph.insert
---           { prefixEnd
---             | outgoing =
---                 IntDict.insert
---                   joinPoint.node.id
---                   (Set.insert transition conn)
---                   prefixEnd.outgoing
---           }
---           dawg.graph
---   }
-
 {-| Create a connection between two existing nodes, with the specified
     transition.  If such a connection already exists, it is updated with
     the specified transition.
@@ -474,11 +431,6 @@ createTransitionBetween transition from to dawg =
           (Maybe.map (connectTo to transition))
           dawg.graph
   }
-
-type MergeSuffixesCategorisation
-  = Single Node
-  | Confluence (Set Node)
-  | ForwardSplit (Set Node)
 
 type MergeType
   = CreateNewFinal (Adjacency Connection, NodeId) -- (incoming nodes to redirect, old final)
@@ -542,15 +494,6 @@ createBackwardsChain transitions finalNode prefixEnd dawg =
 
 mergeSuffixes : List Transition -> NodeId -> MergeType -> DAWG -> DAWG
 mergeSuffixes transitions prefixEnd mergeType dawg =
-{-
-  To cover:
-  - 3
-  - 5
-  - 6
-  - 7
-
-  lol, let's not even pretend I'm following it!!
--}
   case mergeType of
     CreateNewFinal (incoming, oldFinal) ->
       -- create a final-terminated chain going backwards, culminating at `prefixEnd`
@@ -566,11 +509,9 @@ mergeSuffixes transitions prefixEnd mergeType dawg =
     MergeToExistingFinal finalNode ->
       followSuffixes transitions prefixEnd finalNode dawg
 
-{-| Convenience method to add entire strings to the DAWG.
--}
--- addString : String -> DAWG -> DAWG
-
--- fromWords : List String -> DAWG
+{--
+  Output/debugging functions
+--}
 
 transitionToString : Transition -> String
 transitionToString transition =
@@ -604,6 +545,10 @@ debugDAWG txt dawg =
     (graphToString dawg.graph)
   |> \_ -> dawg
 
+println : String -> a -> a
+println txt x =
+  Debug.log txt () |> \_ -> x
+
 {--
   User-facing functions
 --}
@@ -626,20 +571,6 @@ fromWords =
 numNodes : DAWG -> Int
 numNodes dawg =
   Graph.size dawg.graph
-
--- wordVisitor : List Node -> Int -> List String -> List String
--- wordVisitor path_to_root _ words =
---   -- I _think_ the most recent element will be the one that is
---   -- first on path_to_root.  Then we follow it back to the earliest
---   -- element.
---   case path_to_root of
---     [] -> words
---     last::path_remaining ->
---       path_to_connections path_to_root
---       |> List.filterMap terminal_transitions_of_connection
---       |> 
-
--- Helper function to recursively traverse the DAWG
 
 explore : Node -> String -> DAWGGraph -> List (Node, String, Bool)
 explore node s graph =
@@ -684,19 +615,3 @@ recognizedWords dawg =
         )
         (Graph.get dawg.root dawg.graph)
       |> Maybe.withDefault []
-                                                                                                                                          
-
-
--- wordVisitor : List Node -> Int -> () -> ()
--- wordVisitor path_to_root _ words =
---   Debug.log "Seeing" (path_to_root |> List.map (\n -> IntDict.values n.outgoing |> List.map Set.toList))
---   |> \_ -> ()
-
--- wordVisitor2 : Node -> () -> ((), () -> ())
--- wordVisitor2 node _ =
---   Debug.log "Seeing" (node |> (\n -> IntDict.values n.incoming |> List.map Set.toList))
---   |> \_ -> ((), \() -> ())
-
--- recognizableWords : DAWG -> List String
--- recognizableWords dawg =
---   Graph.bfs wordVisitor [] dawg.graph
