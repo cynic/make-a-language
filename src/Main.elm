@@ -53,7 +53,7 @@ init : () -> (Model, Cmd Msg)
 init _ =
   ( { dragState = Static 0.5
     , text = ""
-    , forceDirectedGraph = ForceDirectedGraph.init DAWG.empty.graph |> Tuple.first
+    , forceDirectedGraph = ForceDirectedGraph.init DAWG.empty |> Tuple.first
     }
   , Cmd.none
   )
@@ -93,7 +93,7 @@ update msg model =
           | text = text
           , forceDirectedGraph =
               ForceDirectedGraph.update
-                (ForceDirectedGraph.GraphUpdated <| .graph <| DAWG.fromWords <| String.split "\n" text)
+                (ForceDirectedGraph.GraphUpdated <| DAWG.fromWords <| String.split "\n" text)
                 model.forceDirectedGraph
         }
       , Cmd.none

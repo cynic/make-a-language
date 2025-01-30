@@ -8,7 +8,7 @@ import Graph exposing (Edge, Graph, NodeContext, NodeId)
 import Html.Events.Extra.Mouse as Mouse
 import Json.Decode as Decode
 import TypedSvg exposing
-  (circle, g, line, svg, title, rect, text_, marker, path, defs)
+  (circle, g, line, svg, title, rect, text_, marker, path, defs, tspan)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd)
@@ -17,8 +17,9 @@ import TypedSvg.Attributes.InPx as Px exposing
   , markerWidth, markerHeight)
 import TypedSvg.Core exposing (Attribute, Svg, text)
 import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..), Cursor(..))
-import DAWG exposing (DAWGGraph, Node, Connection)
+import DAWG exposing (DAWGGraph, Node, Connection, DAWG)
 import Html.Attributes exposing (attribute)
+import Set
 
 w : Float
 w = 990
@@ -31,7 +32,7 @@ type Msg
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
-  | GraphUpdated DAWGGraph
+  | GraphUpdated DAWG
 
 
 type alias Model =
@@ -63,17 +64,48 @@ initializeNode ctx =
   }
 
 
-makeSimulation : Graph Entity Connection -> Force.State NodeId
-makeSimulation graph =
+makeSimulation : NodeId ->Graph Entity Connection -> Force.State NodeId
+makeSimulation finalNode graph =
   let
     link { from, to } =
       ( from, to )
 
     forces =
-      [ Force.links <| List.map link <| Graph.edges graph
-      , Force.manyBody <| List.map .id <| Graph.nodes graph
+      [
+        Force.customLinks 10 <|
+          List.map
+            (\e ->
+              { source = e.from
+              , target = e.to
+              , distance = 30.0 + 35.0 * toFloat (Set.size e.label)
+              , strength = Just <| 0.1 * (toFloat <| Set.size e.label)
+              }
+            )
+          (Graph.edges graph)
+        -- Force.links <| List.map link <| Graph.edges graph
+      , Force.manyBodyStrength 0.85 <| List.map .id <| Graph.nodes graph
+      -- , Force.manyBody <| List.map .id <| Graph.nodes graph
       , Force.center (w / 2) (h / 2)
-      , Force.towardsX [{ node = 0, strength = 0.15, target = -1 }]
+      , Force.towardsX <|
+          List.filterMap
+            (\n ->
+              if n.id == 0 then
+                Just { node = 0, strength = 0.15, target = 0 }
+              else if n.id == finalNode then
+                Just { node = n.id, strength = 0.05, target = w }
+              else
+                Nothing
+            )
+            (Graph.nodes graph)
+      , Force.towardsY <|
+          List.filterMap
+            (\n ->
+              if n.id /= 0 && n.id /= finalNode then
+                Just { node = n.id, strength = 0.05, target = 0 }
+              else
+                Just { node = n.id, strength = 0.05, target = h }
+            )
+            (Graph.nodes graph)
       ]
   in
     Force.simulation forces
@@ -82,13 +114,17 @@ toForceGraph : DAWGGraph -> Graph Entity Connection
 toForceGraph g =
   Graph.mapContexts initializeNode g
 
-init : DAWGGraph -> ( Model, Cmd Msg )
-init g =
+receiveDAWG : DAWG -> Model
+receiveDAWG dawg =
   let
-    forceGraph = toForceGraph g
+    forceGraph = toForceGraph (DAWG.debugDAWG "Received by ForceDirectedGraph" dawg).graph |> \v -> Debug.log "\n" () |> \_ -> v
+    finalId = dawg.final |> Maybe.withDefault 0
   in
-    ( Model Nothing forceGraph (makeSimulation forceGraph), Cmd.none )
+    Model Nothing forceGraph (makeSimulation finalId forceGraph)
 
+init : DAWG -> (Model, Cmd Msg)
+init dawg =
+  ( receiveDAWG dawg, Cmd.none )
 
 updateNode : ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode ( x, y ) nodeCtx =
@@ -137,11 +173,8 @@ update msg { drag, graph, simulation } =
               )
               newState
 
-    GraphUpdated g ->
-      let
-        forceGraph = toForceGraph g
-      in
-        Model drag forceGraph (makeSimulation forceGraph)
+    GraphUpdated dawg ->
+      receiveDAWG dawg
 
     DragStart index xy ->
       Model (Just (Drag xy xy index)) graph (Force.reheat simulation)
@@ -191,6 +224,22 @@ onMouseDown : NodeId -> Attribute Msg
 onMouseDown index =
   Mouse.onDown (.clientPos >> DragStart index)
 
+transitionToTextSpan : (Char, Int) -> Svg msg
+transitionToTextSpan transition =
+  case transition of
+    (ch, 0) ->
+      tspan [] [ text <| String.fromChar ch ]
+    (ch, _) ->
+      tspan
+        [ fontWeight FontWeightBolder
+        , fill <| Paint <| Color.darkOrange
+        ]
+        [ text <| String.fromChar ch ]
+
+connectionToSvgText : Connection -> List (Svg msg)
+connectionToSvgText =
+  Set.toList
+  >> List.map transitionToTextSpan
 
 linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
 linkElement graph edge =
@@ -200,13 +249,13 @@ linkElement graph edge =
 
     target =
       Maybe.withDefault (Force.entity 0 False) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
-    label = DAWG.connectionToString edge.label
+    label = connectionToSvgText edge.label
     em_to_px em_value = font_size * em_value
     (padding, width, height) =
       let
         padding_em = 0.3
 
-        width_em = padding_em + (toFloat <| String.length label)
+        width_em = padding_em + (toFloat <| Set.size edge.label)
         height_em = 1 + padding_em -- in em
       in
         ( padding_em |> em_to_px
@@ -258,14 +307,14 @@ linkElement graph edge =
           , attribute "paint-order" "stroke fill markers"
           , cursor CursorDefault
           ]
-          [ text label ]
+          label
       ]
 
 
 nodeElement : { a | id : NodeId, label : { b | x : Float, y : Float, value : Bool } } -> Svg Msg
 nodeElement node =
   let
-    radius = 3
+    radius = 8
     outerRadius = radius + 3.5
     color =
       if node.id == 0 then
