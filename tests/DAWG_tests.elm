@@ -72,6 +72,41 @@ suite =
           D.fromWords ["py", "py"]
           |> nodesAndWords
           |> Expect.equal (3, ["py"])
+      , test "pxxa-pyy-pyya" <|
+        \_ ->
+          D.fromWords ["pxxa", "pyy", "pyya"]
+          |> nodesAndWords
+          |> Expect.equal (5, ["pxxa", "pyy", "pyya"])
+      , test "pxxa-pyya-py" <|
+        \_ ->
+          D.fromWords ["pxxa", "pyya", "py"]
+          |> nodesAndWords
+          |> Expect.equal (5, ["pxxa", "py", "pyya"])
+      , test "s-ps" <|
+        \_ ->
+          D.fromWords ["s", "ps"]
+          |> nodesAndWords
+          |> Expect.equal (3, ["ps", "s"])
+      , test "pxaab-pya-pyaab" <|
+        \_ ->
+          D.fromWords ["pxaab", "pya", "pyaab"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pxaab", "pya", "pyaab"])
+      , test "pxba-py-pyyba" <|
+        \_ ->
+          D.fromWords ["pxba", "py", "pyyba"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pxba", "py", "pyyba"])
+      , test "pxba-py-pyba" <|
+        \_ ->
+          D.fromWords ["pxba", "py", "pyba"]
+          |> nodesAndWords
+          |> Expect.equal (5, ["pxba", "py", "pyba"])
+      , test "pxa-py-pya-pr-pra" <|
+        \_ ->
+          D.fromWords ["pxa", "py", "pya", "pr", "pra"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["pr", "pra", "pxa", "py", "pya"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
