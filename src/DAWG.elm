@@ -475,17 +475,29 @@ createConfluence danglingid actualid dawg =
     (Graph.get danglingid dawg.graph)
   |> Maybe.withDefault dawg
 
+pathBackwardsIncludes : NodeId -> List NodeId -> DAWG -> Bool
+pathBackwardsIncludes to_find to_check dawg =
+  case to_check of
+    [] -> False
+    nodeid::remaining ->
+      ( Graph.get nodeid dawg.graph
+        |> Maybe.map (\node -> (node.node.id == to_find, IntDict.keys node.incoming))
+        |> Maybe.withDefault (False, [])
+      )
+      |> \(found, new) ->
+            found || pathBackwardsIncludes to_find (new ++ remaining) dawg
+
+isDangling : NodeId -> DAWG -> Bool
+isDangling nodeid dawg =
+  Graph.get nodeid dawg.graph
+  |> Maybe.map isLeaf
+  |> Maybe.withDefault False
+
 followSuffixes : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
 followSuffixes transitions prefixEnd currentNode dawg =
-  case transitions of
+  case Debug.log ("Suffixes to follow from #" ++ String.fromInt currentNode) transitions of
     [] ->
-      if prefixEnd == currentNode then
-        println ("[Suffix 1] No more transitions to follow; ending as expected at prefix-node #" ++ String.fromInt prefixEnd ++ ".")
-        dawg
-      else
-        println ("[Suffix 1] No more transitions to follow, but prefix-node ≠ current-node (#" ++ String.fromInt prefixEnd ++ " ≠ #" ++ String.fromInt currentNode ++ ").  Creating confluence.")
-        createConfluence prefixEnd currentNode dawg
-        |> \dawg_ -> { dawg_ | graph = Graph.remove prefixEnd dawg_.graph }
+      dawg
     (w, isFinal)::transitions_remaining ->
       case compatibleBackwardsFollowable currentNode (w, isFinal) dawg.graph of
         [] ->
@@ -494,10 +506,25 @@ followSuffixes transitions prefixEnd currentNode dawg =
         candidateBackwardNodes ->
           case List.partition isSingle candidateBackwardNodes of
             ([single], _) ->
-              println ("[Suffix 4] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
-              followSuffixes transitions_remaining prefixEnd single.node.id dawg
+              case transitions_remaining of
+                [] ->
+                  if prefixEnd == single.node.id then
+                    println ("[Suffix 1] No more transitions to follow; ending as expected at prefix-node #" ++ String.fromInt prefixEnd ++ ".")
+                    dawg
+                  else if isDangling prefixEnd dawg then
+                    println ("[Suffix 1] Dangling prefix-node #" ++ String.fromInt prefixEnd ++ " detected (current-node = #" ++ String.fromInt single.node.id ++ ").  Creating confluence.")
+                    createConfluence prefixEnd single.node.id dawg
+                    |> \dawg_ -> { dawg_ | graph = Graph.remove prefixEnd dawg_.graph }
+                  else
+                    -- in other words, it's NOT the end but it's also NOT dangling
+                    Debug.log "single" single |> \_ ->
+                    println ("[Suffix 1] Shorter word than graph (back = #" ++ String.fromInt single.node.id ++ ").  Connecting #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt currentNode ++ ".")
+                    createTransitionBetween (w, isFinal) prefixEnd currentNode dawg
+                _ ->
+                  println ("[Suffix 4] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
+                  followSuffixes transitions_remaining prefixEnd single.node.id dawg
             (x::xs, _) ->
-              Debug.log ("[Suffix 4] BUG! Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
+              Debug.log ("[Suffix 4] BUG! 👽 Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
                 (x::xs)
               |> \_ -> dawg
             ([], dcdf) ->
@@ -539,10 +566,6 @@ createBackwardsChain transitions finalNode prefixEnd dawg =
       createNewPrecursorNode head finalNode dawg
       |> \(dawg_, successor) -> createBackwardsChain rest successor.node.id prefixEnd dawg_
 
-checkExceptionCase : NodeId -> DAWG -> DAWG
-checkExceptionCase prefixEnd dawg =
-  dawg
-
 mergeSuffixes : List Transition -> NodeId -> MergeType -> DAWG -> DAWG
 mergeSuffixes transitions prefixEnd mergeType dawg =
   case mergeType of
@@ -556,7 +579,6 @@ mergeSuffixes transitions prefixEnd mergeType dawg =
         |> redirectNodesToFinal (incoming, oldFinal)
         |> debugDAWG ("[Suffix] After node redirection to newly-defined final node #" ++ String.fromInt finalnode.node.id)
         |> mergeSuffixes transitions prefixEnd (MergeToExistingFinal finalnode.node.id)
-        |> checkExceptionCase prefixEnd
         --|> createBackwardsChain transitions finalnode.node.id prefixEnd
 
     MergeToExistingFinal finalNode ->

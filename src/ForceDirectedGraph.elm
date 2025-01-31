@@ -224,17 +224,25 @@ onMouseDown : NodeId -> Attribute Msg
 onMouseDown index =
   Mouse.onDown (.clientPos >> DragStart index)
 
+textChar : Char -> String
+textChar ch =
+  case ch of
+    ' ' ->
+      "└┘"
+    _ ->
+      String.fromChar ch
+
 transitionToTextSpan : (Char, Int) -> Svg msg
 transitionToTextSpan transition =
   case transition of
     (ch, 0) ->
-      tspan [] [ text <| String.fromChar ch ]
+      tspan [] [ text <| textChar ch ]
     (ch, _) ->
       tspan
         [ fontWeight FontWeightBolder
         , fill <| Paint <| Color.darkOrange
         ]
-        [ text <| String.fromChar ch ]
+        [ text <| textChar ch ]
 
 connectionToSvgText : Connection -> List (Svg msg)
 connectionToSvgText =

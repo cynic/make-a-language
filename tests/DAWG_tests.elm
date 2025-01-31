@@ -82,11 +82,6 @@ suite =
           D.fromWords ["pxxa", "pyya", "py"]
           |> nodesAndWords
           |> Expect.equal (6, ["pxxa", "py", "pyya"])
-      , test "s-ps" <|
-        \_ ->
-          D.fromWords ["s", "ps"]
-          |> nodesAndWords
-          |> Expect.equal (3, ["ps", "s"])
       , test "pxaab-pya-pyaab" <|
         \_ ->
           D.fromWords ["pxaab", "pya", "pyaab"]
@@ -107,6 +102,56 @@ suite =
           D.fromWords ["pxa", "py", "pya", "pr", "pra"]
           |> nodesAndWords
           |> Expect.equal (4, ["pr", "pra", "pxa", "py", "pya"])
+      , test "s-ps" <|
+        \_ ->
+          D.fromWords ["s", "ps"]
+          |> nodesAndWords
+          |> Expect.equal (3, ["ps", "s"])
+      , test "ps-s" <|
+        \_ ->
+          D.fromWords ["ps", "s"]
+          |> nodesAndWords
+          |> Expect.equal (3, ["ps", "s"])
+      , test "aps-as" <|
+        \_ ->
+          D.fromWords ["aps", "as"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["aps", "as"])
+      , test "aps-ps" <|
+        \_ ->
+          D.fromWords ["aps", "ps"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["aps", "ps"])
+      , test "apqzs-as" <|
+        \_ ->
+          D.fromWords ["apqzs", "as"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["apqzs", "as"])
+      , test "apqzs-azs" <|
+        \_ ->
+          D.fromWords ["apqzs", "azs"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["apqzs", "azs"])
+      , test "ate-create" <|
+        \_ ->
+          D.fromWords ["ate", "create"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["ate", "create"])
+      , test "create-ate" <|
+        \_ ->
+          D.fromWords ["create", "ate"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["ate", "create"])
+      , test "bars-ballad-bxrs" <|
+        \_ ->
+          D.fromWords ["bars", "ballad", "bxrs"]
+          |> nodesAndWords
+          |> Expect.equal (9, ["ballad", "bars", "bxrs"])
+      , test "bats-bars-bxrs" <|
+        \_ ->
+          D.fromWords ["bats", "bars", "bxrs"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["bars", "bats", "bxrs"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
