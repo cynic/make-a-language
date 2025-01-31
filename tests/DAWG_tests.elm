@@ -117,6 +117,11 @@ suite =
           D.fromWords ["aps", "as"]
           |> nodesAndWords
           |> Expect.equal (4, ["aps", "as"])
+      , test "as-aps" <|
+        \_ ->
+          D.fromWords ["as", "aps"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["aps", "as"])
       , test "aps-ps" <|
         \_ ->
           D.fromWords ["aps", "ps"]

@@ -495,40 +495,47 @@ isDangling nodeid dawg =
 
 followSuffixes : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
 followSuffixes transitions prefixEnd currentNode dawg =
-  case Debug.log ("Suffixes to follow from #" ++ String.fromInt currentNode) transitions of
+  case Debug.log ("[Suffix 2] Suffixes to follow from #" ++ String.fromInt currentNode) transitions of
     [] ->
       dawg
     (w, isFinal)::transitions_remaining ->
       case compatibleBackwardsFollowable currentNode (w, isFinal) dawg.graph of
         [] ->
-          println ("[Suffix 3] No compatible backwards nodes from #" ++ String.fromInt currentNode ++ " for " ++ transitionToString (w, isFinal) ++ ": D_all = Ø")
-          createBackwardsChain transitions currentNode prefixEnd dawg
+          if currentNode == prefixEnd && not (List.isEmpty transitions_remaining) then
+            createBackwardsChain transitions currentNode prefixEnd dawg
+          else
+            println ("[Suffix 2.1.2] No compatible backwards nodes from #" ++ String.fromInt currentNode ++ " for " ++ transitionToString (w, isFinal) ++ ": D_all = Ø")
+            createBackwardsChain transitions currentNode prefixEnd dawg
         candidateBackwardNodes ->
           case List.partition isSingle candidateBackwardNodes of
             ([single], _) ->
               case transitions_remaining of
                 [] ->
                   if prefixEnd == single.node.id then
-                    println ("[Suffix 1] No more transitions to follow; ending as expected at prefix-node #" ++ String.fromInt prefixEnd ++ ".")
+                    println ("[Suffix 3.1] No more transitions to follow; ending as expected at prefix-node #" ++ String.fromInt prefixEnd ++ ".")
                     dawg
                   else if isDangling prefixEnd dawg then
-                    println ("[Suffix 1] Dangling prefix-node #" ++ String.fromInt prefixEnd ++ " detected (current-node = #" ++ String.fromInt single.node.id ++ ").  Creating confluence.")
+                    println ("[Suffix 3.2.1] Dangling prefix-node #" ++ String.fromInt prefixEnd ++ " detected (current-node = #" ++ String.fromInt single.node.id ++ ").  Creating confluence.")
                     createConfluence prefixEnd single.node.id dawg
                     |> \dawg_ -> { dawg_ | graph = Graph.remove prefixEnd dawg_.graph }
                   else
                     -- in other words, it's NOT the end but it's also NOT dangling
                     Debug.log "single" single |> \_ ->
-                    println ("[Suffix 1] Shorter word than graph (back = #" ++ String.fromInt single.node.id ++ ").  Connecting #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt currentNode ++ ".")
+                    println ("[Suffix 3.2.2] Shorter word than graph (back = #" ++ String.fromInt single.node.id ++ ").  Connecting #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt currentNode ++ ".")
                     createTransitionBetween (w, isFinal) prefixEnd currentNode dawg
                 _ ->
-                  println ("[Suffix 4] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
-                  followSuffixes transitions_remaining prefixEnd single.node.id dawg
+                  if prefixEnd == single.node.id then
+                    println ("[Suffix 2.1.1] Word is longer than graph; we must add in nodes.")
+                    createBackwardsChain transitions currentNode prefixEnd dawg
+                  else
+                    println ("[Suffix 2.2.1] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
+                    followSuffixes transitions_remaining prefixEnd single.node.id dawg
             (x::xs, _) ->
-              Debug.log ("[Suffix 4] BUG! 👽 Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
+              Debug.log ("[Suffix] BUG! 👽 Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
                 (x::xs)
               |> \_ -> dawg
             ([], dcdf) ->
-              Debug.log ("[Suffix 6/7] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
+              Debug.log ("[Suffix 2.2.2] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
                 dcdf
               |> \_ -> createBackwardsChain transitions currentNode prefixEnd dawg
 
@@ -553,16 +560,16 @@ createBackwardsChain : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
 createBackwardsChain transitions finalNode prefixEnd dawg =
   case transitions of
     [] ->
-      println ("[Suffix ??] NO TRANSITIONS?? Probably a bug! Was trying to back-chain (final=" ++ String.fromInt finalNode ++ ", initial=" ++ String.fromInt prefixEnd ++ "), now what do I do here?")
+      println ("[Suffix-Chain ??] NO TRANSITIONS?? Probably a bug! Was trying to back-chain (final=" ++ String.fromInt finalNode ++ ", initial=" ++ String.fromInt prefixEnd ++ "), now what do I do here?")
       dawg
     [firstTransition] ->
       -- for now, we will do the v.simple thing
-      println ("[Suffix 3.1] Only one backwards transition; no new nodes, just a " ++ transitionToString firstTransition ++ " link from #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt finalNode)
+      println ("[Suffix-Chain A] Only one backwards transition; no new nodes, just a " ++ transitionToString firstTransition ++ " link from #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt finalNode)
       createTransitionBetween firstTransition prefixEnd finalNode dawg
       -- hmmm.  But… before this link is made, we've done the redirection.
       -- And because we've done the redirection, we SHOULD be able to 
     head::rest ->
-      println ("[Suffix 3.2] More than one backwards transition; creating a precursor node before #" ++ String.fromInt finalNode)
+      println ("[Suffix-Chain B] More than one backwards transition; creating a precursor node before #" ++ String.fromInt finalNode)
       createNewPrecursorNode head finalNode dawg
       |> \(dawg_, successor) -> createBackwardsChain rest successor.node.id prefixEnd dawg_
 
@@ -571,18 +578,18 @@ mergeSuffixes transitions prefixEnd mergeType dawg =
   case mergeType of
     CreateNewFinal (incoming, oldFinal) ->
       -- create a final-terminated chain going backwards, culminating at `prefixEnd`
-      println ("[Suffix] Creating new final, then merging back to prefix-node #" ++ String.fromInt prefixEnd)
+      println ("[Suffix 1] Creating new final, then merging back to prefix-node #" ++ String.fromInt prefixEnd)
       addFinalNode dawg
       |> \(finalnode, dawg_) ->
         dawg_
-        |> debugDAWG ("[Suffix] New \"final\" node #" ++ String.fromInt finalnode.node.id ++ " added.  Before redirecting       ")
+        |> debugDAWG ("[Suffix 1] New \"final\" node #" ++ String.fromInt finalnode.node.id ++ " added.  Before redirecting       ")
         |> redirectNodesToFinal (incoming, oldFinal)
-        |> debugDAWG ("[Suffix] After node redirection to newly-defined final node #" ++ String.fromInt finalnode.node.id)
+        |> debugDAWG ("[Suffix 1] After node redirection to newly-defined final node #" ++ String.fromInt finalnode.node.id)
         |> mergeSuffixes transitions prefixEnd (MergeToExistingFinal finalnode.node.id)
         --|> createBackwardsChain transitions finalnode.node.id prefixEnd
 
     MergeToExistingFinal finalNode ->
-      println ("[Suffix] Using final #" ++ String.fromInt finalNode ++ ", merging back to prefix-node #" ++ String.fromInt prefixEnd)
+      println ("[Suffix 2] Using final #" ++ String.fromInt finalNode ++ ", merging back to prefix-node #" ++ String.fromInt prefixEnd)
       followSuffixes transitions prefixEnd finalNode dawg
 
 {--
