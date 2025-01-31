@@ -76,12 +76,12 @@ suite =
         \_ ->
           D.fromWords ["pxxa", "pyy", "pyya"]
           |> nodesAndWords
-          |> Expect.equal (5, ["pxxa", "pyy", "pyya"])
+          |> Expect.equal (6, ["pxxa", "pyy", "pyya"])
       , test "pxxa-pyya-py" <|
         \_ ->
           D.fromWords ["pxxa", "pyya", "py"]
           |> nodesAndWords
-          |> Expect.equal (5, ["pxxa", "py", "pyya"])
+          |> Expect.equal (6, ["pxxa", "py", "pyya"])
       , test "s-ps" <|
         \_ ->
           D.fromWords ["s", "ps"]
@@ -91,7 +91,7 @@ suite =
         \_ ->
           D.fromWords ["pxaab", "pya", "pyaab"]
           |> nodesAndWords
-          |> Expect.equal (6, ["pxaab", "pya", "pyaab"])
+          |> Expect.equal (7, ["pxaab", "pya", "pyaab"])
       , test "pxba-py-pyyba" <|
         \_ ->
           D.fromWords ["pxba", "py", "pyyba"]
