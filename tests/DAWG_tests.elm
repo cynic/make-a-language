@@ -5,6 +5,7 @@ import Fuzz exposing (Fuzzer, int, list, string)
 import Test exposing (..)
 import DAWG as D
 import Fuzz exposing (stringOfLengthBetween)
+import List.Extra
 
 nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
@@ -166,7 +167,7 @@ suite =
         \_ ->
           D.fromWords ["aton", "cton", "atit", "ctit"]
           |> nodesAndWords
-          |> Expect.equal (2, ["aton", "cton", "atit", "ctit"])
+          |> Expect.equal (2, ["aton", "atit", "cton", "ctit"])
       , test "ato-cto-ati-cti" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati", "cti"]
@@ -207,6 +208,31 @@ suite =
           D.fromWords ["pqt", "zvt", "zvr", "pqr"]
           |> nodesAndWords
           |> Expect.equal (6, ["pqr", "pqt", "zvr", "zvt"])
+      , test "pqt-zvt-pqarcz-pqr" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "pqarcz", "pqr"]
+          |> nodesAndWords
+          |> Expect.equal (9, ["pqarcz", "pqr", "pqt", "zvt"])
+      , test "pqt-zvt-zvarc-pqr" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "zvarc", "pqr"]
+          |> nodesAndWords
+          |> Expect.equal (9, ["pqr", "pqt", "zvarc", "zvt"])
+      , test "pqt-zvt-pqrr" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "pqrr"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["pqrr", "pqt", "zvt"])
+      , test "pqt-zvt-zvxt" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "zvxt"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pqrr", "pqt", "zvt"])
+      , test "x-y-xx" <|
+        \_ ->
+          D.fromWords ["x", "y", "xx"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["x", "xx", "y"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
@@ -295,6 +321,11 @@ suite =
           |> nodesAndWords
           |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
       ]
+    -- , fuzz (Fuzz.listOfLengthBetween 2 4 (Fuzz.asciiStringOfLengthBetween 1 6)) "always recognizes exactly the unique words that it is given" <|
+    --   \listOfStrings ->
+    --     D.fromWords (List.Extra.unique listOfStrings)
+    --     |> D.recognizedWords
+    --     |> Expect.equal (List.sort <| List.Extra.unique listOfStrings)
     , describe "is stress-tested with"
       [ test "what-phat" <|
         \_ ->

@@ -395,10 +395,10 @@ prefixMerge transitions currentNode dawg =
             else if isBackwardSplit someNode || isConfluenceConnection currentNode someNode.node.id dawg then
               case dawg.final of
                 Just f ->
-                  println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the (#" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging with final-node #" ++ String.fromInt f)
+                  println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the #" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging with final-node #" ++ String.fromInt f)
                   mergeSuffixes (List.reverse transitions) currentNode (MergeToExistingFinal f) dawg
                 Nothing ->
-                  println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the (#" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging WITHOUT a defined final-node.")
+                  println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the #" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging WITHOUT a defined final-node.")
                   mergeSuffixes (List.reverse transitions) currentNode (CreateNewFinal (IntDict.empty, 0)) dawg
             else
               println ("[Prefix 2.2.3] Graph node #" ++ String.fromInt someNode.node.id ++ " is single.  Continuing prefix-merge.")
@@ -560,18 +560,20 @@ createBackwardsChain : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
 createBackwardsChain transitions finalNode prefixEnd dawg =
   case transitions of
     [] ->
-      println ("[Suffix-Chain ??] NO TRANSITIONS?? Probably a bug! Was trying to back-chain (final=" ++ String.fromInt finalNode ++ ", initial=" ++ String.fromInt prefixEnd ++ "), now what do I do here?")
+      println ("[Suffix-Chain 1] NO TRANSITIONS?? Probably a bug! Was trying to back-chain (final=" ++ String.fromInt finalNode ++ ", initial=" ++ String.fromInt prefixEnd ++ "), now what do I do here?")
       dawg
     [firstTransition] ->
       -- for now, we will do the v.simple thing
-      println ("[Suffix-Chain A] Only one backwards transition; no new nodes, just a " ++ transitionToString firstTransition ++ " link from #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt finalNode)
+      println ("[Suffix-Chain 2] Only one backwards transition; no new nodes, just a " ++ transitionToString firstTransition ++ " link from #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt finalNode)
       createTransitionBetween firstTransition prefixEnd finalNode dawg
       -- hmmm.  But… before this link is made, we've done the redirection.
       -- And because we've done the redirection, we SHOULD be able to 
     head::rest ->
-      println ("[Suffix-Chain B] More than one backwards transition; creating a precursor node before #" ++ String.fromInt finalNode)
+      println ("[Suffix-Chain 2.1] More than one backwards transition; creating a precursor node before #" ++ String.fromInt finalNode)
       createNewPrecursorNode head finalNode dawg
-      |> \(dawg_, successor) -> createBackwardsChain rest successor.node.id prefixEnd dawg_
+      |> \(dawg_, successor) ->
+        println ("[Suffix-Chain 2.2] Created precursor node #" ++ String.fromInt successor.node.id ++ "; will continue to build chain.")
+        createBackwardsChain rest successor.node.id prefixEnd dawg_
 
 mergeSuffixes : List Transition -> NodeId -> MergeType -> DAWG -> DAWG
 mergeSuffixes transitions prefixEnd mergeType dawg =
@@ -654,6 +656,10 @@ fromWords =
 numNodes : DAWG -> Int
 numNodes dawg =
   Graph.size dawg.graph
+
+numEdges : DAWG -> Int
+numEdges dawg =
+  List.length <| Graph.edges dawg.graph
 
 explore : Node -> String -> DAWGGraph -> List (Node, String, Bool)
 explore node s graph =
