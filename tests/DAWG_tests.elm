@@ -182,6 +182,31 @@ suite =
           D.fromWords ["ato", "cto"]
           |> nodesAndWords
           |> Expect.equal (4, ["ato", "cto"])
+      , test "pqt-zvt-pqr" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "pqr"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pqr", "pqt", "zvt"])
+      , test "zvt-pqt-pqr" <|
+        \_ ->
+          D.fromWords ["zvt", "pqt", "pqr"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pqr", "pqt", "zvt"])
+      , test "pqt-prt-pqr-zvt" <|
+        \_ ->
+          D.fromWords ["pqt", "prt", "pqr", "zvt"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pqr", "pqt", "prt", "zvt"])
+      , test "pqt-prt-zvt-pqr" <|
+        \_ ->
+          D.fromWords ["pqt", "prt", "zvt", "pqr"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pqr", "pqt", "prt", "zvt"])
+      , test "pqt-zvt-zvr-pqr" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "zvr", "pqr"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["pqr", "pqt", "zvr", "zvt"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
