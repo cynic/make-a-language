@@ -20,6 +20,7 @@ import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..)
 import DAWG exposing (DAWGGraph, Node, Connection, DAWG)
 import Html.Attributes exposing (attribute)
 import Set
+import IntDict
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -48,13 +49,17 @@ type alias Drag =
 
 
 type alias Entity =
-    Force.Entity NodeId { value : Bool }
+    Force.Entity NodeId { value : { isTerminal : Bool, isFinal : Bool } }
 
 
 initializeNode : Node -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
-    { label = Force.entity ctx.node.id (DAWG.isTerminalNode ctx)
+    { label =
+        Force.entity ctx.node.id
+          { isTerminal = DAWG.isTerminalNode ctx
+          , isFinal = IntDict.isEmpty ctx.outgoing
+          }
     , id = ctx.node.id
     }
   , incoming = ctx.incoming
@@ -89,19 +94,28 @@ viewportForces (w, h) graph =
 basicForces : Graph Entity Connection -> List (Force.Force NodeId)
 basicForces graph =
   [
-    Force.customLinks 10 <|
+    Force.customLinks 1 <|
       List.map
         (\e ->
           { source = e.from
           , target = e.to
-          , distance = 30.0 + 35.0 * toFloat (Set.size e.label)
-          , strength = Just <| 0.1 * (toFloat <| Set.size e.label)
+          , distance = 30.0 + 25.0 * toFloat (Set.size e.label)
+          , strength = Just <| 1.0 * (toFloat <| Set.size e.label)
           }
         )
       (Graph.edges graph)
     -- Force.links <| List.map link <| Graph.edges graph
-  , Force.manyBodyStrength 0.85 <| List.map .id <| Graph.nodes graph
+  , Force.manyBodyStrength -300.0 <| List.map .id <| Graph.nodes graph
   -- , Force.manyBody <| List.map .id <| Graph.nodes graph
+  , Force.towardsX <|
+      List.filterMap
+        (\n ->
+          if n.id == 0 then
+            Just { node = 0, strength = 0.15, target = 0 }
+          else
+            Nothing
+        )
+        (Graph.nodes graph)
   ]
 
 makeSimulation : (Float, Float) -> Graph Entity Connection -> Force.State NodeId
@@ -159,8 +173,8 @@ updateGraphWithList =
     List.foldr (\node graph -> Graph.update node.id (graphUpdater node) graph)
 
 
-update : Msg -> Model -> Model
-update msg model =
+update : (Float, Float) -> Msg -> Model -> Model
+update offset_amount msg model =
   case msg of
     Tick ->
       let
@@ -197,7 +211,7 @@ update msg model =
       }
 
     DragStart index xy ->
-      { model | drag = Just <| Drag xy xy index, simulation = Force.reheat model.simulation }
+      { model | drag = Just <| Drag (offset offset_amount xy) (offset offset_amount xy) index, simulation = Force.reheat model.simulation }
 
     DragAt xy ->
       case model.drag of
@@ -222,9 +236,13 @@ update msg model =
         Nothing ->
           { model | drag = Nothing }
 
+offset : (Float, Float) -> (Float, Float) -> (Float, Float)
+offset (offset_x, offset_y) (x, y) =
+  (x - offset_x, y - offset_y)
 
-subscriptions : Model -> Sub Msg
-subscriptions model =
+
+subscriptions : (Float, Float) -> Model -> Sub Msg
+subscriptions offset_amount model =
   case model.drag of
     Nothing ->
       -- This allows us to save resources, as if the simulation is done, there is no point in subscribing
@@ -237,8 +255,8 @@ subscriptions model =
 
     Just _ ->
       Sub.batch
-        [ Browser.Events.onMouseMove (Decode.map (.clientPos >> DragAt) Mouse.eventDecoder)
-        , Browser.Events.onMouseUp (Decode.map (.clientPos >> DragEnd) Mouse.eventDecoder)
+        [ Browser.Events.onMouseMove (Decode.map (.clientPos >> (offset offset_amount) >> DragAt) Mouse.eventDecoder)
+        , Browser.Events.onMouseUp (Decode.map (.clientPos >> (offset offset_amount) >> DragEnd) Mouse.eventDecoder)
         , Browser.Events.onAnimationFrame (always Tick)
         ]
 
@@ -276,10 +294,10 @@ linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
 linkElement graph edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 False) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
+      Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
 
     target =
-      Maybe.withDefault (Force.entity 0 False) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+      Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
     label = connectionToSvgText edge.label
     em_to_px em_value = font_size * em_value
     (padding, width, height) =
@@ -342,7 +360,7 @@ linkElement graph edge =
       ]
 
 
-nodeElement : { a | id : NodeId, label : { b | x : Float, y : Float, value : Bool } } -> Svg Msg
+nodeElement : { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
 nodeElement node =
   let
     radius = 8
@@ -350,6 +368,8 @@ nodeElement node =
     color =
       if node.id == 0 then
         Color.rgb 0.8 0.0 0.7
+      else if node.label.value.isTerminal then
+        Color.rgb255 8 255 8
       else
         Color.black
   in
@@ -365,11 +385,11 @@ nodeElement node =
           , cy node.label.y
           ]
           [ title [] [ text <| String.fromInt node.id ] ]
-      ::  if node.label.value || node.id == 0 then
+      ::  if node.label.value.isTerminal || node.id == 0 then
             [ circle
                 [ r outerRadius
                 , fill <| Paint <| Color.rgba 0 0 0 0
-                , stroke <| Paint color
+                , stroke <| Paint Color.darkCharcoal
                 , strokeWidth 2.5
                 , onMouseDown node.id
                 , cx node.label.x

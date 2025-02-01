@@ -103,6 +103,7 @@ updateLayout fraction model =
     newDimensions = viewportDimensionsToLayoutDimensions model.dimensions.viewport newConfig
     newForcesGraph =
       ForceDirectedGraph.update
+        (newDimensions.leftPanel.width + 10, 10)
         (ForceDirectedGraph.ViewportUpdated
           ( newDimensions.rightPanel.width - 10
           , newDimensions.rightPanel.height - 10
@@ -190,6 +191,7 @@ update msg model =
           | text = text
           , forceDirectedGraph =
               ForceDirectedGraph.update
+                (model.dimensions.leftPanel.width + 10, 10)
                 (ForceDirectedGraph.GraphUpdated <| DAWG.fromWords <| String.split "\n" text)
                 model.forceDirectedGraph
         }
@@ -214,7 +216,13 @@ update msg model =
         ) 
 
     ForceDirectedMsg msg_ ->
-      ( { model | forceDirectedGraph = ForceDirectedGraph.update msg_ model.forceDirectedGraph }
+      ( { model
+          | forceDirectedGraph =
+              ForceDirectedGraph.update
+                (model.dimensions.leftPanel.width + 10, 10)
+                msg_
+                model.forceDirectedGraph
+        }
       , Cmd.none
       )
 
@@ -247,7 +255,7 @@ view model =
               , height (px model.dimensions.leftPanel.height)
               , userSelect pointerEvents_
               , pointerEvents pointerEvents_
-              , backgroundColor (rgb 255 25 255)
+              -- , backgroundColor (rgb 255 25 255)
               , position absolute
               , top (px 0)
               , left (px 0)
@@ -259,15 +267,17 @@ view model =
                   , height (px <| model.dimensions.leftPanel.height - 20)
                   , resize none
                   , border (px 0)
-                  , padding4 (px 5) (px 0) (px 5) (px 10)
+                  , padding4 (px 4) (px 0) (px 4) (px 10)
                   , margin (px 5)
                   , borderRadius4 (px 8) (px 0) (px 0) (px 8)
-                  , backgroundColor (rgb 90 200 120)
-                  , fontSize (px 24)
+                  -- , backgroundColor (rgb 90 200 120)
+                  , border3 (px 1) solid (rgb 128 128 128)
+                  , fontSize (px 18)
                   , fontFamilyMany
                       ["Baskerville", "Libre Baskerville", "Consolas", "Cascadia Code", "Fira Code"]
                       serif
                   ]
+              , HA.placeholder "Enter words here, one per line"
               , onInput TextInput
               ]
               []
@@ -281,7 +291,7 @@ view model =
               , left (px <| model.dimensions.leftPanel.width - model.layoutConfiguration.leftRightSplitterWidth / 2.0)
               , width (px model.layoutConfiguration.leftRightSplitterWidth)
               , height (px <| model.dimensions.viewport.height - 10)
-              , backgroundColor (rgb 200 200 0)
+              --, backgroundColor (rgb 200 200 0)
               , cursor colResize
               , zIndex (int 10) -- needed???
               ]
@@ -292,11 +302,13 @@ view model =
       , div
           [ HA.id "right-panel"
           , css
-              [ width (px <| model.dimensions.rightPanel.width - 10)
-              , height (px <| model.dimensions.rightPanel.height - 10)
+              -- + 1px for border on either side = 12
+              [ width (px <| model.dimensions.rightPanel.width - 12)
+              , height (px <| model.dimensions.rightPanel.height - 12)
               , userSelect pointerEvents_
               , pointerEvents pointerEvents_
-              , backgroundColor (rgb 150 150 150)
+              -- , backgroundColor (rgb 150 150 150)
+              , border3 (px 1) solid (rgb 128 128 128)
               , position absolute
               , top (px 0)
               , left (px <| model.dimensions.leftPanel.width + model.layoutConfiguration.leftRightSplitterWidth / 2.0)
@@ -355,7 +367,10 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch
     [ mainSubscriptions model
-    , ForceDirectedGraph.subscriptions model.forceDirectedGraph |> Sub.map ForceDirectedMsg
+    , ForceDirectedGraph.subscriptions
+        (model.dimensions.leftPanel.width + 10, 10)
+        model.forceDirectedGraph
+      |> Sub.map ForceDirectedMsg
     ]
 
 {- The goal here is to get (mouse x / window width) on each mouse event. So if
