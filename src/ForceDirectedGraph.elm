@@ -21,24 +21,22 @@ import DAWG exposing (DAWGGraph, Node, Connection, DAWG)
 import Html.Attributes exposing (attribute)
 import Set
 
-w : Float
-w = 990
-
-h : Float
-h = 504
-
 type Msg
   = DragStart NodeId ( Float, Float )
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
   | GraphUpdated DAWG
+  | ViewportUpdated (Float, Float)
 
 
 type alias Model =
   { drag : Maybe Drag
   , graph : Graph Entity Connection
   , simulation : Force.State NodeId
+  , dimensions : (Float, Float) -- (w,h) of svg element
+  , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
+  , viewportForces : List (Force.Force NodeId)
   }
 
 
@@ -63,68 +61,76 @@ initializeNode ctx =
   , outgoing = ctx.outgoing
   }
 
+viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
+viewportForces (w, h) graph =
+  [ Force.center (w / 2) (h / 2)
+  --   Force.towardsX <|
+  --     List.filterMap
+  --       (\n ->
+  --         if n.id == 0 then
+  --           Just { node = 0, strength = 0.15, target = 0 }
+  --         else if n.id == finalNode then
+  --           Just { node = n.id, strength = 0.05, target = w }
+  --         else
+  --           Nothing
+  --       )
+  --       (Graph.nodes graph)
+  -- , Force.towardsY <|
+  --     List.filterMap
+  --       (\n ->
+  --         if n.id /= 0 && n.id /= finalNode then
+  --           Just { node = n.id, strength = 0.05, target = 0 }
+  --         else
+  --           Just { node = n.id, strength = 0.05, target = h }
+  --       )
+  --       (Graph.nodes graph)
+  ]
 
-makeSimulation : NodeId ->Graph Entity Connection -> Force.State NodeId
-makeSimulation finalNode graph =
-  let
-    link { from, to } =
-      ( from, to )
+basicForces : Graph Entity Connection -> List (Force.Force NodeId)
+basicForces graph =
+  [
+    Force.customLinks 10 <|
+      List.map
+        (\e ->
+          { source = e.from
+          , target = e.to
+          , distance = 30.0 + 35.0 * toFloat (Set.size e.label)
+          , strength = Just <| 0.1 * (toFloat <| Set.size e.label)
+          }
+        )
+      (Graph.edges graph)
+    -- Force.links <| List.map link <| Graph.edges graph
+  , Force.manyBodyStrength 0.85 <| List.map .id <| Graph.nodes graph
+  -- , Force.manyBody <| List.map .id <| Graph.nodes graph
+  ]
 
-    forces =
-      [
-        Force.customLinks 10 <|
-          List.map
-            (\e ->
-              { source = e.from
-              , target = e.to
-              , distance = 30.0 + 35.0 * toFloat (Set.size e.label)
-              , strength = Just <| 0.1 * (toFloat <| Set.size e.label)
-              }
-            )
-          (Graph.edges graph)
-        -- Force.links <| List.map link <| Graph.edges graph
-      , Force.manyBodyStrength 0.85 <| List.map .id <| Graph.nodes graph
-      -- , Force.manyBody <| List.map .id <| Graph.nodes graph
-      , Force.center (w / 2) (h / 2)
-      , Force.towardsX <|
-          List.filterMap
-            (\n ->
-              if n.id == 0 then
-                Just { node = 0, strength = 0.15, target = 0 }
-              else if n.id == finalNode then
-                Just { node = n.id, strength = 0.05, target = w }
-              else
-                Nothing
-            )
-            (Graph.nodes graph)
-      , Force.towardsY <|
-          List.filterMap
-            (\n ->
-              if n.id /= 0 && n.id /= finalNode then
-                Just { node = n.id, strength = 0.05, target = 0 }
-              else
-                Just { node = n.id, strength = 0.05, target = h }
-            )
-            (Graph.nodes graph)
-      ]
-  in
-    Force.simulation forces
+makeSimulation : (Float, Float) -> Graph Entity Connection -> Force.State NodeId
+makeSimulation (w, h) graph =
+  Force.simulation
+    (basicForces graph ++ viewportForces (w, h) graph)
 
 toForceGraph : DAWGGraph -> Graph Entity Connection
 toForceGraph g =
   Graph.mapContexts initializeNode g
 
-receiveDAWG : DAWG -> Model
-receiveDAWG dawg =
+receiveDAWG : DAWG -> (Float, Float) -> Model
+receiveDAWG dawg (w, h) =
   let
     forceGraph = toForceGraph (DAWG.debugDAWG "Received by ForceDirectedGraph" dawg).graph |> \v -> Debug.log "\n" () |> \_ -> v
-    finalId = dawg.final |> Maybe.withDefault 0
+    basic = basicForces forceGraph
+    viewport = viewportForces (w, h) forceGraph
   in
-    Model Nothing forceGraph (makeSimulation finalId forceGraph)
+    { drag = Nothing
+    , graph = forceGraph
+    , simulation = Force.simulation (basic ++ viewport)
+    , dimensions = (w, h)
+    , basicForces = basic
+    , viewportForces = viewport
+    }
 
-init : DAWG -> (Model, Cmd Msg)
-init dawg =
-  ( receiveDAWG dawg, Cmd.none )
+init : DAWG -> (Float, Float) -> (Model, Cmd Msg)
+init dawg (w, h) =
+  ( receiveDAWG dawg (w, h), Cmd.none )
 
 updateNode : ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode ( x, y ) nodeCtx =
@@ -154,50 +160,67 @@ updateGraphWithList =
 
 
 update : Msg -> Model -> Model
-update msg { drag, graph, simulation } =
+update msg model =
   case msg of
     Tick ->
       let
         ( newState, list ) =
-          Force.tick simulation <| List.map .label <| Graph.nodes graph
+          Force.tick model.simulation <| List.map .label <| Graph.nodes model.graph
       in
-        case drag of
+        case model.drag of
           Nothing ->
-            Model drag (updateGraphWithList graph list) newState
+            { model
+              | graph = updateGraphWithList model.graph list
+              , simulation = newState
+            }
 
           Just { current, index } ->
-            Model drag
-              (Graph.update index
-                (Maybe.map (updateNode current))
-                (updateGraphWithList graph list)
-              )
-              newState
+            { model
+              | graph =
+                  Graph.update index
+                  (Maybe.map (updateNode current))
+                  (updateGraphWithList model.graph list)
+              , simulation = newState
+            }
 
     GraphUpdated dawg ->
-      receiveDAWG dawg
+      receiveDAWG dawg model.dimensions
+
+    ViewportUpdated dim ->
+      let
+        viewport = viewportForces dim model.graph
+      in
+      { model
+        | dimensions = dim
+        , viewportForces = viewport
+        , simulation = Force.simulation (model.basicForces ++ model.viewportForces)
+      }
 
     DragStart index xy ->
-      Model (Just (Drag xy xy index)) graph (Force.reheat simulation)
+      { model | drag = Just <| Drag xy xy index, simulation = Force.reheat model.simulation }
 
     DragAt xy ->
-      case drag of
+      case model.drag of
         Just { start, index } ->
-          Model (Just (Drag start xy index))
-            (Graph.update index (Maybe.map (updateNode xy)) graph)
-            (Force.reheat simulation)
+          { model
+            | drag = Just <| Drag start xy index
+            , graph = Graph.update index (Maybe.map (updateNode xy)) model.graph
+            , simulation = Force.reheat model.simulation
+          }
 
         Nothing ->
-          Model Nothing graph simulation
+          { model | drag = Nothing }
 
     DragEnd xy ->
-      case drag of
+      case model.drag of
         Just { index } ->
-          Model Nothing
-            (Graph.update index (Maybe.map (updateNode xy)) graph)
-            simulation
+          { model
+            | drag = Nothing
+            , graph = Graph.update index (Maybe.map (updateNode xy)) model.graph
+          }
 
         Nothing ->
-          Model Nothing graph simulation
+          { model | drag = Nothing }
 
 
 subscriptions : Model -> Sub Msg
@@ -358,28 +381,28 @@ nodeElement node =
             []
       )
 
+arrowheadMarker : Svg msg
+arrowheadMarker =
+  marker
+    [ id "arrowhead"
+    , viewBox 0 0 10 10
+    , refX "15"
+    , refY "5"
+    , orient "auto-start-reverse"
+    , markerWidth 5
+    , markerHeight 5
+    , fill <| Paint <| Color.rgba 0 0.3 1.0 0.5
+    ]
+    [ path
+        [ d "M 0 0 L 10 5 L 0 10 z" ]
+        []
+    ]
 
 view : Model -> Svg Msg
 view model =
   svg
-    [ viewBox 0 0 w h ]
-    [ defs
-        []
-        [ marker
-            [ id "arrowhead"
-            , viewBox 0 0 10 10
-            , refX "15"
-            , refY "5"
-            , orient "auto-start-reverse"
-            , markerWidth 5
-            , markerHeight 5
-            , fill <| Paint <| Color.rgba 0 0.3 1.0 0.5
-            ]
-            [ path
-                [ d "M 0 0 L 10 5 L 0 10 z" ]
-                []
-            ]
-        ]
+    [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions) ]
+    [ defs [] [ arrowheadMarker ]
     , Graph.edges model.graph
       |> List.map (linkElement model.graph)
       |> g [ class [ "links" ] ]

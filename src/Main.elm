@@ -11,15 +11,20 @@ APPROACH:
 
 
 import Browser
-import Browser.Events as E
-import Html exposing (..)
-import Html.Attributes exposing (..)
-import Html.Events exposing (..)
+import Browser.Events as BE
+import Html.Styled exposing (..)
+--import Html.Attributes exposing (..)
+import Html.Styled.Events exposing (..)
+import Json.Encode as E
 import Json.Decode as D
-import Svg exposing (svg)
-import Svg.Attributes as SA exposing (width, height, viewBox)
 import ForceDirectedGraph
 import DAWG
+import Basics.Extra exposing (..)
+import Browser.Dom
+import Task
+import Platform.Cmd as Cmd
+import Css exposing (..)
+import Html.Styled.Attributes as HA exposing (css)
 
 -- MAIN
 
@@ -27,7 +32,7 @@ import DAWG
 main =
   Browser.element
     { init = init
-    , view = view
+    , view = view >> toUnstyled
     , update = update
     , subscriptions = subscriptions
     }
@@ -36,28 +41,116 @@ main =
 
 -- MODEL
 
+type alias Dimensions =
+  { width : Float
+  , height : Float
+  }
+
+type alias LayoutDimensions =
+  { viewport : Dimensions
+  , leftPanel : Dimensions
+  , rightPanel : Dimensions
+  }
+
+type alias LayoutConfiguration =
+  { leftRightSplitterWidth : Float
+  , leftRightSplitPercentage : Float
+  }
 
 type alias Model =
   { dragState : DragState
   , text : String
   , forceDirectedGraph : ForceDirectedGraph.Model
+  , dimensions : LayoutDimensions
+  , layoutConfiguration : LayoutConfiguration
   }
 
-
 type DragState
-  = Static Float
-  | Moving Float
+  = Static
+  | Moving
 
+decodeDimensions : D.Decoder Dimensions
+decodeDimensions =
+  D.map2
+    (\w h -> { width = w, height = h })
+    (D.field "width" D.float)
+    (D.field "height" D.float)
 
-init : () -> (Model, Cmd Msg)
-init _ =
-  ( { dragState = Static 0.5
-    , text = ""
-    , forceDirectedGraph = ForceDirectedGraph.init DAWG.empty |> Tuple.first
+viewportDimensionsToLayoutDimensions : Dimensions -> LayoutConfiguration -> LayoutDimensions
+viewportDimensionsToLayoutDimensions viewport config =
+  { viewport = viewport
+  , leftPanel =
+      Dimensions
+        (viewport.width * config.leftRightSplitPercentage - config.leftRightSplitterWidth / 2.0)
+        viewport.height
+  , rightPanel =
+      Dimensions
+        (viewport.width * (1 - config.leftRightSplitPercentage) - config.leftRightSplitterWidth / 2.0)
+        viewport.height
+  }
+
+initialLayoutConfig : LayoutConfiguration
+initialLayoutConfig =
+  { leftRightSplitterWidth = 10
+  , leftRightSplitPercentage = 0.2
+  }
+
+updateLayout : Float -> Model -> Model
+updateLayout fraction model =
+  let
+    config = model.layoutConfiguration
+    newConfig = { config | leftRightSplitPercentage = fraction }
+    newDimensions = viewportDimensionsToLayoutDimensions model.dimensions.viewport newConfig
+    newForcesGraph =
+      ForceDirectedGraph.update
+        (ForceDirectedGraph.ViewportUpdated
+          ( newDimensions.rightPanel.width - 10
+          , newDimensions.rightPanel.height - 10
+          )
+        )
+        model.forceDirectedGraph
+  in
+    { model
+      | layoutConfiguration = newConfig
+      , dimensions = newDimensions
+      , forceDirectedGraph = newForcesGraph
     }
-  , Cmd.none
-  )
 
+init : E.Value -> (Model, Cmd Msg)
+init flags =
+  D.decodeValue decodeDimensions flags
+  |> Result.map
+    (flip viewportDimensionsToLayoutDimensions initialLayoutConfig
+    >>
+    \layout ->
+      ( { dragState = Static
+        , text = ""
+        , forceDirectedGraph =
+            ForceDirectedGraph.init
+              DAWG.empty
+              ( layout.rightPanel.width - 10
+              , layout.rightPanel.height - 10
+              )
+            |> Tuple.first
+        , dimensions = layout
+        , layoutConfiguration = initialLayoutConfig
+        }
+      , Cmd.none
+      )
+    )
+  |> Result.withDefault
+    ( { dragState = Static
+      , text = ""
+      , forceDirectedGraph =
+          ForceDirectedGraph.init
+            DAWG.empty
+            (0, 0)
+          |> Tuple.first
+      , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
+      , layoutConfiguration = initialLayoutConfig
+      }
+    , Cmd.none
+    )
 
 
 -- UPDATE
@@ -69,22 +162,26 @@ type Msg
   | DragStop Float
   | TextInput String
   | ForceDirectedMsg ForceDirectedGraph.Msg
+  | ViewportResizeTrigger
+  | OnResize (Float, Float)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     DragStart ->
-      ( { model | dragState = Moving (toFraction model.dragState) }
+      ( { model | dragState = Moving }
       , Cmd.none
       )
 
     DragMove isDown fraction ->
-      ( { model | dragState = if isDown then Moving fraction else Static (toFraction model.dragState) }
+      ( { model | dragState = if isDown then Moving else Static }
+        |> updateLayout fraction
       , Cmd.none
       )
 
     DragStop fraction ->
-      ( { model | dragState = Static fraction }
+      ( { model | dragState = Static }
+        |> updateLayout fraction
       , Cmd.none
       )
 
@@ -99,98 +196,119 @@ update msg model =
       , Cmd.none
       )
 
+    ViewportResizeTrigger ->
+      ( model
+      , Browser.Dom.getViewport
+        |> Task.perform (\x -> OnResize (x.viewport.width, x.viewport.height))
+      )
+
+    OnResize (width, height) ->
+      let
+        currentDimensions = model.dimensions
+      in
+        ( { model
+            | dimensions = { currentDimensions | viewport = Dimensions width height }
+          }
+          |> updateLayout model.layoutConfiguration.leftRightSplitPercentage
+        , Cmd.none
+        ) 
+
     ForceDirectedMsg msg_ ->
       ( { model | forceDirectedGraph = ForceDirectedGraph.update msg_ model.forceDirectedGraph }
       , Cmd.none
       )
 
-
-toFraction : DragState -> Float
-toFraction dragState =
-  case dragState of
-    Static fraction -> fraction
-    Moving fraction -> fraction
-
-
-
 -- VIEW
-
 
 view : Model -> Html Msg
 view model =
   let
-    fraction = Basics.max (0.2) <| Basics.min 0.5 (toFraction model.dragState)
-    pointerEvents = toPointerEvents model.dragState
+    {- The "user-select" and "pointer-event" properties are "none" when resizing,
+    ensuring that text does not get highlighted as the mouse moves.
+    -}
+    pointerEvents_ =
+      case model.dragState of
+        Static -> auto
+        Moving -> none
   in
-  div
-    [ style "margin" "0"
-    , style "padding" "0"
-    , style "width" "100vw"
-    , style "height" "100vh"
-    , style "font-family" "monospace"
-    , style "display" "flex"
-    , style "flex-direction" "row"
-    ]
-    [ viewPanel "#222" "#ddd" fraction pointerEvents
-        [ textarea
-            [ style "width" (String.fromFloat (100 * fraction) ++ "vw")
-            , style "height" "100%"
-            , style "resize" "none"
-            , style "border" "none"
-            , style "padding" "10px"
-            , style "background-color" "#f4f4f4"
-            , onInput TextInput
-            ]
-            []
-        ]
-    , viewDragZone fraction
-    , viewPanel "#ddd" "#222" (1 - fraction) pointerEvents
-        [ ForceDirectedGraph.view model.forceDirectedGraph
-          |> Html.map ForceDirectedMsg
-        ]
-        -- [ svg
-        --     [ style "flex-grow" "1"
-        --     , style "background-color" "white"
-        --     -- , style "border-left" "2px solid #ccc"
-        --     , SA.width "100%"
-        --     , SA.height "100%"
-        --     , viewBox "0 0 100 100"
-        --     ]
-        --     []
-        -- ]
-    ]
-
-
-toPointerEvents : DragState -> String
-toPointerEvents dragState =
-  case dragState of
-    Static _ -> "auto"
-    Moving _ -> "none"
-
-
-
-{- The "user-select" and "pointer-event" properties are "none" when resizing,
-ensuring that text does not get highlighted as the mouse moves.
--}
-viewPanel : String -> String -> Float -> String -> List (Html msg) -> Html msg
-viewPanel background foreground fraction pointerEvents content =
-  div
-    [ style "width" (String.fromFloat (100 * fraction) ++ "vw")
-    , style "height" "100vh"
-    , style "user-select" pointerEvents
-    , style "pointer-events" pointerEvents
-    --
-    , style "background-color" background
-    , style "color" foreground
-    -- , style "font-size" "3em"
-    --
-    , style "display" "flex"
-    , style "justify-content" "center"
-    , style "align-items" "center"
-    ]
-    (content)
-
-
+    div -- outer div that wraps everything.
+      [ css
+          [ margin (px 0)
+          , padding (px 0)
+          , Css.width (vw 100)
+          , Css.height (vh 100)
+          ] 
+      ]
+      -- left panel
+      [ div
+          [ HA.id "left-panel"
+          , css
+              [ width (px <| model.dimensions.leftPanel.width - model.layoutConfiguration.leftRightSplitterWidth / 2.0)
+              , height (px model.dimensions.leftPanel.height)
+              , userSelect pointerEvents_
+              , pointerEvents pointerEvents_
+              , backgroundColor (rgb 255 25 255)
+              , position absolute
+              , top (px 0)
+              , left (px 0)
+              ]
+          ]
+          [ textarea
+              [ css
+                  [ width (px <| model.dimensions.leftPanel.width - 20)
+                  , height (px <| model.dimensions.leftPanel.height - 20)
+                  , resize none
+                  , border (px 0)
+                  , padding4 (px 5) (px 0) (px 5) (px 10)
+                  , margin (px 5)
+                  , borderRadius4 (px 8) (px 0) (px 0) (px 8)
+                  , backgroundColor (rgb 90 200 120)
+                  , fontSize (px 24)
+                  , fontFamilyMany
+                      ["Baskerville", "Libre Baskerville", "Consolas", "Cascadia Code", "Fira Code"]
+                      serif
+                  ]
+              , onInput TextInput
+              ]
+              []
+          ]
+      -- splitter
+      , div
+          [ HA.id "left-right-splitter"
+          , css
+              [ position absolute
+              , top (px 5)
+              , left (px <| model.dimensions.leftPanel.width - model.layoutConfiguration.leftRightSplitterWidth / 2.0)
+              , width (px model.layoutConfiguration.leftRightSplitterWidth)
+              , height (px <| model.dimensions.viewport.height - 10)
+              , backgroundColor (rgb 200 200 0)
+              , cursor colResize
+              , zIndex (int 10) -- needed???
+              ]
+          , on "mousedown" (D.succeed DragStart)
+          ]
+          []
+      -- right panel
+      , div
+          [ HA.id "right-panel"
+          , css
+              [ width (px <| model.dimensions.rightPanel.width - 10)
+              , height (px <| model.dimensions.rightPanel.height - 10)
+              , userSelect pointerEvents_
+              , pointerEvents pointerEvents_
+              , backgroundColor (rgb 150 150 150)
+              , position absolute
+              , top (px 0)
+              , left (px <| model.dimensions.leftPanel.width + model.layoutConfiguration.leftRightSplitterWidth / 2.0)
+              , borderRadius4 (px 0) (px 8) (px 8) (px 0)
+              , margin2 (px 5) (px 0)
+              ]
+          ]
+          [ ForceDirectedGraph.view model.forceDirectedGraph
+            |> fromUnstyled
+            |> Html.Styled.map ForceDirectedMsg
+          ]
+      ]
 
 -- VIEW DRAG ZONE
 
@@ -205,31 +323,6 @@ viewPanel background foreground fraction pointerEvents content =
 You could avoid the 4th trick by setting "left" to "calc(50vw - 5px)" but I
 do not know if there is a strong benefit to one approach or the other.
 -}
-viewDragZone : Float -> Html Msg
-viewDragZone fraction =
-        -- , div
-        --     [ style "width" "10px"
-        --     , style "background-color" "#ccc"
-        --     , style "cursor" "ew-resize"
-        --     , style "height" "100%"
-        --     , onMouseDown StartResizing
-        --     ]
-        --     []
-  div
-    [ style "position" "absolute"
-    , style "top" "0"
-    , style "left" (String.fromFloat (100 * fraction) ++ "vw")
-    , style "width" "10px"
-    , style "height" "100vh"
-    , style "margin-left" "-5px"
-    , style "cursor" "col-resize"
-    , style "z-index" "10"
-    , style "background-color" "#ccc"
-    , on "mousedown" (D.succeed DragStart)
-    ]
-    []
-
-
 
 -- SUBSCRIPTIONS
 
@@ -239,17 +332,23 @@ This way we catch all events, even if they are not on our drag zone.
 
 Listening for mouse moves is costly though, so we only listen if there is an
 ongoing drag.
+
+Regarding resize, the Elm browser .onResize will give us the WINDOW's width
+and height, which includes borders and scrollbars.  We actually want the
+html's width and height, which excludes those things.  So we trigger a
+resize which then makes a DOM call to ask for the correct information.
 -}
 mainSubscriptions : Model -> Sub Msg
 mainSubscriptions model =
   case model.dragState of
-    Static _ ->
-      Sub.none
+    Static ->
+      BE.onResize (\_ _ -> ViewportResizeTrigger)
 
-    Moving _ ->
+    Moving ->
       Sub.batch
-        [ E.onMouseMove (D.map2 DragMove decodeButtons decodeFraction)
-        , E.onMouseUp (D.map DragStop decodeFraction)
+        [ BE.onMouseMove (D.map2 DragMove decodeButtons decodeFraction)
+        , BE.onMouseUp (D.map DragStop decodeFraction)
+        , BE.onResize (\_ _ -> ViewportResizeTrigger)
         ]
 
 subscriptions : Model -> Sub Msg

@@ -9,6 +9,7 @@
             "BrianHicks/elm-csv": "3.0.3",
             "RalfNorthman/elm-lttb": "1.0.3",
             "avh4/elm-color": "1.0.0",
+            "dzuk-mutant/elm-css": "3.0.1",
             "elm/browser": "1.0.2",
             "elm/core": "1.0.5",
             "elm/html": "1.0.0",
@@ -52,7 +53,8 @@
             "ianmackenzie/elm-triangular-mesh": "1.1.0",
             "ianmackenzie/elm-units": "2.10.0",
             "ianmackenzie/elm-units-interval": "3.2.0",
-            "justinmimbs/date": "4.0.1"
+            "justinmimbs/date": "4.0.1",
+            "robinheghan/murmur3": "1.0.0"
         }
     },
     "test-dependencies": {

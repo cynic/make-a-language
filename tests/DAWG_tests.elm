@@ -157,6 +157,31 @@ suite =
           D.fromWords ["bats", "bars", "bxrs"]
           |> nodesAndWords
           |> Expect.equal (6, ["bars", "bats", "bxrs"])
+      , test "naton-acton-natit-actit" <|
+        \_ ->
+          D.fromWords ["naton", "acton", "natit", "actit"]
+          |> nodesAndWords
+          |> Expect.equal (2, ["actit", "acton", "naton", "natit"])
+      , test "aton-cton-atit-ctit" <|
+        \_ ->
+          D.fromWords ["aton", "cton", "atit", "ctit"]
+          |> nodesAndWords
+          |> Expect.equal (2, ["aton", "cton", "atit", "ctit"])
+      , test "ato-cto-ati-cti" <|
+        \_ ->
+          D.fromWords ["ato", "cto", "ati", "cti"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["ato", "cto", "ati", "cti"])
+      , test "ato-ati-cto-cti" <|
+        \_ ->
+          D.fromWords ["ato", "cto", "ati", "cti"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["ato", "cto", "ati", "cti"])
+      , test "ato-cto" <|
+        \_ ->
+          D.fromWords ["ato", "cto"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["ato", "cto"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
