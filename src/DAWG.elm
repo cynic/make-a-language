@@ -6,6 +6,7 @@ import Maybe.Extra as Maybe
 import Basics.Extra exposing (..)
 import IntDict
 import Set exposing (Set)
+import Result.Extra
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -190,9 +191,13 @@ compatibleBackwardsFollowable nodeid transition graph =
   DAWG-modification functions
 -}
 
-removeTransitionFromConnection : Transition -> Connection -> Connection
+removeTransitionFromConnection : Transition -> Connection -> Maybe Connection
 removeTransitionFromConnection transition connection =
-  Set.remove transition connection
+  let
+    s = Set.remove transition connection
+  in
+    if Set.isEmpty s then Nothing
+    else Just s
 
 addTransitionToConnection : Transition -> Connection -> Connection
 addTransitionToConnection transition connection =
@@ -202,8 +207,8 @@ updateConnectionWith : Transition -> Connection -> Connection
 updateConnectionWith transition conn =
   case transition of
     (ch, 1) ->
-      removeTransitionFromConnection (ch, 0) conn
-      |> addTransitionToConnection transition
+      addTransitionToConnection transition conn
+      |> Set.remove (ch, 0)
     (ch, _) ->
       if Set.member (ch, 1) conn then
         conn
@@ -638,16 +643,20 @@ println txt x =
   User-facing functions
 --}
 
-addString : String -> DAWG -> DAWG
-addString txt dawg =
+wordToTransitions : String -> List Transition
+wordToTransitions txt =
   Maybe.map
     (\(last, rest) ->
       List.map (\ch -> (ch, 0)) rest
-      |> \transitions ->
-        prefixMerge (transitions ++ [(last, 1)]) dawg.root dawg
+      |> \transitions -> transitions ++ [(last, 1)]
     )
     (txt |> String.toList |> List.unconsLast)
-  |> Maybe.withDefault dawg -- don't accept an empty-string as valid.
+  |> Maybe.withDefault [] -- don't accept an empty-string as valid.
+
+addString : String -> DAWG -> DAWG
+addString txt dawg =
+  wordToTransitions txt
+  |> \transitions -> prefixMerge transitions dawg.root dawg
 
 fromWords : List String -> DAWG
 fromWords =
@@ -690,17 +699,19 @@ processStack stack acc graph =
         (if f then s::acc else acc)
         graph
 
+recognizedWordsFrom : DAWG -> Node -> Result String (List String)
+recognizedWordsFrom dawg root =
+  case Graph.checkAcyclic dawg.graph of
+    Err edge ->
+      Err <| "Edge " ++ String.fromInt edge.from ++ "→" ++ String.fromInt edge.to ++ " creates a cycle; this is not a DAWG."
+    Ok _ ->
+      Ok <| processStack [(root, "", False)] [] dawg.graph
+
 -- Entry point function
 recognizedWords : DAWG -> List String
 recognizedWords dawg =
-  case Graph.checkAcyclic dawg.graph of
-    Err edge ->
-      ["Edge " ++ String.fromInt edge.from ++ "→" ++ String.fromInt edge.to ++ " creates a cycle; this is not a DAWG."]
-    Ok _ ->
-      Maybe.map
-        (\root ->
-            processStack [(root, "", False)] [] dawg.graph
-            |> List.sort
-        )
-        (Graph.get dawg.root dawg.graph)
-      |> Maybe.withDefault []
+  Maybe.map
+    (recognizedWordsFrom dawg >> Result.map List.sort >> Result.mapError identity)
+    (Graph.get dawg.root dawg.graph)
+  |> Maybe.withDefault (Err "Couldn't find the root in the DAWG…!  What on earth is going on?!")
+  |> Result.Extra.extract (\e -> [e])
