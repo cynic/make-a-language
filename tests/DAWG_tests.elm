@@ -167,17 +167,27 @@ suite =
         \_ ->
           D.fromWords ["aton", "cton", "atit", "ctit"]
           |> nodesAndWords
-          |> Expect.equal (2, ["aton", "atit", "cton", "ctit"])
+          |> Expect.equal (2, ["atit", "aton", "ctit", "cton"])
+      , test "ato-cto-ati" <|
+        \_ ->
+          D.fromWords ["ato", "cto", "ati"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["ati", "ato", "cto"])
+      , test "ato-cto-at" <|
+        \_ ->
+          D.fromWords ["ato", "cto", "at"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["at", "ato", "cto"])
       , test "ato-cto-ati-cti" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati", "cti"]
           |> nodesAndWords
-          |> Expect.equal (4, ["ato", "cto", "ati", "cti"])
+          |> Expect.equal (4, ["ati", "ato", "cti", "cto"])
       , test "ato-ati-cto-cti" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati", "cti"]
           |> nodesAndWords
-          |> Expect.equal (4, ["ato", "cto", "ati", "cti"])
+          |> Expect.equal (4, ["ati", "ato", "cti", "cto"])
       , test "ato-cto" <|
         \_ ->
           D.fromWords ["ato", "cto"]
@@ -217,7 +227,7 @@ suite =
         \_ ->
           D.fromWords ["pqt", "zvt", "zvarc", "pqr"]
           |> nodesAndWords
-          |> Expect.equal (9, ["pqr", "pqt", "zvarc", "zvt"])
+          |> Expect.equal (8, ["pqr", "pqt", "zvarc", "zvt"])
       , test "pqt-zvt-pqrr" <|
         \_ ->
           D.fromWords ["pqt", "zvt", "pqrr"]
@@ -227,12 +237,47 @@ suite =
         \_ ->
           D.fromWords ["pqt", "zvt", "zvxt"]
           |> nodesAndWords
-          |> Expect.equal (6, ["pqrr", "pqt", "zvt"])
+          |> Expect.equal (6, ["pqt", "zvt", "zvxt"])
       , test "x-y-xx" <|
         \_ ->
           D.fromWords ["x", "y", "xx"]
           |> nodesAndWords
           |> Expect.equal (4, ["x", "xx", "y"])
+      , test "kxto-pzto-pzt" <|
+        \_ ->
+          D.fromWords ["kxto", "pzto", "pzt"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["kxto", "pzt", "pzto"])
+      , test "crv-ax-cx-arv" <|
+        \_ ->
+          D.fromWords ["crv", "ax", "cx", "arv"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["arv", "ax", "crv", "cx"])
+      , test "pato-qcto-pat" <|
+        \_ ->
+          D.fromWords ["pato", "qcto", "pat"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["pat", "pato", "qcto"])
+      , test "pato-qcto-pati" <|
+        \_ ->
+          D.fromWords ["pato", "qcto", "pati"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["pati", "pato", "qcto"])
+      , test "ato-cto-atoz" <|
+        \_ ->
+          D.fromWords ["ato", "cto", "atoz"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["ato", "atoz", "cto"])
+      , test "pato-qcto-patoz" <|
+        \_ ->
+          D.fromWords ["pato", "qcto", "patoz"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["pato", "patoz", "qcto"])
+      , test "atpvnxb-ctpvnxb-atprxb-ctprxb-atprxy" <|
+        \_ ->
+          D.fromWords ["atpvnxb", "ctpvnxb", "atprxb", "ctprxb", "atprxy"]
+          |> nodesAndWords
+          |> Expect.equal (14, ["atprxb", "atprxy", "atpvnxb", "ctprxb", "ctpvnxb"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
