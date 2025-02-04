@@ -167,17 +167,17 @@ suite =
         \_ ->
           D.fromWords ["aton", "cton", "atit", "ctit"]
           |> nodesAndWords
-          |> Expect.equal (2, ["atit", "aton", "ctit", "cton"])
+          |> Expect.equal (8, ["atit", "aton", "ctit", "cton"])
       , test "ato-cto-ati" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati"]
           |> nodesAndWords
-          |> Expect.equal (4, ["ati", "ato", "cto"])
+          |> Expect.equal (6, ["ati", "ato", "cto"])
       , test "ato-cto-at" <|
         \_ ->
           D.fromWords ["ato", "cto", "at"]
           |> nodesAndWords
-          |> Expect.equal (4, ["at", "ato", "cto"])
+          |> Expect.equal (5, ["at", "ato", "cto"])
       , test "ato-cto-ati-cti" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati", "cti"]
