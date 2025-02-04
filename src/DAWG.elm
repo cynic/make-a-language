@@ -766,11 +766,11 @@ performUpdateAndRecurse remaining_transitions linking d dawg =
       case linking.lastConstructed of
         Nothing ->
           println ("[Chaining 2.2.4.1/2] Joining main-line #" ++ String.fromInt linking.graphPrefixEnd ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-          createTransitionBetween d.chosenTransition linking.graphPrefixEnd linking.graphSuffixEnd dawg
+          createTransitionBetween d.chosenTransition linking.graphPrefixEnd (if linking.splitPath then d.id else linking.graphSuffixEnd) dawg
         Just c ->
           println ("[Chaining 2.2.4.1/2] Joining alt-path #" ++ String.fromInt c ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
           duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg
-          |> createTransitionBetween d.chosenTransition c linking.graphSuffixEnd
+          |> createTransitionBetween d.chosenTransition c (if linking.splitPath then d.id else linking.graphSuffixEnd)
     _ ->
       case linking.lastConstructed of
         Nothing ->

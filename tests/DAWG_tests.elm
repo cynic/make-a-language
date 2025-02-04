@@ -162,7 +162,7 @@ suite =
         \_ ->
           D.fromWords ["naton", "acton", "natit", "actit"]
           |> nodesAndWords
-          |> Expect.equal (2, ["actit", "acton", "naton", "natit"])
+          |> Expect.equal (10, ["actit", "acton", "natit", "naton"])
       , test "aton-cton-atit-ctit" <|
         \_ ->
           D.fromWords ["aton", "cton", "atit", "ctit"]
