@@ -242,7 +242,7 @@ suite =
         \_ ->
           D.fromWords ["x", "y", "xx"]
           |> nodesAndWords
-          |> Expect.equal (4, ["x", "xx", "y"])
+          |> Expect.equal (3, ["x", "xx", "y"])
       , test "kxto-pzto-pzt" <|
         \_ ->
           D.fromWords ["kxto", "pzto", "pzt"]
