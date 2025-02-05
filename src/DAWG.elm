@@ -350,8 +350,16 @@ prefixMerge transitions currentNode dawg =
             println ("[Prefix 2.1.1] Created/updated terminal transition to #" ++ String.fromInt someNode.node.id ++ ".  Updating existing transition to be final & exiting unconditionally.")
             createTransitionBetween (w, 1) currentNode someNode.node.id dawg
           else
-            if isBackwardSplit someNode.node.id dawg || isConfluenceConnection currentNode someNode.node.id dawg then
-              -- check for this BEFORE final, or we'll be caught by x-y-xx
+            if isFinalNode someNode.node.id dawg then
+              println ("[Prefix 2.2.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is final.  Go to suffix-merging WITHOUT a defined final-node.")
+              mergeSuffixes
+                (List.reverse transitions)
+                currentNode
+                -- we remove the `currentNode` from consideration because otherwise, the link to the final node would be lost
+                --(CreateNewFinal (IntDict.remove currentNode someNode.incoming, someNode.node.id))
+                (MergeToExistingFinal someNode.node.id)
+                dawg
+            else if isBackwardSplit someNode.node.id dawg || isConfluenceConnection currentNode someNode.node.id dawg then
               case dawg.final of
                 Just f ->
                   println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the #" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging with final-node #" ++ String.fromInt f)
@@ -359,13 +367,6 @@ prefixMerge transitions currentNode dawg =
                 Nothing ->
                   println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the #" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence.  Going to suffix-merging WITHOUT a defined final-node.")
                   mergeSuffixes (List.reverse transitions) currentNode (CreateNewFinal (IntDict.empty, 0)) dawg
-            else if isFinalNode someNode.node.id dawg then
-              println ("[Prefix 2.2.1] Graph node #" ++ String.fromInt someNode.node.id ++ " is final.  Go to suffix-merging WITHOUT a defined final-node.")
-              mergeSuffixes
-                (List.reverse transitions_remaining)
-                someNode.node.id
-                (CreateNewFinal (IntDict.remove currentNode someNode.incoming, someNode.node.id))
-                dawg
             else
               println ("[Prefix 2.2.3] Graph node #" ++ String.fromInt someNode.node.id ++ " is single.  Continuing prefix-merge.")
               prefixMerge transitions_remaining someNode.node.id dawg
@@ -764,20 +765,29 @@ performUpdateAndRecurse : List Transition -> LinkingForwardData -> CurrentNodeDa
 performUpdateAndRecurse remaining_transitions linking d dawg =
   case remaining_transitions of
     [] -> -- only one transition remaining.
-      case linking.lastConstructed of
-        Nothing ->
-          println ("[Chaining 2.2.4.1/2] Joining main-line #" ++ String.fromInt linking.graphPrefixEnd ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-          createTransitionBetween d.chosenTransition linking.graphPrefixEnd (if linking.splitPath then d.id else linking.graphSuffixEnd) dawg
-        Just c ->
-          println ("[Chaining 2.2.4.1/2] Joining alt-path #" ++ String.fromInt c ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-          duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg
-          |> createTransitionBetween d.chosenTransition c (if linking.splitPath then d.id else linking.graphSuffixEnd)
+      let
+        join =
+          if linking.splitPath then
+            println ("[Chaining 2.2.4] Path-splitting happened. Joining to main-line #" ++ String.fromInt d.id ++ ".")
+            d.id
+          else
+            println ("[Chaining 2.2.4] No path-splitting occurred, retaining main-line join-point #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+            linking.graphSuffixEnd
+      in
+        case linking.lastConstructed of
+          Nothing ->
+            println ("[Chaining 2.2.4.1/2] Joining main-line #" ++ String.fromInt linking.graphPrefixEnd ++ " to main-line #" ++ String.fromInt join ++ ".")
+            createTransitionBetween d.chosenTransition linking.graphPrefixEnd join dawg
+          Just c ->
+            println ("[Chaining 2.2.4.1/2] Joining alt-path #" ++ String.fromInt c ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+            duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd join dawg
+            |> createTransitionBetween d.chosenTransition c join
     _ ->
       case linking.lastConstructed of
         Nothing ->
           createNewSuccessorNode d.chosenTransition linking.graphPrefixEnd dawg
           |> \(dawg_, successor) ->
-              println ("[Chaining 2.2.2.1/2] Created new node #" ++ String.fromInt successor ++ ", linked from graph prefix #" ++ String.fromInt d.id ++ ".")
+              println ("[Chaining 2.2.2.1/2] Created new node #" ++ String.fromInt successor ++ ", linked from graph prefix #" ++ String.fromInt linking.graphPrefixEnd ++ ".")
               createForwardsChain remaining_transitions { linking | graphPrefixEnd = d.id, lastConstructed = Just successor } dawg_
         Just c ->
           createNewSuccessorNode d.chosenTransition c dawg
@@ -876,7 +886,7 @@ connectionToString : Connection -> String
 connectionToString =
   Set.map transitionToString
   >> Set.toList
-  >> String.join ""
+  >> String.join "\u{FEFF}" -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
 
 graphToString : DAWGGraph -> String
 graphToString graph =
