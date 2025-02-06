@@ -872,7 +872,8 @@ forgeForwardChain transition rest linking dawg =
       createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
       |> debugDAWG "No forward-path, no alt-path, no final-connection: connect prefix to suffix, and exit."
     ( Nothing, Just c ) ->
-      createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd dawg
+      duplicateOutgoingConnections linking.graphPrefixEnd c dawg
+      |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
       |> debugDAWG "No forward-path, no final-connection, but we have an alt-path: connect alt-path to suffix, and exit."
     ( Just final, Nothing ) ->
       -- e.g. a-b
