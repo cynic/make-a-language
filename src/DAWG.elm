@@ -808,8 +808,11 @@ traceForwardChainTo transition rest linking d dawg =
       -- debugDAWG "G" dawg
     ( Nothing, Just c, True ) ->
       debugDAWG "H" dawg
-    ( Just final, Nothing, False ) ->
-      debugDAWG "I" dawg
+    ( Just final, Nothing, False ) -> -- e.g. an-tn-x-tx
+      -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
+      println ("Not sure, but I think this might be a mid-extension of a word.  I'll connect it with a separate chain from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd)
+      createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
+      --debugDAWG "I" dawg
     ( Just final, Nothing, True ) ->
       -- e.g. a-ab
       -- I connect directly to the final node, AND `d` is the final node.  The path has not
@@ -904,6 +907,8 @@ createForwardsChain transitions linking dawg =
           -- forge a new forward chain.
           forgeForwardChain transition rest linking dawg
         Just d ->
+          -- I have something that can take me forward, so I may be able
+          -- to follow it.
           traceForwardChainTo d.chosenTransition rest linking d dawg
 
       -- if isFinalNode linking.graphPrefixEnd dawg then
@@ -990,43 +995,43 @@ createForwardsChain transitions linking dawg =
       --             |> debugDAWG ("[Chaining 2.5.2.3] Duplicated outgoing connections from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt c)
       --             |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
 
-linkSingleNode : LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
-linkSingleNode linking d dawg =
-  let
-    join =
-      if linking.splitPath then
-        d.id |> Debug.log "[Chaining 2.3.4] Path-splitting happened. Joining to main-line #"
-      else
-        linking.graphSuffixEnd |> Debug.log "[Chaining 2.3.4] No path-splitting occurred, retaining main-line join-point #"
-  in
-    case linking.lastConstructed of
-      Nothing ->
-        println ("[Chaining 2.3.4.1/2] Joining main-line #" ++ String.fromInt linking.graphPrefixEnd ++ " to main-line #" ++ String.fromInt join ++ ".")
-        createTransitionBetween d.chosenTransition linking.graphPrefixEnd join dawg
-      Just c ->
-        println ("[Chaining 2.3.4.1/2] Joining alt-path #" ++ String.fromInt c ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-        duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd join dawg
-        |> createTransitionBetween d.chosenTransition c join
+-- linkSingleNode : LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
+-- linkSingleNode linking d dawg =
+--   let
+--     join =
+--       if linking.splitPath then
+--         d.id |> Debug.log "[Chaining 2.3.4] Path-splitting happened. Joining to main-line #"
+--       else
+--         linking.graphSuffixEnd |> Debug.log "[Chaining 2.3.4] No path-splitting occurred, retaining main-line join-point #"
+--   in
+--     case linking.lastConstructed of
+--       Nothing ->
+--         println ("[Chaining 2.3.4.1/2] Joining main-line #" ++ String.fromInt linking.graphPrefixEnd ++ " to main-line #" ++ String.fromInt join ++ ".")
+--         createTransitionBetween d.chosenTransition linking.graphPrefixEnd join dawg
+--       Just c ->
+--         println ("[Chaining 2.3.4.1/2] Joining alt-path #" ++ String.fromInt c ++ " to main-line #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+--         duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd join dawg
+--         |> createTransitionBetween d.chosenTransition c join
 
-performUpdateAndRecurse : List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
-performUpdateAndRecurse remaining_transitions linking d dawg =
-  case remaining_transitions of
-    [] -> -- only one transition remaining.
-      linkSingleNode linking d dawg
-    _ ->
-      case linking.lastConstructed of
-        Nothing ->
-          createNewSuccessorNode d.chosenTransition linking.graphPrefixEnd dawg
-          |> \(dawg_, successor) ->
-              println ("[Chaining 2.3.2.1/2] Created new node #" ++ String.fromInt successor ++ ", linked from graph prefix #" ++ String.fromInt linking.graphPrefixEnd ++ ".")
-              createForwardsChain remaining_transitions { linking | graphPrefixEnd = d.id, lastConstructed = Just successor } dawg_
-        Just c ->
-          createNewSuccessorNode d.chosenTransition c dawg
-          |> \(dawg_, successor) ->
-              println ("[Chaining 2.3.2.1/2] Created new node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt d.id ++ ".  Proceeding.")
-              duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg_
-              |> debugDAWG ("[Chaining 2.3.2.3] Duplicated outgoing connections from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt c)
-              |> createForwardsChain remaining_transitions { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
+-- performUpdateAndRecurse : List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
+-- performUpdateAndRecurse remaining_transitions linking d dawg =
+--   case remaining_transitions of
+--     [] -> -- only one transition remaining.
+--       linkSingleNode linking d dawg
+--     _ ->
+--       case linking.lastConstructed of
+--         Nothing ->
+--           createNewSuccessorNode d.chosenTransition linking.graphPrefixEnd dawg
+--           |> \(dawg_, successor) ->
+--               println ("[Chaining 2.3.2.1/2] Created new node #" ++ String.fromInt successor ++ ", linked from graph prefix #" ++ String.fromInt linking.graphPrefixEnd ++ ".")
+--               createForwardsChain remaining_transitions { linking | graphPrefixEnd = d.id, lastConstructed = Just successor } dawg_
+--         Just c ->
+--           createNewSuccessorNode d.chosenTransition c dawg
+--           |> \(dawg_, successor) ->
+--               println ("[Chaining 2.3.2.1/2] Created new node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt d.id ++ ".  Proceeding.")
+--               duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg_
+--               |> debugDAWG ("[Chaining 2.3.2.3] Duplicated outgoing connections from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt c)
+--               |> createForwardsChain remaining_transitions { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
 
 createChain : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
 createChain transitions prefixEnd suffixEnd dawg =
