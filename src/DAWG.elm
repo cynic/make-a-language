@@ -877,14 +877,13 @@ forgeForwardChain transition rest linking dawg =
     ( Just final, Nothing ) ->
       -- e.g. a-b
       -- Straightforward, create a confluence or connection and we are done.
-      createTransitionChainBetween (transition::rest) linking.graphPrefixEnd final dawg
-      |> debugDAWG ("No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to final; I'll create one.")
-      -- dawgUpdate final (connectFrom linking.graphPrefixEnd transition) dawg
+      createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
+      |> debugDAWG ("No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ "; I'll create one.")
       -- debugDAWG "C" dawg
     ( Just final, Just c) -> -- ato-cto-ati
       duplicateOutgoingConnections linking.graphPrefixEnd c dawg
-      |> createTransitionChainBetween (transition::rest) c final
-      |> debugDAWG ("Graph hits final.  No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to final; I'll create one.")
+      |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
+      |> debugDAWG ("On an alt-path. No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ " using " ++ transitionToString transition ++ "; I'll create one.")
 
 {-| Create a forwards-chain going from dP (the prefix-node) to dS (the
     suffix-node).  The suffix-node might be the final (dω).
