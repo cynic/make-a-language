@@ -94,18 +94,18 @@ viewportForces (w, h) graph =
 basicForces : Graph Entity Connection -> List (Force.Force NodeId)
 basicForces graph =
   [
-    Force.customLinks 1 <|
+    Force.customLinks 2 <|
       List.map
         (\e ->
           { source = e.from
           , target = e.to
-          , distance = 30.0 + 25.0 * toFloat (Set.size e.label)
-          , strength = Just <| 1.0 * (toFloat <| Set.size e.label)
+          , distance = 35.0 + 25.0 * toFloat (Set.size e.label)
+          , strength = Just <| 0.4 * (toFloat <| Set.size e.label)
           }
         )
       (Graph.edges graph)
     -- Force.links <| List.map link <| Graph.edges graph
-  , Force.manyBodyStrength -300.0 <| List.map .id <| Graph.nodes graph
+  , Force.manyBodyStrength -1000.0 <| List.map .id <| Graph.nodes graph
   -- , Force.manyBody <| List.map .id <| Graph.nodes graph
   , Force.towardsX <|
       List.filterMap

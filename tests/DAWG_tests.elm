@@ -257,17 +257,17 @@ suite =
         \_ ->
           D.fromWords ["pato", "qcto", "pat"]
           |> nodesAndWords
-          |> Expect.equal (7, ["pat", "pato", "qcto"])
+          |> Expect.equal (9, ["pat", "pato", "qcto"])
       , test "pato-qcto-pati" <|
         \_ ->
           D.fromWords ["pato", "qcto", "pati"]
           |> nodesAndWords
-          |> Expect.equal (7, ["pati", "pato", "qcto"])
+          |> Expect.equal (8, ["pati", "pato", "qcto"])
       , test "pato-peto-qcto-pati" <|
         \_ ->
           D.fromWords ["pato", "peto", "qcto", "pati"]
           |> nodesAndWords
-          |> Expect.equal (7, ["pati", "pato", "peto", "qcto"])
+          |> Expect.equal (8, ["pati", "pato", "peto", "qcto"])
       , test "ato-cto-atoz" <|
         \_ ->
           D.fromWords ["ato", "cto", "atoz"]
@@ -277,7 +277,7 @@ suite =
         \_ ->
           D.fromWords ["pato", "qcto", "patoz"]
           |> nodesAndWords
-          |> Expect.equal (7, ["pato", "patoz", "qcto"])
+          |> Expect.equal (9, ["pato", "patoz", "qcto"])
       , test "atpvnxb-ctpvnxb-atprxb-ctprxb-atprxy" <|
         \_ ->
           D.fromWords ["atpvnxb", "ctpvnxb", "atprxb", "ctprxb", "atprxy"]
@@ -333,6 +333,11 @@ suite =
           D.fromWords ["an", "tn", "x", "tx"]
           |> nodesAndWords
           |> Expect.equal (4, ["an", "tn", "tx", "x"])
+      , test "x-y-am-xm" <|
+        \_ ->
+          D.fromWords ["x", "y", "am", "xm"]
+          |> nodesAndWords
+          |> Expect.equal (3, ["am", "x", "xm", "y"]) 
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
@@ -422,7 +427,7 @@ suite =
           |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
       ]
 
-    , fuzz (Fuzz.listOfLengthBetween 2 6 (Fuzz.asciiStringOfLengthBetween 1 7)) "always recognizes exactly the unique words that it is given" <|
+    , fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 7)) "always recognizes exactly the unique words that it is given" <|
       \listOfStrings ->
         D.fromWords (List.Extra.unique listOfStrings)
         |> D.recognizedWords

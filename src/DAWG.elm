@@ -236,7 +236,7 @@ cloneAndMergeOutgoingConnectionsOfNode from to dawg = -- from = dr, to = ds
 connectTo : NodeId -> Transition -> Node -> Node
 connectTo to transition from =
   { from
-    | outgoing = createOrUpdateOutgoingConnection transition from to
+    | outgoing = createOrUpdateOutgoingConnection transition from to |> Debug.log "After connection"
   }
 
 {-| Connect from a particular node with a particular transition, returning
@@ -257,7 +257,7 @@ connectFrom from transition to =
 disconnectFrom : NodeId -> Node -> Node
 disconnectFrom to from =
   { from
-    | outgoing = IntDict.remove to from.outgoing
+    | outgoing = IntDict.remove to (Debug.log ("Before disconnection of " ++ String.fromInt to) from.outgoing) |> Debug.log "After disconnection"
   }
 
 obtainConnectionFrom : NodeId -> Node -> Maybe (Node, NodeId, Connection)
@@ -830,11 +830,19 @@ traceForwardChainTo transition rest linking d dawg =
           else -- e.g. xa-y-ya
             println ("Straight prefix; connected to final; but NOT connected to suffix. Combining " ++ transitionToString transition ++ " with suffix.")
             dawgUpdate linking.graphPrefixEnd
-              ( disconnectFrom d.id
-              >> connectTo linking.graphSuffixEnd transition
+              (\node ->
+                { node
+                  | outgoing =
+                      node.outgoing
+                      |> IntDict.update d.id
+                          (Maybe.andThen (removeTransitionFromConnection transition))
+                      |> IntDict.update linking.graphSuffixEnd
+                          (Maybe.map (addTransitionToConnection transition)
+                          >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
+                          )
+                }
               )
               dawg
-            --dawgUpdate final (connectFrom linking.graphPrefixEnd transition) dawg
         _ ->
           -- println ("J-2 " ++ transitionToString transition ++ " is NOT the last transition.")
           splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
