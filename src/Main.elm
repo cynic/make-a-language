@@ -28,7 +28,7 @@ import Html.Styled.Attributes as HA exposing (css)
 
 -- MAIN
 
-
+main : Program E.Value Model Msg
 main =
   Browser.element
     { init = init
@@ -50,6 +50,7 @@ type alias LayoutDimensions =
   { viewport : Dimensions
   , leftPanel : Dimensions
   , rightPanel : Dimensions
+  , recognizedWords : Dimensions
   }
 
 type alias LayoutConfiguration =
@@ -60,6 +61,7 @@ type alias LayoutConfiguration =
 type alias Model =
   { dragState : DragState
   , text : String
+  , dawg : DAWG.DAWG
   , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
@@ -78,6 +80,10 @@ decodeDimensions =
 
 viewportDimensionsToLayoutDimensions : Dimensions -> LayoutConfiguration -> LayoutDimensions
 viewportDimensionsToLayoutDimensions viewport config =
+  let
+    recognizedWordsHeight = 38
+    rightPanelHeight = viewport.height - recognizedWordsHeight - 6
+  in
   { viewport = viewport
   , leftPanel =
       Dimensions
@@ -86,7 +92,11 @@ viewportDimensionsToLayoutDimensions viewport config =
   , rightPanel =
       Dimensions
         (viewport.width * (1 - config.leftRightSplitPercentage) - config.leftRightSplitterWidth / 2.0)
-        viewport.height
+        rightPanelHeight
+  , recognizedWords =
+      Dimensions
+        (viewport.width * (1 - config.leftRightSplitPercentage) - config.leftRightSplitterWidth / 2.0)
+        recognizedWordsHeight
   }
 
 initialLayoutConfig : LayoutConfiguration
@@ -126,6 +136,7 @@ init flags =
     \layout ->
       ( { dragState = Static
         , text = ""
+        , dawg = DAWG.empty
         , forceDirectedGraph =
             ForceDirectedGraph.init
               DAWG.empty
@@ -142,6 +153,7 @@ init flags =
   |> Result.withDefault
     ( { dragState = Static
       , text = ""
+      , dawg = DAWG.empty
       , forceDirectedGraph =
           ForceDirectedGraph.init
             DAWG.empty
@@ -187,12 +199,16 @@ update msg model =
       )
 
     TextInput text ->
+      let
+        dawg = DAWG.fromWords <| String.split "\n" text
+      in
       ( { model
           | text = text
+          , dawg = dawg
           , forceDirectedGraph =
               ForceDirectedGraph.update
                 (model.dimensions.leftPanel.width + 10, 10)
-                (ForceDirectedGraph.GraphUpdated <| DAWG.fromWords <| String.split "\n" text)
+                (ForceDirectedGraph.GraphUpdated dawg)
                 model.forceDirectedGraph
         }
       , Cmd.none
@@ -304,7 +320,7 @@ view model =
           , css
               -- + 1px for border on either side = 12
               [ width (px <| model.dimensions.rightPanel.width - 12)
-              , height (px <| model.dimensions.rightPanel.height - 12)
+              , height (px <| model.dimensions.rightPanel.height - 14)
               , userSelect pointerEvents_
               , pointerEvents pointerEvents_
               -- , backgroundColor (rgb 150 150 150)
@@ -312,7 +328,7 @@ view model =
               , position absolute
               , top (px 0)
               , left (px <| model.dimensions.leftPanel.width + model.layoutConfiguration.leftRightSplitterWidth / 2.0)
-              , borderRadius4 (px 0) (px 8) (px 8) (px 0)
+              , borderRadius4 (px 0) (px 8) (px 0) (px 0)
               , margin2 (px 5) (px 0)
               ]
           ]
@@ -320,6 +336,28 @@ view model =
             |> fromUnstyled
             |> Html.Styled.map ForceDirectedMsg
           ]
+      -- recognized words zone
+      , div
+          [ HA.id "recognized-words-zone"
+          , css
+              [ width <| px <| model.dimensions.recognizedWords.width - 22
+              , height <| px <| model.dimensions.recognizedWords.height
+              , userSelect pointerEvents_
+              , pointerEvents pointerEvents_
+              , border3 (px 1) solid (rgb 128 128 128)
+              , position absolute
+              , top <| px <| model.dimensions.rightPanel.height - 6
+              , left (px <| model.dimensions.leftPanel.width + model.layoutConfiguration.leftRightSplitterWidth / 2.0)
+              , borderRadius4 (px 0) (px 0) (px 8) (px 0)
+              , margin2 (px 5) (px 0)
+              , display flex_
+              , alignItems center
+              , padding2 (px 0) (px 5)
+              , overflowX auto
+              , whiteSpace nowrap
+              ]
+          ]
+          [ Html.Styled.text <| String.join " ◉ " <| DAWG.recognizedWords model.dawg ]
       ]
 
 -- VIEW DRAG ZONE
