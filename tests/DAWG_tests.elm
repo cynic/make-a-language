@@ -9,7 +9,7 @@ import List.Extra
 
 nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
-  (D.numNodes d, D.recognizedWords d)
+  (D.numNodes d, D.verifiedRecognizedWords d)
 
 suite : Test
 suite =

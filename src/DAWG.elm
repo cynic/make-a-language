@@ -1206,6 +1206,8 @@ numEdges : DAWG -> Int
 numEdges dawg =
   List.length <| Graph.edges dawg.graph
 
+{-| Explores incrementally in a breadth-first manner, returning a
+    LIST of (node-found, new-string, is-final) -}
 explore : Node -> String -> DAWGGraph -> List (Node, String, Bool)
 explore node s graph =
   node.outgoing
@@ -1251,3 +1253,68 @@ recognizedWords dawg =
     (Graph.get dawg.root dawg.graph)
   |> Maybe.withDefault (Err "Couldn't find the root in the DAWG…!  What on earth is going on?!")
   |> Result.Extra.extract (\e -> [e])
+
+exploreDeterministic : Node -> DAWGGraph -> Result String (List Node)
+exploreDeterministic node graph =
+  let
+    foundNonDeterminism =
+      if IntDict.size node.outgoing <= 1 then
+        Nothing
+      else
+        let
+          allSets =
+            node.outgoing
+            |> IntDict.values
+            |> List.map (Set.map Tuple.first) -- |> Debug.log ("CHECK for #" ++ String.fromInt node.node.id)
+          allTransitions =
+            List.foldl Set.union Set.empty allSets -- |> Debug.log "All transitions"
+          duplicate =
+            List.foldl
+              (\currentSet (result, all) ->
+                Set.diff all currentSet -- (Debug.log "Checking against" currentSet)
+                |> (\diff -> (Set.diff (Set.union currentSet result) all, diff)) -- |> Debug.log "now")
+              )
+              (Set.empty, allTransitions)
+              allSets
+            |> Tuple.first
+        in
+          if Set.isEmpty duplicate then
+            Nothing
+          else
+            Just (Set.toList duplicate)
+  in
+    case foundNonDeterminism of
+      Nothing -> -- No intersection, or no outgoing values—same difference here.
+        node.outgoing
+        |> IntDict.map (\k _ -> Graph.get k graph)
+        |> IntDict.values
+        |> List.filterMap identity
+        |> Ok
+      Just found ->
+        Err ("Transition(s) «" ++ String.fromList found ++ "» from node #" ++ String.fromInt node.node.id ++ " are not deterministic.")
+
+findNonDeterministic : List Node -> DAWGGraph -> Maybe String
+findNonDeterministic stack graph =
+  case stack of
+    [] -> Nothing
+    n::rest ->
+      case exploreDeterministic n graph of
+        Err e -> Just e
+        Ok nodes ->
+          findNonDeterministic
+            (nodes ++ rest)
+            graph
+
+{-| Same as recognizedWords, but also verifies that the graph is deterministic. -}
+verifiedRecognizedWords : DAWG -> List String
+verifiedRecognizedWords dawg =
+  let
+    nonDeterministic =
+      Graph.get dawg.root dawg.graph
+      |> Maybe.andThen (\root -> findNonDeterministic [root] dawg.graph)
+  in
+    case nonDeterministic of
+      Nothing ->
+        recognizedWords dawg
+      Just e ->
+        [e]
