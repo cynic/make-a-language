@@ -778,7 +778,7 @@ traceForwardChainTo transition rest linking d dawg =
             (\splitResult dawg_ ->
               case splitResult of
                 Straight g -> -- e.g. zv-kv-zv
-                  println ("Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
+                  println ("[E] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
                   dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) dawg
                 SplitOff c -> -- e.g. kp-gx-ax-gp
                     -- so at this point, I have an independent prefix & suffix, but
@@ -791,9 +791,9 @@ traceForwardChainTo transition rest linking d dawg =
                     existingConnections = Graph.get d.id dawg_.graph |> Maybe.map .outgoing
                     combined =
                       Maybe.map2 (IntDict.uniteWith (\_ -> mergeConnectionWith)) suffixConnections existingConnections
-                      |> Maybe.withDefaultLazy (\() -> println "👽 BUG 👽 in case E of traceForwardChainTo??" IntDict.empty)
+                      |> Maybe.withDefaultLazy (\() -> println "[E] 👽 BUG 👽 in case E of traceForwardChainTo??" IntDict.empty)
                   in
-                    println ("Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
+                    println ("[E] Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
                     dawgUpdate c (\node -> { node | outgoing = combined }) dawg_
             )
             dawg
@@ -804,9 +804,9 @@ traceForwardChainTo transition rest linking d dawg =
                 Straight g ->
                   -- println ("Continuing to follow the graph, remaining transitions are " ++ transitionsToString rest)
                   -- createForwardsChain rest { linking | graphPrefixEnd = g } dawg_
-                  dawg_
+                  println "E-2" dawg_
                 SplitOff c -> -- e.g. zv-kv-rv-kva
-                  println ("Splitting the path and continuing to follow; remaining transitions are " ++ transitionsToString rest)
+                  println ("[E] Splitting the path and continuing to follow; remaining transitions are " ++ transitionsToString rest)
                   createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
             )
             dawg
@@ -817,30 +817,55 @@ traceForwardChainTo transition rest linking d dawg =
       -- connections from `graphPrefixEnd` for `c`'s predecessor
       case rest of
         [] -> -- e.g. ato-cto-at
-          println ("Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
+          println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
           dawgUpdate c (connectTo d.id transition) dawg
         _ ->
           createNewSuccessorNode d.chosenTransition c dawg
           |> \(dawg_, successor) ->
-            println ("Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
+            println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
             duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg_
             |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
       -- debugDAWG "G" dawg
     ( Nothing, Just c, True ) ->
       debugDAWG "H" dawg
-    ( Just final, Nothing, False ) -> -- e.g. an-tn-x-tx , x-b-bc-ac-bx
+    ( Just final, Nothing, False ) ->
       -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
-      -- println ("Not sure, but I think this might be a mid-extension of a word.  I'll connect it with a separate chain from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd)
-      splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-        (\splitResult dawg_ ->
-          case splitResult of
-            Straight g ->
-              debugDAWG "I-1" dawg_
-            SplitOff c ->
-              println "Beginning an alt-path"
-              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
-        )
-        dawg
+      case rest of
+        [] ->
+          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
+            (\splitResult dawg_ ->
+              case splitResult of
+                Straight g -> -- e.g. zv-kv-zv
+                  println ("[I] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
+                  dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) dawg
+                SplitOff c -> -- e.g. kp-gx-ax-gp
+                    -- so at this point, I have an independent prefix & suffix, but
+                    -- I also have no transitions that I can use to make a connection.
+                    -- So, I will connect `c` to the outgoing connections of `graphPrefixEnd`
+                    -- _and_ the outgoing connections of `d.id` to reflect the connection
+                    -- to requested-suffix and the connection to existing graph-suffix respectively.
+                  let
+                    suffixConnections = Graph.get linking.graphSuffixEnd dawg_.graph |> Maybe.map .outgoing
+                    existingConnections = Graph.get d.id dawg_.graph |> Maybe.map .outgoing
+                    combined =
+                      Maybe.map2 (IntDict.uniteWith (\_ -> mergeConnectionWith)) suffixConnections existingConnections
+                      |> Maybe.withDefaultLazy (\() -> println "[I] 👽 BUG 👽 in case I of traceForwardChainTo??" IntDict.empty)
+                  in
+                    println ("[I] Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
+                    dawgUpdate c (\node -> { node | outgoing = combined }) dawg_
+            )
+            dawg
+        _ -> -- e.g. an-tn-x-tx , x-b-bc-ac-bx
+          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
+            (\splitResult dawg_ ->
+              case splitResult of
+                Straight g ->
+                  debugDAWG "I-1" dawg_
+                SplitOff c ->
+                  println "[I] Beginning an alt-path"
+                  createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
+            )
+            dawg
       
       --createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
       
@@ -861,7 +886,7 @@ traceForwardChainTo transition rest linking d dawg =
             println "J-2"
             dawg
           else -- e.g. xa-y-ya
-            println ("Straight prefix; connected to final; but NOT connected to suffix. Combining " ++ transitionToString transition ++ " with suffix.")
+            println ("[J] Straight prefix; connected to final; but NOT connected to suffix. Combining " ++ transitionToString transition ++ " with suffix.")
             dawgUpdate linking.graphPrefixEnd
               (\node ->
                 { node
@@ -883,13 +908,13 @@ traceForwardChainTo transition rest linking d dawg =
               case splitResult of
                 Straight g -> -- e.g. a-ab
                   -- We are still on a straight path past the final; I can extend straight out.
-                  println ("On a straight prefix, past the final; extending straight to new final & redirecting.")
+                  println ("[J] On a straight prefix, past the final; extending straight to new final & redirecting.")
                   addFinalNode dawg_
                   |> \(newFinal, dawg__) ->
                       createTransitionChainBetween rest g newFinal.node.id dawg__
                       |> redirectNodesToFinal (IntDict.remove linking.graphPrefixEnd d.completeIncoming, d.id)
                 SplitOff c -> -- e.g. xa-y-yaa
-                  println ("On an alt-path now (#" ++ String.fromInt c ++ ", continuing to follow.")
+                  println ("[J] On an alt-path now (#" ++ String.fromInt c ++ ", continuing to follow.")
                   createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
             )
             dawg
@@ -899,7 +924,7 @@ traceForwardChainTo transition rest linking d dawg =
     ( Just final, Just c, True ) ->
       -- I am on an alt path and the graph connects to a final.  Am I also ending, though?
       -- Let me connect myself to the graphSuffixEnd, using the current transition.
-      println ("On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
+      println ("[K] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
       createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd dawg
       -- debugDAWG "L" dawg
 
@@ -914,21 +939,21 @@ forgeForwardChain transition rest linking dawg =
       -- e.g.: a
       -- make a new chain between prefix and suffix, and we are done.
       createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
-      |> debugDAWG "No forward-path, no alt-path, no final-connection: connect prefix to suffix, and exit."
+      |> debugDAWG "[A] No forward-path, no alt-path, no final-connection: connect prefix to suffix, and exit."
     ( Nothing, Just c ) ->
       duplicateOutgoingConnections linking.graphPrefixEnd c dawg
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
-      |> debugDAWG "No forward-path, no final-connection, but we have an alt-path: connect alt-path to suffix, and exit."
+      |> debugDAWG "[B] No forward-path, no final-connection, but we have an alt-path: connect alt-path to suffix, and exit."
     ( Just final, Nothing ) ->
       -- e.g. a-b
       -- Straightforward, create a confluence or connection and we are done.
       createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
-      |> debugDAWG ("No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ "; I'll create one.")
+      |> debugDAWG ("[C] No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ "; I'll create one.")
       -- debugDAWG "C" dawg
     ( Just final, Just c) -> -- ato-cto-ati
       duplicateOutgoingConnections linking.graphPrefixEnd c dawg
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
-      |> debugDAWG ("On an alt-path. No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ " using " ++ transitionToString transition ++ "; I'll create one.")
+      |> debugDAWG ("[D] On an alt-path. No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ " using " ++ transitionToString transition ++ "; I'll create one.")
 
 {-| Create a forwards-chain going from dP (the prefix-node) to dS (the
     suffix-node).  The suffix-node might be the final (dω).

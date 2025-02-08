@@ -368,6 +368,11 @@ suite =
           D.fromWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"]
           |> nodesAndWords
           |> Expect.equal (6, ["tbvxm","tbvym","tbwxm","tbwym","tovxm","tovym","towxm","towym"])
+      , test "be-dv-cv-a-de" <|
+        \_ ->
+          D.fromWords ["be","dv","cv","a","de"]
+          |> nodesAndWords
+          |> Expect.equal (5, ["a","be","cv","de","dv"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
