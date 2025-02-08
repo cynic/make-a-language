@@ -358,6 +358,11 @@ suite =
           D.fromWords ["x", "b", "bc", "ac", "bzo"]
           |> nodesAndWords
           |> Expect.equal (5, ["ac", "b", "bc", "bzo", "x"])
+      , test "kp-gx-ax-gp" <|
+        \_ ->
+          D.fromWords ["kp","gx","ax","gp"]
+          |> nodesAndWords
+          |> Expect.equal (5, ["ax", "gp", "gx", "kp"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
@@ -450,7 +455,7 @@ suite =
     , fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 7)) "always recognizes exactly the unique words that it is given" <|
       \listOfStrings ->
         D.fromWords (List.Extra.unique listOfStrings)
-        |> D.recognizedWords
+        |> D.verifiedRecognizedWords
         |> Expect.equal (List.sort <| List.Extra.unique listOfStrings)
 
     , describe "is stress-tested with"
