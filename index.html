@@ -5,7 +5,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Make You A Language</title>
-  <link rel="stylesheet" href="style.css">
+  <style>
+    body {
+      margin: 0;
+      /* overflow-y: hidden; */
+    }
+    textarea {
+      transition: background-color 0.35s ease;
+    }
+    textarea:focus {
+      outline: none;
+      background-color: lightgrey;
+    }
+  </style>
+  <!-- <link rel="stylesheet" href="style.css"> -->
   <!-- <meta name="description" content=""> -->
 
   <!-- <link rel="icon" href="/icon.svg" type="image/svg+xml"> -->
@@ -24,7 +37,11 @@
     // } catch {
     //   item = null;
     // }
-    const app = Elm.Main.init({ flags: null, node: document.getElementById('elm') });
+    const flags =
+      { width : document.getElementsByTagName('html')[0].clientWidth
+      , height : document.getElementsByTagName('html')[0].clientHeight
+      };
+    const app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
     // app.ports.save.subscribe(v => localStorage.setItem('lang-graph', JSON.stringify(v)));
   </script>
 
