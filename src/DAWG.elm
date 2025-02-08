@@ -502,9 +502,10 @@ followSuffixes transitions prefixEnd currentNode dawg =
                     |> \dawg_ -> { dawg_ | graph = Graph.remove prefixEnd dawg_.graph }
                   else
                     -- in other words, it's NOT the end but it's also NOT dangling
-                    Debug.log "single" single |> \_ ->
-                    println ("[Suffix 3.2.2] Shorter word than graph (back = #" ++ String.fromInt single.node.id ++ ").  Connecting #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt currentNode ++ ".")
-                    createTransitionBetween (w, isFinal) prefixEnd currentNode dawg
+                    -- Debug.log "single" single |> \_ ->
+                    -- println ("[Suffix 3.2.2] Shorter word than graph (back = #" ++ String.fromInt single.node.id ++ ").  Connecting #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt currentNode ++ ".")
+                    -- createTransitionBetween (w, isFinal) prefixEnd currentNode dawg
+                    createChain (List.reverse transitions) prefixEnd currentNode dawg
                 _ ->
                   if prefixEnd == single.node.id then
                     println ("[Suffix 2.1.1] Word is longer than graph; we must add in nodes.")
@@ -807,11 +808,24 @@ traceForwardChainTo transition rest linking d dawg =
       -- debugDAWG "G" dawg
     ( Nothing, Just c, True ) ->
       debugDAWG "H" dawg
-    ( Just final, Nothing, False ) -> -- e.g. an-tn-x-tx
+    ( Just final, Nothing, False ) -> -- e.g. an-tn-x-tx , x-b-bc-ac-bx
       -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
-      println ("Not sure, but I think this might be a mid-extension of a word.  I'll connect it with a separate chain from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd)
-      createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
-      --debugDAWG "I" dawg
+      -- println ("Not sure, but I think this might be a mid-extension of a word.  I'll connect it with a separate chain from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd)
+      splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
+        (\splitResult dawg_ ->
+          case splitResult of
+            Straight g ->
+              debugDAWG "I-1" dawg_
+            SplitOff c ->
+              println "Beginning an alt-path"
+              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
+        )
+        dawg
+      
+      --createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
+      
+      -- In this case, 
+      -- debugDAWG "I" dawg
     ( Just final, Nothing, True ) ->
       -- e.g. a-ab
       -- I connect directly to the final node, AND `d` is the final node.  The path has not
