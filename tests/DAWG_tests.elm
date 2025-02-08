@@ -257,7 +257,7 @@ suite =
         \_ ->
           D.fromWords ["pato", "qcto", "pat"]
           |> nodesAndWords
-          |> Expect.equal (9, ["pat", "pato", "qcto"])
+          |> Expect.equal (7, ["pat", "pato", "qcto"])
       , test "pato-qcto-pati" <|
         \_ ->
           D.fromWords ["pato", "qcto", "pati"]
@@ -282,7 +282,7 @@ suite =
         \_ ->
           D.fromWords ["atpvnxb", "ctpvnxb", "atprxb", "ctprxb", "atprxy"]
           |> nodesAndWords
-          |> Expect.equal (14, ["atprxb", "atprxy", "atpvnxb", "ctprxb", "ctpvnxb"])
+          |> Expect.equal (13, ["atprxb", "atprxy", "atpvnxb", "ctprxb", "ctpvnxb"])
       , test "xa-y-ya" <|
         \_ ->
           D.fromWords ["xa", "y", "ya"]
@@ -363,6 +363,11 @@ suite =
           D.fromWords ["kp","gx","ax","gp"]
           |> nodesAndWords
           |> Expect.equal (5, ["ax", "gp", "gx", "kp"])
+      , test "towxm-tbwxm-tovxm-tbvxm-towym-tbwym-tovym-tbvym" <|
+        \_ ->
+          D.fromWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["tbvxm","tbvym","tbwxm","tbwym","tovxm","tovym","towxm","towym"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
