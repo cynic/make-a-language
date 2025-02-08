@@ -677,7 +677,6 @@ type alias LinkingForwardData =
   -- there is always precisely one connection from graphPrefixEnd (dP) to currentNode (d')
   , lastConstructed : Maybe NodeId -- c in text
   , graphSuffixEnd : NodeId -- dS in text
-  , splitPath : Bool -- have I split any paths on my journey forward?
   }
 
 {-| Updates incoming nodes to exclude a particular transition to a target.
@@ -1049,7 +1048,6 @@ createChain transitions prefixEnd suffixEnd dawg =
     { graphPrefixEnd = prefixEnd
     , lastConstructed = Nothing
     , graphSuffixEnd = suffixEnd
-    , splitPath = False
     }
     dawg
 
