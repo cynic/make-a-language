@@ -1016,8 +1016,8 @@ recognizedWords dawg =
   |> Maybe.withDefault (Err "Couldn't find the root in the DAWG…!  What on earth is going on?!")
   |> Result.Extra.extract (\e -> [e])
 
-exploreDeterministic : Node -> DAWGGraph -> Result String (List Node)
-exploreDeterministic node graph =
+exploreDeterministic : Node -> NodeId -> DAWGGraph -> Result String (List Node)
+exploreDeterministic node finalId graph =
   let
     foundNonDeterminism =
       if IntDict.size node.outgoing <= 1 then
@@ -1045,26 +1045,31 @@ exploreDeterministic node graph =
           else
             Just (Set.toList duplicate)
   in
-    case foundNonDeterminism of
-      Nothing -> -- No intersection, or no outgoing values—same difference here.
-        node.outgoing
-        |> IntDict.map (\k _ -> Graph.get k graph)
-        |> IntDict.values
-        |> List.filterMap identity
-        |> Ok
-      Just found ->
-        Err ("Transition(s) «" ++ String.fromList found ++ "» from node #" ++ String.fromInt node.node.id ++ " are not deterministic.")
+    if IntDict.isEmpty node.outgoing && node.node.id /= finalId then
+      -- not strictly about being deterministic but eh, while I'm here, right?
+      Err "More than one 'final' node was found, which is incorrect."
+    else
+      case foundNonDeterminism of
+        Nothing -> -- No intersection, or no outgoing values—same difference here.
+          node.outgoing
+          |> IntDict.map (\k _ -> Graph.get k graph)
+          |> IntDict.values
+          |> List.filterMap identity
+          |> Ok
+        Just found ->
+          Err ("Transition(s) «" ++ String.fromList found ++ "» from node #" ++ String.fromInt node.node.id ++ " are not deterministic.")
 
-findNonDeterministic : List Node -> DAWGGraph -> Maybe String
-findNonDeterministic stack graph =
+findNonDeterministic : List Node -> NodeId -> DAWGGraph -> Maybe String
+findNonDeterministic stack finalId graph =
   case stack of
     [] -> Nothing
     n::rest ->
-      case exploreDeterministic n graph of
+      case exploreDeterministic n finalId graph of
         Err e -> Just e
         Ok nodes ->
           findNonDeterministic
             (nodes ++ rest)
+            finalId
             graph
 
 {-| Same as recognizedWords, but also verifies that the graph is deterministic. -}
@@ -1072,8 +1077,13 @@ verifiedRecognizedWords : DAWG -> List String
 verifiedRecognizedWords dawg =
   let
     nonDeterministic =
-      Graph.get dawg.root dawg.graph
-      |> Maybe.andThen (\root -> findNonDeterministic [root] dawg.graph)
+      case dawg.final of
+        Nothing ->
+          Just "The DAWG has no final node."
+        Just final ->
+          Graph.get dawg.root dawg.graph
+          |> Maybe.andThen
+            (\root -> findNonDeterministic [root] final dawg.graph)
   in
     case nonDeterministic of
       Nothing ->

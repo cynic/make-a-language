@@ -17,7 +17,7 @@ suite =
     [ describe "an empty DAWG" -- Nest as many descriptions as you like.
       [ test "has no words in it" <|
         \_ ->
-          nodesAndWords D.empty
+          (D.numNodes D.empty, D.recognizedWords D.empty)
           |> Expect.equal (1, [])
       ]
     , describe "algorithms can handle"
@@ -422,7 +422,7 @@ suite =
         \_ ->
           D.empty
           |> D.addString ""
-          |> nodesAndWords
+          |> \d -> (D.numNodes d, D.recognizedWords d) -- note: not `verifiedRecognizedWords`
           |> Expect.equal (1, [])
 
       , test "with a single letter works" <|
