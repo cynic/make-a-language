@@ -456,7 +456,7 @@ followSuffixes transitions prefixEnd currentNode dawg =
           createChain (List.reverse transitions) prefixEnd currentNode dawg
         candidateBackwardNodes ->
           case List.partition isSingle candidateBackwardNodes of
-            ([single], _) ->
+            (single::_, _) ->
               case transitions_remaining of
                 [] ->
                   if prefixEnd == single.node.id then
@@ -471,10 +471,10 @@ followSuffixes transitions prefixEnd currentNode dawg =
                   else
                     println ("[Suffix 2.2.1] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
                     followSuffixes transitions_remaining prefixEnd single.node.id dawg
-            (x::xs, _) ->
-              Debug.log ("[Suffix] BUG! 👽 Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
-                (x::xs)
-              |> \_ -> dawg
+            -- (x::xs, _) ->
+            --   Debug.log ("[Suffix] BUG! 👽 Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
+            --     (x::xs)
+            --   |> \_ -> dawg
             ([], dcdf) ->
               Debug.log ("[Suffix 2.2.2] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
                 dcdf
@@ -720,6 +720,72 @@ connectIndependentPaths transition rest linking d =
           createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg
     )
 
+connectIndependentPaths2 : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
+connectIndependentPaths2 transition rest linking d =
+  -- e.g. a-ab
+  -- I connect directly to the final node, AND `d` is the final node.  The path has not
+  -- split, so I know that the prefix is exact.  If this is the final transition, then
+  -- whether this is straight, confluence, or backward-split does NOT matter: the "suffix"
+  -- is correct anyway because the suffix is final.
+
+  -- however, if /w/ is longer than the graph, then there will be are additional transitions.
+  -- then we must split any confluence/backward-split, and rejoin at the final node after.
+  case rest of
+    [] -> 
+      if False then -- when True, we use the implementation with minimisation issues.  When False, it is the implementation with correctness issues.  We want to fix & use the False one.
+        withSplitPath linking.graphPrefixEnd d.id transition
+          (\c dawg ->
+            let
+              suffixConnections = Graph.get linking.graphSuffixEnd dawg.graph |> Maybe.map .outgoing
+              existingConnections = Graph.get d.id dawg.graph |> Maybe.map .outgoing
+              combined =
+                Maybe.map2 (IntDict.uniteWith (\_ -> mergeConnectionWith)) suffixConnections existingConnections
+                |> Maybe.withDefaultLazy (\() -> println "[E*] 👽 BUG 👽 in case E of traceForwardChainTo??" IntDict.empty)
+            in
+              println ("[E*] Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
+              dawgUpdate c (\node -> { node | outgoing = combined }) dawg
+          )
+
+      else
+      -- hmm, so the above DOES work instead.  However, it is less efficient in what it minimizes: +1 node-count appears.
+      -- The below also works, BUT it has a correctness issue when it comes to an edge-case.
+      -- So: do I want to work on minimizing of the above, or correctness of the below?
+
+        if d.id == linking.graphSuffixEnd then -- could interchangeably use `final` in this context
+          println ("[J] There is nothing to do; exit with success.")
+        else -- e.g. xa-y-ya
+          println ("[J] Straight prefix; connected to final; but NOT connected to suffix. Combining " ++ transitionToString transition ++ " with suffix.")
+          dawgUpdate linking.graphPrefixEnd
+            (\node ->
+              { node
+                | outgoing =
+                    node.outgoing
+                    |> IntDict.update d.id
+                        (Maybe.andThen (removeTransitionFromConnection transition))
+                    |> IntDict.update linking.graphSuffixEnd
+                        (Maybe.map (addTransitionToConnection transition)
+                        >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
+                        )
+              }
+            )
+
+    _ ->
+      splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
+        (\splitResult dawg_ ->
+          case splitResult of
+            Straight g -> -- e.g. a-ab
+              -- We are still on a straight path past the final; I can extend straight out.
+              println ("[J] On a straight prefix #" ++ String.fromInt g ++ ", past the final; extending straight to new final & redirecting.")
+              addFinalNode dawg_
+              |> \(newFinal, dawg__) ->
+                  createTransitionChainBetween rest g newFinal.node.id dawg__
+                  |> redirectNodesToFinal (IntDict.remove linking.graphPrefixEnd d.completeIncoming, d.id)
+            SplitOff c -> -- e.g. xa-y-yaa
+              println ("[J] On an alt-path now (#" ++ String.fromInt c ++ ", continuing to follow.")
+              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
+        )
+
+
 {-| Called when there IS a path forward from `.graphPrefixEnd` to `d`. -}
 traceForwardChainTo : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 traceForwardChainTo transition rest linking d dawg =
@@ -727,7 +793,7 @@ traceForwardChainTo transition rest linking d dawg =
   case ( connectsToFinalNode linking.graphPrefixEnd dawg, linking.lastConstructed, d.isFinal ) of
     ( Nothing, Nothing, False ) ->
       -- e.g. kp-gx-ax-gp , zv-kv-rv-kva
-      connectIndependentPaths transition rest linking d dawg
+      connectIndependentPaths2 transition rest linking d dawg
     ( Nothing, Nothing, True ) ->
       debugDAWG "[F] Impossible path" empty 
     ( Nothing, Just c, False ) -> -- e.g. ato-cto-atoz
@@ -748,53 +814,10 @@ traceForwardChainTo transition rest linking d dawg =
     ( Just final, Nothing, False ) ->
       -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
       -- e.g. kp-gx-ax-gp , an-tn-x-tx , x-b-bc-ac-bx
-      connectIndependentPaths transition rest linking d dawg      
+      connectIndependentPaths2 transition rest linking d dawg      
     ( Just final, Nothing, True ) ->
-      -- e.g. a-ab
-      -- I connect directly to the final node, AND `d` is the final node.  The path has not
-      -- split, so I know that the prefix is exact.  If this is the final transition, then
-      -- whether this is straight, confluence, or backward-split does NOT matter: the "suffix"
-      -- is correct anyway because the suffix is final.
+      connectIndependentPaths2 transition rest linking d dawg
 
-      -- however, if /w/ is longer than the graph, then there will be are additional transitions.
-      -- then we must split any confluence/backward-split, and rejoin at the final node after.
-
-      case rest of
-        [] -> 
-          if d.id == linking.graphSuffixEnd then -- could interchangeably use `final` in this context
-            debugDAWG "[J] Impossible path" empty
-          else -- e.g. xa-y-ya
-            println ("[J] Straight prefix; connected to final; but NOT connected to suffix. Combining " ++ transitionToString transition ++ " with suffix.")
-            dawgUpdate linking.graphPrefixEnd
-              (\node ->
-                { node
-                  | outgoing =
-                      node.outgoing
-                      |> IntDict.update d.id
-                          (Maybe.andThen (removeTransitionFromConnection transition))
-                      |> IntDict.update linking.graphSuffixEnd
-                          (Maybe.map (addTransitionToConnection transition)
-                          >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
-                          )
-                }
-              )
-              dawg
-        _ ->
-          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-            (\splitResult dawg_ ->
-              case splitResult of
-                Straight g -> -- e.g. a-ab
-                  -- We are still on a straight path past the final; I can extend straight out.
-                  println ("[J] On a straight prefix, past the final; extending straight to new final & redirecting.")
-                  addFinalNode dawg_
-                  |> \(newFinal, dawg__) ->
-                      createTransitionChainBetween rest g newFinal.node.id dawg__
-                      |> redirectNodesToFinal (IntDict.remove linking.graphPrefixEnd d.completeIncoming, d.id)
-                SplitOff c -> -- e.g. xa-y-yaa
-                  println ("[J] On an alt-path now (#" ++ String.fromInt c ++ ", continuing to follow.")
-                  createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
-            )
-            dawg
     ( Just final, Just c, False ) ->
       debugDAWG "[K] Impossible path" empty
     ( Just final, Just c, True ) ->
