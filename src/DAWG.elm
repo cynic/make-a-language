@@ -753,7 +753,7 @@ connectIndependentPaths transition rest linking d dawg =
       -- Within the graph, there is a suffix that will correctly extend the word.
       -- We must preserve both the word in the graph AND extend it.
       if d.id == linking.graphSuffixEnd then -- could interchangeably use `final` in this context
-        println ("[J] There is nothing to do; exit with success.") dawg
+        println ("Connecting independent paths, but there is nothing to do; exit with success.") dawg
       else --x isFinalNode linking.graphSuffixEnd dawg then -- e.g. xa-y-ya
         let
           outgoingIsSuperset : NodeId -> NodeId -> Bool
@@ -768,6 +768,7 @@ connectIndependentPaths transition rest linking d dawg =
             -- existing graph word?  Well, the outgoing connections of the suffix must be a superset of the
             -- outgoing connections of the `d` node (which we are currently looking at).  If they are NOT,
             -- then we would be affecting an existing graph word.
+            println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
             withSplitPath linking.graphPrefixEnd d.id transition
               (\c ->
                 duplicateOutgoingConnections linking.graphSuffixEnd c
@@ -775,6 +776,7 @@ connectIndependentPaths transition rest linking d dawg =
               )
               dawg
           else
+            -- println ("There is an existing suffix for this word elsewhere in the graph. Connecting the path to that suffix.")
             switchTransitionToNewPath transition linking d dawg
     _ ->
       splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
