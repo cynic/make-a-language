@@ -32,7 +32,7 @@ suite =
         \_ ->
           D.fromWords ["px", "pxa", "pya", "pya"]
           |> nodesAndWords
-          |> Expect.equal (5, ["px", "pxa", "pya"]) -- SHOULD BE SMALLER (4)
+          |> Expect.equal (4, ["px", "pxa", "pya"])
       , test "pxa-py-qya" <|
         \_ ->
           D.fromWords ["pxa", "py", "qya"]
@@ -42,7 +42,7 @@ suite =
         \_ ->
           D.fromWords ["pxa", "py", "pya", "pya"]
           |> nodesAndWords
-          |> Expect.equal (5, ["pxa", "py", "pya"]) -- SHOULD BE SMALLER (4)
+          |> Expect.equal (4, ["pxa", "py", "pya"])
       , test "py-pya-pya" <|
         \_ ->
           D.fromWords ["py", "pya"]
