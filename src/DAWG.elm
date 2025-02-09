@@ -684,51 +684,50 @@ splitAwayPathThenContinue from to transition continuation dawg =
   else
     continuation (Straight to) dawg
 
+withSplitPath : NodeId -> NodeId -> Transition -> (NodeId -> DAWG -> DAWG) -> DAWG -> DAWG
+withSplitPath from to transition continuation dawg =
+  splitAwayPathThenContinue from to transition
+    (\splitResult dawg_ ->
+      case splitResult of
+        Straight _ ->
+          debugDAWG "👾 BUG 👾 Impossible path hit." empty
+        SplitOff c -> continuation c dawg_
+    )
+    dawg
+
+connectIndependentPaths : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
+connectIndependentPaths transition rest linking d =
+  withSplitPath linking.graphPrefixEnd d.id transition
+    (\c dawg ->
+      -- so at this point, I have an independent prefix & suffix, but
+      -- I also have no transitions that I can use to make a connection.
+      -- So, I will connect `c` to the outgoing connections of `graphPrefixEnd`
+      -- _and_ the outgoing connections of `d.id` to reflect the connection
+      -- to requested-suffix and the connection to existing graph-suffix respectively.
+      case rest of
+        [] ->
+          let
+            suffixConnections = Graph.get linking.graphSuffixEnd dawg.graph |> Maybe.map .outgoing
+            existingConnections = Graph.get d.id dawg.graph |> Maybe.map .outgoing
+            combined =
+              Maybe.map2 (IntDict.uniteWith (\_ -> mergeConnectionWith)) suffixConnections existingConnections
+              |> Maybe.withDefaultLazy (\() -> println "[E] 👽 BUG 👽 in case E of traceForwardChainTo??" IntDict.empty)
+          in
+            println ("[E] Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
+            dawgUpdate c (\node -> { node | outgoing = combined }) dawg
+        _ ->
+          println ("[E] Splitting the path and continuing to follow; remaining transitions are " ++ transitionsToString rest)
+          createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg
+    )
+
 {-| Called when there IS a path forward from `.graphPrefixEnd` to `d`. -}
 traceForwardChainTo : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 traceForwardChainTo transition rest linking d dawg =
   -- if there is a connection to final BUT `d` is NOT the final node, that is a separate case!
   case ( connectsToFinalNode linking.graphPrefixEnd dawg, linking.lastConstructed, d.isFinal ) of
     ( Nothing, Nothing, False ) ->
-      case rest of
-        [] ->
-          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-            (\splitResult dawg_ ->
-              case splitResult of
-                Straight g -> -- e.g. zv-kv-zv
-                  -- println ("[E] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
-                  -- dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) empty
-                  println "[E] Impossible path I" empty
-                SplitOff c -> -- e.g. kp-gx-ax-gp
-                    -- so at this point, I have an independent prefix & suffix, but
-                    -- I also have no transitions that I can use to make a connection.
-                    -- So, I will connect `c` to the outgoing connections of `graphPrefixEnd`
-                    -- _and_ the outgoing connections of `d.id` to reflect the connection
-                    -- to requested-suffix and the connection to existing graph-suffix respectively.
-                  let
-                    suffixConnections = Graph.get linking.graphSuffixEnd dawg_.graph |> Maybe.map .outgoing
-                    existingConnections = Graph.get d.id dawg_.graph |> Maybe.map .outgoing
-                    combined =
-                      Maybe.map2 (IntDict.uniteWith (\_ -> mergeConnectionWith)) suffixConnections existingConnections
-                      |> Maybe.withDefaultLazy (\() -> println "[E] 👽 BUG 👽 in case E of traceForwardChainTo??" IntDict.empty)
-                  in
-                    println ("[E] Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
-                    dawgUpdate c (\node -> { node | outgoing = combined }) dawg_
-            )
-            dawg
-        _ -> -- av-kv-rv-kva
-          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-            (\splitResult dawg_ ->
-              case splitResult of
-                Straight g ->
-                  -- println ("Continuing to follow the graph, remaining transitions are " ++ transitionsToString rest)
-                  -- createForwardsChain rest { linking | graphPrefixEnd = g } dawg_
-                  debugDAWG "[E] Impossible path II" empty
-                SplitOff c -> -- e.g. zv-kv-rv-kva
-                  println ("[E] Splitting the path and continuing to follow; remaining transitions are " ++ transitionsToString rest)
-                  createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
-            )
-            dawg
+      -- e.g. kp-gx-ax-gp , zv-kv-rv-kva
+      connectIndependentPaths transition rest linking d dawg
     ( Nothing, Nothing, True ) ->
       debugDAWG "[F] Impossible path" empty 
     ( Nothing, Just c, False ) -> -- e.g. ato-cto-atoz
@@ -748,45 +747,8 @@ traceForwardChainTo transition rest linking d dawg =
       debugDAWG "[H] Impossible path" empty
     ( Just final, Nothing, False ) ->
       -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
-      case rest of
-        [] ->
-          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-            (\splitResult dawg_ ->
-              case splitResult of
-                Straight g -> -- e.g. zv-kv-zv
-                  -- println ("[I] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
-                  -- dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) dawg
-                  debugDAWG "[I] Impossible path I" empty
-                SplitOff c -> -- e.g. kp-gx-ax-gp
-                    -- so at this point, I have an independent prefix & suffix, but
-                    -- I also have no transitions that I can use to make a connection.
-                    -- So, I will connect `c` to the outgoing connections of `graphPrefixEnd`
-                    -- _and_ the outgoing connections of `d.id` to reflect the connection
-                    -- to requested-suffix and the connection to existing graph-suffix respectively.
-                  let
-                    suffixConnections = Graph.get linking.graphSuffixEnd dawg_.graph |> Maybe.map .outgoing
-                    existingConnections = Graph.get d.id dawg_.graph |> Maybe.map .outgoing
-                    combined =
-                      Maybe.map2 (IntDict.uniteWith (\_ -> mergeConnectionWith)) suffixConnections existingConnections
-                      |> Maybe.withDefaultLazy (\() -> println "[I] 👽 BUG 👽 in case I of traceForwardChainTo??" IntDict.empty)
-                  in
-                    println ("[I] Straight prefix to here; last transition; but this is a confluence NOT connected to suffix. Splitting, then linking back to #" ++ String.fromInt linking.graphSuffixEnd)
-                    dawgUpdate c (\node -> { node | outgoing = combined }) dawg_
-            )
-            dawg
-        _ -> -- e.g. an-tn-x-tx , x-b-bc-ac-bx
-          splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-            (\splitResult dawg_ ->
-              case splitResult of
-                Straight g ->
-                  debugDAWG "[I] Impossible path II" empty
-                SplitOff c ->
-                  println "[I] Beginning an alt-path"
-                  createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
-            )
-            dawg
-      
-      
+      -- e.g. kp-gx-ax-gp , an-tn-x-tx , x-b-bc-ac-bx
+      connectIndependentPaths transition rest linking d dawg      
     ( Just final, Nothing, True ) ->
       -- e.g. a-ab
       -- I connect directly to the final node, AND `d` is the final node.  The path has not
