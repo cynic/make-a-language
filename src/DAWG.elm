@@ -696,8 +696,9 @@ traceForwardChainTo transition rest linking d dawg =
             (\splitResult dawg_ ->
               case splitResult of
                 Straight g -> -- e.g. zv-kv-zv
-                  println ("[E] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
-                  dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) dawg
+                  -- println ("[E] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
+                  -- dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) empty
+                  println "[E] Impossible path I" empty
                 SplitOff c -> -- e.g. kp-gx-ax-gp
                     -- so at this point, I have an independent prefix & suffix, but
                     -- I also have no transitions that I can use to make a connection.
@@ -722,14 +723,14 @@ traceForwardChainTo transition rest linking d dawg =
                 Straight g ->
                   -- println ("Continuing to follow the graph, remaining transitions are " ++ transitionsToString rest)
                   -- createForwardsChain rest { linking | graphPrefixEnd = g } dawg_
-                  println "E-2" dawg_
+                  debugDAWG "[E] Impossible path II" empty
                 SplitOff c -> -- e.g. zv-kv-rv-kva
                   println ("[E] Splitting the path and continuing to follow; remaining transitions are " ++ transitionsToString rest)
                   createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
             )
             dawg
     ( Nothing, Nothing, True ) ->
-      debugDAWG "F" dawg
+      debugDAWG "[F] Impossible path" empty 
     ( Nothing, Just c, False ) -> -- e.g. ato-cto-atoz
       -- A trace-forward with an alt-path.  Let's move forward, and replicate all the outgoing
       -- connections from `graphPrefixEnd` for `c`'s predecessor
@@ -743,9 +744,8 @@ traceForwardChainTo transition rest linking d dawg =
             println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
             duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg_
             |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
-      -- debugDAWG "G" dawg
     ( Nothing, Just c, True ) ->
-      debugDAWG "H" dawg
+      debugDAWG "[H] Impossible path" empty
     ( Just final, Nothing, False ) ->
       -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
       case rest of
@@ -754,8 +754,9 @@ traceForwardChainTo transition rest linking d dawg =
             (\splitResult dawg_ ->
               case splitResult of
                 Straight g -> -- e.g. zv-kv-zv
-                  println ("[I] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
-                  dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) dawg
+                  -- println ("[I] Straightforward join of graph #" ++ String.fromInt linking.graphPrefixEnd ++ " to suffix #" ++ String.fromInt linking.graphSuffixEnd)
+                  -- dawgUpdate linking.graphPrefixEnd (connectTo d.id transition) dawg
+                  debugDAWG "[I] Impossible path I" empty
                 SplitOff c -> -- e.g. kp-gx-ax-gp
                     -- so at this point, I have an independent prefix & suffix, but
                     -- I also have no transitions that I can use to make a connection.
@@ -778,17 +779,14 @@ traceForwardChainTo transition rest linking d dawg =
             (\splitResult dawg_ ->
               case splitResult of
                 Straight g ->
-                  debugDAWG "I-1" dawg_
+                  debugDAWG "[I] Impossible path II" empty
                 SplitOff c ->
                   println "[I] Beginning an alt-path"
                   createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
             )
             dawg
       
-      --createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
       
-      -- In this case, 
-      -- debugDAWG "I" dawg
     ( Just final, Nothing, True ) ->
       -- e.g. a-ab
       -- I connect directly to the final node, AND `d` is the final node.  The path has not
@@ -798,11 +796,11 @@ traceForwardChainTo transition rest linking d dawg =
 
       -- however, if /w/ is longer than the graph, then there will be are additional transitions.
       -- then we must split any confluence/backward-split, and rejoin at the final node after.
+
       case rest of
         [] -> 
           if d.id == linking.graphSuffixEnd then -- could interchangeably use `final` in this context
-            println "J-2"
-            dawg
+            debugDAWG "[J] Impossible path" empty
           else -- e.g. xa-y-ya
             println ("[J] Straight prefix; connected to final; but NOT connected to suffix. Combining " ++ transitionToString transition ++ " with suffix.")
             dawgUpdate linking.graphPrefixEnd
@@ -820,7 +818,6 @@ traceForwardChainTo transition rest linking d dawg =
               )
               dawg
         _ ->
-          -- println ("J-2 " ++ transitionToString transition ++ " is NOT the last transition.")
           splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
             (\splitResult dawg_ ->
               case splitResult of
@@ -836,15 +833,13 @@ traceForwardChainTo transition rest linking d dawg =
                   createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
             )
             dawg
-          -- createTransitionChainBetween rest d.id final dawg 
     ( Just final, Just c, False ) ->
-      debugDAWG "K" dawg
+      debugDAWG "[K] Impossible path" empty
     ( Just final, Just c, True ) ->
       -- I am on an alt path and the graph connects to a final.  Am I also ending, though?
       -- Let me connect myself to the graphSuffixEnd, using the current transition.
-      println ("[K] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
+      println ("[L] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
       createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd dawg
-      -- debugDAWG "L" dawg
 
 {-| When there is NO corresponding forward-move on the graph, we call this function
     to forge a path forward.  There is at least one forward-transition, so this will
@@ -867,7 +862,6 @@ forgeForwardChain transition rest linking dawg =
       -- Straightforward, create a confluence or connection and we are done.
       createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
       |> debugDAWG ("[C] No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ "; I'll create one.")
-      -- debugDAWG "C" dawg
     ( Just final, Just c) -> -- ato-cto-ati
       duplicateOutgoingConnections linking.graphPrefixEnd c dawg
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
