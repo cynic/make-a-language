@@ -368,8 +368,10 @@ nodeElement node =
     color =
       if node.id == 0 then
         Color.rgb 0.8 0.0 0.7
+      else if node.label.value.isFinal then
+        Color.rgb255 255 255 8
       else if node.label.value.isTerminal then
-        Color.rgb255 8 255 8
+        Color.rgb255 25 165 25
       else
         Color.black
   in
@@ -385,7 +387,7 @@ nodeElement node =
           , cy node.label.y
           ]
           [ title [] [ text <| String.fromInt node.id ] ]
-      ::  if node.label.value.isTerminal || node.id == 0 then
+      ::  if node.label.value.isFinal || node.id == 0 then
             [ circle
                 [ r outerRadius
                 , fill <| Paint <| Color.rgba 0 0 0 0
