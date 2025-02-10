@@ -25,6 +25,7 @@ import Task
 import Platform.Cmd as Cmd
 import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
+import List.Extra
 
 -- MAIN
 
@@ -337,7 +338,12 @@ view model =
             |> Html.Styled.map ForceDirectedMsg
           ]
       -- recognized words zone
-      , div
+      , let
+          recognized = DAWG.verifiedRecognizedWords model.dawg
+          isSame = (String.split "\n" model.text |> List.Extra.unique |> List.filter ((/=) "") |> List.sort) == recognized
+          (fgcolor, bgcolor) = if isSame then (rgb 0 0 0, rgb 208 240 192) else (rgb 255 255 255, rgb 236 88 0)
+        in
+        div
           [ HA.id "recognized-words-zone"
           , css
               [ width <| px <| model.dimensions.recognizedWords.width - 22
@@ -355,9 +361,11 @@ view model =
               , padding2 (px 0) (px 5)
               , overflowX auto
               , whiteSpace nowrap
+              , backgroundColor bgcolor
+              , color fgcolor
               ]
           ]
-          [ Html.Styled.text <| String.join " ◉ " <| DAWG.recognizedWords model.dawg ]
+          [ Html.Styled.text <| String.join " ◉ " <| recognized ]
       ]
 
 -- VIEW DRAG ZONE
