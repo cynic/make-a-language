@@ -636,7 +636,10 @@ duplicateOutgoingConnectionsExcludingTransition transition from to dawg =
               (\_ -> Just <|
                 { toNode
                   | outgoing =
-                      (fromNode.outgoing |> IntDict.map (\_ -> Set.remove transition))
+                      ( fromNode.outgoing
+                        |> IntDict.map (\_ -> Set.remove transition)
+                        |> IntDict.filter (\_ -> not << Set.isEmpty) -- kill invalid connections!
+                      )
                       |> createOrMergeConnections toNode.outgoing
                 }
               )
@@ -955,9 +958,9 @@ forgeForwardChain transition rest linking dawg =
       createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
       |> debugDAWG ("[C] No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ "; I'll create one.")
     ( Just final, Just c) -> -- ato-cto-ati
-      duplicateOutgoingConnections linking.graphPrefixEnd c dawg
+      duplicateOutgoingConnections linking.graphPrefixEnd c dawg |> debugDAWG "step 1"
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
-      |> debugDAWG ("[D] On an alt-path. No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ " using " ++ transitionToString transition ++ "; I'll create one.")
+      |> debugDAWG ("[D] On an alt-path. No forward-path from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ " using " ++ transitionToString transition ++ "; I'll create one.")
 
 {-| Create a forwards-chain going from dP (the prefix-node) to dS (the
     suffix-node).  The suffix-node might be the final (dω).
