@@ -436,7 +436,7 @@ createTransitionBetween transition from to dawg =
     from_ = Graph.get from dawg.graph
     from_outgoing = -- amend the outgoing to what it _would_ be
       Maybe.map (\node -> createOrUpdateOutgoingConnection transition node to |> IntDict.toList) from_
-      |> Debug.log "cmp. base"
+      --|> Debug.log "cmp. base"
     proposedConnection =
       Maybe.map (\f ->
         IntDict.get to f.outgoing
@@ -447,7 +447,7 @@ createTransitionBetween transition from to dawg =
     existingConnections =
       Maybe.andThen2 (\t proposedConnection_ ->
         IntDict.filter (\_ v -> v == proposedConnection_) t.incoming
-        |> IntDict.keys |> Debug.log ("potentially combinables with #" ++ String.fromInt from)
+        |> IntDict.keys -- |> Debug.log ("potentially combinables with #" ++ String.fromInt from)
         -- now filter these, so that only the nodes that are combinable are left.
         -- These are the nodes where the outgoing connections are identical.
         |> List.filterMap
@@ -457,7 +457,7 @@ createTransitionBetween transition from to dawg =
               else
                 Maybe.andThen2
                   (\f_o other ->
-                    if f_o == Debug.log "cmp. with" (IntDict.toList other.outgoing) then
+                    if f_o == {-Debug.log "cmp. with"-} (IntDict.toList other.outgoing) then
                       Just (from, e)
                     else
                       Nothing
@@ -466,9 +466,9 @@ createTransitionBetween transition from to dawg =
                   (Graph.get e dawg.graph)
             )
         |> \l -> if List.isEmpty l then Nothing else Just l
-      ) to_ proposedConnection |> Debug.log "combinables"
+      ) to_ proposedConnection --|> Debug.log "combinables"
   in
-    Debug.log ("Request to connect #" ++ String.fromInt from ++ " → #" ++ String.fromInt to ++ " with transition " ++ transitionToString transition) () |> \_ ->
+    -- Debug.log ("Request to connect #" ++ String.fromInt from ++ " → #" ++ String.fromInt to ++ " with transition " ++ transitionToString transition) () |> \_ ->
     case existingConnections of
       Nothing ->
         dawgUpdate from (connectTo to transition) dawg
@@ -477,17 +477,9 @@ createTransitionBetween transition from to dawg =
       Just combinables -> -- oh my.  Well, what can we do about it?
         -- the first element of these tuples is the `from` that we've been passed.
 
-        if False then -- we want to work towards True, which includes the optimisation.
-          Debug.log ("🔆 Oh my.  Could we potentially merge a connection here? from=#" ++ String.fromInt from ++ ", to=#" ++ String.fromInt to) existingConnections |> \_ ->
-          -- I'm guaranteed to have a valid connection in this case.
-          combinables |> List.foldl (\(a, b) -> combineNodes b a) (dawgUpdate from (connectTo to transition) dawg)
-        else
-          dawgUpdate from (connectTo to transition) dawg
-        -- IntDict.update to.node.id
-        --   ( Maybe.map (updateConnectionWith transition)
-        --     >> Maybe.orElseLazy (\() -> Just (Set.singleton transition))
-        --   )
-        --   from.outgoing
+        Debug.log ("When creating/updating link #" ++ String.fromInt from ++ "→#" ++ String.fromInt to ++ " via " ++ transitionToString transition ++ ", I see that there are existing connections that can me merged.  Let's do it!") existingConnections |> \_ ->
+        -- I'm guaranteed to have a valid connection in this case.
+        combinables |> List.foldl (\(a, b) -> combineNodes b a) (dawgUpdate from (connectTo to transition) dawg)
 
 {-| Unconditionally creates a chain, using all the specified transitions and
     creating nodes as necessary, that begins at `from` and terminates at `to`.
@@ -634,6 +626,27 @@ duplicateOutgoingConnectionsExcluding excluded from to dawg =
     (Graph.get to dawg.graph)
   |> Maybe.withDefaultLazy (\() -> Debug.log "👽 BUG 👽 in duplicateOutgoingConnectionsExcluding?" dawg)
 
+duplicateOutgoingConnectionsExcludingTransition : Transition -> NodeId -> NodeId -> DAWG -> DAWG
+duplicateOutgoingConnectionsExcludingTransition transition from to dawg =
+  Maybe.map2
+    (\fromNode toNode ->
+      { dawg
+        | graph =
+            Graph.update to
+              (\_ -> Just <|
+                { toNode
+                  | outgoing =
+                      (fromNode.outgoing |> IntDict.map (\_ -> Set.remove transition))
+                      |> createOrMergeConnections toNode.outgoing
+                }
+              )
+              dawg.graph
+      }
+    )
+    (Graph.get from dawg.graph)
+    (Graph.get to dawg.graph)
+  |> Maybe.withDefaultLazy (\() -> Debug.log "👽 BUG 👽 in duplicateOutgoingConnectionsExcludingTransition?" dawg)
+
 duplicateOutgoingConnections : NodeId -> NodeId -> DAWG -> DAWG
 duplicateOutgoingConnections from to dawg =
   Maybe.map2
@@ -739,7 +752,7 @@ type SplitPathResult
 splitAwayPathThenContinue : NodeId -> NodeId -> Transition -> (SplitPathResult -> DAWG -> DAWG) -> DAWG -> DAWG
 splitAwayPathThenContinue from to transition continuation dawg =
   if isConfluenceConnection from to dawg then
-    println ("Found #" ++ String.fromInt from ++ "→#" ++ String.fromInt to ++ " confluence.  Chosen transition is " ++ transitionToString transition ++ ".")
+    println ("Found #" ++ String.fromInt from ++ "→#" ++ String.fromInt to ++ " confluence " ++ (getConnection from to dawg |> Maybe.map connectionToString |> Maybe.withDefault "ERROR!NoConnection!") ++ ".  Chosen transition is " ++ transitionToString transition ++ ".")
     -- remove the transition from the confluence node
     dawgUpdate to (\d_ -> { d_ | incoming = incomingWithoutTransitionFrom transition from d_.incoming }) dawg
     |> createNewSuccessorNode transition from
@@ -859,8 +872,8 @@ connectIndependentPaths transition rest linking d dawg =
                   createTransitionChainBetween rest g newFinal.node.id dawg__
                   |> redirectNodesToFinal (IntDict.remove linking.graphPrefixEnd d.completeIncoming, d.id)
             SplitOff c -> -- e.g. xa-y-yaa
-              println ("[J] On an alt-path now (#" ++ String.fromInt c ++ "), continuing to follow.")
-              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
+              println ("[J] On an alt-path now (#" ++ String.fromInt c ++ "), continuing to follow, upcoming transitions are: " ++ transitionsToString rest)
+              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } (debugDAWG "pre" dawg_) |> debugDAWG "post"
         )
         dawg
 
@@ -869,7 +882,7 @@ connectIndependentPaths transition rest linking d dawg =
 traceForwardChainTo : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 traceForwardChainTo transition rest linking d dawg =
   -- if there is a connection to final BUT `d` is NOT the final node, that is a separate case!
-  case ( connectsToFinalNode linking.graphPrefixEnd dawg, linking.lastConstructed, d.isFinal ) of
+  case ( connectsToFinalNode linking.graphPrefixEnd (debugDAWG ("Tracing forward #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ "; before doing anything, dawg is") dawg), linking.lastConstructed, d.isFinal ) of
     ( Nothing, Nothing, False ) ->
       -- e.g. kp-gx-ax-gp , zv-kv-rv-kva
       connectIndependentPaths transition rest linking d dawg
@@ -881,14 +894,28 @@ traceForwardChainTo transition rest linking d dawg =
       case rest of
         [] -> -- e.g. ato-cto-at
           println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
-          createTransitionBetween transition c d.id dawg
-          -- dawgUpdate c (connectTo d.id transition) dawg
+          -- createTransitionBetween transition c d.id dawg
+          duplicateOutgoingConnections linking.graphPrefixEnd c dawg
+          |> dawgUpdate c (connectTo d.id transition) -- in case the transition is terminal, this will merge
         _ ->
           createNewSuccessorNode d.chosenTransition c dawg
           |> \(dawg_, successor) ->
             println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
-            duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg_
+            duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
             |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
+
+            -- splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
+            --   (\splitResult dawg__ ->
+            --     case splitResult of
+            --       Straight g ->
+            --         println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
+            --         duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg__ -- CHECK HERE!!!
+            --         |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
+            --       SplitOff c_ ->
+            --         println ("[G] Trace-forward with an alt-path.  Splitting #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ " to " ++ String.fromInt c_ ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
+            --         createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor } dawg__
+            --   )
+            --   dawg_
     ( Nothing, Just c, True ) ->
       debugDAWG "[H] Impossible path" empty
     ( Just final, Nothing, False ) ->

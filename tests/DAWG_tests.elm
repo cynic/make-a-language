@@ -167,7 +167,7 @@ suite =
         \_ ->
           D.fromWords ["aton", "cton", "atit", "ctit"]
           |> nodesAndWords
-          |> Expect.equal (8, ["atit", "aton", "ctit", "cton"])
+          |> Expect.equal (7, ["atit", "aton", "ctit", "cton"]) -- CAN PROBABLY BE SMALLER
       , test "ato-cto-ati" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati"]
@@ -198,6 +198,11 @@ suite =
           D.fromWords ["pqt", "zvt", "pqr"]
           |> nodesAndWords
           |> Expect.equal (6, ["pqr", "pqt", "zvt"])
+      , test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
+        \_ ->
+          D.fromWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"]
+          |> nodesAndWords
+          |> Expect.equal (4, ["pqr", "pqt", "pvr", "pvt", "zqr", "zqt", "zvr", "zvt"])
       , test "zvt-pqt-pqr" <|
         \_ ->
           D.fromWords ["zvt", "pqt", "pqr"]
@@ -252,7 +257,7 @@ suite =
         \_ ->
           D.fromWords ["crv", "ax", "cx", "arv"]
           |> nodesAndWords
-          |> Expect.equal (5, ["arv", "ax", "crv", "cx"]) -- SHOULD BE SMALLER (4)
+          |> Expect.equal (4, ["arv", "ax", "crv", "cx"])
       , test "pato-qcto-pat" <|
         \_ ->
           D.fromWords ["pato", "qcto", "pat"]
@@ -368,6 +373,16 @@ suite =
           D.fromWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"]
           |> nodesAndWords
           |> Expect.equal (10, ["tbvxm","tbvym","tbwxm","tbwym","tovxm","tovym","towxm","towym"]) -- SHOULD BE SMALLER (6)
+      , test "owx-bwx-ovx-bvx-owy" <|
+        \_ ->
+          D.fromWords ["owx","bwx","ovx","bvx","owy"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["bvx","bwx","ovx","owx","owy"])
+      , test "owx-bwx-ovx-bvx-bv" <|
+        \_ ->
+          D.fromWords ["owx","bwx","ovx","bvx","bv"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["bv", "bvx","bwx","ovx","owx"])
       , test "be-dv-cv-a-de" <|
         \_ ->
           D.fromWords ["be","dv","cv","a","de"]
