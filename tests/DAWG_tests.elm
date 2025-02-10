@@ -162,12 +162,12 @@ suite =
         \_ ->
           D.fromWords ["naton", "acton", "natit", "actit"]
           |> nodesAndWords
-          |> Expect.equal (10, ["actit", "acton", "natit", "naton"])
+          |> Expect.equal (8, ["actit", "acton", "natit", "naton"])
       , test "aton-cton-atit-ctit" <|
         \_ ->
           D.fromWords ["aton", "cton", "atit", "ctit"]
           |> nodesAndWords
-          |> Expect.equal (7, ["atit", "aton", "ctit", "cton"]) -- CAN PROBABLY BE SMALLER
+          |> Expect.equal (6, ["atit", "aton", "ctit", "cton"]) -- CAN PROBABLY BE SMALLER
       , test "ato-cto-ati" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati"]
@@ -182,12 +182,12 @@ suite =
         \_ ->
           D.fromWords ["ato", "cto", "ati", "cti"]
           |> nodesAndWords
-          |> Expect.equal (6, ["ati", "ato", "cti", "cto"]) -- SHOULD BE SMALLER (4)
+          |> Expect.equal (4, ["ati", "ato", "cti", "cto"])
       , test "ato-ati-cto-cti" <|
         \_ ->
           D.fromWords ["ato", "cto", "ati", "cti"]
           |> nodesAndWords
-          |> Expect.equal (6, ["ati", "ato", "cti", "cto"]) -- SHOULD BE SMALLER (4)
+          |> Expect.equal (4, ["ati", "ato", "cti", "cto"])
       , test "ato-cto" <|
         \_ ->
           D.fromWords ["ato", "cto"]
@@ -222,7 +222,7 @@ suite =
         \_ ->
           D.fromWords ["pqt", "zvt", "zvr", "pqr"]
           |> nodesAndWords
-          |> Expect.equal (6, ["pqr", "pqt", "zvr", "zvt"])
+          |> Expect.equal (5, ["pqr", "pqt", "zvr", "zvt"])
       , test "pqt-zvt-pqarcz-pqr" <|
         \_ ->
           D.fromWords ["pqt", "zvt", "pqarcz", "pqr"]
@@ -372,7 +372,7 @@ suite =
         \_ ->
           D.fromWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"]
           |> nodesAndWords
-          |> Expect.equal (10, ["tbvxm","tbvym","tbwxm","tbwym","tovxm","tovym","towxm","towym"]) -- SHOULD BE SMALLER (6)
+          |> Expect.equal (6, ["tbvxm","tbvym","tbwxm","tbwym","tovxm","tovym","towxm","towym"])
       , test "owx-bwx-ovx-bvx-owy" <|
         \_ ->
           D.fromWords ["owx","bwx","ovx","bvx","owy"]
@@ -382,12 +382,27 @@ suite =
         \_ ->
           D.fromWords ["owx","bwx","ovx","bvx","bv"]
           |> nodesAndWords
-          |> Expect.equal (6, ["bv", "bvx","bwx","ovx","owx"])
+          |> Expect.equal (5, ["bv", "bvx","bwx","ovx","owx"])
       , test "be-dv-cv-a-de" <|
         \_ ->
           D.fromWords ["be","dv","cv","a","de"]
           |> nodesAndWords
           |> Expect.equal (5, ["a","be","cv","de","dv"])
+      , test "tt-ttal-nt-ntl-ntal" <|
+        \_ ->
+          D.fromWords ["tt","ttal","nt","ntl","ntal"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["nt","ntal","ntl","tt","ttal"])
+      , test "tst-tstabl-nst-nstabl-nstl" <|
+        \_ ->
+          D.fromWords ["tst","tstabl","nst","nstabl","nstl"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["nst","nstabl","nstl","tst","tstabl"])
+      , test "test-testable-tester-nest-nestable-nester-nestle" <|
+        \_ ->
+          D.fromWords ["test","testable","tester","nest","nestable","nester","nestle"]
+          |> nodesAndWords
+          |> Expect.equal (8, ["nest","nestable","nester","nestle","test","testable","tester"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
@@ -477,7 +492,13 @@ suite =
           |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
       ]
 
-    , fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 7)) "always recognizes exactly the unique words that it is given" <|
+    , fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
+      \listOfStrings ->
+        D.fromWords (List.Extra.unique listOfStrings)
+        |> D.verifiedRecognizedWords
+        |> Expect.equal (List.sort <| List.Extra.unique listOfStrings)
+
+    , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
       \listOfStrings ->
         D.fromWords (List.Extra.unique listOfStrings)
         |> D.verifiedRecognizedWords
@@ -582,7 +603,7 @@ suite =
           |> D.addString "nativity"
           |> D.addString "activity"
           |> nodesAndWords
-          |> Expect.equal (14, ["action", "activity", "nation", "nativity"]) -- SHOULD BE SMALLER (≤13)
+          |> Expect.equal (11, ["action", "activity", "nation", "nativity"])
       -- , test "nation-action-nativity-activity-act" <|
       --   \_ ->
       --     D.empty

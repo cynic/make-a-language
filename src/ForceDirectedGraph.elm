@@ -99,13 +99,13 @@ basicForces graph =
         (\e ->
           { source = e.from
           , target = e.to
-          , distance = 35.0 + 25.0 * toFloat (Set.size e.label)
+          , distance = 25.0 + 20.0 * toFloat (Set.size e.label)
           , strength = Just <| 0.4 * (toFloat <| Set.size e.label)
           }
         )
       (Graph.edges graph)
     -- Force.links <| List.map link <| Graph.edges graph
-  , Force.manyBodyStrength -1000.0 <| List.map .id <| Graph.nodes graph
+  , Force.manyBodyStrength -500.0 <| List.map .id <| Graph.nodes graph
   -- , Force.manyBody <| List.map .id <| Graph.nodes graph
   , Force.towardsX <|
       List.filterMap

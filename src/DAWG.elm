@@ -418,10 +418,31 @@ redirectNodesToFinal redirection dawg =
 -}
 combineNodes : NodeId -> NodeId -> DAWG -> DAWG
 combineNodes kill keep dawg =
-  cloneAndMergeIncomingConnectionsOfNode kill keep (debugDAWG "before" dawg)
+  cloneAndMergeIncomingConnectionsOfNode kill keep dawg
   |> \dawg_ -> { dawg_ | graph = Graph.remove kill dawg_.graph }
-  |> debugDAWG "After"
+  --|> debugDAWG "After"
 
+checkForCollapse : NodeId -> DAWG -> DAWG
+checkForCollapse nodeid dawg =
+  (Graph.get nodeid dawg.graph)
+  |> Maybe.map
+    (\node ->
+      let
+        sets =
+          node.incoming |> IntDict.toList
+          |> List.gatherEqualsBy Tuple.second
+          |> List.filter (Tuple.second >> (not << List.isEmpty))
+      in
+        case sets of
+          [] -> dawg
+          ((k, s), _)::_ ->
+            -- … yeah this isn't the MOST effecient, but let's see how it goes.
+            println ("[Collapsing] Collapsing #" ++ String.fromInt nodeid ++ " backwards")
+            Set.toList s |> List.head
+            |> Maybe.map (\transition -> createTransitionBetween transition k nodeid dawg)
+            |> Maybe.withDefault dawg
+    )
+  |> Maybe.withDefault dawg
 
 {-| Create a connection between two existing nodes, with the specified
     transition.  If such a connection already exists, it is updated with
@@ -480,6 +501,7 @@ createTransitionBetween transition from to dawg =
         Debug.log ("When creating/updating link #" ++ String.fromInt from ++ "→#" ++ String.fromInt to ++ " via " ++ transitionToString transition ++ ", I see that there are existing connections that can me merged.  Let's do it!") existingConnections |> \_ ->
         -- I'm guaranteed to have a valid connection in this case.
         combinables |> List.foldl (\(a, b) -> combineNodes b a) (dawgUpdate from (connectTo to transition) dawg)
+        |> checkForCollapse from
 
 {-| Unconditionally creates a chain, using all the specified transitions and
     creating nodes as necessary, that begins at `from` and terminates at `to`.

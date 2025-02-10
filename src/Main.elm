@@ -103,7 +103,7 @@ viewportDimensionsToLayoutDimensions viewport config =
 initialLayoutConfig : LayoutConfiguration
 initialLayoutConfig =
   { leftRightSplitterWidth = 10
-  , leftRightSplitPercentage = 0.2
+  , leftRightSplitPercentage = 0.1
   }
 
 updateLayout : Float -> Model -> Model
