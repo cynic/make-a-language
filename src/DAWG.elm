@@ -192,6 +192,7 @@ mergeConnectionWith : Connection -> Connection -> Connection
 mergeConnectionWith =
   Set.foldl updateConnectionWith
 
+{-| Don't use this; instead, use connectTo. -}
 createOrUpdateOutgoingConnection : Transition -> Node -> NodeId -> IntDict.IntDict Connection
 createOrUpdateOutgoingConnection transition from to =
   IntDict.update to
@@ -240,7 +241,7 @@ cloneAndMergeIncomingConnectionsOfNode from to dawg = -- from = dr, to = ds
       fromIncoming_
     |> Maybe.withDefault dawg
 
-{-| Connect to a particular node with a particular transition, returning
+{- Connect to a particular node with a particular transition, returning
     the updated `from` node
 
   This is a fairly high-level function. It will
@@ -248,8 +249,9 @@ cloneAndMergeIncomingConnectionsOfNode from to dawg = -- from = dr, to = ds
   - ensure that if the transition is final, there isn't a competing
     non-final transition.
 -}
+{-| Use this if you absolutely need to, but you probably want createTransitionBetween -}
 connectTo : NodeId -> Transition -> Node -> Node
-connectTo to transition from =
+connectTo to transition from =  
   { from
     | outgoing = createOrUpdateOutgoingConnection transition from to
   }
@@ -412,13 +414,80 @@ redirectNodesToFinal redirection dawg =
   |> Maybe.map (flip (redirectNodes redirection) dawg)
   |> Maybe.withDefault dawg
 
+{-| Combine the `incoming` of nodes `kill` and `keep`; delete `kill` and retain only `keep`.
+-}
+combineNodes : NodeId -> NodeId -> DAWG -> DAWG
+combineNodes kill keep dawg =
+  cloneAndMergeIncomingConnectionsOfNode kill keep (debugDAWG "before" dawg)
+  |> \dawg_ -> { dawg_ | graph = Graph.remove kill dawg_.graph }
+  |> debugDAWG "After"
+
+
 {-| Create a connection between two existing nodes, with the specified
     transition.  If such a connection already exists, it is updated with
-    the specified transition.
+    the specified transition.  If there is an incoming connection to the
+    destination, and it can be merged, then it is merged and we then check
+    OUR incoming nodes to see whether a merge is possible.
 -}
 createTransitionBetween : Transition -> NodeId -> NodeId -> DAWG -> DAWG
-createTransitionBetween transition from to =
-  dawgUpdate from (connectTo to transition)
+createTransitionBetween transition from to dawg =
+  let
+    to_ = Graph.get to dawg.graph
+    from_ = Graph.get from dawg.graph
+    from_outgoing = -- amend the outgoing to what it _would_ be
+      Maybe.map (\node -> createOrUpdateOutgoingConnection transition node to |> IntDict.toList) from_
+      |> Debug.log "cmp. base"
+    proposedConnection =
+      Maybe.map (\f ->
+        IntDict.get to f.outgoing
+        |> Maybe.map (updateConnectionWith transition)
+        |> Maybe.withDefaultLazy (\() -> Set.singleton transition)
+      ) from_
+    -- now have a quick look at the "to"'s incoming.  Is this connection already there?  If so, what is its source?
+    existingConnections =
+      Maybe.andThen2 (\t proposedConnection_ ->
+        IntDict.filter (\_ v -> v == proposedConnection_) t.incoming
+        |> IntDict.keys |> Debug.log ("potentially combinables with #" ++ String.fromInt from)
+        -- now filter these, so that only the nodes that are combinable are left.
+        -- These are the nodes where the outgoing connections are identical.
+        |> List.filterMap
+            (\e ->
+              if from == e then
+                Nothing -- this can happen if you try to put in the same word that's already in.
+              else
+                Maybe.andThen2
+                  (\f_o other ->
+                    if f_o == Debug.log "cmp. with" (IntDict.toList other.outgoing) then
+                      Just (from, e)
+                    else
+                      Nothing
+                  )
+                  from_outgoing
+                  (Graph.get e dawg.graph)
+            )
+        |> \l -> if List.isEmpty l then Nothing else Just l
+      ) to_ proposedConnection |> Debug.log "combinables"
+  in
+    Debug.log ("Request to connect #" ++ String.fromInt from ++ " → #" ++ String.fromInt to ++ " with transition " ++ transitionToString transition) () |> \_ ->
+    case existingConnections of
+      Nothing ->
+        dawgUpdate from (connectTo to transition) dawg
+      Just [] -> -- yeah, this one should be impossible to reach, but 🤷 it keeps the compiler quiet.
+        dawgUpdate from (connectTo to transition) dawg
+      Just combinables -> -- oh my.  Well, what can we do about it?
+        -- the first element of these tuples is the `from` that we've been passed.
+
+        if False then -- we want to work towards True, which includes the optimisation.
+          Debug.log ("🔆 Oh my.  Could we potentially merge a connection here? from=#" ++ String.fromInt from ++ ", to=#" ++ String.fromInt to) existingConnections |> \_ ->
+          -- I'm guaranteed to have a valid connection in this case.
+          combinables |> List.foldl (\(a, b) -> combineNodes b a) (dawgUpdate from (connectTo to transition) dawg)
+        else
+          dawgUpdate from (connectTo to transition) dawg
+        -- IntDict.update to.node.id
+        --   ( Maybe.map (updateConnectionWith transition)
+        --     >> Maybe.orElseLazy (\() -> Just (Set.singleton transition))
+        --   )
+        --   from.outgoing
 
 {-| Unconditionally creates a chain, using all the specified transitions and
     creating nodes as necessary, that begins at `from` and terminates at `to`.
@@ -812,7 +881,8 @@ traceForwardChainTo transition rest linking d dawg =
       case rest of
         [] -> -- e.g. ato-cto-at
           println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
-          dawgUpdate c (connectTo d.id transition) dawg
+          createTransitionBetween transition c d.id dawg
+          -- dawgUpdate c (connectTo d.id transition) dawg
         _ ->
           createNewSuccessorNode d.chosenTransition c dawg
           |> \(dawg_, successor) ->
