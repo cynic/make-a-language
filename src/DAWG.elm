@@ -886,6 +886,7 @@ connectIndependentPaths transition rest linking d dawg =
             -- existing graph word?  Well, the outgoing connections of the suffix must be a superset of the
             -- outgoing connections of the `d` node (which we are currently looking at).  If they are NOT,
             -- then we would be affecting an existing graph word.
+            -- e.g. ax-gx-kp-gp
             println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
             withSplitPath linking.graphPrefixEnd d.id transition
               (\c ->
@@ -972,9 +973,9 @@ traceForwardChainTo transition rest linking d dawg =
             |> checkForCollapse d.id
           else
             -- e.g. tsbl-nsbl-nsl
-            println "[G] Inserted word is a partial prefix; this is more like connecting independent prefix and suffix."
             createNewSuccessorNode d.chosenTransition c dawg
             |> (\(dawg_, successor) ->
+                println ("[G] Inserted word is a (possibly partial) prefix. Created #" ++ String.fromInt successor ++ ", and duplicating the outgoing transitions of #" ++ String.fromInt linking.graphSuffixEnd ++ " and #" ++ String.fromInt d.id ++ " to it.")
                 duplicateOutgoingConnections linking.graphSuffixEnd successor dawg_
                 |> duplicateOutgoingConnections d.id successor
               )
