@@ -403,6 +403,16 @@ suite =
           D.fromWords ["tt","ttal","nt","ntl","ntal"]
           |> nodesAndWords
           |> Expect.equal (7, ["nt","ntal","ntl","tt","ttal"])
+      , test "tstabl-nstabl-nstl" <|
+        \_ ->
+          D.fromWords ["tstabl","nstabl","nstl"]
+          |> nodesAndWords
+          |> Expect.equal (10, ["nstabl","nstl","tstabl"])
+      , test "tsbl-nsbl-nsl" <|
+        \_ ->
+          D.fromWords ["tsbl","nsbl","nsl"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["nsbl","nsl","tsbl"])
       , test "tst-tstabl-nst-nstabl-nstl" <|
         \_ ->
           D.fromWords ["tst","tstabl","nst","nstabl","nstl"]

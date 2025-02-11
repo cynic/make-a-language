@@ -41,6 +41,10 @@ isConfluence : Connection -> Bool
 isConfluence connection =
   Set.size connection > 1
 
+isTerminal : Transition -> Bool
+isTerminal (_, f) =
+  f == 1
+
 isConfluenceConnection : NodeId -> NodeId -> DAWG -> Bool
 isConfluenceConnection node1 node2 dawg =
   Maybe.map2
@@ -890,7 +894,8 @@ connectIndependentPaths transition rest linking d dawg =
               )
               dawg
           else if d.isFinal == False && ([linking.graphPrefixEnd, linking.graphSuffixEnd] |> List.map (flip Graph.get dawg.graph) |> List.all (Maybe.map (\n -> IntDict.member d.id n.outgoing) >> Maybe.withDefault False)) then
-            Debug.log "HMMMMMMMMMM!" () |> \_ ->
+            -- e.g. ttal-tyal-ntl-ntal
+            println "Not enough space to enact a join; must create an ancillary node to compensate."
             -- `dS`-`d` already exists.  (the if-statement checks for this).
             -- We will redirect it later, but first, we will create the node
             -- that it will be redirect _to_.
@@ -917,11 +922,10 @@ connectIndependentPaths transition rest linking d dawg =
               )
             |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in connectIndependentPaths, second case" dawg)
           else
-            println "AWWWWWW"
             -- This is a valid test for when we must create a chain INSTEAD of joining.
             -- The essential point is this: if, by switching the transition, we would affect an existing
             -- graph-word, then we must create a chain instead.
-            println ("d = #" ++ String.fromInt d.id ++ ", dP = #" ++ String.fromInt linking.graphPrefixEnd ++ ", dS = #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+            -- println ("d = #" ++ String.fromInt d.id ++ ", dP = #" ++ String.fromInt linking.graphPrefixEnd ++ ", dS = #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
 
             
             -- println ("There is an existing suffix for this word elsewhere in the graph. Connecting the path to that suffix.")
@@ -939,7 +943,7 @@ connectIndependentPaths transition rest linking d dawg =
                   |> redirectNodesToFinal (IntDict.remove linking.graphPrefixEnd d.completeIncoming, d.id)
             SplitOff c -> -- e.g. xa-y-yaa
               println ("[J] On an alt-path now (#" ++ String.fromInt c ++ "), continuing to follow, upcoming transitions are: " ++ transitionsToString rest)
-              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } (debugDAWG "pre" dawg_) |> debugDAWG "post"
+              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
         )
         dawg
 
@@ -958,31 +962,28 @@ traceForwardChainTo transition rest linking d dawg =
       -- A trace-forward with an alt-path.  Let's move forward, and replicate all the outgoing
       -- connections from `graphPrefixEnd` for `c`'s predecessor
       case rest of
-        [] -> -- e.g. ato-cto-at
-          println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
-          -- createTransitionBetween transition c d.id dawg
-          duplicateOutgoingConnections linking.graphPrefixEnd c dawg
-          |> dawgUpdate c (connectTo d.id transition) -- in case the transition is terminal, this will merge
-          |> checkForCollapse d.id
+        [] ->
+          if isTerminal transition then
+             -- e.g. ato-cto-at
+            println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
+            -- createTransitionBetween transition c d.id dawg
+            duplicateOutgoingConnections linking.graphPrefixEnd c dawg
+            |> dawgUpdate c (connectTo d.id transition) -- in case the transition is terminal, this will merge
+            |> checkForCollapse d.id
+          else
+            -- e.g. tsbl-nsbl-nsl
+            println "[G] Inserted word is a partial prefix; this is more like connecting independent prefix and suffix."
+            createNewSuccessorNode d.chosenTransition c dawg
+            |> (\(dawg_, successor) ->
+                duplicateOutgoingConnections linking.graphSuffixEnd successor dawg_
+                |> duplicateOutgoingConnections d.id successor
+              )
         _ ->
           createNewSuccessorNode d.chosenTransition c dawg
           |> \(dawg_, successor) ->
             println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
             duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
             |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
-
-            -- splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-            --   (\splitResult dawg__ ->
-            --     case splitResult of
-            --       Straight g ->
-            --         println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
-            --         duplicateOutgoingConnectionsExcluding d.id linking.graphPrefixEnd c dawg__ -- CHECK HERE!!!
-            --         |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
-            --       SplitOff c_ ->
-            --         println ("[G] Trace-forward with an alt-path.  Splitting #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ " to " ++ String.fromInt c_ ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
-            --         createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor } dawg__
-            --   )
-            --   dawg_
     ( Nothing, Just c, True ) ->
       debugDAWG "[H] Impossible path" empty
     ( Just final, Nothing, False ) ->
