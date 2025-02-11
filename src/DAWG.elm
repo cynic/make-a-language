@@ -441,7 +441,7 @@ checkForCollapse nodeid dawg =
           [] -> dawg
           ((k, s), _)::_ ->
             -- … yeah this isn't the MOST effecient, but let's see how it goes.
-            println ("[Collapsing] Collapsing #" ++ String.fromInt nodeid ++ " backwards")
+            -- println ("[Collapsing] Collapsing #" ++ String.fromInt nodeid ++ " backwards")
             Set.toList s |> List.head
             |> Maybe.map (\transition -> createTransitionBetween transition k nodeid dawg)
             |> Maybe.withDefault dawg
@@ -502,9 +502,15 @@ createTransitionBetween transition from to dawg =
       Just combinables -> -- oh my.  Well, what can we do about it?
         -- the first element of these tuples is the `from` that we've been passed.
 
-        Debug.log ("When creating/updating link #" ++ String.fromInt from ++ "→#" ++ String.fromInt to ++ " via " ++ transitionToString transition ++ ", I see that there are existing connections that can me merged.  Let's do it!") existingConnections |> \_ ->
         -- I'm guaranteed to have a valid connection in this case.
-        combinables |> List.foldl (\(a, b) -> combineNodes b a) (dawgUpdate from (connectTo to transition) dawg)
+        combinables
+        |> List.foldl
+          (\(a, b) ->
+            combineNodes b a
+            >> debugDAWG ("Collapsed #" ++ String.fromInt a ++ "|#" ++ String.fromInt b ++ ", both →#" ++ String.fromInt to ++ " via " ++ transitionToString transition ++ ", into one.")
+          )
+          (dawgUpdate from (connectTo to transition)
+          (debugDAWG "Pre-collapse" dawg))
         |> checkForCollapse from
 
 {-| Unconditionally creates a chain, using all the specified transitions and
@@ -843,6 +849,7 @@ switchTransitionToNewPath transition linking d dawg =
   println ("Switching an existing transition (" ++ transitionToString transition ++ "), originating at #" ++ String.fromInt linking.graphPrefixEnd ++ ", from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
   removeTransitionBetweenNodes linking.graphPrefixEnd d.id transition dawg
   |> addTransitionBetweenNodes linking.graphPrefixEnd linking.graphSuffixEnd transition
+  |> checkForCollapse linking.graphSuffixEnd
 
 connectIndependentPaths : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 connectIndependentPaths transition rest linking d dawg =
@@ -956,6 +963,7 @@ traceForwardChainTo transition rest linking d dawg =
           -- createTransitionBetween transition c d.id dawg
           duplicateOutgoingConnections linking.graphPrefixEnd c dawg
           |> dawgUpdate c (connectTo d.id transition) -- in case the transition is terminal, this will merge
+          |> checkForCollapse d.id
         _ ->
           createNewSuccessorNode d.chosenTransition c dawg
           |> \(dawg_, successor) ->
