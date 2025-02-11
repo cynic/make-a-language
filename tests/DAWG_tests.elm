@@ -1,10 +1,10 @@
 module DAWG_tests exposing (..)
 
-import Expect exposing (Expectation)
-import Fuzz exposing (Fuzzer, int, list, string)
+import Expect
+import Fuzz
 import Test exposing (..)
 import DAWG as D
-import Fuzz exposing (stringOfLengthBetween)
+import Fuzz
 import List.Extra
 
 nodesAndWords : D.DAWG -> (Int, List String)
@@ -388,11 +388,21 @@ suite =
           D.fromWords ["be","dv","cv","a","de"]
           |> nodesAndWords
           |> Expect.equal (5, ["a","be","cv","de","dv"])
+      , test "ttal-ntl-ntal" <|
+        \_ ->
+          D.fromWords ["ttal","ntl","ntal"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["ntal","ntl","ttal"])
+      , test "ttal-tyal-ntl-ntal" <|
+        \_ ->
+          D.fromWords ["ttal","tyal","ntl","ntal"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["ntal","ntl","ttal","tyal"])
       , test "tt-ttal-nt-ntl-ntal" <|
         \_ ->
           D.fromWords ["tt","ttal","nt","ntl","ntal"]
           |> nodesAndWords
-          |> Expect.equal (6, ["nt","ntal","ntl","tt","ttal"])
+          |> Expect.equal (7, ["nt","ntal","ntl","tt","ttal"])
       , test "tst-tstabl-nst-nstabl-nstl" <|
         \_ ->
           D.fromWords ["tst","tstabl","nst","nstabl","nstl"]
@@ -403,6 +413,11 @@ suite =
           D.fromWords ["test","testable","tester","nest","nestable","nester","nestle"]
           |> nodesAndWords
           |> Expect.equal (8, ["nest","nestable","nester","nestle","test","testable","tester"])
+      , test "test-testable-tester-nest-nestable-nester-ne" <|
+        \_ ->
+          D.fromWords ["test","testable","tester","nest","nestable","nester","ne"]
+          |> nodesAndWords
+          |> Expect.equal (8, ["ne","nest","nestable","nester","test","testable","tester"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.

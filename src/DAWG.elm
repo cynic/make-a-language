@@ -309,14 +309,12 @@ mergeConnectionTo to maybeRedirect =
         }
     )
 
-{-| Create a transition to a new node, returning the DAWG and the new node.
--}
-createNewSuccessorNode : Transition -> NodeId -> DAWG -> (DAWG, NodeId)
-createNewSuccessorNode transition srcNode dawg =
+createNewSuccessorNodeWithConnection : Connection -> NodeId -> DAWG -> (DAWG, NodeId)
+createNewSuccessorNodeWithConnection connection srcNode dawg =
   let
     newNode =
       { node = Node (dawg.maxId + 1) ()
-      , incoming = IntDict.singleton srcNode (Set.singleton transition)
+      , incoming = IntDict.singleton srcNode connection
       , outgoing = IntDict.empty
       }
   in
@@ -326,6 +324,12 @@ createNewSuccessorNode transition srcNode dawg =
       }
     , newNode.node.id
     )
+
+{-| Create a transition to a new node, returning the DAWG and the new node.
+-}
+createNewSuccessorNode : Transition -> NodeId -> DAWG -> (DAWG, NodeId)
+createNewSuccessorNode transition srcNode dawg =
+  createNewSuccessorNodeWithConnection (Set.singleton transition) srcNode dawg
 
 {-| Create a transition to a new node, returning the DAWG and the new node.
 -}
@@ -646,7 +650,7 @@ duplicateOutgoingConnectionsExcluding excluded from to dawg =
     )
     (Graph.get from dawg.graph)
     (Graph.get to dawg.graph)
-  |> Maybe.withDefaultLazy (\() -> Debug.log "👽 BUG 👽 in duplicateOutgoingConnectionsExcluding?" dawg)
+  |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnectionsExcluding? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
 
 duplicateOutgoingConnectionsExcludingTransition : Transition -> NodeId -> NodeId -> DAWG -> DAWG
 duplicateOutgoingConnectionsExcludingTransition transition from to dawg =
@@ -670,26 +674,22 @@ duplicateOutgoingConnectionsExcludingTransition transition from to dawg =
     )
     (Graph.get from dawg.graph)
     (Graph.get to dawg.graph)
-  |> Maybe.withDefaultLazy (\() -> Debug.log "👽 BUG 👽 in duplicateOutgoingConnectionsExcludingTransition?" dawg)
+  |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnectionsExcludingTransition? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
 
 duplicateOutgoingConnections : NodeId -> NodeId -> DAWG -> DAWG
 duplicateOutgoingConnections from to dawg =
   Maybe.map2
     (\fromNode toNode ->
+      let
+        merged = createOrMergeConnections fromNode.outgoing toNode.outgoing
+      in
       { dawg
-        | graph =
-            Graph.update to
-              (\_ -> Just <|
-                { toNode
-                  | outgoing = createOrMergeConnections fromNode.outgoing toNode.outgoing
-                }
-              )
-              dawg.graph
+        | graph = Graph.update to (\_ -> Just { toNode | outgoing = merged }) dawg.graph
       }
     )
     (Graph.get from dawg.graph)
     (Graph.get to dawg.graph)
-  |> Maybe.withDefaultLazy (\() -> Debug.log "👽 BUG 👽 in duplicateOutgoingConnections?" dawg)
+  |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnections? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
 
 type alias CurrentNodeData =
   { chosenTransition : Transition -- tC in text. Maximum-terminality among available options.
@@ -882,7 +882,41 @@ connectIndependentPaths transition rest linking d dawg =
                 >> duplicateOutgoingConnections d.id c
               )
               dawg
+          else if d.isFinal == False && ([linking.graphPrefixEnd, linking.graphSuffixEnd] |> List.map (flip Graph.get dawg.graph) |> List.all (Maybe.map (\n -> IntDict.member d.id n.outgoing) >> Maybe.withDefault False)) then
+            Debug.log "HMMMMMMMMMM!" () |> \_ ->
+            -- `dS`-`d` already exists.  (the if-statement checks for this).
+            -- We will redirect it later, but first, we will create the node
+            -- that it will be redirect _to_.
+            -- We will now create a new node from `d`.
+            getConnection linking.graphSuffixEnd d.id dawg
+            |> Maybe.map
+              (\ds_d_connection ->
+                createNewSuccessorNodeWithConnection ds_d_connection {-root-}d.id dawg
+                |> \(dawg_, successor) ->
+                  println ("Created new redirection node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt d.id)
+                  -- now, redirect ds_d_connection to meet the successor node.
+                  tryDawgUpdate linking.graphSuffixEnd
+                    (obtainConnectionFrom d.id >> redirectConnectionTo successor)
+                    dawg_
+                  |> debugDAWG ("Redirected #" ++ String.fromInt linking.graphSuffixEnd ++ "→#" ++ String.fromInt d.id ++ " connection to #" ++ String.fromInt successor)
+                  -- lastly, replicate all of the outgoing connections from `d` to `successor`,
+                  -- EXCEPT for the connection that we created to `successor`.
+                  |> duplicateOutgoingConnectionsExcluding successor d.id successor
+                  |> debugDAWG ("Duplicated outgoing connections from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt successor)
+                -- |> \(dawg_, successor) ->
+                --     createTransitionBetween ('y', 0) d.id successor dawg_
+                --     |> duplicateOutgoingConnections successor d.id
+                    -- |> createTransitionBetween transition linking.graphSuffixEnd successor
+              )
+            |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in connectIndependentPaths, second case" dawg)
           else
+            println "AWWWWWW"
+            -- This is a valid test for when we must create a chain INSTEAD of joining.
+            -- The essential point is this: if, by switching the transition, we would affect an existing
+            -- graph-word, then we must create a chain instead.
+            println ("d = #" ++ String.fromInt d.id ++ ", dP = #" ++ String.fromInt linking.graphPrefixEnd ++ ", dS = #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+
+            
             -- println ("There is an existing suffix for this word elsewhere in the graph. Connecting the path to that suffix.")
             switchTransitionToNewPath transition linking d dawg
     _ ->
