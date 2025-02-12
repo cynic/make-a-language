@@ -918,10 +918,6 @@ connectIndependentPaths transition rest linking d dawg =
                 -- EXCEPT for the connection that we created to `successor`.
                 |> duplicateOutgoingConnectionsExcluding successor d.id successor
                 |> debugDAWG ("Duplicated outgoing connections from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt successor)
-              -- |> \(dawg_, successor) ->
-              --     createTransitionBetween ('y', 0) d.id successor dawg_
-              --     |> duplicateOutgoingConnections successor d.id
-                  -- |> createTransitionBetween transition linking.graphSuffixEnd successor
             )
           |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in connectIndependentPaths, second case" dawg)
         else
@@ -950,48 +946,47 @@ connectIndependentPaths transition rest linking d dawg =
         )
         dawg
 
+{-| In a case such as teve-ceve-ce , the graph-suffix starts with the same
+    character that the graph-prefix ends with (i.e., 'e', in this case).  This
+    can also happen for longer runs (see ayxpayx… in tests).  In that case,
+    we should consider moving along the prefix rather than connecting to the
+    suffix.  This function checks for whether a repeated suffix exists, and
+    should only be called once we have reached the end of the transitions.
+-}
+prefixRepeatsSuffix : List Transition -> NodeId -> NodeId -> DAWG -> Bool
+prefixRepeatsSuffix suffixTransitions_ lastPrefix_ firstSuffix_ dawg =
+  let
+    prefixRepeatsSuffixReal : List Transition -> NodeId -> NodeId -> Bool
+    prefixRepeatsSuffixReal suffixTransitions lastPrefix firstSuffix =
+      if lastPrefix == firstSuffix then
+        False -- e.g. pqt-zvt-zvxt
+      else
+        case suffixTransitions of
+          [] ->
+            -- can't be true if we don't end at the final.
+            isFinalNode firstSuffix dawg
+          (w, _)::rest ->
+            case ( forwardsFollowable w lastPrefix dawg.graph, forwardsFollowable w firstSuffix dawg.graph ) of
+              ( Just inPrefix , Just inSuffix ) ->
+                prefixRepeatsSuffixReal rest inPrefix.node.id inSuffix.node.id
+              _ ->
+                False
+  in
+    if List.isEmpty suffixTransitions_ then
+      -- d'uh. 🤦 infinite loop in caller otherwise, eh? Silly billy.
+      False
+    else
+      prefixRepeatsSuffixReal suffixTransitions_ lastPrefix_ firstSuffix_
+
 traceForwardOnThisChain : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 traceForwardOnThisChain transition rest linking d dawg =
   debugDAWG ("There is no alt-chain; I am tracing forward on the main chain, #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ ".  Before doing anything") dawg |> \_ ->
-  case ( connectsToFinalNode linking.graphPrefixEnd dawg, rest, d.isFinal ) of
-    ( Nothing, [], False ) ->
-      -- e.g. kp-gx-ax-gp , zv-kv-rv-kva
-      let
-        repeatedSuffix : Maybe ( NodeId, NodeId, Transition )
-        repeatedSuffix =
-          List.head linking.suffixPath
-          |> Maybe.map (\(w, isFinal) ->
-            case ( forwardsFollowable w d.id dawg.graph, forwardsFollowable w linking.graphSuffixEnd dawg.graph ) of
-              ( Just inPrefix , Just inSuffix ) -> Just ( inPrefix.node.id, inSuffix.node.id, (w, isFinal) )
-              _ -> Nothing
-          )
-          |> Maybe.withDefault Nothing
-      in
-        case repeatedSuffix of
-          Nothing ->
-            connectIndependentPaths transition rest linking d dawg
-          Just ( prefixId, suffixId, t ) ->
-            println ("The prefix (#" ++ String.fromInt prefixId ++ ") mirrors the suffix (#" ++ String.fromInt suffixId ++ ") via transition " ++ transitionToString t ++ ".  I will shift the prefix-suffix window and reconsider what to do.")
-            -- createForwardsChain [transition,t]
-            --   ({ linking
-            --     | graphSuffixEnd = suffixId
-            --     , suffixPath = List.tail linking.suffixPath |> Maybe.withDefault []
-            --   } |> Debug.log "now")
-            --   dawg
-            traceForwardChainTo transition [t]
-              { linking
-                | graphSuffixEnd = suffixId
-                , suffixPath = List.tail linking.suffixPath |> Maybe.withDefault []
-              }
-              d dawg
-    ( Nothing, _, False ) ->
-      connectIndependentPaths transition rest linking d dawg      
-    ( Just final, _, _ ) ->
-      -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
-      -- e.g. kp-gx-ax-gp , an-tn-x-tx , x-b-bc-ac-bx
-      connectIndependentPaths transition rest linking d dawg      
-    ( Nothing, _, True ) ->
+  case ( connectsToFinalNode linking.graphPrefixEnd dawg, d.isFinal ) of
+    ( Nothing, True ) ->
       debugDAWG "[F] Impossible path" empty
+    _ ->
+      -- e.g. kp-gx-ax-gp , zv-kv-rv-kva , an-tn-x-tx , x-b-bc-ac-bx
+      connectIndependentPaths transition rest linking d dawg
 
 withOutgoingNodesOf : List NodeId -> (NodeId -> DAWG -> DAWG) -> DAWG -> DAWG
 withOutgoingNodesOf nodeids f dawg =
@@ -1007,7 +1002,7 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
   debugDAWG ("Tracing forward on alt-chain that ends on #" ++ String.fromInt c ++ "; on main chain, the trace is from, #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ ".  Before doing anything") dawg |> \_ ->
   case ( connectsToFinalNode linking.graphPrefixEnd dawg, rest, d.isFinal ) of
     ( Nothing, [], False ) -> -- e.g. ato-cto-atoz
-      if List.isEmpty linking.suffixPath then
+      if List.isEmpty linking.suffixPath then -- if this is terminal
           -- e.g. ato-cto-at
         println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
         -- createTransitionBetween transition c d.id dawg
@@ -1019,7 +1014,8 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
         createNewSuccessorNode d.chosenTransition c dawg
         |> (\(dawg_, successor) ->
             println ("[G] Inserted word is a (possibly partial) prefix. Created #" ++ String.fromInt successor ++ ", and duplicating the outgoing transitions of #" ++ String.fromInt linking.graphSuffixEnd ++ " and #" ++ String.fromInt d.id ++ " to it.")
-            duplicateOutgoingConnections linking.graphSuffixEnd successor dawg_
+            duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
+            |> duplicateOutgoingConnections linking.graphSuffixEnd successor
             |> duplicateOutgoingConnections d.id successor
             |> withOutgoingNodesOf [successor, d.id] checkForCollapse
           )
@@ -1033,7 +1029,7 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
       -- I am on an alt path and the graph connects to a final.  Am I also ending, though?
       -- Let me connect myself to the graphSuffixEnd, using the current transition.
       println ("[L] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
-        duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg -- CHECK HERE!!!
+      duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg -- CHECK HERE!!!
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd 
     ( Nothing, _, True ) ->
       debugDAWG "[H] Impossible path" empty
@@ -1043,15 +1039,25 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
 {-| Called when there IS a path forward from `.graphPrefixEnd` to `d`. -}
 traceForwardChainTo : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 traceForwardChainTo transition rest linking d dawg =
-  case linking.lastConstructed of
-    Nothing ->
-      -- if d.id == linking.graphSuffixEnd then -- could interchangeably use `final` in this context
-      --   debugDAWG ("Tracing forward on graph, and I've encountered the suffix.  Ending trace now, with success.") dawg
-      -- else --x isFinalNode linking.graphSuffixEnd dawg then -- e.g. xa-y-ya
+  if List.isEmpty rest && prefixRepeatsSuffix linking.suffixPath d.id linking.graphSuffixEnd dawg then
+    println ("The prefix (#" ++ String.fromInt linking.graphPrefixEnd ++ ") mirrors the suffix (#" ++ String.fromInt linking.graphSuffixEnd ++ ") using transitions " ++ transitionsToString linking.suffixPath ++ ".  I will shift the prefix-suffix window and reconsider what to do.")
+    dawg.final
+    |> Maybe.map (\final ->
+      createForwardsChain (transition::linking.suffixPath)
+        { linking
+          | graphSuffixEnd = final
+          , suffixPath = []
+        }
+        dawg
+    )
+    |> Maybe.withDefaultLazy (\() -> Debug.log "wtf??  final is not set?!!" empty)
+  else
+    case linking.lastConstructed of
+      Nothing ->
         traceForwardOnThisChain transition rest linking d dawg
-    Just c ->
-      traceForwardOnAlternateChain transition rest linking d c dawg
-  -- if there is a connection to final BUT `d` is NOT the final node, that is a separate case!
+      Just c ->
+        traceForwardOnAlternateChain transition rest linking d c dawg
+    -- if there is a connection to final BUT `d` is NOT the final node, that is a separate case!
 
 {-| When there is NO corresponding forward-move on the graph, we call this function
     to forge a path forward.  There is at least one forward-transition, so this will
