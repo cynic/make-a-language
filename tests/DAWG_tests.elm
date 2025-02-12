@@ -413,16 +413,21 @@ suite =
           D.fromWords ["tsbl","nsbl","nsl"]
           |> nodesAndWords
           |> Expect.equal (7, ["nsbl","nsl","tsbl"])
+      , test "nst-nsl-tst-tsl-nstl" <|
+        \_ ->
+          D.fromWords ["nst", "nsl", "tst", "tsl", "nstl"]
+          |> nodesAndWords
+          |> Expect.equal (7, ["nsl", "nst", "nstl", "tsl", "tst"])
       , test "tst-tstabl-nst-nstabl-nstl" <|
         \_ ->
           D.fromWords ["tst","tstabl","nst","nstabl","nstl"]
           |> nodesAndWords
-          |> Expect.equal (6, ["nst","nstabl","nstl","tst","tstabl"])
+          |> Expect.equal (10, ["nst","nstabl","nstl","tst","tstabl"])
       , test "test-testable-tester-nest-nestable-nester-nestle" <|
         \_ ->
           D.fromWords ["test","testable","tester","nest","nestable","nester","nestle"]
           |> nodesAndWords
-          |> Expect.equal (8, ["nest","nestable","nester","nestle","test","testable","tester"])
+          |> Expect.equal (14, ["nest","nestable","nester","nestle","test","testable","tester"])
       , test "test-testable-tester-nest-nestable-nester-ne" <|
         \_ ->
           D.fromWords ["test","testable","tester","nest","nestable","nester","ne"]
