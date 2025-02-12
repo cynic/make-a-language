@@ -428,6 +428,26 @@ suite =
           D.fromWords ["test","testable","tester","nest","nestable","nester","ne"]
           |> nodesAndWords
           |> Expect.equal (8, ["ne","nest","nestable","nester","test","testable","tester"])
+      , test "tere-cere-te" <|
+        \_ ->
+          D.fromWords ["tere","cere","te"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["cere","te","tere"])
+      , test "teve-ceve-cyve-tyve-te" <|
+        \_ ->
+          D.fromWords ["teve", "ceve", "cyve", "tyve", "te"]
+          |> nodesAndWords
+          |> Expect.equal (6, ["ceve","cyve", "te", "teve", "tyve"])
+      , test "ayxpayx-byxpayx-ayxpbyx-byxpbyx-ayx" <|
+        \_ ->
+          D.fromWords ["ayxpayx", "byxpayx", "ayxpbyx", "byxpbyx", "ayx"]
+          |> nodesAndWords
+          |> Expect.equal (10, ["ayx", "ayxpayx", "ayxpbyx", "byxpayx", "byxpbyx"])
+      , test "ayxpayx-byxpayx-ayxpbyx-byxpbyx-ayxpayx" <|
+        \_ ->
+          D.fromWords ["ayxpayx", "byxpayx", "ayxpbyx", "byxpbyx", "ayxpayx"]
+          |> nodesAndWords
+          |> Expect.equal (8, ["ayxpayx", "ayxpbyx", "byxpayx", "byxpbyx"])
       ]
     , describe "adding a new transition"
       -- Expect.equal is designed to be used in pipeline style, like this.
