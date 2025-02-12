@@ -90,16 +90,15 @@ viewportForces (w, h) graph =
   --       )
   --       (Graph.nodes graph)
   ]
-
 basicForces : Graph Entity Connection -> List (Force.Force NodeId)
 basicForces graph =
   [
-    Force.customLinks 2 <|
+    Force.customLinks 4 <|
       List.map
         (\e ->
           { source = e.from
           , target = e.to
-          , distance = 25.0 + 20.0 * toFloat (Set.size e.label)
+          , distance = 40.0 + 20.0 * toFloat (Set.size e.label) --35-40 seems like a good distance
           , strength = Just <| 0.4 * (toFloat <| Set.size e.label)
           }
         )

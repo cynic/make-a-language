@@ -11,6 +11,37 @@ nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
   (D.numNodes d, D.verifiedRecognizedWords d)
 
+standardTestForWords : List String -> Int -> Int -> Expect.Expectation
+standardTestForWords words expectedNodes expectedEdges =
+  let
+    expectedRecognized = List.sort words |> List.Extra.unique |> List.filter ((/=) "")
+    czech : List (List String) -> Expect.Expectation
+    czech l =
+      case l of
+        [] ->
+          Expect.pass
+        x::rest ->
+          let
+            dawg = D.fromWords x
+            edges = D.numEdges dawg
+            nodes = D.numNodes dawg
+            recognized = D.verifiedRecognizedWords dawg
+          in
+            if recognized /= expectedRecognized then
+              Debug.log "Failure on recognized words of permutation" x
+              |> \_ -> Expect.equal recognized expectedRecognized
+            else if nodes /= expectedNodes then
+              Debug.log "Failure on node-count of permutation" x
+              |> \_ -> Expect.equal nodes expectedNodes
+            else if edges /= expectedEdges then
+              Debug.log "Failure on edge-count of permutation" x
+              |> \_ -> Expect.equal edges expectedEdges
+            else
+              czech rest
+            
+  in
+    czech (List.Extra.permutations words)
+
 suite : Test
 suite =
   describe "The DAWG module"
@@ -23,186 +54,99 @@ suite =
     , describe "algorithms can handle"
       [ test "two totally separate words" <|
         \_ ->
-          D.fromWords ["abc", "def"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["abc", "def"])
+          standardTestForWords ["abc", "def"] 6 6
       ]
     , describe "handles prefix construction correctly when given"
       [ test "px-pxa-pya-pya" <|
         \_ ->
-          D.fromWords ["px", "pxa", "pya", "pya"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["px", "pxa", "pya"])
+          standardTestForWords ["px", "pxa", "pya", "pya"] 4 3
       , test "pxa-py-qya" <|
         \_ ->
-          D.fromWords ["pxa", "py", "qya"]
-          |> nodesAndWords
-          |> Expect.equal (5, ["pxa", "py", "qya"])
+          standardTestForWords ["pxa", "py", "qya"] 5 6
       , test "pxa-py-pya-pya" <|
         \_ ->
-          D.fromWords ["pxa", "py", "pya", "pya"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["pxa", "py", "pya"])
+          standardTestForWords ["pxa", "py", "pya", "pya"] 4 3
       , test "py-pya-pya" <|
         \_ ->
-          D.fromWords ["py", "pya"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["py", "pya"])
+          standardTestForWords ["py", "pya", "pya"] 4 3
       , test "py-pya" <|
         \_ ->
-          D.fromWords ["py", "pya"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["py", "pya"])
-      , test "pya-py" <|
-        \_ ->
-          D.fromWords ["pya", "py"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["py", "pya"])
+          standardTestForWords ["py", "pya"] 4 3
       , test "px-pxa-pya-py" <|
         \_ ->
-          D.fromWords ["px", "pxa", "pya", "py"] |> D.debugDAWG "check"
-          |> nodesAndWords
-          |> Expect.equal (4, ["px", "pxa", "py", "pya"])
+          standardTestForWords ["px", "pxa", "pya", "py"] 4 3
       , test "pya-py-py" <|
         \_ ->
-          D.fromWords ["pya", "py", "py"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["py", "pya"])
+          standardTestForWords ["pya", "py", "py"] 4 3
       , test "py-py" <|
         \_ ->
-          D.fromWords ["py", "py"]
-          |> nodesAndWords
-          |> Expect.equal (3, ["py"])
+          standardTestForWords ["py", "py"] 3 2
       , test "pxxa-pyy-pyya" <|
         \_ ->
-          D.fromWords ["pxxa", "pyy", "pyya"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pxxa", "pyy", "pyya"])
+          standardTestForWords ["pxxa", "pyy", "pyya"] 6 6
       , test "pxxa-pyya-py" <|
         \_ ->
-          D.fromWords ["pxxa", "pyya", "py"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pxxa", "py", "pyya"])
+          standardTestForWords ["pxxa", "pyya", "py"] 6 6
       , test "pxaab-pya-pyaab" <|
         \_ ->
-          D.fromWords ["pxaab", "pya", "pyaab"]
-          |> nodesAndWords
-          |> Expect.equal (7, ["pxaab", "pya", "pyaab"])
+          standardTestForWords ["pxaab", "pya", "pyaab"] 7 7
       , test "pxba-py-pyyba" <|
         \_ ->
-          D.fromWords ["pxba", "py", "pyyba"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pxba", "py", "pyyba"])
+          standardTestForWords ["pxba", "py", "pyyba"] 6 6
       , test "pxba-py-pyba" <|
         \_ ->
-          D.fromWords ["pxba", "py", "pyba"]
-          |> nodesAndWords
-          |> Expect.equal (5, ["pxba", "py", "pyba"])
+          standardTestForWords ["pxba", "py", "pyba"] 5 4
       , test "pxa-py-pya-pr-pra" <|
         \_ ->
-          D.fromWords ["pxa", "py", "pya", "pr", "pra"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["pr", "pra", "pxa", "py", "pya"])
-      , test "s-ps" <|
-        \_ ->
-          D.fromWords ["s", "ps"]
-          |> nodesAndWords
-          |> Expect.equal (3, ["ps", "s"])
+          standardTestForWords ["pxa", "py", "pya", "pr", "pra"] 4 3
       , test "ps-s" <|
         \_ ->
-          D.fromWords ["ps", "s"]
-          |> nodesAndWords
-          |> Expect.equal (3, ["ps", "s"])
+          standardTestForWords ["ps", "s"] 3 3
       , test "aps-as" <|
         \_ ->
-          D.fromWords ["aps", "as"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["aps", "as"])
-      , test "as-aps" <|
-        \_ ->
-          D.fromWords ["as", "aps"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["aps", "as"])
+          standardTestForWords ["aps", "as"] 4 4
       , test "aps-ps" <|
         \_ ->
-          D.fromWords ["aps", "ps"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["aps", "ps"])
+          standardTestForWords ["aps", "ps"] 4 4
       , test "apqzs-as" <|
         \_ ->
-          D.fromWords ["apqzs", "as"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["apqzs", "as"])
+          standardTestForWords ["apqzs", "as"] 6 6
       , test "apqzs-azs" <|
         \_ ->
-          D.fromWords ["apqzs", "azs"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["apqzs", "azs"])
+          standardTestForWords ["apqzs", "azs"] 6 6
       , test "ate-create" <|
         \_ ->
-          D.fromWords ["ate", "create"]
-          |> nodesAndWords
-          |> Expect.equal (7, ["ate", "create"])
-      , test "create-ate" <|
-        \_ ->
-          D.fromWords ["create", "ate"]
-          |> nodesAndWords
-          |> Expect.equal (7, ["ate", "create"])
+          standardTestForWords ["ate", "create"] 7 7
       , test "bars-ballad-bxrs" <|
         \_ ->
-          D.fromWords ["bars", "ballad", "bxrs"]
-          |> nodesAndWords
-          |> Expect.equal (9, ["ballad", "bars", "bxrs"])
+          standardTestForWords ["bars", "ballad", "bxrs"] 9 10
       , test "bats-bars-bxrs" <|
         \_ ->
-          D.fromWords ["bats", "bars", "bxrs"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["bars", "bats", "bxrs"])
+          standardTestForWords ["bats", "bars", "bxrs"] 6 6
       , test "naton-acton-natit-actit" <|
         \_ ->
-          D.fromWords ["naton", "acton", "natit", "actit"]
-          |> nodesAndWords
-          |> Expect.equal (8, ["actit", "acton", "natit", "naton"])
+          standardTestForWords ["naton", "acton", "natit", "actit"] 8 9
       , test "aton-cton-atit-ctit" <|
         \_ ->
-          D.fromWords ["aton", "cton", "atit", "ctit"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["atit", "aton", "ctit", "cton"]) -- CAN PROBABLY BE SMALLER
+          standardTestForWords ["aton", "cton", "atit", "ctit"] 6 6
       , test "ato-cto-ati" <|
         \_ ->
-          D.fromWords ["ato", "cto", "ati"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["ati", "ato", "cto"])
+          standardTestForWords ["ato", "cto", "ati"] 6 6
       , test "ato-cto-at" <|
         \_ ->
-          D.fromWords ["ato", "cto", "at"]
-          |> nodesAndWords
-          |> Expect.equal (5, ["at", "ato", "cto"])
+          standardTestForWords ["ato", "cto", "at"] 5 5
       , test "ato-cto-ati-cti" <|
         \_ ->
-          D.fromWords ["ato", "cto", "ati", "cti"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["ati", "ato", "cti", "cto"])
-      , test "ato-ati-cto-cti" <|
-        \_ ->
-          D.fromWords ["ato", "cto", "ati", "cti"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["ati", "ato", "cti", "cto"])
+          standardTestForWords ["ato", "cto", "ati", "cti"] 4 3
       , test "ato-cto" <|
         \_ ->
-          D.fromWords ["ato", "cto"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["ato", "cto"])
+          standardTestForWords ["ato", "cto"] 4 3
       , test "pqt-zvt-pqr" <|
         \_ ->
-          D.fromWords ["pqt", "zvt", "pqr"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pqr", "pqt", "zvt"])
+          standardTestForWords ["pqt", "zvt", "pqr"] 6 6
       , test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
         \_ ->
-          D.fromWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"]
-          |> nodesAndWords
-          |> Expect.equal (4, ["pqr", "pqt", "pvr", "pvt", "zqr", "zqt", "zvr", "zvt"])
+          standardTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
       , test "zvt-pqt-pqr" <|
         \_ ->
           D.fromWords ["zvt", "pqt", "pqr"]

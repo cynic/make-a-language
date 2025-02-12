@@ -365,7 +365,7 @@ view model =
               , color fgcolor
               ]
           ]
-          [ Html.Styled.text <| String.join " ◉ " <| recognized ]
+          [ Html.Styled.text <| (String.join " ◉ " <| recognized) ++ "      🛈: " ++ String.fromInt (DAWG.numNodes model.dawg) ++ " nodes, " ++ String.fromInt (DAWG.numEdges model.dawg) ++ " edges." ]
       ]
 
 -- VIEW DRAG ZONE
