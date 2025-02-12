@@ -89,7 +89,7 @@ isSingle : Node -> Bool
 isSingle node =
   IntDict.size node.outgoing == 1 &&
     List.all (Set.size >> (==) 1) (IntDict.values node.outgoing)
-    |> Debug.log ("isSingle for #" ++ String.fromInt node.node.id)
+    -- |> Debug.log ("isSingle for #" ++ String.fromInt node.node.id)
 
 isFinalNode : NodeId -> DAWG -> Bool
 isFinalNode nodeid dawg =
@@ -883,73 +883,59 @@ connectIndependentPaths transition rest linking d dawg =
           outgoingIsSuperset newDest currentDest =
             allTransitionsFrom newDest dawg
             |> Set.Extra.isSupersetOf (allTransitionsFrom currentDest dawg)
-          repeatedSuffix : Maybe ( NodeId, NodeId )
-          repeatedSuffix =
-            List.head linking.suffixPath
-            |> Maybe.map (\(w, _) ->
-              case ( forwardsFollowable w d.id dawg.graph, forwardsFollowable w linking.graphSuffixEnd dawg.graph ) of
-                ( Just inPrefix , Just inSuffix ) -> Just ( inPrefix.node.id, inSuffix.node.id )
-                _ -> Nothing
-            )
-            |> Maybe.withDefault Nothing
         in
-          case repeatedSuffix of
-            Just ( prefix, suffix ) ->
-              -- oh, boy!  On further examination
+          if isConfluenceConnection linking.graphPrefixEnd d.id dawg && not (outgoingIsSuperset linking.graphSuffixEnd d.id) then
+            -- Alright!  This looks to be a valid test for when we must create a chain INSTEAD of joining.
+            -- The essential point is this: if, by switching the transition, we would affect an existing
+            -- graph-word, then we must create a chain instead.  And how do we know if we would affect an
+            -- existing graph word?  Well, the outgoing connections of the suffix must be a superset of the
+            -- outgoing connections of the `d` node (which we are currently looking at).  If they are NOT,
+            -- then we would be affecting an existing graph word.
+            -- e.g. ax-gx-kp-gp
+            println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
+            withSplitPath linking.graphPrefixEnd d.id transition
+              (\c ->
+                duplicateOutgoingConnections linking.graphSuffixEnd c
+                >> duplicateOutgoingConnections d.id c
+              )
               dawg
-            Nothing ->
-              if isConfluenceConnection linking.graphPrefixEnd d.id dawg && not (outgoingIsSuperset linking.graphSuffixEnd d.id) then
-                -- Alright!  This looks to be a valid test for when we must create a chain INSTEAD of joining.
-                -- The essential point is this: if, by switching the transition, we would affect an existing
-                -- graph-word, then we must create a chain instead.  And how do we know if we would affect an
-                -- existing graph word?  Well, the outgoing connections of the suffix must be a superset of the
-                -- outgoing connections of the `d` node (which we are currently looking at).  If they are NOT,
-                -- then we would be affecting an existing graph word.
-                -- e.g. ax-gx-kp-gp
-                println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
-                withSplitPath linking.graphPrefixEnd d.id transition
-                  (\c ->
-                    duplicateOutgoingConnections linking.graphSuffixEnd c
-                    >> duplicateOutgoingConnections d.id c
-                  )
-                  dawg
-              else if d.isFinal == False && ([linking.graphPrefixEnd, linking.graphSuffixEnd] |> List.map (flip Graph.get dawg.graph) |> List.all (Maybe.map (\n -> IntDict.member d.id n.outgoing) >> Maybe.withDefault False)) then
-                -- e.g. ttal-tyal-ntl-ntal
-                println "Not enough space to enact a join; must create an ancillary node to compensate."
-                -- `dS`-`d` already exists.  (the if-statement checks for this).
-                -- We will redirect it later, but first, we will create the node
-                -- that it will be redirect _to_.
-                -- We will now create a new node from `d`.
-                getConnection linking.graphSuffixEnd d.id dawg
-                |> Maybe.map
-                  (\ds_d_connection ->
-                    createNewSuccessorNodeWithConnection ds_d_connection {-root-}d.id dawg
-                    |> \(dawg_, successor) ->
-                      println ("Created new redirection node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt d.id)
-                      -- now, redirect ds_d_connection to meet the successor node.
-                      tryDawgUpdate linking.graphSuffixEnd
-                        (obtainConnectionFrom d.id >> redirectConnectionTo successor)
-                        dawg_
-                      |> debugDAWG ("Redirected #" ++ String.fromInt linking.graphSuffixEnd ++ "→#" ++ String.fromInt d.id ++ " connection to #" ++ String.fromInt successor)
-                      -- lastly, replicate all of the outgoing connections from `d` to `successor`,
-                      -- EXCEPT for the connection that we created to `successor`.
-                      |> duplicateOutgoingConnectionsExcluding successor d.id successor
-                      |> debugDAWG ("Duplicated outgoing connections from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt successor)
-                    -- |> \(dawg_, successor) ->
-                    --     createTransitionBetween ('y', 0) d.id successor dawg_
-                    --     |> duplicateOutgoingConnections successor d.id
-                        -- |> createTransitionBetween transition linking.graphSuffixEnd successor
-                  )
-                |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in connectIndependentPaths, second case" dawg)
-              else
-                -- This is a valid test for when we must create a chain INSTEAD of joining.
-                -- The essential point is this: if, by switching the transition, we would affect an existing
-                -- graph-word, then we must create a chain instead.
-                -- println ("d = #" ++ String.fromInt d.id ++ ", dP = #" ++ String.fromInt linking.graphPrefixEnd ++ ", dS = #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+          else if d.isFinal == False && ([linking.graphPrefixEnd, linking.graphSuffixEnd] |> List.map (flip Graph.get dawg.graph) |> List.all (Maybe.map (\n -> IntDict.member d.id n.outgoing) >> Maybe.withDefault False)) then
+            -- e.g. ttal-tyal-ntl-ntal
+            println "Not enough space to enact a join; must create an ancillary node to compensate."
+            -- `dS`-`d` already exists.  (the if-statement checks for this).
+            -- We will redirect it later, but first, we will create the node
+            -- that it will be redirect _to_.
+            -- We will now create a new node from `d`.
+            getConnection linking.graphSuffixEnd d.id dawg
+            |> Maybe.map
+              (\ds_d_connection ->
+                createNewSuccessorNodeWithConnection ds_d_connection {-root-}d.id dawg
+                |> \(dawg_, successor) ->
+                  println ("Created new redirection node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt d.id)
+                  -- now, redirect ds_d_connection to meet the successor node.
+                  tryDawgUpdate linking.graphSuffixEnd
+                    (obtainConnectionFrom d.id >> redirectConnectionTo successor)
+                    dawg_
+                  |> debugDAWG ("Redirected #" ++ String.fromInt linking.graphSuffixEnd ++ "→#" ++ String.fromInt d.id ++ " connection to #" ++ String.fromInt successor)
+                  -- lastly, replicate all of the outgoing connections from `d` to `successor`,
+                  -- EXCEPT for the connection that we created to `successor`.
+                  |> duplicateOutgoingConnectionsExcluding successor d.id successor
+                  |> debugDAWG ("Duplicated outgoing connections from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt successor)
+                -- |> \(dawg_, successor) ->
+                --     createTransitionBetween ('y', 0) d.id successor dawg_
+                --     |> duplicateOutgoingConnections successor d.id
+                    -- |> createTransitionBetween transition linking.graphSuffixEnd successor
+              )
+            |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in connectIndependentPaths, second case" dawg)
+          else
+            -- This is a valid test for when we must create a chain INSTEAD of joining.
+            -- The essential point is this: if, by switching the transition, we would affect an existing
+            -- graph-word, then we must create a chain instead.
+            -- println ("d = #" ++ String.fromInt d.id ++ ", dP = #" ++ String.fromInt linking.graphPrefixEnd ++ ", dS = #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
 
-                
-                -- println ("There is an existing suffix for this word elsewhere in the graph. Connecting the path to that suffix.")
-                switchTransitionToNewPath transition linking d dawg
+            
+            -- println ("There is an existing suffix for this word elsewhere in the graph. Connecting the path to that suffix.")
+            switchTransitionToNewPath transition linking d dawg
     _ ->
       splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
         (\splitResult dawg_ ->
@@ -970,17 +956,44 @@ connectIndependentPaths transition rest linking d dawg =
 traceForwardOnThisChain : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 traceForwardOnThisChain transition rest linking d dawg =
   debugDAWG ("There is no alt-chain; I am tracing forward on the main chain, #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ ".  Before doing anything") dawg |> \_ ->
-  case ( connectsToFinalNode linking.graphPrefixEnd dawg, d.isFinal ) of
-    ( Nothing, False ) ->
+  case ( connectsToFinalNode linking.graphPrefixEnd dawg, rest, d.isFinal ) of
+    ( Nothing, [], False ) ->
       -- e.g. kp-gx-ax-gp , zv-kv-rv-kva
-      connectIndependentPaths transition rest linking d dawg
-    ( Just final, False ) ->
+      let
+        repeatedSuffix : Maybe ( NodeId, NodeId, Transition )
+        repeatedSuffix =
+          List.head linking.suffixPath
+          |> Maybe.map (\(w, isFinal) ->
+            case ( forwardsFollowable w d.id dawg.graph, forwardsFollowable w linking.graphSuffixEnd dawg.graph ) of
+              ( Just inPrefix , Just inSuffix ) -> Just ( inPrefix.node.id, inSuffix.node.id, (w, isFinal) )
+              _ -> Nothing
+          )
+          |> Maybe.withDefault Nothing
+      in
+        case repeatedSuffix of
+          Nothing ->
+            connectIndependentPaths transition rest linking d dawg
+          Just ( prefixId, suffixId, t ) ->
+            println ("The prefix (#" ++ String.fromInt prefixId ++ ") mirrors the suffix (#" ++ String.fromInt suffixId ++ ") via transition " ++ transitionToString t ++ ".  I will shift the prefix-suffix window and reconsider what to do.")
+            createForwardsChain [transition,t]
+              ({ linking
+                | graphSuffixEnd = suffixId
+                , suffixPath = List.tail linking.suffixPath |> Maybe.withDefault []
+              } |> Debug.log "now")
+              dawg
+            -- traceForwardChainTo transition [t]
+            --   { linking
+            --     | graphSuffixEnd = suffixId
+            --     , suffixPath = List.tail linking.suffixPath |> Maybe.withDefault []
+            --   }
+            --   d dawg
+    ( Nothing, _, False ) ->
+      connectIndependentPaths transition rest linking d dawg      
+    ( Just final, _, _ ) ->
       -- The graph connects to a final node, which is NOT the `graphEndSuffix`.  There is no alt-path.
       -- e.g. kp-gx-ax-gp , an-tn-x-tx , x-b-bc-ac-bx
       connectIndependentPaths transition rest linking d dawg      
-    ( Just final, True ) ->
-      connectIndependentPaths transition rest linking d dawg
-    ( Nothing, True ) ->
+    ( Nothing, _, True ) ->
       debugDAWG "[F] Impossible path" empty 
 
 traceForwardOnAlternateChain : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> NodeId -> DAWG -> DAWG
