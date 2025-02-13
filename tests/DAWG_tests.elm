@@ -57,7 +57,8 @@ suite =
           standardTestForWords ["abc", "def"] 6 6
       ]
     , describe "handles prefix construction correctly when given"
-      [ test "px-pxa-pya-pya" <|
+      [
+        test "px-pxa-pya-pya" <|
         \_ ->
           standardTestForWords ["px", "pxa", "pya", "pya"] 4 3
       , test "pxa-py-qya" <|
@@ -144,39 +145,26 @@ suite =
       , test "pqt-zvt-pqr" <|
         \_ ->
           standardTestForWords ["pqt", "zvt", "pqr"] 6 6
-      , test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
+      -- , test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
+      --   \_ -> -- COMMENTED OUT: this will generate 40320 different combinations!!
+      --     standardTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
+      , test "pqt-zqr-pvr-pvt" <|
         \_ ->
-          standardTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
-      , test "zvt-pqt-pqr" <|
-        \_ ->
-          D.fromWords ["zvt", "pqt", "pqr"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pqr", "pqt", "zvt"])
+          standardTestForWords ["pqt", "zqr", "pvr", "pvt"] 7 8
       , test "pqt-prt-pqr-zvt" <|
         \_ ->
-          D.fromWords ["pqt", "prt", "pqr", "zvt"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pqr", "pqt", "prt", "zvt"])
-      , test "pqt-prt-zvt-pqr" <|
-        \_ ->
-          D.fromWords ["pqt", "prt", "zvt", "pqr"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["pqr", "pqt", "prt", "zvt"])
+          standardTestForWords ["pqt", "prt", "pqr", "zvt"] 6 7
       , test "pqt-zvt-zvr-pqr" <|
         \_ ->
-          D.fromWords ["pqt", "zvt", "zvr", "pqr"]
-          |> nodesAndWords
-          |> Expect.equal (5, ["pqr", "pqt", "zvr", "zvt"])
+          standardTestForWords ["pqt", "zvt", "zvr", "pqr"] 5 5
       , test "pqt-zvt-pqarcz-pqr" <|
         \_ ->
-          D.fromWords ["pqt", "zvt", "pqarcz", "pqr"]
-          |> nodesAndWords
-          |> Expect.equal (9, ["pqarcz", "pqr", "pqt", "zvt"])
+          standardTestForWords ["pqt", "zvt", "pqarcz", "pqr"] 9 10
       , test "pqt-zvt-zvarc-pqr" <|
         \_ ->
-          D.fromWords ["pqt", "zvt", "zvarc", "pqr"]
-          |> nodesAndWords
-          |> Expect.equal (8, ["pqr", "pqt", "zvarc", "zvt"])
+          standardTestForWords ["pqt", "zvt", "zvarc", "pqr"] 8 9
+    --       |> nodesAndWords
+    --       |> Expect.equal (8, ["pqr", "pqt", "zvarc", "zvt"])
       , test "pqt-zvt-pqrr" <|
         \_ ->
           D.fromWords ["pqt", "zvt", "pqrr"]

@@ -856,9 +856,13 @@ addTransitionBetweenNodes source destination transition dawg =
 switchTransitionToNewPath : Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 switchTransitionToNewPath transition linking d dawg =
   println ("Switching an existing transition (" ++ transitionToString transition ++ "), originating at #" ++ String.fromInt linking.graphPrefixEnd ++ ", from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-  removeTransitionBetweenNodes linking.graphPrefixEnd d.id transition dawg
-  |> addTransitionBetweenNodes linking.graphPrefixEnd linking.graphSuffixEnd transition
-  |> checkForCollapse linking.graphSuffixEnd
+  createNewSuccessorNode transition linking.graphPrefixEnd dawg
+  |> \(dawg_, successor) ->
+    removeTransitionBetweenNodes linking.graphPrefixEnd d.id transition dawg_
+    -- |> addTransitionBetweenNodes successor linking.graphSuffixEnd transition
+    |> duplicateOutgoingConnections linking.graphSuffixEnd successor
+    |> duplicateOutgoingConnections d.id successor
+    |> withOutgoingNodesOf [linking.graphSuffixEnd, d.id] checkForCollapse
 
 connectIndependentPaths : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 connectIndependentPaths transition rest linking d dawg =
