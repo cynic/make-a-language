@@ -4,59 +4,54 @@ import Expect
 import Fuzz
 import Test exposing (..)
 import DAWG as D
-import Fuzz
-import List.Extra
+import List.Extra as List
 
 nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
   (D.numNodes d, D.verifiedRecognizedWords d)
 
+
+czech : List (List String) -> List String -> Int -> Int -> Expect.Expectation
+czech l expectedRecognized expectedNodes expectedEdges =
+  case l of
+    [] ->
+      Expect.pass
+    x::rest ->
+      let
+        dawg = D.fromWords x
+        edges = D.numEdges dawg
+        nodes = D.numNodes dawg
+        recognized = D.verifiedRecognizedWords dawg
+      in
+        if recognized /= expectedRecognized then
+          Debug.log "Failure on recognized words of permutation" x
+          |> \_ -> Expect.equal recognized expectedRecognized
+        else if nodes /= expectedNodes then
+          Debug.log "Failure on node-count of permutation" x
+          |> \_ -> Expect.equal nodes expectedNodes
+        else if edges /= expectedEdges then
+          Debug.log "Failure on edge-count of permutation" x
+          |> \_ -> Expect.equal edges expectedEdges
+        else
+          czech rest expectedRecognized expectedNodes expectedEdges
+
+
+expectedWords : List String -> List String
+expectedWords = List.sort >> List.unique >> List.filter ((/=) "")
+
 standardTestForWords : List String -> Int -> Int -> Expect.Expectation
-standardTestForWords words expectedNodes expectedEdges =
-  let
-    expectedRecognized = List.sort words |> List.Extra.unique |> List.filter ((/=) "")
-    czech : List (List String) -> Expect.Expectation
-    czech l =
-      case l of
-        [] ->
-          Expect.pass
-        x::rest ->
-          let
-            dawg = D.fromWords x
-            edges = D.numEdges dawg
-            nodes = D.numNodes dawg
-            recognized = D.verifiedRecognizedWords dawg
-          in
-            if recognized /= expectedRecognized then
-              Debug.log "Failure on recognized words of permutation" x
-              |> \_ -> Expect.equal recognized expectedRecognized
-            else if nodes /= expectedNodes then
-              Debug.log "Failure on node-count of permutation" x
-              |> \_ -> Expect.equal nodes expectedNodes
-            else if edges /= expectedEdges then
-              Debug.log "Failure on edge-count of permutation" x
-              |> \_ -> Expect.equal edges expectedEdges
-            else
-              czech rest
-            
-  in
-    czech (List.Extra.permutations words)
+standardTestForWords words =
+  czech (List.permutations words) (expectedWords words)
+
+cheapTestForWords : List String -> Int -> Int -> Expect.Expectation
+cheapTestForWords words =
+  czech [words] (expectedWords words)
 
 suite : Test
 suite =
   describe "The DAWG module"
-    [ describe "an empty DAWG" -- Nest as many descriptions as you like.
-      [ test "has no words in it" <|
-        \_ ->
-          (D.numNodes D.empty, D.recognizedWords D.empty)
-          |> Expect.equal (1, [])
-      ]
-    , describe "algorithms can handle"
-      [ test "two totally separate words" <|
-        \_ ->
-          standardTestForWords ["abc", "def"] 6 6
-      ]
-    , describe "handles prefix construction correctly when given"
+    [ -- Nest as many descriptions as you like.
+    describe "handles construction correctly when given"
       [
         test "px-pxa-pya-pya" <|
         \_ ->
@@ -145,9 +140,6 @@ suite =
       , test "pqt-zvt-pqr" <|
         \_ ->
           standardTestForWords ["pqt", "zvt", "pqr"] 6 6
-      -- , test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
-      --   \_ -> -- COMMENTED OUT: this will generate 40320 different combinations!!
-      --     standardTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
       , test "pqt-zqr-pvr-pvt" <|
         \_ ->
           standardTestForWords ["pqt", "zqr", "pvr", "pvt"] 7 8
@@ -241,9 +233,6 @@ suite =
       , test "kp-gx-ax-gp" <|
         \_ ->
           standardTestForWords ["kp","gx","ax","gp"] 5 6
-      -- , test "towxm-tbwxm-tovxm-tbvxm-towym-tbwym-tovym-tbvym" <|
-      --   \_ -> -- EXPENSIVE!!!  Generates 40320 permutations!
-      --     standardTestForWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"] 6 5
       , test "owx-bwx-ovx-bvx-owy" <|
         \_ ->
           standardTestForWords ["owx","bwx","ovx","bvx","owy"] 6 7
@@ -274,364 +263,211 @@ suite =
       , test "tst-tstabl-nst-nstabl-nstl" <|
         \_ ->
           standardTestForWords ["tst","tstabl","nst","nstabl","nstl"] 10 11
-      , test "test-testable-tester-nest-nestable-nester-nestle" <|
-        \_ ->
-          standardTestForWords ["test","testable","tester","nest","nestable","nester","nestle"] 14 17
-      , test "test-testable-tester-nest-nestable-nester-ne" <|
-        \_ ->
-          standardTestForWords ["test","testable","tester","nest","nestable","nester","ne"] 11 12
       , test "teste-ne-neste" <|
         \_ ->
           standardTestForWords ["teste", "ne", "neste"] 7 7
       , test "tere-cere-te" <|
         \_ ->
-          D.fromWords ["tere","cere","te"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["cere","te","tere"])
+          standardTestForWords ["tere","cere","te"] 6 6
       , test "teve-ceve-cyve-tyve-te" <|
         \_ ->
-          D.fromWords ["teve", "ceve", "cyve", "tyve", "te"]
-          |> nodesAndWords
-          |> Expect.equal (6, ["ceve","cyve", "te", "teve", "tyve"])
+          standardTestForWords ["teve", "ceve", "cyve", "tyve", "te"] 6 6
       , test "ayxpayx-byxpayx-ayxpbyx-byxpbyx-ayx" <|
         \_ ->
-          D.fromWords ["ayxpayx", "byxpayx", "ayxpbyx", "byxpbyx", "ayx"]
-          |> nodesAndWords
-          |> Expect.equal (10, ["ayx", "ayxpayx", "ayxpbyx", "byxpayx", "byxpbyx"])
+          standardTestForWords ["ayxpayx", "byxpayx", "ayxpbyx", "byxpbyx", "ayx"] 10 10
       , test "ayxpayx-byxpayx-ayxpbyx-byxpbyx-ayxpayx" <|
         \_ ->
-          D.fromWords ["ayxpayx", "byxpayx", "ayxpbyx", "byxpbyx", "ayxpayx"]
-          |> nodesAndWords
-          |> Expect.equal (8, ["ayxpayx", "ayxpbyx", "byxpayx", "byxpbyx"])
+          standardTestForWords ["ayxpayx", "byxpayx", "ayxpbyx", "byxpbyx", "ayxpayx"] 8 7
       , test "ayayx-byayx-aybyx" <|
         \_ ->
-          D.fromWords ["ayayx", "byayx", "aybyx"]
-          |> nodesAndWords
-          |> Expect.equal (8, ["ayayx", "aybyx", "byayx"])
+          standardTestForWords ["ayayx", "byayx", "aybyx"] 8 8
+      , test "what-phat" <|
+        \_ ->
+          standardTestForWords ["what", "phat"] 5 4
+      , test "what's up-whotsup-wassup-whatsapp-wazzup" <|
+        \_ ->
+          standardTestForWords ["what's up", "whotsup", "wassup", "whatsapp", "wazzup"] 16 19
+      , test "able-unable-disable" <|
+        \_ ->
+          standardTestForWords ["able", "unable", "disable"] 9 10
+      , test "tap-tar-top" <|
+        \_ ->
+          standardTestForWords ["tap", "tar", "top"] 5 5
+      , test "nation-action" <|
+        \_ ->
+          standardTestForWords ["nation", "action"] 8 8
+      , test "nation-action-function" <|
+        \_ ->
+          standardTestForWords ["nation", "action", "function"] 10 11
+      , test "nation-action-function-functionary" <|
+        \_ ->
+          standardTestForWords ["nation", "action", "function", "functionary"] 18 19
+      , test "nation-action-function-functionary-native" <|
+        \_ ->
+          standardTestForWords ["nation", "action", "function", "functionary", "native"] 22 24
+      , test "nation-function-functionary" <|
+        \_ ->
+          standardTestForWords ["nation", "function", "functionary"] 17 17
+      , test "fred-freddy" <|
+        \_ ->
+          standardTestForWords ["fred", "freddy"] 7 6
+      , test "fred-freddy-frederick" <|
+        \_ ->
+          standardTestForWords ["fred", "freddy", "frederick"] 11 11
+      , test "nation-action-nativity-activity" <|
+        \_ ->
+          standardTestForWords ["nation", "action", "nativity", "activity"] 11 12
+      , test "nation-action-nativity-activity-act" <|
+        \_ ->
+          standardTestForWords ["nation", "action", "nativity", "activity", "act"] 12 13
+      , test "x-y" <|
+        \_ ->
+          standardTestForWords ["x", "y"] 2 1
+      , test "tark-tavk" <|
+        \_ ->
+          standardTestForWords ["tark", "tavk"] 5 4
+      , test "tark-turkey" <|
+        \_ ->
+          standardTestForWords ["tark", "turkey"] 9 9
+      , test "tark-shark" <|
+        \_ ->
+          standardTestForWords ["tark", "shark"] 6 6
+      , test "tar-tap" <|
+        \_ ->
+          standardTestForWords ["tar", "tap"] 4 3
+      , test "task-tark" <|
+        \_ ->
+          standardTestForWords ["task", "tark"] 5 4
+      , test "task-tark-tork" <|
+        \_ ->
+          standardTestForWords ["task", "tark", "tork"] 6 6
+      , test "task-hork-terk" <|
+        \_ ->
+          standardTestForWords ["task", "hork", "terk"] 7 8
+      , test "phong-pring" <|
+        \_ ->
+          standardTestForWords ["phong", "pring"] 7 7
+      , test "phong-pring-pheng" <|
+        \_ ->
+          standardTestForWords ["phong", "pring", "pheng"] 7 7
+      , test "prong-pring-pheng-prin" <|
+        \_ ->
+          standardTestForWords ["prong", "pring", "pheng", "prin"] 8 9
+      , test "prong-pring-prin-phong" <|
+        \_ ->
+          standardTestForWords ["prong", "pring", "prin", "phong"] 8 9
+      , test "tar-tap-box" <|
+        \_ ->
+          standardTestForWords ["tar", "tap", "box"] 6 6
+      , test "try-pry-cry" <|
+        \_ ->
+          standardTestForWords ["try", "pry", "cry"] 4 3
       ]
-    , describe "adding a new transition"
+    , describe "basic tests"
       -- Expect.equal is designed to be used in pipeline style, like this.
-      [ test "to an empty graph gives us one word" <|
+      [ test "adding a string to an empty graph gives us one word" <|
         \_ ->
           D.addString "a" D.empty
           |> nodesAndWords
           |> Expect.equal (2, ["a"])
-
-      , test "to a graph with one vertex gives sequential transitions" <|
+      , test "an empty DAWG has no words in it" <|
+        \_ ->
+          (D.numNodes D.empty, D.recognizedWords D.empty)
+          |> Expect.equal (1, [])
+      , test "we can handle two totally separate words" <|
+        \_ ->
+          standardTestForWords ["abc", "def"] 6 6
+      , test "adding a string to a graph with one vertex gives sequential transitions" <|
         \_ ->
           D.addString "ab" D.empty
           |> nodesAndWords
           |> Expect.equal (3, ["ab"])
-
-      -- , test "as an alternate gives two edges between two vertices" <|
-      --   \_ ->
-      --     D.empty
-      --     |> D.addNewEdge 'a' True [] 0
-      --     |> Tuple.first
-      --     |> D.addNewEdge 'b' True [] 0
-      --     |> Tuple.first |> D.debugDAWG "check"
-      --     |> nodesAndWords
-      --     |> Expect.equal (2, ["a", "b"])
-
-      -- , test "to a graph with two alternates gives three edges between two vertices" <|
-      --   \_ ->
-      --     D.empty
-      --     |> D.addNewEdge 'a' True [] 0
-      --     |> Tuple.first
-      --     |> D.addNewEdge 'b' True [] 0
-      --     |> Tuple.first
-      --     |> D.addNewEdge 'c' True [] 0
-      --     |> Tuple.first |> D.debugDAWG "check"
-      --     |> nodesAndWords
-      --     |> Expect.equal (2, ["a", "b", "c"])
-
-      , test "to a graph with one vertex gives sequential transitions and another word" <|
+      , test "adding a string to a graph with one vertex gives sequential transitions and another word" <|
         \_ ->
           D.addString "a" D.empty
           |> D.addString "ab"
           |> nodesAndWords
           |> Expect.equal (3, ["a", "ab"])
-      ]
-    , describe "adding a new word"
-      [ test "that is empty does nothing" <|
+      , test "adding an empty word does nothing" <|
         \_ ->
           D.empty
           |> D.addString ""
           |> \d -> (D.numNodes d, D.recognizedWords d) -- note: not `verifiedRecognizedWords`
           |> Expect.equal (1, [])
-
-      , test "with a single letter works" <|
+      , test "adding a single letter works" <|
         \_ ->
           D.empty
           |> D.addString "😃"
           |> nodesAndWords
           |> Expect.equal (2, ["😃"])
-
-      , test "with two single letters works" <|
+      , test "adding two single letters works" <|
         \_ ->
           D.empty
           |> D.addString "ab"
           |> nodesAndWords
           |> Expect.equal (3, ["ab"])
-
-      , test "with a multiple letters works" <|
+      , test "adding multiple letters works" <|
         \_ ->
           D.empty
           |> D.addString "ghafūr"
           |> nodesAndWords
           |> Expect.equal (7, ["ghafūr"])
-
-      , test "on top of the same old word does nothing" <|
+      , test "repeating an already existing string does nothing" <|
         \_ ->
           D.empty
           |> D.addString "kurremkarmerruk"
           |> D.addString "kurremkarmerruk" |> D.debugDAWG "check"
           |> nodesAndWords
           |> Expect.equal (16, ["kurremkarmerruk"])
+      ]
+    , describe "stress-testing via fuzzing"
+      [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
+        \listOfStrings ->
+          D.fromWords (List.unique listOfStrings)
+          |> D.verifiedRecognizedWords
+          |> Expect.equal (List.sort <| List.unique listOfStrings)
 
-      , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "that is randomly generated works" <|
+      , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
+        \listOfStrings ->
+          D.fromWords (List.unique listOfStrings)
+          |> D.verifiedRecognizedWords
+          |> Expect.equal (List.sort <| List.unique listOfStrings)
+
+      , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
         \randomlyGeneratedString ->
           D.empty
           |> D.addString randomlyGeneratedString
           |> nodesAndWords
           |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
       ]
-
-    , fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
-      \listOfStrings ->
-        D.fromWords (List.Extra.unique listOfStrings)
-        |> D.verifiedRecognizedWords
-        |> Expect.equal (List.sort <| List.Extra.unique listOfStrings)
-
-    , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
-      \listOfStrings ->
-        D.fromWords (List.Extra.unique listOfStrings)
-        |> D.verifiedRecognizedWords
-        |> Expect.equal (List.sort <| List.Extra.unique listOfStrings)
-
-    , describe "is stress-tested with"
-      [ test "what-phat" <|
+      , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
+        [
+        test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
+        \_ -> -- COMMENTED OUT: this will generate 40320 different combinations!!
+          cheapTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
+      , test "towxm-tbwxm-tovxm-tbvxm-towym-tbwym-tovym-tbvym" <|
+        \_ -> -- EXPENSIVE!!!  Generates 40320 permutations!
+          cheapTestForWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"] 6 5
+      , test "test-testable-tester-nest-nestable-nester-nestle" <|
         \_ ->
-          D.empty
-          |> D.addString "what"
-          |> D.addString "phat"
-          |> nodesAndWords
-          |> Expect.equal (5, ["phat", "what"])
-      , test "what's up-whotsup-wassup-whatsapp-wazzup" <|
+          cheapTestForWords ["test","testable","tester","nest","nestable","nester","nestle"] 14 17
+      , test "test-testable-tester-nest-nestable-nester-ne" <|
         \_ ->
-          D.empty
-          |> D.addString "what's up"
-          |> D.addString "whotsup"
-          |> D.addString "wassup"
-          |> D.addString "whatsapp"
-          |> D.addString "wazzup"
-          |> nodesAndWords
-          |> Expect.equal (16, ["wassup", "wazzup", "what's up", "whatsapp", "whotsup"])
-      , test "able-unable-disable" <|
-        \_ ->
-          D.empty
-          |> D.addString "able"
-          |> D.addString "unable"
-          |> D.addString "disable"
-          |> nodesAndWords
-          |> Expect.equal (9, ["able", "disable", "unable"])
-      , test "tap-tar-top" <|
-        \_ ->
-          D.empty
-          |> D.addString "tap"
-          |> D.addString "tar"
-          |> D.addString "top"
-          |> nodesAndWords
-          |> Expect.equal (5, ["tap", "tar", "top"])
-      , test "nation-action" <|
-        \_ ->
-          D.empty
-          |> D.addString "nation"
-          |> D.addString "action"
-          |> nodesAndWords
-          |> Expect.equal (8, ["action", "nation"])
-      , test "nation-action-function" <|
-        \_ ->
-          D.empty
-          |> D.addString "nation"
-          |> D.addString "action"
-          |> D.addString "function"
-          |> nodesAndWords
-          |> Expect.equal (10, ["action", "function", "nation"])
-      -- , test "nation-action-function-functionary" <|
-      --   \_ ->
-      --     D.empty
-      --     |> D.addString "nation"
-      --     |> D.addString "action"
-      --     |> D.addString "function"
-      --     |> D.addString "functionary"
-      --     |> nodesAndWords
-      --     |> Expect.equal ["action", "function", "functionary", "nation"]
-      -- , test "nation-action-function-functionary-native" <|
-      --   \_ ->
-      --     D.empty
-      --     |> D.addString "nation"
-      --     |> D.addString "action"
-      --     |> D.addString "function"
-      --     |> D.addString "functionary"
-      --     |> D.addString "native"
-      --     |> nodesAndWords
-      --     |> Expect.equal ["action", "function", "functionary", "nation", "native"]
-      -- , test "nation-function-functionary" <|
-      --   \_ ->
-      --     D.empty
-      --     |> D.addString "nation"
-      --     |> D.addString "function"
-      --     |> D.addString "functionary"
-      --     |> nodesAndWords
-      --     |> Expect.equal ["function", "functionary", "nation"]
-      , test "fred-freddy" <|
-        \_ ->
-          D.empty
-          |> D.addString "fred"
-          |> D.addString "freddy"
-          |> nodesAndWords
-          |> Expect.equal (7, ["fred", "freddy"])
-      , test "fred-freddy-frederick" <|
-        \_ ->
-          D.empty
-          |> D.addString "fred"
-          |> D.addString "freddy"
-          |> D.addString "frederick" |> D.debugDAWG "check"
-          |> nodesAndWords
-          |> Expect.equal (11, ["fred", "freddy", "frederick"])
-      , test "nation-action-nativity-activity" <|
-        \_ ->
-          D.empty
-          |> D.addString "nation"
-          |> D.addString "action"
-          |> D.addString "nativity"
-          |> D.addString "activity"
-          |> nodesAndWords
-          |> Expect.equal (11, ["action", "activity", "nation", "nativity"])
-      -- , test "nation-action-nativity-activity-act" <|
-      --   \_ ->
-      --     D.empty
-      --     |> D.addString "nation"
-      --     |> D.addString "action"
-      --     |> D.addString "nativity"
-      --     |> D.addString "activity"
-      --     |> D.addString "act" |> D.debugDAWG "check"
-      --     |> nodesAndWords
-      --     |> Expect.equal ["act", "action", "activity", "nation", "nativity"]
-      , test "x-y" <|
-        \_ ->
-          D.empty
-          |> D.addString "x"
-          |> D.addString "y"
-          |> nodesAndWords
-          |> Expect.equal (2, ["x", "y"])
-      , test "tark-tavk" <|
-        \_ ->
-          D.empty
-          |> D.addString "tark"
-          |> D.addString "tavk"
-          |> nodesAndWords
-          |> Expect.equal (5, ["tark", "tavk"])
-      , test "tark-turkey" <|
-        \_ ->
-          D.empty
-          |> D.addString "tark"
-          |> D.addString "turkey"
-          |> nodesAndWords
-          |> Expect.equal (9, ["tark", "turkey"])
-      , test "tark-shark" <|
-        \_ ->
-          D.empty
-          |> D.addString "tark"
-          |> D.addString "shark"
-          |> nodesAndWords
-          |> Expect.equal (6, ["shark", "tark"])
-      , test "tar-tap" <|
-        \_ ->
-          D.empty
-          |> D.addString "tar"
-          |> D.addString "tap"
-          |> nodesAndWords
-          |> Expect.equal (4, ["tap", "tar"])
-      ]
-      , test "task-tark" <|
-        \_ ->
-          D.empty
-          |> D.addString "task"
-          |> D.addString "tark"
-          |> nodesAndWords
-          |> Expect.equal (5, ["tark", "task"])
-      , test "task-tark-tork" <|
-        \_ ->
-          D.empty
-          |> D.addString "task"
-          |> D.addString "tark"
-          |> D.addString "tork"
-          |> nodesAndWords
-          |> Expect.equal (6, ["tark", "task", "tork"])
-      , test "tark-tork" <|
-        \_ ->
-          D.empty
-          |> D.addString "tark"
-          |> D.addString "tork"
-          |> nodesAndWords
-          |> Expect.equal (5, ["tark", "tork"])
-      , test "task-hork-terk" <|
-        \_ ->
-          D.empty
-          |> D.addString "task"
-          |> D.addString "hork"
-          |> D.addString "terk"
-          |> nodesAndWords
-          |> Expect.equal (7, ["hork", "task", "terk"])
-      , test "phong-pring" <|
-        \_ ->
-          D.empty
-          |> D.addString "phong"
-          |> D.addString "pring"
-          |> nodesAndWords
-          |> Expect.equal (7, ["phong", "pring"])
-      , test "phong-pring-pheng" <|
-        \_ ->
-          D.empty
-          |> D.addString "phong"
-          |> D.addString "pring"
-          |> D.addString "pheng"
-          |> nodesAndWords
-          |> Expect.equal (7, ["pheng", "phong", "pring"])
-      , test "prong-pring-pheng-prin" <|
-        \_ ->
-          D.empty
-          |> D.addString "prong"
-          |> D.addString "pring"
-          |> D.addString "pheng"
-          |> D.addString "prin"
-          |> nodesAndWords
-          |> Expect.equal (8, ["pheng", "prin", "pring", "prong"])
-      , test "prong-pring-prin-phong" <|
-        \_ ->
-          D.empty
-          |> D.addString "prong"
-          |> D.addString "pring"
-          |> D.addString "prin"
-          |> D.addString "phong"
-          |> nodesAndWords
-          |> Expect.equal (8, ["phong", "prin", "pring", "prong"])
-      , test "tar-tap-box" <|
-        \_ ->
-          D.empty
-          |> D.addString "tar"
-          |> D.addString "tap"
-          |> D.addString "tax"
-          |> nodesAndWords
-          |> Expect.equal (4, ["tap", "tar", "tax"])
-      , test "try-pry-cry" <|
-        \_ ->
-          D.empty
-          |> D.addString "try"
-          |> D.addString "pry"
-          |> D.addString "cry"
-          |> nodesAndWords
-          |> Expect.equal (4, ["cry", "pry", "try"])
+          cheapTestForWords ["test","testable","tester","nest","nestable","nester","ne"] 11 12
+        ]
+    -- , describe "really expensive tests"
+    --   [
+    --     test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
+    --     \_ -> -- COMMENTED OUT: this will generate 40320 different combinations!!
+    --       standardTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
+    --   , test "towxm-tbwxm-tovxm-tbvxm-towym-tbwym-tovym-tbvym" <|
+    --     \_ -> -- EXPENSIVE!!!  Generates 40320 permutations!
+    --       standardTestForWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"] 6 5
+    --   , test "test-testable-tester-nest-nestable-nester-nestle" <|
+    --     \_ ->
+    --       standardTestForWords ["test","testable","tester","nest","nestable","nester","nestle"] 14 17
+    --   , test "test-testable-tester-nest-nestable-nester-ne" <|
+    --     \_ ->
+    --       standardTestForWords ["test","testable","tester","nest","nestable","nester","ne"] 11 12
+    --   ]
     ]

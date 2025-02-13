@@ -1048,15 +1048,31 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
         |> dawgUpdate c (connectTo d.id transition) -- in case the transition is terminal, this will merge
         |> checkForCollapse d.id
       else
-        -- e.g. tsbl-nsbl-nsl
-        createNewSuccessorNode d.chosenTransition c dawg
-        |> (\(dawg_, successor) ->
-            println ("[G] Inserted word is a (possibly partial) prefix. Created #" ++ String.fromInt successor ++ ", and duplicating the outgoing transitions of #" ++ String.fromInt linking.graphSuffixEnd ++ " and #" ++ String.fromInt d.id ++ " to it.")
-            duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
-            |> duplicateOutgoingConnections linking.graphSuffixEnd successor
-            |> duplicateOutgoingConnections d.id successor
-            |> withOutgoingNodesOf [successor, d.id] checkForCollapse
-          )
+        case outgoingConflict d.id linking.graphSuffixEnd dawg of
+          [] ->
+            -- e.g. tsbl-nsbl-nsl
+            createNewSuccessorNode d.chosenTransition c dawg
+            |> (\(dawg_, successor) ->
+                println ("[G] Inserted word is a (possibly partial) prefix. Created #" ++ String.fromInt successor ++ ", and duplicating the outgoing transitions of #" ++ String.fromInt linking.graphSuffixEnd ++ " and #" ++ String.fromInt d.id ++ " to it.")
+                duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
+                |> duplicateOutgoingConnections linking.graphSuffixEnd successor
+                |> duplicateOutgoingConnections d.id successor
+                |> withOutgoingNodesOf [successor, d.id] checkForCollapse
+              )
+          transitions -> -- e.g. teste-ne-neste
+            -- shift the window forward & reconsider?  If I try to do a direct link, I will end up with
+            -- a nondeterministic graph.
+            case linking.suffixPath of
+              [] -> debugDAWG "[N] Impossible case." empty
+              h::rest_ ->
+                Debug.log ("Conflicting transitions (" ++ transitionsToString transitions ++ ") of #" ++ String.fromInt d.id ++ " and #" ++ String.fromInt linking.graphSuffixEnd ++ " prevent a direct switch.  Shifting window & retrying instead.") () |> \_ ->
+                case forwardsFollowable (Tuple.first h) linking.graphSuffixEnd dawg.graph of
+                  Nothing ->
+                    debugDAWG "[N-2] Impossible case." empty
+                  Just newSuffix ->
+                    traceForwardChainTo transition (rest ++ [h])
+                      { linking | graphSuffixEnd = newSuffix.node.id, suffixPath = rest_ }
+                      d dawg
     ( Nothing, _, False) ->
       createNewSuccessorNode d.chosenTransition c dawg
       |> \(dawg_, successor) ->
