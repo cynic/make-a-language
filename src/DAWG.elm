@@ -630,20 +630,6 @@ getConnection from to dawg =
   Graph.get from dawg.graph
   |> Maybe.andThen (\{ outgoing } -> IntDict.get to outgoing)
 
-{-| This is a SET of the Connection; it is NOT a MERGE!! -}
-setConnection : NodeId -> NodeId -> Connection -> DAWG -> DAWG
-setConnection from to conn =
-  dawgUpdate from (\node -> { node | outgoing = IntDict.insert to conn node.outgoing })
-
-popCharFromConnection : Char -> Connection -> Maybe (Connection, Transition)
-popCharFromConnection ch conn =
-  if Set.member (ch, 0) conn then
-    Just (Set.remove (ch, 0) conn, (ch, 0))
-  else if Set.member (ch, 1) conn then
-    Just (Set.remove (ch, 1) conn, (ch, 1))
-  else
-    Nothing
-
 duplicateOutgoingConnectionsExcluding : NodeId -> NodeId -> NodeId -> DAWG -> DAWG
 duplicateOutgoingConnectionsExcluding excluded from to dawg =
   Maybe.map2
@@ -666,8 +652,11 @@ duplicateOutgoingConnectionsExcluding excluded from to dawg =
     (Graph.get to dawg.graph)
   |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnectionsExcluding? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
 
-duplicateOutgoingConnectionsExcludingTransition : Transition -> NodeId -> NodeId -> DAWG -> DAWG
-duplicateOutgoingConnectionsExcludingTransition transition from to dawg =
+duplicateOutgoingConnectionsExcludingTransitions : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
+duplicateOutgoingConnectionsExcludingTransitions transitions from to dawg =
+  let
+    to_remove = Set.fromList transitions
+  in
   Maybe.map2
     (\fromNode toNode ->
       { dawg
@@ -677,7 +666,7 @@ duplicateOutgoingConnectionsExcludingTransition transition from to dawg =
                 { toNode
                   | outgoing =
                       ( fromNode.outgoing
-                        |> IntDict.map (\_ -> Set.remove transition)
+                        |> IntDict.map (\_ s -> Set.diff s to_remove)
                         |> IntDict.filter (\_ -> not << Set.isEmpty) -- kill invalid connections!
                       )
                       |> createOrMergeConnections toNode.outgoing
@@ -825,6 +814,17 @@ allTransitionsFrom nodeid dawg =
     (\node -> IntDict.values node.outgoing |> List.foldl Set.union Set.empty)
   |> Maybe.withDefault Set.empty
 
+getTransitionFrom : NodeId -> Char -> DAWG -> Maybe Transition
+getTransitionFrom source w dawg =
+  allTransitionsFrom source dawg
+  |> \s ->
+    if Set.member (w, 1) s then
+      Just (w, 1)
+    else if Set.member (w, 0) s then
+      Just (w, 0)
+    else
+      Nothing
+
 removeTransitionBetweenNodes : NodeId -> NodeId -> Transition -> DAWG -> DAWG
 removeTransitionBetweenNodes source destination transition dawg =
   dawgUpdate source
@@ -853,16 +853,50 @@ addTransitionBetweenNodes source destination transition dawg =
     )
     dawg
 
+{-| Returns conflicting transitions betweeen 'a' and 'b' -}
+outgoingConflict : NodeId -> NodeId -> DAWG -> List Transition
+outgoingConflict a b dawg =
+  let
+    a_out = allTransitionsFrom a dawg
+    b_out = allTransitionsFrom b dawg
+    a_chars = Set.map Tuple.first a_out
+    b_chars = Set.map Tuple.first b_out
+  in
+    Set.intersect a_chars b_chars
+    |> Set.toList
+    |> List.map
+      (\w ->
+        maxTerminality
+          (if Set.member (w, 0) a_out then (w, 0) else (w, 1))
+          (if Set.member (w, 0) b_out then (w, 0) else (w, 1))
+      )
+
 switchTransitionToNewPath : Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 switchTransitionToNewPath transition linking d dawg =
-  println ("Switching an existing transition (" ++ transitionToString transition ++ "), originating at #" ++ String.fromInt linking.graphPrefixEnd ++ ", from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-  createNewSuccessorNode transition linking.graphPrefixEnd dawg
-  |> \(dawg_, successor) ->
-    removeTransitionBetweenNodes linking.graphPrefixEnd d.id transition dawg_
-    -- |> addTransitionBetweenNodes successor linking.graphSuffixEnd transition
-    |> duplicateOutgoingConnections linking.graphSuffixEnd successor
-    |> duplicateOutgoingConnections d.id successor
-    |> withOutgoingNodesOf [linking.graphSuffixEnd, d.id] checkForCollapse
+  case outgoingConflict d.id linking.graphSuffixEnd dawg of
+    [] ->
+      println ("Switching an existing transition (" ++ transitionToString transition ++ "), originating at #" ++ String.fromInt linking.graphPrefixEnd ++ ", from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
+      createNewSuccessorNode transition linking.graphPrefixEnd dawg
+      |> \(dawg_, successor) ->
+        removeTransitionBetweenNodes linking.graphPrefixEnd d.id transition dawg_
+        -- |> addTransitionBetweenNodes linking.graphPrefixEnd linking.graphSuffixEnd transition
+        |> duplicateOutgoingConnections linking.graphSuffixEnd successor
+        |> duplicateOutgoingConnections d.id successor
+        |> withOutgoingNodesOf [linking.graphSuffixEnd, d.id] checkForCollapse
+    transitions -> -- e.g. teste-ne-neste
+      -- shift the window forward & reconsider?  If I try to do a direct link, I will end up with
+      -- a nondeterministic graph.
+      case linking.suffixPath of
+        [] -> debugDAWG "[M] Impossible case." empty
+        h::rest ->
+          Debug.log ("Conflicting transitions (" ++ transitionsToString transitions ++ ") of #" ++ String.fromInt d.id ++ " and #" ++ String.fromInt linking.graphSuffixEnd ++ " prevent a direct switch.  Shifting window & retrying instead.") () |> \_ ->
+          case forwardsFollowable (Tuple.first h) linking.graphSuffixEnd dawg.graph of
+            Nothing ->
+              debugDAWG "[M-2] Impossible case." empty
+            Just newSuffix ->
+              traceForwardChainTo transition [h]
+                { linking | graphSuffixEnd = newSuffix.node.id, suffixPath = rest }
+                d dawg
 
 connectIndependentPaths : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
 connectIndependentPaths transition rest linking d dawg =
@@ -1018,7 +1052,7 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
         createNewSuccessorNode d.chosenTransition c dawg
         |> (\(dawg_, successor) ->
             println ("[G] Inserted word is a (possibly partial) prefix. Created #" ++ String.fromInt successor ++ ", and duplicating the outgoing transitions of #" ++ String.fromInt linking.graphSuffixEnd ++ " and #" ++ String.fromInt d.id ++ " to it.")
-            duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
+            duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
             |> duplicateOutgoingConnections linking.graphSuffixEnd successor
             |> duplicateOutgoingConnections d.id successor
             |> withOutgoingNodesOf [successor, d.id] checkForCollapse
@@ -1027,13 +1061,13 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
       createNewSuccessorNode d.chosenTransition c dawg
       |> \(dawg_, successor) ->
         println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
-        duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
+        duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
         |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
     ( Just final, _, True ) ->
       -- I am on an alt path and the graph connects to a final.  Am I also ending, though?
       -- Let me connect myself to the graphSuffixEnd, using the current transition.
       println ("[L] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
-      duplicateOutgoingConnectionsExcludingTransition transition linking.graphPrefixEnd c dawg -- CHECK HERE!!!
+      duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg -- CHECK HERE!!!
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd 
     ( Nothing, _, True ) ->
       debugDAWG "[H] Impossible path" empty
