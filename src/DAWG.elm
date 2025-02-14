@@ -439,7 +439,7 @@ checkForCollapse nodeid dawg =
       let
         sets =
           node.incoming |> IntDict.toList
-          |> List.gatherEqualsBy Tuple.second
+          |> List.gatherEqualsBy (Tuple.first >> (flip allTransitionsFrom dawg))
           |> List.filter (Tuple.second >> (not << List.isEmpty))
       in
         case sets of
@@ -1079,11 +1079,13 @@ traceForwardOnAlternateChain transition rest linking d c dawg =
         println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
         duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
         |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
+        |> checkForCollapse successor
     ( Just final, _, True ) ->
       -- I am on an alt path and the graph connects to a final.  Am I also ending, though?
       -- Let me connect myself to the graphSuffixEnd, using the current transition.
       println ("[L] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
       duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg -- CHECK HERE!!!
+      |> checkForCollapse c
       |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd 
     ( Nothing, _, True ) ->
       debugDAWG "[H] Impossible path" empty
