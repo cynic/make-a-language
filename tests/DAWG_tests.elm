@@ -436,6 +436,15 @@ suite =
           |> D.verifiedRecognizedWords
           |> Expect.equal (List.sort <| List.unique listOfStrings)
 
+      , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 5 10)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
+        \listOfStrings ->
+          let
+            dawg0 = D.fromWords listOfStrings
+            edges0 = D.numEdges dawg0
+            nodes0 = D.numNodes dawg0
+          in
+            standardTestForWords listOfStrings nodes0 edges0
+
       , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
         \randomlyGeneratedString ->
           D.empty
