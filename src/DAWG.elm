@@ -689,6 +689,10 @@ duplicateOutgoingConnections from to dawg =
       { dawg
         | graph = Graph.update to (\_ -> Just { toNode | outgoing = merged }) dawg.graph
       }
+      -- I _could_ include this.  But it has nasty consequences for later duplicate checks
+      -- because the node might not exist!!  Better to do this in the caller, after all
+      -- duplicate checks are completed?
+      -- |> withOutgoingNodesOf [to] checkForCollapse
     )
     (Graph.get from dawg.graph)
     (Graph.get to dawg.graph)
@@ -926,14 +930,32 @@ connectIndependentPaths transition rest linking d dawg =
           -- existing graph word?  Well, the outgoing connections of the suffix must be a superset of the
           -- outgoing connections of the `d` node (which we are currently looking at).  If they are NOT,
           -- then we would be affecting an existing graph word.
-          -- e.g. ax-gx-kp-gp
-          println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
-          withSplitPath linking.graphPrefixEnd d.id transition
-            (\c ->
-              duplicateOutgoingConnections linking.graphSuffixEnd c
-              >> duplicateOutgoingConnections d.id c
-            )
-            dawg
+          case outgoingConflict d.id linking.graphSuffixEnd dawg of
+            [] ->
+              -- e.g. ax-gx-kp-gp
+              println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
+              withSplitPath linking.graphPrefixEnd d.id transition
+                (\c ->
+                  duplicateOutgoingConnections linking.graphSuffixEnd c
+                  >> duplicateOutgoingConnections d.id c
+                )
+                dawg
+            transitions -> -- e.g. teste-ne-neste
+              -- shift the window forward & reconsider?  If I try to do a direct link, I will end up with
+              -- a nondeterministic graph.
+              case linking.suffixPath of
+                [] -> debugDAWG "[O] Impossible case." empty
+                h::rest_ -> -- e.g. axax-bx-cx-cxax
+                  -- if there is an existing prefix/suffix pair that feeds forward with this, then let's shift the window and re-check.
+                  Debug.log ("Conflicting transitions (" ++ transitionsToString transitions ++ ") of #" ++ String.fromInt d.id ++ " and #" ++ String.fromInt linking.graphSuffixEnd ++ " prevent a direct switch.  Shifting window & retrying instead.") () |> \_ ->
+                  case forwardsFollowable (Tuple.first h) linking.graphSuffixEnd dawg.graph of
+                    Nothing ->
+                      debugDAWG "[O-2] Impossible case." empty
+                    Just newSuffix ->
+                      traceForwardChainTo transition (rest ++ [h])
+                        { linking | graphSuffixEnd = newSuffix.node.id, suffixPath = rest_ }
+                        d dawg
+
         else if d.isFinal == False && ([linking.graphPrefixEnd, linking.graphSuffixEnd] |> List.map (flip Graph.get dawg.graph) |> List.all (Maybe.map (\n -> IntDict.member d.id n.outgoing) >> Maybe.withDefault False)) then
           -- e.g. ttal-tyal-ntl-ntal
           println "Not enough space to enact a join; must create an ancillary node to compensate."

@@ -365,6 +365,9 @@ suite =
       , test "aoeuth-aontuh-th-aoentuh-aoentuh-ouh" <|
         \_ ->
           standardTestForWords ["aoeuth", "aontuh", "th", "aoentuh", "aoentuh", "ouh"] 9 12
+      , test "axax-bx-cx-cxax" <|
+        \_ ->
+          standardTestForWords ["axax", "bx", "cx", "cxax"] 6 7
       ]
     , describe "basic tests"
       -- Expect.equal is designed to be used in pipeline style, like this.
