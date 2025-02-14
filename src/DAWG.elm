@@ -543,19 +543,23 @@ createTransitionChainBetween transitions from to dawg =
         (Graph.get from dawg.graph)
       |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in createTransitionChainBetween." dawg)
 
-followSuffixes : List Transition -> List Transition -> NodeId -> NodeId -> DAWG -> DAWG
+-- returns the nodeId we stopped on and the number of transitions we consumed
+followSuffixes : List Transition -> List Transition -> NodeId -> NodeId -> DAWG -> (NodeId, Int)
 followSuffixes transitions followed prefixEnd currentNode dawg =
   if False then -- mark as True to totally remove all suffix-following (just to experiment).
-    createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+    --createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+    ( currentNode, 0 ) 
   else
     println ("[Suffix 2] Suffixes to follow from #" ++ String.fromInt currentNode ++ ", moving back towards #" ++ String.fromInt prefixEnd ++ ": " ++ transitionsToString transitions) |> \_ ->
     case transitions of
       [] ->
-        dawg
+        ( currentNode, List.length followed )
+        -- dawg
       (w, isFinal)::transitions_remaining ->
         case compatibleBackwardsFollowable currentNode (w, isFinal) dawg.graph of
           [] ->
-            createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+            ( currentNode, List.length followed )
+            -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
           candidateBackwardNodes ->
             case List.partition isSingle candidateBackwardNodes of
               ([single], _) ->
@@ -563,24 +567,31 @@ followSuffixes transitions followed prefixEnd currentNode dawg =
                   [] ->
                     if prefixEnd == single.node.id then
                       println ("[Suffix 3.1] No more transitions to follow; ending as expected at prefix-node #" ++ String.fromInt prefixEnd ++ ".")
-                      dawg
+                      ( currentNode, List.length followed )
+                      -- dawg
                     else
-                      createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+                      ( currentNode, List.length followed )
+                      -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
                   _ ->
                     if prefixEnd == single.node.id then
                       println ("[Suffix 2.1.1] Word is longer than graph; we must add in nodes.")
-                      createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+                      ( currentNode, List.length followed )
+                      -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
                     else
                       println ("[Suffix 2.2.1] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
                       followSuffixes transitions_remaining ((w, isFinal)::followed) prefixEnd single.node.id dawg
-              (x::xs, _) ->
-                Debug.log ("[Suffix] BUG! 👽 Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Why weren't they merged?")
-                  (x::xs)
-                |> \_ -> dawg
               ([], dcdf) ->
                 Debug.log ("[Suffix 2.2.2] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
                   dcdf
-                |> \_ -> createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+                |> \_ ->
+                ( currentNode, List.length followed )
+                  -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
+              (possible, _) ->
+                println ("[Suffix] Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Should they have been merged??  In any event, I'll pick the longest suffix I can.")
+                List.map (\n -> followSuffixes transitions_remaining ((w, isFinal)::followed) prefixEnd n.node.id dawg) possible
+                |> List.maximumBy Tuple.second
+                |> Maybe.withDefault ( currentNode, List.length followed )
+                  -- dawg
 
 addFinalNode : DAWG -> (Node, DAWG)
 addFinalNode dawg =
@@ -1197,6 +1208,7 @@ createChain transitions prefixEnd suffixEnd suffixTransitions dawg =
     }
     dawg
 
+-- transitions are provided in REVERSE order to mergeSuffixes.
 mergeSuffixes : List Transition -> NodeId -> DAWG -> DAWG
 mergeSuffixes transitions prefixEnd dawg =
   case dawg.final of
@@ -1204,10 +1216,18 @@ mergeSuffixes transitions prefixEnd dawg =
       -- create a final-terminated chain going backwards, culminating at `prefixEnd`
       println "[Suffix] No final exists; creating it."
       addFinalNode dawg
-      |> \(finalnode, dawg_) -> followSuffixes transitions [] prefixEnd finalnode.node.id dawg_
+      |> \(finalnode, dawg_) ->
+        mergeSuffixes transitions prefixEnd dawg_
     Just final ->
       println ("[Suffix] Using final #" ++ String.fromInt final ++ ", following suffixes back to get close to prefix-node #" ++ String.fromInt prefixEnd)
       followSuffixes transitions [] prefixEnd final dawg
+      |> \(suffixStart, numTaken) ->
+        let
+          (a, b) = List.splitAt numTaken transitions
+          followed = List.reverse a
+          to_chain_with = List.reverse b
+        in
+          createChain to_chain_with prefixEnd suffixStart followed dawg
 
 {--
   Output/debugging functions

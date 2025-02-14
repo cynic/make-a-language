@@ -457,18 +457,21 @@ suite =
       ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
-        test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
-        \_ -> -- COMMENTED OUT: this will generate 40320 different combinations!!
-          cheapTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
-      , test "towxm-tbwxm-tovxm-tbvxm-towym-tbwym-tovym-tbvym" <|
-        \_ -> -- EXPENSIVE!!!  Generates 40320 permutations!
-          cheapTestForWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"] 6 5
-      , test "test-testable-tester-nest-nestable-nester-nestle" <|
-        \_ ->
-          cheapTestForWords ["test","testable","tester","nest","nestable","nester","nestle"] 14 17
-      , test "test-testable-tester-nest-nestable-nester-ne" <|
-        \_ ->
-          cheapTestForWords ["test","testable","tester","nest","nestable","nester","ne"] 11 12
+          test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
+          \_ -> -- COMMENTED OUT: this will generate 40320 different combinations!!
+            cheapTestForWords ["pqt", "zvt", "zvr", "pqr", "pvt", "zqr", "pvr", "zqt"] 4 3
+        , test "towxm-tbwxm-tovxm-tbvxm-towym-tbwym-tovym-tbvym" <|
+          \_ -> -- EXPENSIVE!!!  Generates 40320 permutations!
+            cheapTestForWords ["towxm", "tbwxm", "tovxm", "tbvxm", "towym", "tbwym", "tovym", "tbvym"] 6 5
+        , test "test-testable-tester-nest-nestable-nester-nestle" <|
+          \_ ->
+            cheapTestForWords ["test","testable","tester","nest","nestable","nester","nestle"] 14 17
+        , test "test-testable-tester-nest-nestable-nester-ne" <|
+          \_ ->
+            cheapTestForWords ["test","testable","tester","nest","nestable","nester","ne"] 11 12
+        , test "sed-sedy-ses-td-ts-ots-op-ops-ds" <|
+          \_ ->
+            cheapTestForWords ["sed", "sedy", "ses", "td", "ts", "ots", "op", "ops", "ds"] 9 13      
         ]
     -- , describe "really expensive tests"
     --   [
