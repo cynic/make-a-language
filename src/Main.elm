@@ -38,8 +38,6 @@ main =
     , subscriptions = subscriptions
     }
 
-
-
 -- MODEL
 
 type alias Dimensions =
@@ -102,7 +100,7 @@ viewportDimensionsToLayoutDimensions viewport config =
 
 initialLayoutConfig : LayoutConfiguration
 initialLayoutConfig =
-  { leftRightSplitterWidth = 10
+  { leftRightSplitterWidth = 5
   , leftRightSplitPercentage = 0.1
   }
 
@@ -262,31 +260,49 @@ view model =
           , padding (px 0)
           , Css.width (vw 100)
           , Css.height (vh 100)
+          , gridTemplateColumns <| trackList (px model.dimensions.leftPanel.width) [px model.layoutConfiguration.leftRightSplitterWidth, fr 1]
+          , display grid_
           ] 
       ]
       -- left panel
       [ div
           [ HA.id "left-panel"
           , css
-              [ width (px <| model.dimensions.leftPanel.width - model.layoutConfiguration.leftRightSplitterWidth / 2.0)
-              , height (px model.dimensions.leftPanel.height)
-              , userSelect pointerEvents_
+              [ userSelect pointerEvents_
               , pointerEvents pointerEvents_
               -- , backgroundColor (rgb 255 25 255)
-              , position absolute
-              , top (px 0)
-              , left (px 0)
+              , margin4 (px 0) (px 0) (px 0) (px 5)
+              , display flex_
+              , flexDirection column
               ]
           ]
           [ textarea
               [ css
-                  [ width (px <| model.dimensions.leftPanel.width - 20)
-                  , height (px <| model.dimensions.leftPanel.height - 20)
+                  [ flexGrow (num 2)
+                  , resize none
+                  , border (px 0)
+                  , margin2 (px 5) (px 0)
+                  , padding4 (px 4) (px 0) (px 4) (px 10)
+                  , borderRadius4 (px 8) (px 0) (px 0) (px 0)
+                  -- , backgroundColor (rgb 90 200 120)
+                  , border3 (px 1) solid (rgb 128 128 128)
+                  , fontSize (px 18)
+                  , fontFamilyMany
+                      ["Baskerville", "Libre Baskerville", "Consolas", "Cascadia Code", "Fira Code"]
+                      serif
+                  ]
+              , HA.placeholder "Enter words here, one per line"
+              , onInput TextInput
+              ]
+              []
+          , textarea
+              [ css
+                  [ flexGrow (num 1)
                   , resize none
                   , border (px 0)
                   , padding4 (px 4) (px 0) (px 4) (px 10)
-                  , margin (px 5)
-                  , borderRadius4 (px 8) (px 0) (px 0) (px 8)
+                  , borderRadius4 (px 0) (px 0) (px 0) (px 8)
+                  , marginBottom (px 5)
                   -- , backgroundColor (rgb 90 200 120)
                   , border3 (px 1) solid (rgb 128 128 128)
                   , fontSize (px 18)
@@ -303,14 +319,11 @@ view model =
       , div
           [ HA.id "left-right-splitter"
           , css
-              [ position absolute
-              , top (px 5)
-              , left (px <| model.dimensions.leftPanel.width - model.layoutConfiguration.leftRightSplitterWidth / 2.0)
-              , width (px model.layoutConfiguration.leftRightSplitterWidth)
-              , height (px <| model.dimensions.viewport.height - 10)
-              --, backgroundColor (rgb 200 200 0)
+              [ width (px <| model.layoutConfiguration.leftRightSplitterWidth)
+              , backgroundColor (rgb 160 160 160)
               , cursor colResize
-              , zIndex (int 10) -- needed???
+              , margin2 (px 5) (px 0)
+              --, zIndex (int 10) -- needed???
               ]
           , on "mousedown" (D.succeed DragStart)
           ]
@@ -320,52 +333,54 @@ view model =
           [ HA.id "right-panel"
           , css
               -- + 1px for border on either side = 12
-              [ width (px <| model.dimensions.rightPanel.width - 12)
-              , height (px <| model.dimensions.rightPanel.height - 14)
-              , userSelect pointerEvents_
+              [ userSelect pointerEvents_
               , pointerEvents pointerEvents_
               -- , backgroundColor (rgb 150 150 150)
-              , border3 (px 1) solid (rgb 128 128 128)
-              , position absolute
-              , top (px 0)
-              , left (px <| model.dimensions.leftPanel.width + model.layoutConfiguration.leftRightSplitterWidth / 2.0)
-              , borderRadius4 (px 0) (px 8) (px 0) (px 0)
-              , margin2 (px 5) (px 0)
-              ]
-          ]
-          [ ForceDirectedGraph.view model.forceDirectedGraph
-            |> fromUnstyled
-            |> Html.Styled.map ForceDirectedMsg
-          ]
-      -- recognized words zone
-      , let
-          recognized = DAWG.verifiedRecognizedWords model.dawg
-          isSame = (String.split "\n" model.text |> List.Extra.unique |> List.filter ((/=) "") |> List.sort) == recognized
-          (fgcolor, bgcolor) = if isSame then (rgb 0 0 0, rgb 208 240 192) else (rgb 255 255 255, rgb 236 88 0)
-        in
-        div
-          [ HA.id "recognized-words-zone"
-          , css
-              [ width <| px <| model.dimensions.recognizedWords.width - 22
-              , height <| px <| model.dimensions.recognizedWords.height
-              , userSelect pointerEvents_
-              , pointerEvents pointerEvents_
-              , border3 (px 1) solid (rgb 128 128 128)
-              , position absolute
-              , top <| px <| model.dimensions.rightPanel.height - 6
-              , left (px <| model.dimensions.leftPanel.width + model.layoutConfiguration.leftRightSplitterWidth / 2.0)
-              , borderRadius4 (px 0) (px 0) (px 8) (px 0)
-              , margin2 (px 5) (px 0)
               , display flex_
-              , alignItems center
-              , padding2 (px 0) (px 5)
+              , flexDirection column
+              , marginRight (px 5)
               , overflowX auto
-              , whiteSpace nowrap
-              , backgroundColor bgcolor
-              , color fgcolor
+              , overflowY hidden
               ]
           ]
-          [ Html.Styled.text <| (String.join " ◉ " <| recognized) ++ "      🛈: " ++ String.fromInt (DAWG.numNodes model.dawg) ++ " nodes, " ++ String.fromInt (DAWG.numEdges model.dawg) ++ " edges, " ++ String.fromInt (List.length recognized) ++ " words." ]
+          [ div
+              [ css
+                  [ flexBasis (px model.dimensions.rightPanel.height)
+                  , flexGrow (num 1)
+                  , border3 (px 1) solid (rgb 128 128 128)
+                  , borderRadius4 (px 0) (px 8) (px 0) (px 0)
+                  , margin2 (px 5) (px 0)
+                  ]
+              ]
+              [ ForceDirectedGraph.view model.forceDirectedGraph
+                |> fromUnstyled
+                |> Html.Styled.map ForceDirectedMsg
+              ]
+        -- recognized words zone
+        , let
+            recognized = DAWG.verifiedRecognizedWords model.dawg
+            isSame = (String.split "\n" model.text |> List.Extra.unique |> List.filter ((/=) "") |> List.sort) == recognized
+            (fgcolor, bgcolor) = if isSame then (rgb 0 0 0, rgb 208 240 192) else (rgb 255 255 255, rgb 236 88 0)
+          in
+          div
+            [ HA.id "recognized-words-zone"
+            , css
+                [ userSelect pointerEvents_
+                , pointerEvents pointerEvents_
+                , border3 (px 1) solid (rgb 128 128 128)
+                , borderRadius4 (px 0) (px 0) (px 8) (px 0)
+                , padding2 (px 0) (px 4)
+                , display flex_
+                , alignItems center
+                , overflowX auto
+                , marginBottom (px 5)
+                , whiteSpace nowrap
+                , backgroundColor bgcolor
+                , color fgcolor
+                ]
+            ]
+            [ Html.Styled.text <| (String.join " ◉ " <| recognized) ++ "      🛈: " ++ String.fromInt (DAWG.numNodes model.dawg) ++ " nodes, " ++ String.fromInt (DAWG.numEdges model.dawg) ++ " edges, " ++ String.fromInt (List.length recognized) ++ " words." ]
+        ]
       ]
 
 -- VIEW DRAG ZONE
