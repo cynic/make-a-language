@@ -235,6 +235,46 @@ expressionToDAWG expr state =
     -- (_ as x) ->
     --   debugLog "UNHANDLED!" exprToString x |> \_ -> ( noOp, noOp, state )
 
+combine : Expr -> Expr -> Expr
+combine first second =
+  case (debugLog "combining [a]" exprToString first, debugLog "combining [b]" exprToString second) of
+    (Variable a, Variable b) -> Variable (Set.union a b)
+    (Multiply a b, Multiply c d) -> Multiply (combine a c) (combine b d)
+    (Add a b, Add c d) -> combine a c |> combine b |> combine d
+    _ -> Debug.log "!!! Cannot handle combining !!!" ( exprToString first , exprToString second ) |> \_ -> first
+
+simplify : Expr -> Expr
+simplify e =
+  case debugLog "Simplifying" exprToString e of
+    Add (Variable _ as a) (Add (Variable _ as b) c) ->
+      Debug.log "Rule #4(1): ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
+      Add (combine a b |> simplify) (simplify c)
+    Add (Variable _ as a) (Variable _ as b) ->
+      -- if y == z then
+      Debug.log "Rule #4(2): ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
+      combine a b
+      -- else
+      --   Multiply (Multiply (simplify x) (Add (simplify y) (simplify z))) (simplify a)
+    Multiply a b -> -- generic.
+      Multiply (simplify a) (simplify b)
+    Add a b -> -- generic.
+      Add (simplify a) (simplify b)
+    x -> x
+
+reorganize : Expr -> Expr
+reorganize e =
+  -- We can switch addition around in accordance with Rule #2 (commutativity of s)
+  case e of
+    Add (Multiply _ _ as a) (Variable _ as b) ->
+      Add b (reorganize a)
+    Add (Add _ _ as a) (Variable _ as b) ->
+      Add b (reorganize a)
+    -- Add (Add _ _ as a) (Variable _ as b) ->
+    --   Add b (reorganize a)
+    Multiply a b ->
+      Multiply (reorganize a) (reorganize b)
+    x -> x
+
 parseAlgebra : String -> Result (List P.DeadEnd) Expr
 parseAlgebra =
   P.run expressionParser
@@ -247,7 +287,8 @@ fromAlgebra s =
   |> parseAlgebra
   |> Result.map (\e ->
     let
-      (start_adjust, end_adjust, state) = expressionToDAWG (debugLog "Parsed" exprToString e) (ToDawgRecord IntDict.empty 0)
+      simplified = (reorganize >> simplify) (debugLog "Parsed    " exprToString e) |> debugLog "Simplified" exprToString
+      (start_adjust, end_adjust, state) = expressionToDAWG simplified (ToDawgRecord IntDict.empty 0)
       adjusted = state |> start_adjust 0 |> end_adjust (state.maxId + 1)
       edges =
         IntDict.values adjusted.connections
