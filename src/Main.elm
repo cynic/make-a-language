@@ -27,6 +27,7 @@ import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
 import Html
+import Html.Styled.Attributes exposing (for)
 
 -- MAIN
 
@@ -66,6 +67,7 @@ type alias Model =
   , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
+  , useAlgebraic : Bool
   }
 
 type DragState
@@ -148,6 +150,7 @@ init flags =
             |> Tuple.first
         , dimensions = layout
         , layoutConfiguration = initialLayoutConfig
+        , useAlgebraic = False
         }
       , Cmd.none
       )
@@ -164,6 +167,7 @@ init flags =
           |> Tuple.first
       , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
       , layoutConfiguration = initialLayoutConfig
+      , useAlgebraic = False
       }
     , Cmd.none
     )
@@ -181,6 +185,7 @@ type Msg
   | ViewportResizeTrigger
   | OnResize (Float, Float)
   | AlgebraicTextInput String
+  | SetAlgebraicUse Bool
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -204,7 +209,9 @@ update msg model =
 
     TextInput text ->
       let
-        dawg = DAWG.fromWords <| String.split "\n" text
+        dawg =
+          String.split "\n" text
+          |> if model.useAlgebraic then DAWG.fromWordsAlgebraic else DAWG.fromWordsGraphing
       in
       ( { model
           | text = text
@@ -234,6 +241,12 @@ update msg model =
         }
       , Cmd.none
       )
+
+    SetAlgebraicUse yesno ->
+      ( { model
+          | useAlgebraic = yesno
+        }
+      , Cmd.none )
 
     ViewportResizeTrigger ->
       ( model
@@ -336,6 +349,23 @@ view model =
               , onInput AlgebraicTextInput
               ]
               [ Html.Styled.text model.algebraic ]
+          , div
+              [ css
+                  [ height (Css.em 2.2)
+                  , flexGrow (num 0)
+                  ]
+              ]
+              [ input
+                  [ HA.type_ "checkbox"
+                  , HA.id "useAlgebraic"
+                  , onCheck SetAlgebraicUse
+                  ]
+                  []
+              , label
+                  [ for "checkbox" ]
+                  [ Html.Styled.text "Use algebraic?" ]
+
+              ]
           ]
       -- splitter
       , div

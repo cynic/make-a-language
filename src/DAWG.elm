@@ -246,15 +246,24 @@ combine first second =
 simplify : Expr -> Expr
 simplify e =
   case debugLog "Simplifying" exprToString e of
+    Multiply (Add x y) a ->
+      if x == y then
+        Debug.log "Rule #3: ☝🏾 split/collapse backward" () |> \_ ->
+        Multiply (simplify x) (simplify a)
+      else
+        Multiply (simplify <| Add x y) a
     Add (Variable _ as a) (Add (Variable _ as b) c) ->
       Debug.log "Rule #4(1): ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
       Add (combine a b |> simplify) (simplify c)
     Add (Variable _ as a) (Variable _ as b) ->
-      -- if y == z then
       Debug.log "Rule #4(2): ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
       combine a b
-      -- else
-      --   Multiply (Multiply (simplify x) (Add (simplify y) (simplify z))) (simplify a)
+    Add (Multiply a x) (Multiply b y) ->
+      if a == b then
+        Debug.log "Rule #9: ☝🏾 common prefix collapse" () |> \_ ->
+        Multiply (simplify a) (simplify <| Add x y)
+      else
+        Add (simplify <| Multiply a x) (simplify <| Multiply b y)
     Multiply a b -> -- generic.
       Multiply (simplify a) (simplify b)
     Add a b -> -- generic.
@@ -275,6 +284,107 @@ reorganize e =
       Multiply (reorganize a) (reorganize b)
     x -> x
 
+type ExprAST
+  = M (List ExprAST)
+  | A (List ExprAST)
+  | V Connection
+
+exprASTToString : ExprAST -> String
+exprASTToString e =
+  case e of
+    V conn ->
+      connectionToString conn
+    M xs ->
+      "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+    A xs ->
+      "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+
+flatten : Expr -> ExprAST
+flatten expr =
+  case expr of
+    Variable s ->
+      V s
+
+    Add left right ->
+      let
+        flattenedLeft = flatten left
+        flattenedRight = flatten right
+      in
+        case ( flattenedLeft, flattenedRight ) of
+          -- Merge nested additions into a single list
+          ( A leftList, A rightList ) ->
+            A (leftList ++ rightList)
+
+          ( A leftList, _ ) ->
+            A (leftList ++ [ flattenedRight ])
+
+          ( _, A rightList ) ->
+            A (flattenedLeft :: rightList)
+
+          -- Default: wrap both in an A list
+          _ ->
+            A [ flattenedLeft, flattenedRight ]
+
+    Multiply left right ->
+      let
+        flattenedLeft = flatten left
+        flattenedRight = flatten right
+      in
+        case ( flattenedLeft, flattenedRight ) of
+          -- Merge nested multiplications into a single list
+          ( M leftList, M rightList ) ->
+            M (leftList ++ rightList)
+
+          ( M leftList, _ ) ->
+            M (leftList ++ [ flattenedRight ])
+
+          ( _, M rightList ) ->
+            M (flattenedLeft :: rightList)
+
+          -- Default: wrap both in an M list
+          _ ->
+              M [ flattenedLeft, flattenedRight ]
+
+unflatten : ExprAST -> Maybe Expr
+unflatten ast =
+  case ast of
+    V s ->
+      Just <| Variable s
+
+    A list ->
+      case list of
+        a::((_::_) as tail) ->
+          List.foldl (\expr acc -> Maybe.map2 Add acc (unflatten expr) ) (unflatten a) tail
+
+        _ -> Nothing
+
+    M list ->
+      case list of
+        a::((_::_) as tail) ->
+          List.foldl (\expr acc -> Maybe.map2 Multiply acc (unflatten expr) ) (unflatten a) tail
+
+        _ -> Nothing
+
+sortAST : ExprAST -> ExprAST
+sortAST e =
+  let
+    compare a b =
+      case (a, b) of
+        (V _, V _) ->
+          EQ
+        (V _, _) ->
+          LT
+        (_, V _) ->
+          GT
+        _ ->
+          EQ
+        
+  in
+    case e of
+      V x -> V x
+      M xs -> M (List.map sortAST xs)
+      A xs -> A (List.sortWith compare xs)
+
 parseAlgebra : String -> Result (List P.DeadEnd) Expr
 parseAlgebra =
   P.run expressionParser
@@ -287,6 +397,8 @@ fromAlgebra s =
   |> parseAlgebra
   |> Result.map (\e ->
     let
+      flattened = flatten e |> sortAST |> debugLog "check" exprASTToString
+      unflattened = unflatten flattened |> Maybe.map (debugLog "check2" exprToString)
       simplified = (reorganize >> simplify) (debugLog "Parsed    " exprToString e) |> debugLog "Simplified" exprToString
       (start_adjust, end_adjust, state) = expressionToDAWG simplified (ToDawgRecord IntDict.empty 0)
       adjusted = state |> start_adjust 0 |> end_adjust (state.maxId + 1)
@@ -1624,9 +1736,31 @@ addString txt dawg =
   wordToTransitions txt
   |> \transitions -> prefixMerge transitions dawg.root dawg
 
-fromWords : List String -> DAWG
-fromWords =
+fromWordsGraphing : List String -> DAWG
+fromWordsGraphing =
   List.foldl (\s a -> addString s a |> debugDAWG ("🔻 Post-insertion of '" ++ s ++ "'")) empty
+
+fromWordsAlgebraic : List String -> DAWG
+fromWordsAlgebraic =
+  List.map (String.replace " " "" >> String.replace "\n" "")
+  >> List.filterMap
+    (\s ->
+      case (String.dropRight 1 s, String.right 1 s) of
+        ( _, "" ) -> Nothing
+        ( "", x ) -> Just <| "!" ++ x
+        ( a, b ) ->
+          String.toList a
+          |> List.intersperse '.'
+          |> String.fromList
+          |> \initial -> initial ++ ".!" ++ b
+          |> Just
+    )
+  >> String.join "+"
+  >> Debug.log "Sending to algebra…"
+  >> fromAlgebra
+
+fromWords : List String -> DAWG
+fromWords = fromWordsGraphing
 
 numNodes : DAWG -> Int
 numNodes dawg =
