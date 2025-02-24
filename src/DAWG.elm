@@ -8,6 +8,237 @@ import IntDict
 import Set exposing (Set)
 import Result.Extra
 import Set.Extra
+import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, int, spaces, end, getChompedString, chompIf, chompWhile, map, sequence, loop, Step(..))
+import Char.Extra
+import Html exposing (th)
+
+-- AST for algebraic expressions
+type Expr
+  = Variable Connection
+  | Add Expr Expr
+  | Multiply Expr Expr
+  | Group Expr
+
+-- Parser for algebraic expressions
+expressionParser : Parser Expr
+expressionParser =
+  Debug.log ("------------------------------ NEW PARSE BEGINNING") () |> \_ ->
+  succeed identity
+    |= term
+    |. spaces
+    |. end
+
+-- Term: Handles addition
+term : Parser Expr
+term =
+  let
+    termHelper left =
+      oneOf
+        [ succeed (Loop << Add left)
+            |. spaces
+            |. symbol "+"
+            |. spaces
+            |= lazy (\_ -> factor)
+        , succeed (Done left)
+        ]
+  in
+    succeed identity
+      |= factor
+      |> P.andThen (\left -> loop left termHelper)
+
+-- Factor: Handles multiplication
+factor : Parser Expr
+factor =
+  succeed identity
+    |= primary -- obtain what will either be a variable or a group.
+    |> P.andThen
+      (\initial -> -- with that variable, proceed.
+          loop initial -- It will be used as the initial value for a (potential) product.
+            (\left -> -- `initial` is the first value here; but if we loop, then this will be a left-associative Multiply.
+              oneOf
+                [ succeed (Loop << Multiply left) -- Structure & return an indication to continue parsing within Factor.
+                    |. spaces
+                    |. symbol "." -- IF we find a '.', then we take this branch and…
+                    |. spaces
+                    |= lazy (\_ -> primary) -- …grab another primary after the '.'
+                , succeed (Done left) -- If there is no '.', then this will be hit. Notice that we ONLY return `left` here.
+                ]
+            )
+      )
+
+-- Variable: Parses alphabetic variable names
+variable : Parser Expr
+variable =
+  let
+    cParser = \c -> not (Char.Extra.isSpace c || c == '+' || c == '.' || c == '(' || c == ')' || c == '!')
+    updateSetParser finality state s =
+      case String.toList s of
+        '!'::[c] ->
+          updateSetParser finality state (String.fromList [c])
+        [c] ->
+          if Set.member (c, 1) state then
+            succeed <| Loop state
+          else if Set.member (c, 0) state then
+            succeed <| Loop <| (Set.remove (c, 0) >> Set.insert (c, finality)) state
+          else
+            succeed <| Loop <| Set.insert (c, finality) state
+        _ -> P.problem <| "Expected a single character, but got \"" ++ s ++ "\" instead."
+
+    tParser state =
+      oneOf
+        [ symbol "!!!" |> P.andThen (\_ -> updateSetParser 1 state "!")
+        , symbol "!!" |> P.andThen (\_ -> updateSetParser 0 state "!")
+        , symbol "!"
+            |. P.chompIf cParser
+            |> getChompedString
+            |> P.andThen (updateSetParser 1 state)
+        , chompIf cParser
+          |> getChompedString
+          |> P.andThen (updateSetParser 0 state)
+        , if Set.isEmpty state then
+            P.problem "Expected a variable"
+          else
+            succeed (Done state)
+        ]
+  in
+    loop Set.empty tParser
+    |> map Variable
+
+-- Primary: Handles variables and parentheses
+primary : Parser Expr
+primary =
+  oneOf
+    [ variable
+    , succeed Group
+        |. symbol "("
+        |. spaces
+        |= lazy (\_ -> term)
+        |. spaces
+        |. symbol ")"
+    ]
+
+type alias ToDawgRecord =
+  { nodeA : Int
+  , joinPoint : Maybe Int
+  , endPoints : List (Int, Int)
+  , dawg : DAWG
+  , thisContext : ParseContext
+  }
+
+type ParseContext = NoContext | InMultiply | InAdd
+
+joinAfterSplit : ToDawgRecord -> ToDawgRecord
+joinAfterSplit state =
+  { state
+    | dawg =
+        List.foldl
+          (\(id_start, id_end) dawg_ ->
+            dawgUpdate id_start
+              (\node ->
+                { node
+                  | outgoing =
+                      IntDict.get id_end node.outgoing
+                      |> Maybe.map (\conn ->
+                        IntDict.update state.dawg.maxId
+                          (\val ->
+                            case val of
+                              Just existing -> Just <| Set.union conn existing
+                              Nothing -> Just conn
+                          )
+                          (debugLog "outgoing" IntDict.toList node.outgoing)
+                        |> \out -> if id_end /= state.dawg.maxId then IntDict.remove id_end out else out
+                      ) |> Maybe.withDefault node.outgoing
+                }
+              )
+              dawg_
+            |> tryDawgUpdate id_end
+                (\node -> if IntDict.isEmpty node.incoming then Nothing else Just node)
+          )
+          (debugDAWG "yolo" state.dawg)
+          (Debug.log "working through" state.endPoints)
+  }
+
+
+expressionToDAWG : Expr -> ToDawgRecord -> ToDawgRecord
+expressionToDAWG expr state =
+  case expr of
+    Variable conn ->
+      let
+        dawg = state.dawg
+        nodeId = state.dawg.maxId + 1
+      in
+        { state
+          | dawg =
+              { dawg
+                | graph =
+                    Graph.insert
+                      { node = Node nodeId ()
+                      , incoming = IntDict.singleton state.nodeA conn
+                      , outgoing = IntDict.empty
+                      } dawg.graph
+                , maxId = nodeId
+              }
+          , nodeA = nodeId
+          , endPoints =
+              case state.thisContext of
+                NoContext ->
+                  state.endPoints
+                InMultiply ->
+                  case state.endPoints of
+                    _::rest -> (state.nodeA, nodeId) :: rest
+                    [] -> [(state.nodeA, nodeId)]
+                InAdd ->
+                  (state.nodeA, nodeId) :: state.endPoints
+        }
+    Multiply (Variable a) (Variable b) ->
+      expressionToDAWG (Variable a) { state | thisContext = InMultiply }
+      |> expressionToDAWG (Variable b)
+    Multiply ((Multiply _ _) as a) (Variable b) ->
+      expressionToDAWG a { state | thisContext = InMultiply }
+      |> expressionToDAWG (Variable b)
+    Multiply ((Multiply _ _) as a) (Group b) ->
+      expressionToDAWG a { state | thisContext = InMultiply }
+      |> expressionToDAWG (Group b)
+    Multiply (Group _ as g) (Variable _ as v) ->
+      expressionToDAWG g { state | thisContext = NoContext }
+      |> \st -> expressionToDAWG v { st | thisContext = InMultiply }
+    Multiply (Variable _ as v) (Group _ as g)  ->
+      expressionToDAWG v { state | thisContext = InMultiply }
+      |> \st -> expressionToDAWG g { st | thisContext = InMultiply }
+    Group e ->
+      expressionToDAWG e { state | thisContext = NoContext }
+    Add ((Add _ _) as a) (Variable _ as v) ->
+      expressionToDAWG a state
+      |> \st -> expressionToDAWG v { st | thisContext = InAdd, nodeA = state.nodeA }
+      |> joinAfterSplit
+    Add (Variable a) (Variable b) ->
+      expressionToDAWG (Variable a) { state | thisContext = InAdd }
+      |> \st -> expressionToDAWG (Variable b) { st | thisContext = InAdd, nodeA = state.nodeA }
+      |> joinAfterSplit
+    Add (Multiply _ _ as m) (Variable _ as v) ->
+      expressionToDAWG m { state | thisContext = InMultiply }
+      |> \st -> expressionToDAWG v { st | thisContext = InAdd, nodeA = state.nodeA }
+      |> joinAfterSplit
+    (_ as x) ->
+      Debug.log "UNHANDLED!" x |> \_ -> state
+
+parseAlgebra : String -> Result (List P.DeadEnd) Expr
+parseAlgebra =
+  P.run expressionParser
+
+fromAlgebra : String -> DAWG
+fromAlgebra s =
+  s
+  |> String.replace " " ""
+  |> String.replace "\n" ""
+  |> parseAlgebra
+  |> Debug.log "Parsed"
+  |> Result.map (\v ->
+    expressionToDAWG v (ToDawgRecord 0 Nothing [] empty NoContext)
+    |> .dawg
+    |> \d -> { d | final = Just d.maxId }
+  )
+  |> Result.withDefault empty
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -1272,6 +1503,10 @@ debugDAWG txt dawg =
 println : String -> a -> a
 println txt x =
   Debug.log txt () |> \_ -> x
+
+debugLog : String -> (a -> b) -> a -> a
+debugLog s f v =
+  Debug.log s (f v) |> \_ -> v
 
 {--
   User-facing functions (and a few helpers thereof)

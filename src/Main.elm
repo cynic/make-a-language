@@ -26,6 +26,7 @@ import Platform.Cmd as Cmd
 import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
+import Html
 
 -- MAIN
 
@@ -60,6 +61,7 @@ type alias LayoutConfiguration =
 type alias Model =
   { dragState : DragState
   , text : String
+  , algebraic : String
   , dawg : DAWG.DAWG
   , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
@@ -135,6 +137,7 @@ init flags =
     \layout ->
       ( { dragState = Static
         , text = ""
+        , algebraic = ""
         , dawg = DAWG.empty
         , forceDirectedGraph =
             ForceDirectedGraph.init
@@ -152,6 +155,7 @@ init flags =
   |> Result.withDefault
     ( { dragState = Static
       , text = ""
+      , algebraic = ""
       , dawg = DAWG.empty
       , forceDirectedGraph =
           ForceDirectedGraph.init
@@ -176,6 +180,7 @@ type Msg
   | ForceDirectedMsg ForceDirectedGraph.Msg
   | ViewportResizeTrigger
   | OnResize (Float, Float)
+  | AlgebraicTextInput String
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -203,6 +208,23 @@ update msg model =
       in
       ( { model
           | text = text
+          , dawg = dawg
+          , forceDirectedGraph =
+              ForceDirectedGraph.update
+                (model.dimensions.leftPanel.width + 10, 10)
+                (ForceDirectedGraph.GraphUpdated dawg)
+                model.forceDirectedGraph
+        }
+      , Cmd.none
+      )
+
+    AlgebraicTextInput text ->
+      let
+        dawg = DAWG.fromAlgebra text
+      in
+      ( { model
+          | algebraic = text
+          , text = DAWG.recognizedWords dawg |> String.join "\n"
           , dawg = dawg
           , forceDirectedGraph =
               ForceDirectedGraph.update
@@ -294,7 +316,7 @@ view model =
               , HA.placeholder "Enter words here, one per line"
               , onInput TextInput
               ]
-              []
+              [ Html.Styled.text model.text ]
           , textarea
               [ css
                   [ flexGrow (num 1)
@@ -310,10 +332,10 @@ view model =
                       ["Baskerville", "Libre Baskerville", "Consolas", "Cascadia Code", "Fira Code"]
                       serif
                   ]
-              , HA.placeholder "Enter words here, one per line"
-              , onInput TextInput
+              , HA.placeholder "Algebraic input here"
+              , onInput AlgebraicTextInput
               ]
-              []
+              [ Html.Styled.text model.algebraic ]
           ]
       -- splitter
       , div
