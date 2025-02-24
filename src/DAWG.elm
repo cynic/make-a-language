@@ -17,7 +17,6 @@ type Expr
   = Variable Connection
   | Add Expr Expr
   | Multiply Expr Expr
-  | Group Expr
 
 -- Parser for algebraic expressions
 expressionParser : Parser Expr
@@ -109,7 +108,7 @@ primary : Parser Expr
 primary =
   oneOf
     [ variable
-    , succeed Group
+    , succeed identity -- I _could_ create a Group here, but what would be the point?  The parse tree takes care of grouping.
         |. symbol "("
         |. spaces
         |= lazy (\_ -> term)
@@ -117,110 +116,124 @@ primary =
         |. symbol ")"
     ]
 
+exprToString : Expr -> String
+exprToString e =
+  case e of
+    Variable conn ->
+      connectionToString conn
+    Multiply a b ->
+      "(× " ++ exprToString a ++ " " ++ exprToString b ++ ")"
+    Add a b ->
+      "(+ " ++ exprToString a ++ " " ++ exprToString b ++ ")"
+
+type alias EdgeRecord =
+  { start : Maybe Int
+  , data : Connection
+  , end : Maybe Int
+  }
+
+type alias Adjuster = Int -> ToDawgRecord -> ToDawgRecord
+
 type alias ToDawgRecord =
-  { nodeA : Int
-  , joinPoint : Maybe Int
-  , endPoints : List (Int, Int)
-  , dawg : DAWG
-  , thisContext : ParseContext
+  { connections : IntDict.IntDict EdgeRecord  -- the ones which are relevant before this
+  , maxId : Int
   }
 
-type ParseContext = NoContext | InMultiply | InAdd
+{-
+  I always know where to attach FROM: it is some node I've already created or know about or have seen.
+  But I don't know where to attach TO always, and I think that it is tricky because when I have something
+  like a+b+c+d, all of them must attach to the SAME end-point… but where will that be?  Well, when going in,
+  I am using prefix notation, so I already know the operation and I also know the operands.
 
-joinAfterSplit : ToDawgRecord -> ToDawgRecord
-joinAfterSplit state =
-  { state
-    | dawg =
-        List.foldl
-          (\(id_start, id_end) dawg_ ->
-            dawgUpdate id_start
-              (\node ->
-                { node
-                  | outgoing =
-                      IntDict.get id_end node.outgoing
-                      |> Maybe.map (\conn ->
-                        IntDict.update state.dawg.maxId
-                          (\val ->
-                            case val of
-                              Just existing -> Just <| Set.union conn existing
-                              Nothing -> Just conn
-                          )
-                          (debugLog "outgoing" IntDict.toList node.outgoing)
-                        |> \out -> if id_end /= state.dawg.maxId then IntDict.remove id_end out else out
-                      ) |> Maybe.withDefault node.outgoing
-                }
-              )
-              dawg_
-            |> tryDawgUpdate id_end
-                (\node -> if IntDict.isEmpty node.incoming then Nothing else Just node)
-          )
-          (debugDAWG "yolo" state.dawg)
-          (Debug.log "working through" state.endPoints)
-  }
+  When it is multiplication, things are fairly easy, because I know that they all follow on from each other.
 
+  However, when it is addition, then all the splits have to converge somewhere.  Let's look at one:
 
-expressionToDAWG : Expr -> ToDawgRecord -> ToDawgRecord
+  a.b.(x+c.d.(e+g)+f).p
+  gives us
+  (× (× (× a b) (+ (+ x (× (× c d) (+ e g))) f)) p)
+
+  I will see this as
+    Mul0 (Mul1, Var p) where
+      Mul1 (Mul2, Add0) where
+        Mul2 (Var a, Var b) and
+        Add0 (Add1, Var f) where
+          Add1 (Var x, Mul3) where
+            Mul3 (Mul4, Add2) where
+              Mul4 (Var c, Var d) and
+              Add2 (Var e, Var g).
+
+  So this looks, from the parsing perspective, a little more messy.  Okay.  So, how do I sort it out?
+  Well, I can try making bits of the graph and then joining them together as I go up again.  That way,
+  I always have the start and end of things, because a Var always joins two nodes.  Basically, each Var
+  will form an Edge.  Now an Edge must go from somewhere to somewhere else.  INITIALLY… let's say that
+  it goes from Nothing to Nothing, and then we will fill in those blanks as we go.
+
+  Okay, so: how would we handle the above?
+
+  1. When we get `Mul0 (Mul1, Var p)`, create (Nothing, {p}, Nothing).  Since it's at the end, it will be the
+     destination for the end of `Mul1`.  Now descend; we'll come back here in a bit.
+  2. In `Mul1 (Mul2, Add0)`, we see two parts.  We will need to join them later.  For now, handle each
+     individually, and we'll make a join-point later.  Descend into Mul2.
+  3. In `Mul2 (Var a, Var b)` we can create a good old-fashioned sequence: (Nothing, {a}, 1) and (1, {b}, Nothing).
+     Return functions to set the "start" and "end" of this sequence.
+  4. And now we will be back in (2).  We descend into `Add0`.
+  5. In `Add0`, we see `Var f` and can create (Nothing, {f}, Nothing).  We also see `Add1`, so we descend.
+  6. In `Add1`, we see `Var f` and can create (Nothing, {x}, Nothing).  We then descend into `Mul3`.
+  7. In Mul3, we see `Mul4` and `Add2`.  Let's descend into `Mul4`.
+  8. In Mul4, we see `Var c` and `Var d`.  Great!  We create (Nothing, {c}, 2) and (2, {d}, Nothing).  Return functions
+     to set the "start" and "end" of this sequence.
+  9. Now we are back in (7), so let us descend into `Add2`.
+  10.In `Add2`, we see `Var e` and `Var g`.  We can create (Nothing, {e}, Nothing) and (Nothing, {g}, Nothing), and
+     we can pass back appropriate functions.  Because this is an `Add`, when we set the "start", we would be setting
+     the start of BOTH of these things; and likewise for the end.
+  11.This takes us back to (7).  Now we have the results of the `Mul4` and the `Add2`.  Choose the next available
+     number and use it to set the "end" of the first item and the "start" of the second item to the same value.  Then
+     return the appropriate "start" and "end" functions, as received from the called functions.
+  12.This takes us back to (6).  We can change (Nothing, {f}, )…
+
+-}
+
+newVar : Connection -> ToDawgRecord -> (Adjuster, Adjuster, ToDawgRecord)
+newVar conn state =
+  let
+    k = state.maxId + 1
+  in
+    ( \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | start = Just n }) r.connections }
+    , \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | end = Just n }) r.connections }
+    , { state
+        | maxId = k
+        , connections = IntDict.insert k (EdgeRecord Nothing conn Nothing) state.connections
+      }
+    )
+
+noOp : Adjuster
+noOp _ d = d
+
+expressionToDAWG : Expr -> ToDawgRecord -> (Adjuster, Adjuster, ToDawgRecord)
 expressionToDAWG expr state =
   case expr of
-    Variable conn ->
+    Variable data ->
+      newVar data state
+    Multiply a b ->
       let
-        dawg = state.dawg
-        nodeId = state.dawg.maxId + 1
+        (a_start_adjust, a_end_adjust, s_) = expressionToDAWG a state
+        (b_start_adjust, b_end_adjust, s__) = expressionToDAWG b s_
+        linkVal = s__.maxId + 1
+        result = a_end_adjust linkVal s__ |> b_start_adjust linkVal |> \s -> { s | maxId = linkVal }
       in
-        { state
-          | dawg =
-              { dawg
-                | graph =
-                    Graph.insert
-                      { node = Node nodeId ()
-                      , incoming = IntDict.singleton state.nodeA conn
-                      , outgoing = IntDict.empty
-                      } dawg.graph
-                , maxId = nodeId
-              }
-          , nodeA = nodeId
-          , endPoints =
-              case state.thisContext of
-                NoContext ->
-                  state.endPoints
-                InMultiply ->
-                  case state.endPoints of
-                    _::rest -> (state.nodeA, nodeId) :: rest
-                    [] -> [(state.nodeA, nodeId)]
-                InAdd ->
-                  (state.nodeA, nodeId) :: state.endPoints
-        }
-    Multiply (Variable a) (Variable b) ->
-      expressionToDAWG (Variable a) { state | thisContext = InMultiply }
-      |> expressionToDAWG (Variable b)
-    Multiply ((Multiply _ _) as a) (Variable b) ->
-      expressionToDAWG a { state | thisContext = InMultiply }
-      |> expressionToDAWG (Variable b)
-    Multiply ((Multiply _ _) as a) (Group b) ->
-      expressionToDAWG a { state | thisContext = InMultiply }
-      |> expressionToDAWG (Group b)
-    Multiply (Group _ as g) (Variable _ as v) ->
-      expressionToDAWG g { state | thisContext = NoContext }
-      |> \st -> expressionToDAWG v { st | thisContext = InMultiply }
-    Multiply (Variable _ as v) (Group _ as g)  ->
-      expressionToDAWG v { state | thisContext = InMultiply }
-      |> \st -> expressionToDAWG g { st | thisContext = InMultiply }
-    Group e ->
-      expressionToDAWG e { state | thisContext = NoContext }
-    Add ((Add _ _) as a) (Variable _ as v) ->
-      expressionToDAWG a state
-      |> \st -> expressionToDAWG v { st | thisContext = InAdd, nodeA = state.nodeA }
-      |> joinAfterSplit
-    Add (Variable a) (Variable b) ->
-      expressionToDAWG (Variable a) { state | thisContext = InAdd }
-      |> \st -> expressionToDAWG (Variable b) { st | thisContext = InAdd, nodeA = state.nodeA }
-      |> joinAfterSplit
-    Add (Multiply _ _ as m) (Variable _ as v) ->
-      expressionToDAWG m { state | thisContext = InMultiply }
-      |> \st -> expressionToDAWG v { st | thisContext = InAdd, nodeA = state.nodeA }
-      |> joinAfterSplit
-    (_ as x) ->
-      Debug.log "UNHANDLED!" x |> \_ -> state
+        ( a_start_adjust, b_end_adjust, result )
+    Add a b ->
+      let
+        (a_start_adjust, a_end_adjust, s_) = expressionToDAWG a state
+        (b_start_adjust, b_end_adjust, result) = expressionToDAWG b s_
+      in
+        ( \n d -> a_start_adjust n d |> b_start_adjust n
+        , \n d -> a_end_adjust n d |> b_end_adjust n
+        , result
+        )
+    -- (_ as x) ->
+    --   debugLog "UNHANDLED!" exprToString x |> \_ -> ( noOp, noOp, state )
 
 parseAlgebra : String -> Result (List P.DeadEnd) Expr
 parseAlgebra =
@@ -232,11 +245,35 @@ fromAlgebra s =
   |> String.replace " " ""
   |> String.replace "\n" ""
   |> parseAlgebra
-  |> Debug.log "Parsed"
-  |> Result.map (\v ->
-    expressionToDAWG v (ToDawgRecord 0 Nothing [] empty NoContext)
-    |> .dawg
-    |> \d -> { d | final = Just d.maxId }
+  |> Result.map (\e ->
+    let
+      (start_adjust, end_adjust, state) = expressionToDAWG (debugLog "Parsed" exprToString e) (ToDawgRecord IntDict.empty 0)
+      adjusted = state |> start_adjust 0 |> end_adjust (state.maxId + 1)
+      edges =
+        IntDict.values adjusted.connections
+        |> Debug.log "Raw values from IntDict"
+        |> List.map
+            (\{start, data, end} ->
+              case (start, end) of
+                ( Just a, Just b ) -> Graph.Edge a b data
+                -- the next 3 cases all indicate something bad
+                _ -> Debug.log "BAD!" (start, end) |> \_ -> Graph.Edge 0 0 Set.empty
+            )
+      (maxId, nodes) =
+        IntDict.values adjusted.connections
+        |> List.concatMap
+          (\{start, end} ->
+            case (start, end) of
+              ( Just a, Just b ) -> [a, b]
+              -- the next 3 cases all indicate something bad
+              _ -> Debug.log "BAD!" (start, end) |> \_ -> []
+          )
+        |> List.unique
+        |> \l -> (List.maximum l, List.map (\n -> Node n ()) l)
+    in
+      Maybe.map (\max -> DAWG (Graph.fromNodesAndEdges nodes edges) max 0 (Just <| state.maxId + 1)) maxId
+      |> Maybe.withDefault empty
+      -- |> debugDAWG "tada"
   )
   |> Result.withDefault empty
 
