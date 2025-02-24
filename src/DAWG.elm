@@ -235,40 +235,76 @@ expressionToDAWG expr state =
     -- (_ as x) ->
     --   debugLog "UNHANDLED!" exprToString x |> \_ -> ( noOp, noOp, state )
 
-combine : Expr -> Expr -> Expr
-combine first second =
-  case (debugLog "combining [a]" exprToString first, debugLog "combining [b]" exprToString second) of
-    (Variable a, Variable b) -> Variable (Set.union a b)
-    (Multiply a b, Multiply c d) -> Multiply (combine a c) (combine b d)
-    (Add a b, Add c d) -> combine a c |> combine b |> combine d
-    _ -> Debug.log "!!! Cannot handle combining !!!" ( exprToString first , exprToString second ) |> \_ -> first
 
-simplify : Expr -> Expr
+simplify : ExprAST -> ExprAST
 simplify e =
-  case debugLog "Simplifying" exprToString e of
-    Multiply (Add x y) a ->
-      if x == y then
-        Debug.log "Rule #3: ☝🏾 split/collapse backward" () |> \_ ->
-        Multiply (simplify x) (simplify a)
-      else
-        Multiply (simplify <| Add x y) a
-    Add (Variable _ as a) (Add (Variable _ as b) c) ->
-      Debug.log "Rule #4(1): ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
-      Add (combine a b |> simplify) (simplify c)
-    Add (Variable _ as a) (Variable _ as b) ->
-      Debug.log "Rule #4(2): ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
-      combine a b
-    Add (Multiply a x) (Multiply b y) ->
-      if a == b then
-        Debug.log "Rule #9: ☝🏾 common prefix collapse" () |> \_ ->
-        Multiply (simplify a) (simplify <| Add x y)
-      else
-        Add (simplify <| Multiply a x) (simplify <| Multiply b y)
-    Multiply a b -> -- generic.
-      Multiply (simplify a) (simplify b)
-    Add a b -> -- generic.
-      Add (simplify a) (simplify b)
-    x -> x
+  case debugLog "Simplifying" exprASTToString e of
+    A (V x::V y::rest) ->
+      Debug.log "Rule #4: ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
+      case rest of
+        [] -> V (Set.union x y)
+        _ -> simplify <| A (V (Set.union x y)::rest)
+    A xs ->
+      -- See if we can apply Rule 9: Common Prefix Collapse
+      let
+        samePrefixMuls =
+          List.filter
+            (\v ->
+              case v of
+                M _ -> True
+                _ -> False
+            ) xs
+          |> List.map sortAST
+          |> List.gatherEqualsBy
+            (\v ->
+              case v of
+                M (x::_) -> Just x
+                _ -> Nothing
+            )
+          |> List.filter (not << (Tuple.second >> List.isEmpty))
+          |> List.map (\(fst, rest) -> fst::rest)
+        replacements =
+          samePrefixMuls
+          |> List.filterMap
+            (\l ->
+              case l of
+                M (h::_)::_ ->
+                  Just
+                    ( Debug.log "Common prefix" h
+                    , List.map
+                        (\m ->
+                          case m of
+                            M [_, v] -> v
+                            M (_::rest) -> M rest
+                            _ -> m -- should not reach here!
+                        )
+                        l
+                    )
+                _ -> Nothing
+            )
+          |> List.map
+            (\(head, tails) -> M [head, A tails]
+            )
+      in
+        case samePrefixMuls of
+          [] -> -- no common prefix collapse.
+            A (List.map simplify xs)
+          sames ->
+              -- Debug.log "FOUND SAME PREFIX!" samePrefixMuls |> \_ ->
+              Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
+              -- remove all the "same-prefix" items from inside.
+              List.foldl
+                (\same state -> List.foldl List.remove state same)
+                xs sames
+              -- and replace them with the replacements
+              |> (\l -> l ++ replacements)
+              |> A
+              |> sortAST
+              |> simplify
+
+    M xs -> -- generic.
+      M (List.map simplify xs)
+    V x -> V x -- base case
 
 reorganize : Expr -> Expr
 reorganize e =
@@ -370,12 +406,16 @@ sortAST e =
   let
     compare a b =
       case (a, b) of
-        (V _, V _) ->
-          EQ
+        (V x, V y) ->
+          Basics.compare (Set.toList x) (Set.toList y)
         (V _, _) ->
           LT
         (_, V _) ->
           GT
+        (M (x::_), M (y::_)) ->
+          compare x y
+        (A (x::_), A (y::_)) ->
+          compare x y
         _ ->
           EQ
         
@@ -383,7 +423,11 @@ sortAST e =
     case e of
       V x -> V x
       M xs -> M (List.map sortAST xs)
-      A xs -> A (List.sortWith compare xs)
+      -- the .unique here implements Rule #3
+      A xs ->
+        case List.unique xs |> List.sortWith compare of
+          [y] -> y
+          ys -> A ys
 
 parseAlgebra : String -> Result (List P.DeadEnd) Expr
 parseAlgebra =
@@ -397,10 +441,13 @@ fromAlgebra s =
   |> parseAlgebra
   |> Result.map (\e ->
     let
-      flattened = flatten e |> sortAST |> debugLog "check" exprASTToString
-      unflattened = unflatten flattened |> Maybe.map (debugLog "check2" exprToString)
-      simplified = (reorganize >> simplify) (debugLog "Parsed    " exprToString e) |> debugLog "Simplified" exprToString
-      (start_adjust, end_adjust, state) = expressionToDAWG simplified (ToDawgRecord IntDict.empty 0)
+      flattened = flatten e |> sortAST |> debugLog "flattened" exprASTToString
+      simplified = simplify flattened |> debugLog "Simplified" exprASTToString
+      unflattened =
+        unflatten simplified
+        |> Maybe.map (debugLog "unflattened" exprToString)
+        |> Maybe.withDefault (Variable <| Set.fromList [('n', 1), ('o', 1)])
+      (start_adjust, end_adjust, state) = expressionToDAWG unflattened (ToDawgRecord IntDict.empty 0)
       adjusted = state |> start_adjust 0 |> end_adjust (state.maxId + 1)
       edges =
         IntDict.values adjusted.connections
