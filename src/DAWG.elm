@@ -503,9 +503,11 @@ exprASTToString e =
     V conn ->
       connectionToString conn
     M xs ->
-      "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+      -- "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+      List.map exprASTToString xs |> String.join "."
     A xs ->
-      "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+      -- "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+      "[" ++ (List.map exprASTToString xs |> String.join " + ") ++ "]"
 
 flatten : Expr -> ExprAST
 flatten expr =
