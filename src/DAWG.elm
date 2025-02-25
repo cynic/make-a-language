@@ -297,6 +297,12 @@ commonPrefixCollapse xs =
         |> List.map sortAST
 
 {-|This applies Rule #11, Prefix Subsumption, to an “Add” value.
+
+Applies: a + a.x = a.x
+
+Because ab = a+b, ab + a.x = a + b + a.x = b + a.x
+
+And ac + a.x + c.y = a + c + a.x + c.y = a.x + c.y
 -}
 commonPrefixSubsumption : (List ExprAST) -> List ExprAST
 commonPrefixSubsumption xs =
@@ -306,27 +312,31 @@ commonPrefixSubsumption xs =
       List.filterMap
         (\v ->
           case v of
-            M ((V _ as h)::_) -> Just h
+            M (V conn::_) ->
+              case Set.toList conn of
+                [t] -> Just t
+                _ -> Nothing
             _ -> Nothing
         ) xs
-      |> List.unique
-    toSubsume =
-      List.filter
+      |> Set.fromList
+  in
+    if Set.isEmpty mulHeads then
+      xs
+    else
+      Debug.log "Rule #11: ☝🏾 attempting to apply Common Prefix Subsumption" () |> \_ ->
+      List.filterMap
         (\v ->
           case v of
-            V _ -> List.member v mulHeads
-            _ -> False
+            V conn ->
+              let
+                remaining = Set.diff conn mulHeads
+              in
+                if Set.isEmpty remaining then
+                  Nothing
+                else
+                  Just <| V remaining
+            x -> Just x
         ) xs
-  in
-    case toSubsume of
-      [] -> -- No subsumption.  Rely on the caller to simplify within.
-        xs
-      _ ->
-        Debug.log "Rule #11: ☝🏾 subject to: Common Prefix Subsumption" () |> \_ ->
-        List.foldl
-          (\v state -> List.removeWhen ((==) v) state)
-          xs
-          toSubsume
 
 {-|This applies Rule #10, Finality Primacy, to an “Add” value.
 
@@ -477,20 +487,6 @@ simplify e =
     M xs -> -- generic.
       M (List.map simplify xs)
     V x -> V x -- base case
-
-reorganize : Expr -> Expr
-reorganize e =
-  -- We can switch addition around in accordance with Rule #2 (commutativity of s)
-  case e of
-    Add (Multiply _ _ as a) (Variable _ as b) ->
-      Add b (reorganize a)
-    Add (Add _ _ as a) (Variable _ as b) ->
-      Add b (reorganize a)
-    -- Add (Add _ _ as a) (Variable _ as b) ->
-    --   Add b (reorganize a)
-    Multiply a b ->
-      Multiply (reorganize a) (reorganize b)
-    x -> x
 
 type ExprAST
   = M (List ExprAST)
