@@ -235,6 +235,171 @@ expressionToDAWG expr state =
     -- (_ as x) ->
     --   debugLog "UNHANDLED!" exprToString x |> \_ -> ( noOp, noOp, state )
 
+{-|This applies Rule #9, Common Prefix Collapse, to an “Add” value.
+-}
+commonPrefixCollapse : (List ExprAST) -> List ExprAST
+commonPrefixCollapse xs =
+  let
+    samePrefixMuls =
+      -- get all the "Multiply" values
+      List.filter
+        (\v ->
+          case v of
+            M _ -> True
+            _ -> False
+        ) xs
+      -- triple-check to ensure that the same values are structurally the same
+      |> List.map sortAST
+      |> List.gatherEqualsBy
+        (\v ->
+          case v of
+            M (x::_) -> Just x
+            _ -> Nothing
+        )
+      |> List.filter (not << (Tuple.second >> List.isEmpty))
+      |> List.map (\(fst, rest) -> fst::rest)
+    replacements =
+      samePrefixMuls
+      |> List.filterMap
+        (\l ->
+          case l of
+            M (h::_)::_ ->
+              Just
+                ( Debug.log "Common prefix" h
+                , List.map
+                    (\m ->
+                      case m of
+                        M [_, v] -> v
+                        M (_::rest) -> M rest
+                        _ -> m -- should not reach here!
+                    )
+                    l
+                )
+            _ -> Nothing
+        )
+      |> List.map
+        (\(head, tails) -> M [head, A tails]
+        )
+  in
+    case samePrefixMuls of
+      [] -> -- no common prefix collapse. Rely on the caller to simplify within.
+        xs
+      sames ->
+        Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
+        -- remove all the "same-prefix" items from inside.
+        List.foldl
+          (\same state -> List.foldl List.remove state same)
+          xs sames
+        -- and replace them with the replacements
+        |> (\l -> l ++ replacements)
+        |> List.map sortAST
+
+{-|This applies Rule #11, Prefix Subusmption, to an “Add” value.
+-}
+commonPrefixSubsumption : (List ExprAST) -> List ExprAST
+commonPrefixSubsumption xs =
+  let
+    mulHeads =
+      -- get all the "Multiply" values
+      List.filterMap
+        (\v ->
+          case v of
+            M ((V _ as h)::_) -> Just h
+            _ -> Nothing
+        ) xs
+      |> List.unique
+    toSubsume =
+      List.filter
+        (\v ->
+          case v of
+            V _ -> List.member v mulHeads
+            _ -> False
+        ) xs
+  in
+    case toSubsume of
+      [] -> -- No subsumption.  Rely on the caller to simplify within.
+        xs
+      _ ->
+        Debug.log "Rule #11: ☝🏾 subject to: Common Prefix Subsumption" () |> \_ ->
+        List.foldl
+          (\v state -> List.removeWhen ((==) v) state)
+          xs
+          toSubsume
+
+{-|This applies Rule #5, Common Suffix Collapse, to an “Add” value.
+-}
+-- commonSuffixCollapse : (List ExprAST) -> ExprAST
+-- commonSuffixCollapse xs =
+--   let
+--     samePrefixMuls =
+--       List.filter
+--         (\v ->
+--           case v of
+--             M _ -> True
+--             _ -> False
+--         ) xs
+--       |> List.map sortAST
+--       |> List.gatherEqualsBy
+--     samePrefixMuls =
+--       -- get all the "Multiply" values
+--       List.filter
+--         (\v ->
+--           case v of
+--             M _ -> True
+--             _ -> False
+--         ) xs
+--       -- triple-check to ensure that the same Multiply values look the same
+--       |> List.map sortAST
+--       |> List.gatherEqualsBy
+--           (\v ->
+--             case v of
+--               M sequence ->
+--                 List.unconsLast sequence
+--                 |> Maybe.map (\(last, beforeLast))
+
+--               _ -> Nothing
+--           )
+--       |> List.filter (not << (Tuple.second >> List.isEmpty))
+--       |> List.map (\(fst, rest) -> fst::rest)
+--       |> List.filter (not << (Tuple.second >> List.isEmpty))
+--       |> List.map (\(fst, rest) -> fst::rest)
+--     replacements =
+--       samePrefixMuls
+--       |> List.filterMap
+--         (\l ->
+--           case l of
+--             M (h::_)::_ ->
+--               Just
+--                 ( Debug.log "Common prefix" h
+--                 , List.map
+--                     (\m ->
+--                       case m of
+--                         M [_, v] -> v
+--                         M (_::rest) -> M rest
+--                         _ -> m -- should not reach here!
+--                     )
+--                     l
+--                 )
+--             _ -> Nothing
+--         )
+--       |> List.map
+--         (\(head, tails) -> M [head, A tails]
+--         )
+--   in
+--     case samePrefixMuls of
+--       [] -> -- no common prefix collapse.
+--         A (List.map simplify xs)
+--       sames ->
+--           Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
+--           -- remove all the "same-prefix" items from inside.
+--           List.foldl
+--             (\same state -> List.foldl List.remove state same)
+--             xs sames
+--           -- and replace them with the replacements
+--           |> (\l -> l ++ replacements)
+--           |> A
+--           |> sortAST
+--           |> simplify
 
 simplify : ExprAST -> ExprAST
 simplify e =
@@ -247,61 +412,15 @@ simplify e =
     A xs ->
       -- See if we can apply Rule 9: Common Prefix Collapse
       let
-        samePrefixMuls =
-          List.filter
-            (\v ->
-              case v of
-                M _ -> True
-                _ -> False
-            ) xs
-          |> List.map sortAST
-          |> List.gatherEqualsBy
-            (\v ->
-              case v of
-                M (x::_) -> Just x
-                _ -> Nothing
-            )
-          |> List.filter (not << (Tuple.second >> List.isEmpty))
-          |> List.map (\(fst, rest) -> fst::rest)
-        replacements =
-          samePrefixMuls
-          |> List.filterMap
-            (\l ->
-              case l of
-                M (h::_)::_ ->
-                  Just
-                    ( Debug.log "Common prefix" h
-                    , List.map
-                        (\m ->
-                          case m of
-                            M [_, v] -> v
-                            M (_::rest) -> M rest
-                            _ -> m -- should not reach here!
-                        )
-                        l
-                    )
-                _ -> Nothing
-            )
-          |> List.map
-            (\(head, tails) -> M [head, A tails]
-            )
+        post_simplification = (commonPrefixCollapse >> commonPrefixSubsumption) xs
       in
-        case samePrefixMuls of
-          [] -> -- no common prefix collapse.
-            A (List.map simplify xs)
-          sames ->
-              -- Debug.log "FOUND SAME PREFIX!" samePrefixMuls |> \_ ->
-              Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
-              -- remove all the "same-prefix" items from inside.
-              List.foldl
-                (\same state -> List.foldl List.remove state same)
-                xs sames
-              -- and replace them with the replacements
-              |> (\l -> l ++ replacements)
-              |> A
-              |> sortAST
-              |> simplify
-
+        if post_simplification /= xs then
+          case post_simplification of
+            [x] -> simplify x
+            _ -> simplify <| A post_simplification
+        else
+          A post_simplification
+      -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
       M (List.map simplify xs)
     V x -> V x -- base case
