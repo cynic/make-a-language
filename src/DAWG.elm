@@ -294,7 +294,7 @@ commonPrefixCollapse xs =
         |> (\l -> l ++ replacements)
         |> List.map sortAST
 
-{-|This applies Rule #11, Prefix Subusmption, to an “Add” value.
+{-|This applies Rule #11, Prefix Subsumption, to an “Add” value.
 -}
 commonPrefixSubsumption : (List ExprAST) -> List ExprAST
 commonPrefixSubsumption xs =
@@ -325,6 +325,65 @@ commonPrefixSubsumption xs =
           (\v state -> List.removeWhen ((==) v) state)
           xs
           toSubsume
+
+{-|This applies Rule #10, Finality Primacy, to an “Add” value.
+
+Implemented: ẋ + x.y = ẋ + ẋ.y
+…which is slightly different to my notes, but I think it should work.
+-}
+finalityPrimacy : (List ExprAST) -> List ExprAST
+finalityPrimacy xs =
+  let
+    heads =
+      -- get all the initial transitions from "Multiply" values,
+      -- AND all the single variables
+      List.filterMap
+        (\v ->
+          case v of
+            M ((V conn)::_) -> Just conn
+            V conn -> Just conn
+            _ -> Nothing
+        ) xs
+      |> List.unique
+    collected_transitions =
+      List.foldl Set.union Set.empty heads
+    to_bump =
+      Set.Extra.filterMap
+        (\(c, _) ->
+          if Set.member (c, 0) collected_transitions && Set.member (c, 1) collected_transitions then
+            Just c
+          else
+            Nothing
+        )
+        collected_transitions
+      |> Set.toList
+  in
+    case to_bump of
+      [] -> -- Nothing to promote.  Rely on caller to simplify.
+        xs
+      _ ->
+        Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy" () |> \_ ->
+        List.foldl
+          (\ch state ->
+            List.map
+              (\item ->
+                case item of
+                  M (V conn::rest) ->
+                    if Set.member (ch, 0) conn then
+                      M (V (Set.remove (ch, 0) conn |> Set.insert (ch, 1))::rest)
+                    else
+                      item
+                  V conn ->
+                    if Set.member (ch, 0) conn then
+                      V (Set.remove (ch, 0) conn |> Set.insert (ch, 1))
+                    else
+                      item
+                  x -> x
+              )
+              state
+          )
+          xs
+          to_bump
 
 {-|This applies Rule #5, Common Suffix Collapse, to an “Add” value.
 -}
@@ -412,14 +471,14 @@ simplify e =
     A xs ->
       -- See if we can apply Rule 9: Common Prefix Collapse
       let
-        post_simplification = (commonPrefixCollapse >> commonPrefixSubsumption) xs
+        post_simplification = (finalityPrimacy >> commonPrefixCollapse >> commonPrefixSubsumption) xs
       in
         if post_simplification /= xs then
           case post_simplification of
             [x] -> simplify x
             _ -> simplify <| A post_simplification
         else
-          A post_simplification
+          A (List.map simplify post_simplification)
       -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
       M (List.map simplify xs)
