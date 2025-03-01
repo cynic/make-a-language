@@ -10,9 +10,6 @@ import Result.Extra
 import Set.Extra
 import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, int, spaces, end, getChompedString, chompIf, chompWhile, map, sequence, loop, Step(..))
 import Char.Extra
-import Html exposing (th)
-import List.Extra exposing (unconsLast)
-import List.Extra exposing (uncons)
 
 -- AST for algebraic expressions
 type Expr
@@ -437,7 +434,7 @@ commonSuffixCollapse xs =
                 (\v ->
                   case v of
                     M items ->
-                      unconsLast items
+                      List.unconsLast items
                       |> Maybe.map
                         (\(_, pre) ->
                           case pre of
@@ -475,7 +472,13 @@ simplify e =
     A xs ->
       -- See if we can apply Rule 9: Common Prefix Collapse
       let
-        post_simplification = (finalityPrimacy >> commonPrefixCollapse >> commonPrefixSubsumption >> commonSuffixCollapse) xs
+        -- p-collapse, subsumption, s-collapse
+        post_simplification =
+          ( finalityPrimacy 
+          >>commonPrefixCollapse
+          >>commonPrefixSubsumption
+          >>commonSuffixCollapse
+          ) xs
       in
         if post_simplification /= xs then
           case post_simplification of
@@ -492,6 +495,24 @@ type ExprAST
   = M (List ExprAST)
   | A (List ExprAST)
   | V Connection
+
+exprASTToRTString : ExprAST -> String
+exprASTToRTString e =
+  case e of
+    V conn ->
+      (Set.map
+        (\transition ->
+          case transition of
+            (ch, 0) -> String.fromChar ch
+            (ch, _) -> "!" ++ String.fromChar ch
+        )
+      >> Set.toList
+      >> String.join "") -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
+      conn
+    M xs ->
+      List.map exprASTToRTString xs |> String.join "."
+    A xs ->
+      "(" ++ (List.map exprASTToRTString xs |> String.join " + ") ++ ")"
 
 exprASTToString : ExprAST -> String
 exprASTToString e =
@@ -612,7 +633,7 @@ fromAlgebra s =
   |> Result.map (\e ->
     let
       flattened = flatten e |> sortAST |> debugLog "flattened" exprASTToString
-      simplified = simplify flattened |> debugLog "Simplified" exprASTToString
+      simplified = simplify flattened |> debugLog "Simplified" exprASTToString |> debugLog "round-trip" exprASTToRTString
       unflattened =
         unflatten simplified
         |> Maybe.map (debugLog "unflattened" exprToString)

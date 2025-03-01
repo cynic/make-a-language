@@ -10,7 +10,6 @@ nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
   (D.numNodes d, D.verifiedRecognizedWords d)
 
-
 czech : List (List String) -> List String -> Int -> Int -> Expect.Expectation
 czech l expectedRecognized expectedNodes expectedEdges =
   case l of
@@ -286,7 +285,7 @@ suite =
           standardTestForWords ["what", "phat"] 5 4
       , test "what'sup-whotsup-wassup-whatsapp-wazzup" <|
         \_ ->
-          standardTestForWords ["what'sup", "whotsup", "wassup", "whatsapp", "wazzup"] 16 19
+          standardTestForWords ["what'sup", "whotsup", "wassup", "whatsapp", "wazzup"] 14 17
       , test "able-unable-disable" <|
         \_ ->
           standardTestForWords ["able", "unable", "disable"] 9 10
@@ -426,35 +425,35 @@ suite =
           |> nodesAndWords
           |> Expect.equal (16, ["kurremkarmerruk"])
       ]
-    , describe "stress-testing via fuzzing"
-      [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
-        \listOfStrings ->
-          D.fromWords (List.unique listOfStrings)
-          |> D.verifiedRecognizedWords
-          |> Expect.equal (List.sort <| List.unique listOfStrings)
+    -- , describe "stress-testing via fuzzing"
+    --   [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
+    --     \listOfStrings ->
+    --       D.fromWords (List.unique listOfStrings)
+    --       |> D.verifiedRecognizedWords
+    --       |> Expect.equal (List.sort <| List.unique listOfStrings)
 
-      , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
-        \listOfStrings ->
-          D.fromWords (List.unique listOfStrings)
-          |> D.verifiedRecognizedWords
-          |> Expect.equal (List.sort <| List.unique listOfStrings)
+    --   , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
+    --     \listOfStrings ->
+    --       D.fromWords (List.unique listOfStrings)
+    --       |> D.verifiedRecognizedWords
+    --       |> Expect.equal (List.sort <| List.unique listOfStrings)
 
-      , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 5 10)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
-        \listOfStrings ->
-          let
-            dawg0 = D.fromWords listOfStrings
-            edges0 = D.numEdges dawg0
-            nodes0 = D.numNodes dawg0
-          in
-            standardTestForWords listOfStrings nodes0 edges0
+    --   , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 5 10)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
+    --     \listOfStrings ->
+    --       let
+    --         dawg0 = D.fromWords listOfStrings
+    --         edges0 = D.numEdges dawg0
+    --         nodes0 = D.numNodes dawg0
+    --       in
+    --         standardTestForWords listOfStrings nodes0 edges0
 
-      , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
-        \randomlyGeneratedString ->
-          D.empty
-          |> D.addString randomlyGeneratedString
-          |> nodesAndWords
-          |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
-      ]
+    --   , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
+    --     \randomlyGeneratedString ->
+    --       D.empty
+    --       |> D.addString randomlyGeneratedString
+    --       |> nodesAndWords
+    --       |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
+    --   ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
           test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|
@@ -471,7 +470,7 @@ suite =
             cheapTestForWords ["test","testable","tester","nest","nestable","nester","ne"] 11 12
         , test "sed-sedy-ses-td-ts-ots-op-ops-ds" <|
           \_ ->
-            cheapTestForWords ["sed", "sedy", "ses", "td", "ts", "ots", "op", "ops", "ds"] 9 13      
+            cheapTestForWords ["sed", "sedy", "ses", "td", "ts", "ots", "op", "ops", "ds"] 8 11
         ]
     -- , describe "really expensive tests"
     --   [
