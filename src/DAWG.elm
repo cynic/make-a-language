@@ -293,7 +293,7 @@ commonPrefixCollapse xs =
         |> (\l -> l ++ replacements)
         |> List.map sortAST
 
-{-|This applies Rule #11, Prefix Subsumption, to an “Add” value.
+{-|This applies Rule #11, Split Subsumption, to an “Add” value.
 
 Applies: a + a.x = a.x
 
@@ -301,8 +301,8 @@ Because ab = a+b, ab + a.x = a + b + a.x = b + a.x
 
 And ac + a.x + c.y = a + c + a.x + c.y = a.x + c.y
 -}
-commonPrefixSubsumption : (List ExprAST) -> List ExprAST
-commonPrefixSubsumption xs =
+splitSubsumption : (List ExprAST) -> List ExprAST
+splitSubsumption xs =
   let
     mulHeads =
       -- get all the "Multiply" values
@@ -471,7 +471,7 @@ simplify e =
         post_simplification =
           ( finalityPrimacy 
           >>commonPrefixCollapse
-          >>commonPrefixSubsumption
+          >>splitSubsumption
           >>commonSuffixCollapse
           ) xs
       in
