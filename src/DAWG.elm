@@ -464,11 +464,6 @@ commonSuffixCollapse xs =
 simplify : ExprAST -> ExprAST
 simplify e =
   case debugLog "Simplifying" exprASTToString e of
-    A (V x::V y::rest) ->
-      Debug.log "Rule #4: ☝🏾 subject to: Split expansion/contraction" () |> \_ ->
-      case rest of
-        [] -> V (Set.union x y)
-        _ -> simplify <| A (V (Set.union x y)::rest)
     A xs ->
       -- See if we can apply Rule 9: Common Prefix Collapse
       let
@@ -577,6 +572,11 @@ unflatten ast =
   case ast of
     V s ->
       Just <| Variable s
+
+    A (V x::V y::rest) ->
+      case rest of
+        [] -> unflatten <| V (Set.union x y)
+        _ -> unflatten <| A (V (Set.union x y)::rest)
 
     A list ->
       case list of
