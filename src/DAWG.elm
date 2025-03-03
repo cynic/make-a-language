@@ -198,11 +198,11 @@ newVar conn state =
   let
     k = state.maxId + 1
   in
-    ( \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | start = Just n }) r.connections }
-    , \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | end = Just n }) r.connections }
+    ( \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | start = Just (Debug.log ("Adjusting start of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
+    , \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | end = Just (Debug.log ("Adjusting  end  of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
     , { state
         | maxId = k
-        , connections = IntDict.insert k (EdgeRecord Nothing conn Nothing) state.connections
+        , connections = IntDict.insert k (EdgeRecord Nothing (debugLog "Nothing↔️Nothing edge initialized for" connectionToString conn) Nothing) state.connections
       }
     )
 
@@ -470,9 +470,9 @@ simplify e =
         -- p-collapse, subsumption, s-collapse
         post_simplification =
           ( finalityPrimacy 
+          >>commonSuffixCollapse
           >>commonPrefixCollapse
           >>splitSubsumption
-          >>commonSuffixCollapse
           ) xs
       in
         if post_simplification /= xs then
@@ -662,7 +662,10 @@ fromAlgebra s =
         |> List.unique
         |> \l -> (List.maximum l, List.map (\n -> Node n ()) l)
     in
-      Maybe.map (\max -> DAWG (Graph.fromNodesAndEdges nodes edges) max 0 (Just <| state.maxId + 1)) maxId
+      Maybe.map (\max ->
+        DAWG (Graph.fromNodesAndEdges nodes edges) max 0 (Just <| state.maxId + 1)
+        -- |> \dawg -> List.foldl (checkForCollapse) dawg ((state.maxId + 1)::(List.map (\n -> n.id) nodes))
+      ) maxId
       |> Maybe.withDefault empty
       -- |> debugDAWG "tada"
   )

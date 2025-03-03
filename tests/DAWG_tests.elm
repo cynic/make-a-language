@@ -25,12 +25,12 @@ czech l expectedRecognized expectedNodes expectedEdges =
         if recognized /= expectedRecognized then
           Debug.log "Failure on recognized words of permutation" x
           |> \_ -> Expect.equal recognized expectedRecognized
-        -- else if nodes /= expectedNodes then
-        --   Debug.log "Failure on node-count of permutation" x
-        --   |> \_ -> Expect.equal nodes expectedNodes
-        -- else if edges /= expectedEdges then
-        --   Debug.log "Failure on edge-count of permutation" x
-        --   |> \_ -> Expect.equal edges expectedEdges
+        else if nodes /= expectedNodes then
+          Debug.log "Failure on node-count of permutation" x
+          |> \_ -> Expect.equal nodes expectedNodes
+        else if edges /= expectedEdges then
+          Debug.log "Failure on edge-count of permutation" x
+          |> \_ -> Expect.equal edges expectedEdges
         else
           czech rest expectedRecognized expectedNodes expectedEdges
 
