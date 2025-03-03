@@ -459,19 +459,19 @@ finalityPrimacy xs =
         Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy" () |> \_ ->
         List.foldl
           (\ch state ->
-            List.map
+            List.filterMap
               (\item ->
                 case item of
                   M (V x::rest) ->
                     if x == (ch, 0) then
-                      M (V (ch, 1)::rest)
+                      Just <| M (V (ch, 1)::rest)
                     else
-                      item
-                  V x ->
-                    if x == (ch, 0) then
-                      V (ch, 1)
+                      Just item
+                  V (x, _) ->
+                    if x == ch then
+                      Nothing
                     else
-                      item
+                      Just <| item
                   M (A inner::rest) ->
                     List.map
                       (\x ->
@@ -489,8 +489,9 @@ finalityPrimacy xs =
                           _ -> x
                       )
                       inner
-                    |> \out -> M (A out::rest)
-                  x -> x
+                      -- |> Debug.log "After map"
+                    |> \out -> Just <| M (A out::rest)
+                  x -> Just x
               )
               state
           )
