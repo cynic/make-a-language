@@ -473,18 +473,20 @@ finalityPrimacy xs =
                     else
                       item
                   M (A inner::rest) ->
-                    List.updateIf
+                    List.map
                       (\x ->
                         case x of
-                          V t -> t == (ch, 0)
-                          M (V t::_) -> t == (ch, 0)
-                          _ -> False
-                      )
-                      (\x ->
-                        case item of
-                          V _ -> V (ch, 1)
-                          M (V _::rest_) -> M (V (ch, 1)::rest_)
-                          y -> y
+                          V t ->
+                            if t == (ch, 0) then
+                              V (ch, 1)
+                            else
+                              V t
+                          M (V t::rest_) ->
+                            if t == (ch, 0) then
+                              M <| V (ch, 1)::rest_
+                            else
+                              M <| V t::rest_
+                          _ -> x
                       )
                       inner
                     |> \out -> M (A out::rest)
