@@ -8,134 +8,197 @@ import IntDict
 import Set exposing (Set)
 import Result.Extra
 import Set.Extra
-import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, int, spaces, end, getChompedString, chompIf, chompWhile, map, sequence, loop, Step(..))
+import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, spaces, end, getChompedString, chompIf, sequence, loop, Step(..))
 import Char.Extra
+import Dict
+
+type ExprAST
+  = M (List ExprAST)
+  | A (List ExprAST)
+  | V Transition
 
 -- AST for algebraic expressions
-type Expr
-  = Variable Connection
-  | Add Expr Expr
-  | Multiply Expr Expr
+-- type Expr
+--   = Variable Connection
+--   | Add Expr Expr
+--   | Multiply Expr Expr
 
--- Parser for algebraic expressions
-expressionParser : Parser Expr
+-- -- Parser for algebraic expressions
+-- expressionParser : Parser Expr
+-- expressionParser =
+--   Debug.log ("------------------------------ NEW PARSE BEGINNING") () |> \_ ->
+--   succeed identity
+--     |= term
+--     |. spaces
+--     |. end
+
+-- -- Term: Handles addition
+-- term : Parser Expr
+-- term =
+--   let
+--     termHelper left =
+--       oneOf
+--         [ succeed (Loop << Add left)
+--             |. spaces
+--             |. symbol "+"
+--             |. spaces
+--             |= lazy (\_ -> factor)
+--         , succeed (Done left)
+--         ]
+--   in
+--     succeed identity
+--       |= factor
+--       |> P.andThen (\left -> loop left termHelper)
+
+-- -- Factor: Handles multiplication
+-- factor : Parser Expr
+-- factor =
+--   succeed identity
+--     |= primary -- obtain what will either be a variable or a group.
+--     |> P.andThen
+--       (\initial -> -- with that variable, proceed.
+--           loop initial -- It will be used as the initial value for a (potential) product.
+--             (\left -> -- `initial` is the first value here; but if we loop, then this will be a left-associative Multiply.
+--               oneOf
+--                 [ succeed (Loop << Multiply left) -- Structure & return an indication to continue parsing within Factor.
+--                     |. spaces
+--                     |. symbol "." -- IF we find a '.', then we take this branch and…
+--                     |. spaces
+--                     |= lazy (\_ -> primary) -- …grab another primary after the '.'
+--                 , succeed (Done left) -- If there is no '.', then this will be hit. Notice that we ONLY return `left` here.
+--                 ]
+--             )
+--       )
+
+-- -- Variable: Parses alphabetic variable names
+-- variable : Parser Expr
+-- variable =
+--   let
+--     cParser = \c -> not (Char.Extra.isSpace c || c == '+' || c == '.' || c == '(' || c == ')' || c == '!')
+--     updateSetParser finality state s =
+--       case String.toList s of
+--         '!'::[c] ->
+--           updateSetParser finality state (String.fromList [c])
+--         [c] ->
+--           if Set.member (c, 1) state then
+--             succeed <| Loop state
+--           else if Set.member (c, 0) state then
+--             succeed <| Loop <| (Set.remove (c, 0) >> Set.insert (c, finality)) state
+--           else
+--             succeed <| Loop <| Set.insert (c, finality) state
+--         _ -> P.problem <| "Expected a single character, but got \"" ++ s ++ "\" instead."
+
+--     tParser state =
+--       oneOf
+--         [ symbol "!!!" |> P.andThen (\_ -> updateSetParser 1 state "!")
+--         , symbol "!!" |> P.andThen (\_ -> updateSetParser 0 state "!")
+--         , symbol "!"
+--             |. P.chompIf cParser
+--             |> getChompedString
+--             |> P.andThen (updateSetParser 1 state)
+--         , chompIf cParser
+--           |> getChompedString
+--           |> P.andThen (updateSetParser 0 state)
+--         , if Set.isEmpty state then
+--             P.problem "Expected a variable"
+--           else
+--             succeed (Done state)
+--         ]
+--   in
+--     loop Set.empty tParser
+--     |> map Variable
+
+
+-- Top-level parser
+expressionParser : Parser ExprAST
 expressionParser =
-  Debug.log ("------------------------------ NEW PARSE BEGINNING") () |> \_ ->
-  succeed identity
-    |= term
-    |. spaces
-    |. end
+  term |. spaces |. end
 
--- Term: Handles addition
-term : Parser Expr
+combine : (List ExprAST -> ExprAST) -> ExprAST -> List ExprAST -> ExprAST
+combine f head tail =
+  case tail of
+    [] -> head
+    _ -> f (head :: tail)
+
+-- Term: Handles addition (+)
+term : Parser ExprAST
 term =
-  let
-    termHelper left =
-      oneOf
-        [ succeed (Loop << Add left)
-            |. spaces
-            |. symbol "+"
-            |. spaces
-            |= lazy (\_ -> factor)
-        , succeed (Done left)
-        ]
-  in
-    succeed identity
-      |= factor
-      |> P.andThen (\left -> loop left termHelper)
+  succeed (combine A)
+    |= factor
+    |= loop [] (termHelper "+" factor)
 
--- Factor: Handles multiplication
-factor : Parser Expr
+-- Factor: Handles multiplication (.)
+factor : Parser ExprAST
 factor =
-  succeed identity
-    |= primary -- obtain what will either be a variable or a group.
-    |> P.andThen
-      (\initial -> -- with that variable, proceed.
-          loop initial -- It will be used as the initial value for a (potential) product.
-            (\left -> -- `initial` is the first value here; but if we loop, then this will be a left-associative Multiply.
-              oneOf
-                [ succeed (Loop << Multiply left) -- Structure & return an indication to continue parsing within Factor.
-                    |. spaces
-                    |. symbol "." -- IF we find a '.', then we take this branch and…
-                    |. spaces
-                    |= lazy (\_ -> primary) -- …grab another primary after the '.'
-                , succeed (Done left) -- If there is no '.', then this will be hit. Notice that we ONLY return `left` here.
-                ]
-            )
-      )
+  succeed (combine M)
+    |= primary
+    |= loop [] (termHelper "." primary)
 
--- Variable: Parses alphabetic variable names
-variable : Parser Expr
-variable =
-  let
-    cParser = \c -> not (Char.Extra.isSpace c || c == '+' || c == '.' || c == '(' || c == ')' || c == '!')
-    updateSetParser finality state s =
-      case String.toList s of
-        '!'::[c] ->
-          updateSetParser finality state (String.fromList [c])
-        [c] ->
-          if Set.member (c, 1) state then
-            succeed <| Loop state
-          else if Set.member (c, 0) state then
-            succeed <| Loop <| (Set.remove (c, 0) >> Set.insert (c, finality)) state
-          else
-            succeed <| Loop <| Set.insert (c, finality) state
-        _ -> P.problem <| "Expected a single character, but got \"" ++ s ++ "\" instead."
+-- Helper for building lists of operations
+termHelper : String -> Parser ExprAST -> List ExprAST -> Parser (Step (List ExprAST) (List ExprAST))
+termHelper operator parser tail =
+  oneOf
+    [ succeed (\elem -> Loop (elem :: tail))
+        |. symbol operator
+        |. spaces
+        |= parser
+    , succeed (Done (List.reverse tail))
+    ]
 
-    tParser state =
-      oneOf
-        [ symbol "!!!" |> P.andThen (\_ -> updateSetParser 1 state "!")
-        , symbol "!!" |> P.andThen (\_ -> updateSetParser 0 state "!")
-        , symbol "!"
-            |. P.chompIf cParser
-            |> getChompedString
-            |> P.andThen (updateSetParser 1 state)
-        , chompIf cParser
-          |> getChompedString
-          |> P.andThen (updateSetParser 0 state)
-        , if Set.isEmpty state then
-            P.problem "Expected a variable"
-          else
-            succeed (Done state)
-        ]
-  in
-    loop Set.empty tParser
-    |> map Variable
-
--- Primary: Handles variables and parentheses
-primary : Parser Expr
+-- Primary: Variables or grouped terms
+primary : Parser ExprAST
 primary =
   oneOf
     [ variable
-    , succeed identity -- I _could_ create a Group here, but what would be the point?  The parse tree takes care of grouping.
+    , grouped
+    ]
+
+-- Single-character variable parser
+variable : Parser ExprAST
+variable =
+  let
+    cParser = \c -> not (Char.Extra.isSpace c || c == '+' || c == '.' || c == '(' || c == ')' || c == '!')
+    parseChar finality =
+      chompIf cParser
+      |> getChompedString
+      |> P.andThen
+        (\s ->
+          case String.uncons s of
+            Just (c, "") -> succeed <| V (c, finality)
+            _ -> P.problem "Variables must be single characters"
+        )
+  in
+    oneOf
+      [ symbol "!!" |> P.andThen (\_ -> succeed <| V ('!', 1))
+      , symbol "!" |> P.andThen (\_ -> parseChar 1)
+      , parseChar 0
+      ]
+
+
+-- Grouped expressions (parentheses)
+grouped : Parser ExprAST
+grouped =
+    succeed identity
         |. symbol "("
         |. spaces
         |= lazy (\_ -> term)
         |. spaces
         |. symbol ")"
-    ]
 
-exprToString : Expr -> String
-exprToString e =
-  case e of
-    Variable conn ->
-      connectionToString conn
-    Multiply a b ->
-      "(× " ++ exprToString a ++ " " ++ exprToString b ++ ")"
-    Add a b ->
-      "(+ " ++ exprToString a ++ " " ++ exprToString b ++ ")"
+-- exprToString : Expr -> String
+-- exprToString e =
+--   case e of
+--     Variable conn ->
+--       connectionToString conn
+--     Multiply a b ->
+--       "(× " ++ exprToString a ++ " " ++ exprToString b ++ ")"
+--     Add a b ->
+--       "(+ " ++ exprToString a ++ " " ++ exprToString b ++ ")"
 
 type alias EdgeRecord =
-  { start : Maybe Int
-  , data : Connection
-  , end : Maybe Int
-  }
-
-type alias Adjuster = Int -> ToDawgRecord -> ToDawgRecord
-
-type alias ToDawgRecord =
-  { connections : IntDict.IntDict EdgeRecord  -- the ones which are relevant before this
-  , maxId : Int
+  { start : Int
+  , data : Transition
+  , end : Int
   }
 
 {-
@@ -193,46 +256,65 @@ type alias ToDawgRecord =
 
 -}
 
-newVar : Connection -> ToDawgRecord -> (Adjuster, Adjuster, ToDawgRecord)
-newVar conn state =
-  let
-    k = state.maxId + 1
-  in
-    ( \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | start = Just (Debug.log ("Adjusting start of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
-    , \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | end = Just (Debug.log ("Adjusting  end  of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
-    , { state
-        | maxId = k
-        , connections = IntDict.insert k (EdgeRecord Nothing (debugLog "Nothing↔️Nothing edge initialized for" connectionToString conn) Nothing) state.connections
-      }
-    )
+-- newVar : Connection -> (Int, Int) -> (Adjuster, Adjuster, ToDawgRecord)
+-- newVar conn state =
+--   let
+--     k = state.maxId + 1
+--   in
+--     ( \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | start = Just (Debug.log ("Adjusting start of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
+--     , \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | end = Just (Debug.log ("Adjusting  end  of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
+--     , { state
+--         | maxId = k
+--         , connections = IntDict.insert k (EdgeRecord Nothing (debugLog "Nothing↔️Nothing edge initialized for" connectionToString conn) Nothing) state.connections
+--       }
+--     )
 
-noOp : Adjuster
-noOp _ d = d
+{-| Like foldl, but do something special with the last one.
+-}
+-- this is modified from the elm/core 1.0.5 source.
+foldlSpecial : (a -> b -> b) -> (a -> b -> c) -> b -> List a -> Maybe c
+foldlSpecial func lastItem acc list =
+  case list of
+    [] ->
+      Nothing
 
-expressionToDAWG : Expr -> ToDawgRecord -> (Adjuster, Adjuster, ToDawgRecord)
-expressionToDAWG expr state =
+    [x] ->
+      Just <| lastItem x acc
+
+    x :: xs ->
+      foldlSpecial func lastItem (func x acc) xs
+
+type alias ToDawgRecord =
+  { edges : List EdgeRecord
+  , unused : Int
+  }
+
+expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
+expressionToDAWG expr (start, end) r =
   case expr of
-    Variable data ->
-      newVar data state
-    Multiply a b ->
-      let
-        (a_start_adjust, a_end_adjust, s_) = expressionToDAWG a state
-        (b_start_adjust, b_end_adjust, s__) = expressionToDAWG b s_
-        linkVal = s__.maxId + 1
-        result = a_end_adjust linkVal s__ |> b_start_adjust linkVal |> \s -> { s | maxId = linkVal }
-      in
-        ( a_start_adjust, b_end_adjust, result )
-    Add a b ->
-      let
-        (a_start_adjust, a_end_adjust, s_) = expressionToDAWG a state
-        (b_start_adjust, b_end_adjust, result) = expressionToDAWG b s_
-      in
-        ( \n d -> a_start_adjust n d |> b_start_adjust n
-        , \n d -> a_end_adjust n d |> b_end_adjust n
-        , result
+    V data ->
+      { r | edges = EdgeRecord start data end :: r.edges }
+    M (x::_ as xs) ->
+      foldlSpecial
+        (\item (acc, (start_, end_)) ->
+          expressionToDAWG item (start_, end_) acc
+          |> \acc2 -> ( { acc2 | unused = acc2.unused + 1 }, (end_, acc2.unused) )
         )
-    -- (_ as x) ->
-    --   debugLog "UNHANDLED!" exprToString x |> \_ -> ( noOp, noOp, state )
+        (\item (acc, (start_, _)) ->
+          expressionToDAWG item (start_, end) acc
+        )
+        ( { r | unused = r.unused + 1 }, (start, r.unused))
+        xs
+      |> Maybe.withDefaultLazy (\_ -> Debug.log "ERROR! M without multiple items!" <| expressionToDAWG x (start, end) r)
+    A xs ->
+      List.foldl
+        (\item acc ->
+          expressionToDAWG item (start, end) acc
+        )
+        { r | unused = r.unused + 1 }
+        xs
+    M [] ->
+      r |> Debug.log "ERROR — found an M value with ZERO items!"
 
 {-|This applies Rule #9, Common Prefix Collapse, to an “Add” value.
 -}
@@ -309,10 +391,7 @@ splitSubsumption xs =
       List.filterMap
         (\v ->
           case v of
-            M (V conn::_) ->
-              case Set.toList conn of
-                [t] -> Just t
-                _ -> Nothing
+            M (V t::_) -> Just t
             _ -> Nothing
         ) xs
       |> Set.fromList
@@ -324,14 +403,11 @@ splitSubsumption xs =
       List.filterMap
         (\v ->
           case v of
-            V conn ->
-              let
-                remaining = Set.diff conn mulHeads
-              in
-                if Set.isEmpty remaining then
+            V t ->
+                if Set.member t mulHeads then
                   Nothing
                 else
-                  Just <| V remaining
+                  Just <| V t
             x -> Just x
         ) xs
 
@@ -346,16 +422,25 @@ finalityPrimacy xs =
     heads =
       -- get all the initial transitions from "Multiply" values,
       -- AND all the single variables
-      List.filterMap
+      List.concatMap
         (\v ->
           case v of
-            M ((V conn)::_) -> Just conn
-            V conn -> Just conn
-            _ -> Nothing
+            M ((V t)::_) -> [t]
+            V t -> [t]
+            M (A inner::_) ->
+              List.filterMap
+                (\v_ ->
+                  case v_ of
+                    V t -> Just t
+                    M (V t::_) -> Just t
+                    _ -> Nothing
+                )
+                inner
+            _ -> []
         ) xs
       |> List.unique
     collected_transitions =
-      List.foldl Set.union Set.empty heads
+      List.foldl Set.insert Set.empty heads
     to_bump =
       Set.Extra.filterMap
         (\(c, _) ->
@@ -377,16 +462,32 @@ finalityPrimacy xs =
             List.map
               (\item ->
                 case item of
-                  M (V conn::rest) ->
-                    if Set.member (ch, 0) conn then
-                      M (V (Set.remove (ch, 0) conn |> Set.insert (ch, 1))::rest)
+                  M (V x::rest) ->
+                    if x == (ch, 0) then
+                      M (V (ch, 1)::rest)
                     else
                       item
-                  V conn ->
-                    if Set.member (ch, 0) conn then
-                      V (Set.remove (ch, 0) conn |> Set.insert (ch, 1))
+                  V x ->
+                    if x == (ch, 0) then
+                      V (ch, 1)
                     else
                       item
+                  M (A inner::rest) ->
+                    List.updateIf
+                      (\x ->
+                        case x of
+                          V t -> t == (ch, 0)
+                          M (V t::_) -> t == (ch, 0)
+                          _ -> False
+                      )
+                      (\x ->
+                        case item of
+                          V _ -> V (ch, 1)
+                          M (V _::rest_) -> M (V (ch, 1)::rest_)
+                          y -> y
+                      )
+                      inner
+                    |> \out -> M (A out::rest)
                   x -> x
               )
               state
@@ -470,9 +571,9 @@ simplify e =
         -- p-collapse, subsumption, s-collapse
         post_simplification =
           ( finalityPrimacy 
-          >>commonSuffixCollapse
           >>commonPrefixCollapse
           >>splitSubsumption
+          >>commonSuffixCollapse
           ) xs
       in
         if post_simplification /= xs then
@@ -486,24 +587,13 @@ simplify e =
       M (List.map simplify xs)
     V x -> V x -- base case
 
-type ExprAST
-  = M (List ExprAST)
-  | A (List ExprAST)
-  | V Connection
-
 exprASTToRTString : ExprAST -> String
 exprASTToRTString e =
   case e of
-    V conn ->
-      (Set.map
-        (\transition ->
-          case transition of
-            (ch, 0) -> String.fromChar ch
-            (ch, _) -> "!" ++ String.fromChar ch
-        )
-      >> Set.toList
-      >> String.join "") -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
-      conn
+    V transition ->
+      case transition of
+        (ch, 0) -> String.fromChar ch
+        (ch, _) -> "!" ++ String.fromChar ch
     M xs ->
       List.map exprASTToRTString xs |> String.join "."
     A xs ->
@@ -512,8 +602,8 @@ exprASTToRTString e =
 exprASTToString : ExprAST -> String
 exprASTToString e =
   case e of
-    V conn ->
-      connectionToString conn
+    V t ->
+      transitionToString t
     M xs ->
       -- "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
       List.map exprASTToString xs |> String.join "."
@@ -521,84 +611,13 @@ exprASTToString e =
       -- "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
       "[" ++ (List.map exprASTToString xs |> String.join " + ") ++ "]"
 
-flatten : Expr -> ExprAST
-flatten expr =
-  case expr of
-    Variable s ->
-      V s
-
-    Add left right ->
-      let
-        flattenedLeft = flatten left
-        flattenedRight = flatten right
-      in
-        case ( flattenedLeft, flattenedRight ) of
-          -- Merge nested additions into a single list
-          ( A leftList, A rightList ) ->
-            A (leftList ++ rightList)
-
-          ( A leftList, _ ) ->
-            A (leftList ++ [ flattenedRight ])
-
-          ( _, A rightList ) ->
-            A (flattenedLeft :: rightList)
-
-          -- Default: wrap both in an A list
-          _ ->
-            A [ flattenedLeft, flattenedRight ]
-
-    Multiply left right ->
-      let
-        flattenedLeft = flatten left
-        flattenedRight = flatten right
-      in
-        case ( flattenedLeft, flattenedRight ) of
-          -- Merge nested multiplications into a single list
-          ( M leftList, M rightList ) ->
-            M (leftList ++ rightList)
-
-          ( M leftList, _ ) ->
-            M (leftList ++ [ flattenedRight ])
-
-          ( _, M rightList ) ->
-            M (flattenedLeft :: rightList)
-
-          -- Default: wrap both in an M list
-          _ ->
-              M [ flattenedLeft, flattenedRight ]
-
-unflatten : ExprAST -> Maybe Expr
-unflatten ast =
-  case ast of
-    V s ->
-      Just <| Variable s
-
-    A (V x::V y::rest) ->
-      case rest of
-        [] -> unflatten <| V (Set.union x y)
-        _ -> unflatten <| A (V (Set.union x y)::rest)
-
-    A list ->
-      case list of
-        a::((_::_) as tail) ->
-          List.foldl (\expr acc -> Maybe.map2 Add acc (unflatten expr) ) (unflatten a) tail
-
-        _ -> Nothing
-
-    M list ->
-      case list of
-        a::((_::_) as tail) ->
-          List.foldl (\expr acc -> Maybe.map2 Multiply acc (unflatten expr) ) (unflatten a) tail
-
-        _ -> Nothing
-
 sortAST : ExprAST -> ExprAST
 sortAST e =
   let
     compare a b =
       case (a, b) of
         (V x, V y) ->
-          Basics.compare (Set.toList x) (Set.toList y)
+          Basics.compare x y
         (V _, _) ->
           LT
         (_, V _) ->
@@ -620,9 +639,61 @@ sortAST e =
           [y] -> y
           ys -> A ys
 
-parseAlgebra : String -> Result (List P.DeadEnd) Expr
+parseAlgebra : String -> Result (List P.DeadEnd) ExprAST
 parseAlgebra =
   P.run expressionParser
+
+coalesceToGraphNodes : List EdgeRecord -> List { start : Int, end : Int, data : Connection }
+coalesceToGraphNodes edges =
+  List.gatherEqualsBy
+    (\{start, end} -> (start, end))
+    (Debug.log "Raw edges" edges)
+  |> List.map
+    (\({start, data, end}, xs) ->
+        { start = start
+        , end = end
+        , data = Set.fromList (data::List.map .data xs)
+        }
+    )
+
+redirectPrefixGraphNodes : List { start : Int, end : Int, data : Connection } -> List (Graph.Edge Connection)
+redirectPrefixGraphNodes edges =
+  List.gatherEqualsBy
+    (\{start, data} -> (start, Set.toList data))
+    edges
+  |> Debug.log "Redirect: original gathered edges"
+  -- any edges that have the same start and the same data
+  -- are actually edges that must be joined together into
+  -- one. We know that such edges may arise because of
+  -- cases such as sy-spw-ow; and because of the order of
+  -- simplification (suffix-collapse before prefix-collapse),
+  -- this can result in non-determinism at the start of a
+  -- split. This is fine, because it is ALWAYS
+  -- non-determinism that can be joined! (PROOF??)
+  |> List.foldl
+    (\({start, data, end}, xs) ( acc, redirectDict ) ->
+      ( { start = start
+        , conn = data
+        , end = end
+        } :: acc
+      , List.foldl (\x d -> Dict.insert x.end end d) redirectDict xs
+      )
+    )
+    ([], Dict.empty)
+  |> debugLog "With redirectDict" Tuple.second
+  -- Now, if the other ends are also starts, then those
+  -- starts also need to be modified.
+  |> (\(links, redirectDict) ->
+      List.map
+        (\{start, conn, end} ->
+          Dict.get start redirectDict
+          |> Maybe.map
+            (\redirected -> Graph.Edge redirected end conn)
+          |> Maybe.withDefaultLazy
+            (\_ -> Graph.Edge start end conn)
+        )
+        links
+     )
 
 fromAlgebra : String -> DAWG
 fromAlgebra s =
@@ -632,39 +703,25 @@ fromAlgebra s =
   |> parseAlgebra
   |> Result.map (\e ->
     let
-      flattened = flatten e |> sortAST |> debugLog "flattened" exprASTToString
-      simplified = simplify flattened |> debugLog "Simplified" exprASTToString |> debugLog "round-trip" exprASTToRTString
-      unflattened =
-        unflatten simplified
-        |> Maybe.map (debugLog "unflattened" exprToString)
-        |> Maybe.withDefault (Variable <| Set.fromList [('n', 1), ('o', 1)])
-      (start_adjust, end_adjust, state) = expressionToDAWG unflattened (ToDawgRecord IntDict.empty 0)
-      adjusted = state |> start_adjust 0 |> end_adjust (state.maxId + 1)
-      edges =
-        IntDict.values adjusted.connections
-        |> Debug.log "Raw values from IntDict"
-        |> List.map
-            (\{start, data, end} ->
-              case (start, end) of
-                ( Just a, Just b ) -> Graph.Edge a b data
-                -- the next 3 cases all indicate something bad
-                _ -> Debug.log "BAD!" (start, end) |> \_ -> Graph.Edge 0 0 Set.empty
-            )
+      flattened = sortAST e |> debugLog "flattened" exprASTToString
+      simplified = simplify flattened |> debugLog "Simplified, round-trip" exprASTToRTString
+      graphEdges =
+        expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2)
+        |> .edges
+        |> coalesceToGraphNodes
+        |> redirectPrefixGraphNodes
       (maxId, nodes) =
-        IntDict.values adjusted.connections
-        |> List.concatMap
-          (\{start, end} ->
-            case (start, end) of
-              ( Just a, Just b ) -> [a, b]
-              -- the next 3 cases all indicate something bad
-              _ -> Debug.log "BAD!" (start, end) |> \_ -> []
-          )
-        |> List.unique
-        |> \l -> (List.maximum l, List.map (\n -> Node n ()) l)
+        graphEdges
+        |> List.foldl
+          (\{from, to} acc -> (Set.insert from >> Set.insert to) acc)
+          Set.empty
+        |> Set.toList
+        |> \l -> (List.last l, List.map (\n -> Node n ()) l)
     in
       Maybe.map (\max ->
-        DAWG (Graph.fromNodesAndEdges nodes edges) max 0 (Just <| state.maxId + 1)
+        DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
         -- |> \dawg -> List.foldl (checkForCollapse) dawg ((state.maxId + 1)::(List.map (\n -> n.id) nodes))
+
       ) maxId
       |> Maybe.withDefault empty
       -- |> debugDAWG "tada"
