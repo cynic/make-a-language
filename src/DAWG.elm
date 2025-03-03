@@ -291,8 +291,9 @@ type alias ToDawgRecord =
 
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
-  case expr of
+  case expr {- |> debugLog "Processing fragment" exprASTToString-} of
     V data ->
+      println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
       { r | edges = EdgeRecord start data end :: r.edges }
     M (x::_ as xs) ->
       foldlSpecial
@@ -328,7 +329,10 @@ commonPrefixCollapse xs =
           case v of
             M _ -> True
             _ -> False
-        ) xs
+        )
+        -- (debugLog "Prefix-collapse; received" (A)
+        xs
+        -- )
       -- triple-check to ensure that the same values are structurally the same
       |> List.map sortAST
       |> List.gatherEqualsBy
@@ -337,8 +341,10 @@ commonPrefixCollapse xs =
             M (x::_) -> Just x
             _ -> Nothing
         )
+      -- |> Debug.log "All heads"
       |> List.filter (not << (Tuple.second >> List.isEmpty))
       |> List.map (\(fst, rest) -> fst::rest)
+      -- |> Debug.log "Same-prefix heads"
     replacements =
       samePrefixMuls
       |> List.filterMap
@@ -359,7 +365,9 @@ commonPrefixCollapse xs =
             _ -> Nothing
         )
       |> List.map
-        (\(head, tails) -> M [head, A tails]
+        (\(head, tails) ->
+          M [head, A tails]
+          -- |> Debug.log "replacement"
         )
   in
     case samePrefixMuls of
@@ -399,7 +407,7 @@ splitSubsumption xs =
     if Set.isEmpty mulHeads then
       xs
     else
-      Debug.log "Rule #11: ☝🏾 attempting to apply Common Prefix Subsumption" () |> \_ ->
+      Debug.log "Rule #11: ☝🏾 attempting to apply Split Subsumption" () |> \_ ->
       List.filterMap
         (\v ->
           case v of
@@ -439,6 +447,7 @@ finalityPrimacy xs =
             _ -> []
         ) xs
       |> List.unique
+      -- |> Debug.log "Heads & single values"
     collected_transitions =
       List.foldl Set.insert Set.empty heads
     to_bump =
@@ -451,6 +460,7 @@ finalityPrimacy xs =
         )
         collected_transitions
       |> Set.toList
+      -- |> Debug.log "Found primacy items"
   in
     case to_bump of
       [] -> -- Nothing to promote.  Rely on caller to simplify.
@@ -510,7 +520,10 @@ commonSuffixCollapse xs =
           case v of
             M _ -> True
             _ -> False
-        ) xs
+        )
+        -- (Debug.log "Suffix-collapse; received"
+        xs
+        -- )
       -- triple-check to ensure that the same Multiply values look the same
       |> List.map sortAST
       -- find the ones which have the same last part
@@ -564,19 +577,24 @@ commonSuffixCollapse xs =
           -- and replace them with the replacements
           |> (\l -> l ++ replacements)
           |> List.map sortAST
+          -- |> Debug.log "Result of suffix-collapse"
 
 simplify : ExprAST -> ExprAST
 simplify e =
   case debugLog "Simplifying" exprASTToString e of
+    A (A xs::rest) ->
+      simplify <| A (xs ++ rest)
+    M (M xs::rest) ->
+      simplify <| M (xs ++ rest)
     A xs ->
       -- See if we can apply Rule 9: Common Prefix Collapse
       let
         -- p-collapse, subsumption, s-collapse
         post_simplification =
           ( finalityPrimacy 
-          >>commonPrefixCollapse
           >>splitSubsumption
           >>commonSuffixCollapse
+          >>commonPrefixCollapse
           ) xs
       in
         if post_simplification /= xs then
@@ -584,7 +602,13 @@ simplify e =
             [x] -> simplify x
             _ -> simplify <| A post_simplification
         else
-          A (List.map simplify post_simplification)
+          let
+            inner_simplified = List.map simplify post_simplification
+          in
+            if inner_simplified /= post_simplification then
+              simplify <| A inner_simplified
+            else
+              A inner_simplified
       -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
       M (List.map simplify xs)
@@ -646,23 +670,24 @@ parseAlgebra : String -> Result (List P.DeadEnd) ExprAST
 parseAlgebra =
   P.run expressionParser
 
-coalesceToGraphNodes : List EdgeRecord -> List { start : Int, end : Int, data : Connection }
+coalesceToGraphNodes : List EdgeRecord -> List (Graph.Edge Connection)
 coalesceToGraphNodes edges =
   List.gatherEqualsBy
     (\{start, end} -> (start, end))
     (Debug.log "Raw edges" edges)
+  |> debugLog "Coalesce: found grouped" (List.filter (Tuple.second >> (not << List.isEmpty)))
   |> List.map
     (\({start, data, end}, xs) ->
-        { start = start
-        , end = end
-        , data = Set.fromList (data::List.map .data xs)
+        { from = start
+        , to = end
+        , label = Set.fromList (data::List.map .data xs)
         }
     )
 
-redirectPrefixGraphNodes : List { start : Int, end : Int, data : Connection } -> List (Graph.Edge Connection)
+redirectPrefixGraphNodes : List (Graph.Edge Connection) -> List (Graph.Edge Connection)
 redirectPrefixGraphNodes edges =
   List.gatherEqualsBy
-    (\{start, data} -> (start, Set.toList data))
+    (\{from, label} -> (from, Set.toList label))
     edges
   |> Debug.log "Redirect: original gathered edges"
   -- any edges that have the same start and the same data
@@ -674,12 +699,12 @@ redirectPrefixGraphNodes edges =
   -- split. This is fine, because it is ALWAYS
   -- non-determinism that can be joined! (PROOF??)
   |> List.foldl
-    (\({start, data, end}, xs) ( acc, redirectDict ) ->
-      ( { start = start
-        , conn = data
-        , end = end
+    (\({from, to, label}, xs) ( acc, redirectDict ) ->
+      ( { start = from
+        , conn = label
+        , end = to
         } :: acc
-      , List.foldl (\x d -> Dict.insert x.end end d) redirectDict xs
+      , List.foldl (\x d -> Dict.insert x.to to d) redirectDict xs
       )
     )
     ([], Dict.empty)
@@ -711,6 +736,7 @@ fromAlgebra s =
       graphEdges =
         expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2)
         |> .edges
+        -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
         |> coalesceToGraphNodes
         |> redirectPrefixGraphNodes
       (maxId, nodes) =
