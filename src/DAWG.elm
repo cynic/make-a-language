@@ -353,12 +353,13 @@ commonPrefixCollapse xs =
             M (h::_)::_ ->
               Just
                 ( Debug.log "Common prefix" h
-                , List.map
+                , List.concatMap
                     (\m ->
                       case m of
-                        M [_, v] -> v
-                        M (_::rest) -> M rest
-                        _ -> m -- should not reach here!
+                        M [_, A inner] -> inner
+                        M [_, v] -> [v]
+                        M (_::rest) -> [M rest]
+                        _ -> Debug.log "SHOULD NOT REACH HERE!" [m] -- should not reach here!
                     )
                     l
                 )
@@ -382,6 +383,7 @@ commonPrefixCollapse xs =
         -- and replace them with the replacements
         |> (\l -> l ++ replacements)
         |> List.map sortAST
+        -- |> Debug.log "Prefix-collapse result"
 
 {-|This applies Rule #11, Split Subsumption, to an “Add” value.
 
@@ -544,7 +546,9 @@ commonSuffixCollapse xs =
           let
             common_suffix =
               case groupItems of
-                M items::_ -> List.last items |> Debug.log "Common suffix"
+                M items::_ ->
+                  List.last items
+                  |> Debug.log "Common suffix"
                 _ -> Nothing
             add_part =
               List.filterMap
@@ -583,8 +587,10 @@ simplify : ExprAST -> ExprAST
 simplify e =
   case debugLog "Simplifying" exprASTToString e of
     A (A xs::rest) ->
+      -- println "Rephrasing nested +"
       simplify <| A (xs ++ rest)
     M (M xs::rest) ->
+      -- println "Rephrasing nested ×"
       simplify <| M (xs ++ rest)
     A xs ->
       -- See if we can apply Rule 9: Common Prefix Collapse
@@ -592,11 +598,12 @@ simplify e =
         -- p-collapse, subsumption, s-collapse
         post_simplification =
           ( finalityPrimacy 
-          >>splitSubsumption
+          -->>splitSubsumption
           >>commonSuffixCollapse
           >>commonPrefixCollapse
           ) xs
       in
+        -- println "In +" |> \_ ->
         if post_simplification /= xs then
           case post_simplification of
             [x] -> simplify x
@@ -605,14 +612,22 @@ simplify e =
           let
             inner_simplified = List.map simplify post_simplification
           in
-            if inner_simplified /= post_simplification then
-              simplify <| A inner_simplified
-            else
-              A inner_simplified
+            case ( inner_simplified, inner_simplified /= post_simplification ) of
+              ( [x], True ) ->
+                simplify x
+              ( _, True ) ->
+                simplify <| A inner_simplified
+              ( [x], False ) ->
+                x
+              ( _, False ) ->
+                A inner_simplified
       -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
+      -- println "In ×"
       M (List.map simplify xs)
-    V x -> V x -- base case
+    V x ->
+      -- println "In V"
+      V x -- base case
 
 exprASTToRTString : ExprAST -> String
 exprASTToRTString e =
@@ -684,12 +699,19 @@ coalesceToGraphNodes edges =
         }
     )
 
+graphEdgeToString : Graph.Edge Connection -> String
+graphEdgeToString {from, to, label} =
+  "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
+
 redirectPrefixGraphNodes : List (Graph.Edge Connection) -> List (Graph.Edge Connection)
 redirectPrefixGraphNodes edges =
   List.gatherEqualsBy
     (\{from, label} -> (from, Set.toList label))
+    (
     edges
-  |> Debug.log "Redirect: original gathered edges"
+    |> debugLog "Redirect: original edges" (List.map graphEdgeToString)
+    )
+  |> debugLog "Redirect: gathered edges" ((List.filter (Tuple.second >> (not << List.isEmpty))) >> List.map (\(edge, xs) -> ( graphEdgeToString edge, List.map graphEdgeToString xs)))
   -- any edges that have the same start and the same data
   -- are actually edges that must be joined together into
   -- one. We know that such edges may arise because of
@@ -699,29 +721,68 @@ redirectPrefixGraphNodes edges =
   -- split. This is fine, because it is ALWAYS
   -- non-determinism that can be joined! (PROOF??)
   |> List.foldl
-    (\({from, to, label}, xs) ( acc, redirectDict ) ->
-      ( { start = from
-        , conn = label
-        , end = to
-        } :: acc
-      , List.foldl (\x d -> Dict.insert x.to to d) redirectDict xs
+      (\(edge, xs) ( acc, redirectDict ) ->
+        ( edge :: acc
+        , List.foldl
+            (\x d ->
+              IntDict.insert x.to edge d -- keyed by the old-destination
+            )
+            redirectDict
+            xs
+        )
+      )
+      ( [], IntDict.empty )
+  |> debugLog "( accepted graph-edges, initial redirectDict )" (\(a, d) -> (List.map graphEdgeToString a, (IntDict.toList) d))
+  -- Now, two things:
+  -- 1. if an edge was going FROM a now-redirected value, it should now go FROM the new value.
+  -- 2. if an edge was going TO a now-redirected value, it should now go TO the new value.
+  |> (\(links, redirectDict) ->
+      -- now get the outgoing nodes related to redirectDict.
+      ( links
+      , IntDict.map
+          (\key {to} ->
+            List.filterMap (\({from} as outgoing) ->
+              -- if from == to then
+              --   Just outgoing
+              -- else
+                if from == key then
+                  Just { outgoing | from = to }
+                else
+                  Nothing
+            ) links
+          )
+          redirectDict
       )
     )
-    ([], Dict.empty)
-  |> debugLog "With redirectDict" Tuple.second
-  -- Now, if the other ends are also starts, then those
-  -- starts also need to be modified.
-  |> (\(links, redirectDict) ->
-      List.map
-        (\{start, conn, end} ->
-          Dict.get start redirectDict
-          |> Maybe.map
-            (\redirected -> Graph.Edge redirected end conn)
-          |> Maybe.withDefaultLazy
-            (\_ -> Graph.Edge start end conn)
+  |> debugLog "( final redirectDict )" (\(_, d) -> (IntDict.toList >> List.map (\(k, v) -> (k, List.map graphEdgeToString v))) d)
+  |> (\(links, redirectDict ) ->
+      List.concatMap
+        (\{from, label, to} ->          
+          let
+            newStart =
+              IntDict.get from redirectDict |> Maybe.andThen List.head |> Maybe.map .from |> Maybe.withDefault from
+          in
+            IntDict.get to redirectDict
+            |> Maybe.map (\outgoingEdges ->
+              case outgoingEdges of
+                [] ->
+                  [ Graph.Edge newStart to label |> debugLog "confirmed edge B" graphEdgeToString ]
+                h::_ ->
+                  (Graph.Edge from to label |> debugLog "confirmed edge C" graphEdgeToString) ::
+                  -- if I am here, then one of the replaced values had this as an input.
+                  -- That could cause a loop (SHOULD I CHECK?!!).
+                  -- Instead, insert an edge.
+                  (List.map (\outgoingEdge ->
+                    Graph.Edge to outgoingEdge.to outgoingEdge.label |> debugLog "inserted edge" graphEdgeToString
+                  ) outgoingEdges)
+            )
+            |> Maybe.withDefaultLazy (\_ ->
+              [ Graph.Edge newStart to label |> debugLog "confirmed edge A" graphEdgeToString ]
+            )
         )
         links
      )
+  |> debugLog "Post-redirection" (List.map graphEdgeToString)
 
 fromAlgebra : String -> DAWG
 fromAlgebra s =
@@ -729,32 +790,33 @@ fromAlgebra s =
   |> String.replace " " ""
   |> String.replace "\n" ""
   |> parseAlgebra
-  |> Result.map (\e ->
-    let
-      flattened = sortAST e |> debugLog "flattened" exprASTToString
-      simplified = simplify flattened |> debugLog "Simplified, round-trip" exprASTToRTString
-      graphEdges =
-        expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2)
-        |> .edges
-        -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
-        |> coalesceToGraphNodes
-        |> redirectPrefixGraphNodes
-      (maxId, nodes) =
-        graphEdges
-        |> List.foldl
-          (\{from, to} acc -> (Set.insert from >> Set.insert to) acc)
-          Set.empty
-        |> Set.toList
-        |> \l -> (List.last l, List.map (\n -> Node n ()) l)
-    in
-      Maybe.map (\max ->
-        DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
-        -- |> \dawg -> List.foldl (checkForCollapse) dawg ((state.maxId + 1)::(List.map (\n -> n.id) nodes))
+  |> Result.map
+    (\e ->
+      let
+        flattened = sortAST e |> debugLog "flattened" exprASTToString
+        simplified = simplify flattened |> debugLog "Simplified, round-trip" exprASTToRTString
+        graphEdges =
+          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2)
+          |> .edges
+          -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
+          |> coalesceToGraphNodes
+          |> redirectPrefixGraphNodes
+        (maxId, nodes) =
+          graphEdges
+          |> List.foldl
+            (\{from, to} acc -> (Set.insert from >> Set.insert to) acc)
+            Set.empty
+          |> Set.toList
+          |> \l -> (List.last l, List.map (\n -> Node n ()) l)
+      in
+        Maybe.map (\max ->
+          DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
+          -- |> \dawg -> List.foldl (checkForCollapse) dawg ((state.maxId + 1)::(List.map (\n -> n.id) nodes))
 
-      ) maxId
-      |> Maybe.withDefault empty
-      -- |> debugDAWG "tada"
-  )
+        ) maxId
+        |> Maybe.withDefault empty
+        -- |> debugDAWG "tada"
+    )
   |> Result.withDefault empty
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
@@ -2206,13 +2268,17 @@ verifiedRecognizedWords : DAWG -> List String
 verifiedRecognizedWords dawg =
   let
     nonDeterministic =
-      case dawg.final of
-        Nothing ->
-          Just "The DAWG has no final node."
-        Just final ->
-          Graph.get dawg.root dawg.graph
-          |> Maybe.andThen
-            (\root -> findNonDeterministic [root] final dawg.graph)
+      case Graph.checkAcyclic dawg.graph of
+        Err _ ->
+          Just "The DAWG is not acyclic."
+        Ok _ ->
+          case dawg.final of
+            Nothing ->
+              Just "The DAWG has no final node."
+            Just final ->
+              Graph.get dawg.root dawg.graph
+              |> Maybe.andThen
+                (\root -> findNonDeterministic [root] final dawg.graph)
   in
     case nonDeterministic of
       Nothing ->
