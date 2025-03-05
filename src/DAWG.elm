@@ -293,7 +293,7 @@ expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
   case expr {- |> debugLog "Processing fragment" exprASTToString-} of
     V data ->
-      println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+      --println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
       { r | edges = EdgeRecord start data end :: r.edges }
     M (x::_ as xs) ->
       foldlSpecial
@@ -384,42 +384,6 @@ commonPrefixCollapse xs =
         |> (\l -> l ++ replacements)
         |> List.map sortAST
         -- |> Debug.log "Prefix-collapse result"
-
-{-|This applies Rule #11, Split Subsumption, to an “Add” value.
-
-Applies: a + a.x = a.x
-
-Because ab = a+b, ab + a.x = a + b + a.x = b + a.x
-
-And ac + a.x + c.y = a + c + a.x + c.y = a.x + c.y
--}
-splitSubsumption : (List ExprAST) -> List ExprAST
-splitSubsumption xs =
-  let
-    mulHeads =
-      -- get all the "Multiply" values
-      List.filterMap
-        (\v ->
-          case v of
-            M (V t::_) -> Just t
-            _ -> Nothing
-        ) xs
-      |> Set.fromList
-  in
-    if Set.isEmpty mulHeads then
-      xs
-    else
-      Debug.log "Rule #11: ☝🏾 attempting to apply Split Subsumption" () |> \_ ->
-      List.filterMap
-        (\v ->
-          case v of
-            V t ->
-                if Set.member t mulHeads then
-                  Nothing
-                else
-                  Just <| V t
-            x -> Just x
-        ) xs
 
 {-|This applies Rule #10, Finality Primacy, to an “Add” value.
 
@@ -598,9 +562,8 @@ simplify e =
         -- p-collapse, subsumption, s-collapse
         post_simplification =
           ( finalityPrimacy 
-          -->>splitSubsumption
-          >>commonSuffixCollapse
           >>commonPrefixCollapse
+          >>commonSuffixCollapse
           ) xs
       in
         -- println "In +" |> \_ ->
