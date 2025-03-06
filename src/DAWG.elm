@@ -272,8 +272,8 @@ commonPrefixCollapse xs =
 Implemented: ẋ + x.y = ẋ + ẋ.y
 …which is slightly different to my notes, but I think it should work.
 -}
-finalityPrimacy : (List ExprAST) -> List ExprAST
-finalityPrimacy xs =
+firstFinalityPrimacy : List ExprAST -> List ExprAST
+firstFinalityPrimacy xs =
   let
     heads =
       -- get all the initial transitions from "Multiply" values,
@@ -355,6 +355,114 @@ finalityPrimacy xs =
           )
           xs
           to_bump
+
+lastFinalityPrimacy : List ExprAST -> List ExprAST
+lastFinalityPrimacy xs =
+  let
+    lasts =
+      -- get all the final transitions from "Multiply" values,
+      -- AND all the single variables
+      List.concatMap
+        (\v ->
+          case v of
+            M inner ->
+              List.last inner
+              |> Maybe.map
+                (\v_ ->
+                  case v_ of
+                    V t -> [t]
+                    A inner_ ->
+                      List.filterMap
+                        (\v__ ->
+                          case v__ of
+                            V t -> Just t
+                            M inner__ ->
+                              List.last inner__
+                              |> Maybe.andThen
+                                (\v___ ->
+                                  case v___ of
+                                    V t -> Just t
+                                    _ -> Nothing
+                                )
+                            _ -> Nothing
+                        )
+                        inner_
+                    _ -> []
+                )
+              |> Maybe.withDefault []
+            V t -> [t]
+            _ -> []
+        ) xs
+      |> List.unique
+      |> Debug.log "Lasts & single values"
+    collected_transitions =
+      List.foldl Set.insert Set.empty lasts
+    to_bump =
+      Set.Extra.filterMap
+        (\(c, _) ->
+          if Set.member (c, 0) collected_transitions && Set.member (c, 1) collected_transitions then
+            Just c
+          else
+            Nothing
+        )
+        collected_transitions
+      |> Set.toList
+      -- |> Debug.log "Found primacy items"
+  in
+    case to_bump of
+      [] -> -- Nothing to promote.  Rely on caller to simplify.
+        xs
+      _ ->
+        Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy Ⅱ" () |> \_ ->
+        List.foldl
+          (\ch state ->
+            List.filterMap
+              (\item ->
+                case item of
+                  M inner ->
+                    List.unconsLast inner
+                    |> Maybe.andThen (\(last, initial) ->
+                      case last of
+                        V x ->
+                          if x == (ch, 0) then
+                            Just <| M (initial ++ [V (ch, 1)])
+                          else
+                            Just item
+                        A inner_ ->
+                          List.map
+                            (\x ->
+                              case x of
+                                V t ->
+                                  if t == (ch, 0) then
+                                    V (ch, 1)
+                                  else
+                                    V t
+                                M (V t::rest_) ->
+                                  if t == (ch, 0) then
+                                    M <| V (ch, 1)::rest_
+                                  else
+                                    M <| V t::rest_
+                                _ -> x
+                            )
+                            inner_
+                          |> \out -> Just <| M (initial ++ [A out])
+                        _ -> Just last
+                    )
+                  V (x, _) ->
+                    if x == ch then
+                      Nothing
+                    else
+                      Just <| item
+                  x -> Just x
+              )
+              state
+          )
+          xs
+          to_bump
+
+finalityPrimacy : List ExprAST -> List ExprAST
+finalityPrimacy =
+  firstFinalityPrimacy -->> lastFinalityPrimacy
 
 {-|This applies Rule #5, Common Suffix Collapse, to an “Add” value.
 -}
@@ -700,7 +808,7 @@ fromAlgebra s =
       in
         Maybe.map (\max ->
           DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
-          |> \dawg -> List.foldl (checkForCollapse) dawg ((max)::(List.map (\n -> n.id) nodes))
+          |> \dawg -> List.foldl (checkForCollapse) dawg (1::(List.map (\n -> n.id) nodes))
         ) maxId
         |> Maybe.withDefault empty
         -- |> debugDAWG "tada"
@@ -2189,7 +2297,8 @@ minimality dawg =
       Graph.edges dawg.graph
       |> List.concatMap
         (\{from, to, label} ->
-          Set.toList label |> List.map (\l -> (from, to, l))
+          Set.toList label
+          |> List.map (\t -> (from, to, t))
         )
     (finals, nonFinals) = -- the initial partition.
       -- those which lead to finality, and those which don't.
@@ -2198,21 +2307,21 @@ minimality dawg =
       -- |> Debug.log "Finals and non-finals"
     refine : HopcroftRecord -> List Partition
     refine r =
-      case (r {- |> Debug.log "hopcropft" -}).w of
+      case (r {- |> Debug.log "hopcroft"-}).w of
         [] ->
           r.p
         a::w_rest ->
           let
             xs =
               List.filterMap
-                (\(from, to, (ch, _)) ->
+                (\(from, to, t) ->
                   if Set.member to a then
-                    Just (ch, from)
+                    Just (t, from)
                   else
                     Nothing
                 ) edges
               |> List.gatherEqualsBy Tuple.first
-              |> List.map (\((ch, h), t) -> (ch, Set.fromList (h::List.map Tuple.second t))) -- Now I should have a list of (ch, {states_from_w_which_go_to_`a`})
+              |> List.map (\((transition, h), t) -> (transition, Set.fromList (h::List.map Tuple.second t))) -- Now I should have a list of (ch, {states_from_w_which_go_to_`a`})
               -- |> Debug.log ("`X` set, given `A` of " ++ (Debug.toString (Set.toList a)))
             refine_for_input_and_y : Partition -> Partition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
             refine_for_input_and_y y further_split remaining_after w p =
@@ -2229,8 +2338,8 @@ minimality dawg =
               , (further_split :: remaining_after :: List.remove y p)
                 -- |> Debug.log "Refining p, stage Ⅱ"
               )
-            refine_for_input : Char -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
-            refine_for_input ch x w p = -- really, the ch is only there for potential debugging.
+            refine_for_input : Transition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
+            refine_for_input t x w p = -- really, the ch is only there for potential debugging.
               let
                 candidate_sets =
                   List.filterMap
@@ -2253,7 +2362,7 @@ minimality dawg =
                     -- println ("Refining for input " ++ String.fromChar ch)
                     List.foldl (\(y, further, remaining) (w_, p_) -> refine_for_input_and_y y further remaining w_ p_) (w, p) candidate_sets
             (new_w, new_p) =
-              List.foldl (\(ch, x) (w, p) -> refine_for_input ch x w p) (w_rest, r.p) xs
+              List.foldl (\(t, x) (w, p) -> refine_for_input t x w p) (w_rest, r.p) xs
           in
             refine
               { w = new_w
