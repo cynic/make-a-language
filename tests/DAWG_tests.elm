@@ -21,7 +21,7 @@ czech l expectedRecognized expectedNodes expectedEdges =
         dawg = D.fromWordsAlgebraic x
         edges = D.numEdges dawg
         nodes = D.numNodes dawg
-        minimality = D.isMinimal dawg
+        minimality = D.minimality dawg
         recognized = D.verifiedRecognizedWords dawg
       in
         if recognized /= expectedRecognized then
@@ -33,9 +33,9 @@ czech l expectedRecognized expectedNodes expectedEdges =
         else if edges /= expectedEdges then
           Debug.log "Failure on edge-count of permutation" x
           |> \_ -> Expect.equal edges expectedEdges
-        else if Result.Extra.isErr minimality then
+        else if not (List.isEmpty minimality) then
           Debug.log "Failure on minimality" x
-          |> \_ -> Expect.fail (Result.Extra.error minimality |> Maybe.withDefault "…wut wut wut")
+          |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality |> String.join "; "))
         else
           czech rest expectedRecognized expectedNodes expectedEdges
 

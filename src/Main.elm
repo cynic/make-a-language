@@ -60,6 +60,13 @@ type alias LayoutConfiguration =
   , leftRightSplitPercentage : Float
   }
 
+type alias DAWGMetrics =
+  { recognized : List String
+  , numNodes : Int
+  , numEdges : Int
+  , combinable : List (List Int)
+  }
+
 type alias Model =
   { dragState : DragState
   , text : String
@@ -69,6 +76,7 @@ type alias Model =
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
   , useAlgebraic : Bool
+  , metrics : DAWGMetrics
   }
 
 type DragState
@@ -131,6 +139,26 @@ updateLayout fraction model =
       , forceDirectedGraph = newForcesGraph
     }
 
+defaultModel : Model
+defaultModel =
+  { dragState = Static
+  , text = ""
+  , algebraic = ""
+  , dawg = DAWG.empty
+  , forceDirectedGraph =
+      ForceDirectedGraph.init DAWG.empty (0, 0)
+      |> Tuple.first
+  , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
+  , layoutConfiguration = initialLayoutConfig
+  , useAlgebraic = False
+  , metrics =
+      { recognized = []
+      , numNodes = 0
+      , numEdges = 0
+      , combinable = []
+      }
+  }
+
 init : E.Value -> (Model, Cmd Msg)
 init flags =
   D.decodeValue decodeDimensions flags
@@ -138,11 +166,8 @@ init flags =
     (flip viewportDimensionsToLayoutDimensions initialLayoutConfig
     >>
     \layout ->
-      ( { dragState = Static
-        , text = ""
-        , algebraic = ""
-        , dawg = DAWG.empty
-        , forceDirectedGraph =
+      ( { defaultModel
+          | forceDirectedGraph =
             ForceDirectedGraph.init
               DAWG.empty
               ( layout.rightPanel.width - 10
@@ -150,31 +175,25 @@ init flags =
               )
             |> Tuple.first
         , dimensions = layout
-        , layoutConfiguration = initialLayoutConfig
-        , useAlgebraic = False
         }
       , Cmd.none
       )
     )
-  |> Result.withDefault
-    ( { dragState = Static
-      , text = ""
-      , algebraic = ""
-      , dawg = DAWG.empty
-      , forceDirectedGraph =
-          ForceDirectedGraph.init
-            DAWG.empty
-            (0, 0)
-          |> Tuple.first
-      , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
-      , layoutConfiguration = initialLayoutConfig
-      , useAlgebraic = False
-      }
-    , Cmd.none
-    )
+  |> Result.withDefault ( defaultModel , Cmd.none )
 
 
 -- UPDATE
+
+calcMetrics : DAWG.DAWG -> DAWGMetrics
+calcMetrics dawg =
+  let
+    words = DAWG.verifiedRecognizedWords dawg
+  in
+    { recognized = words
+    , numNodes = DAWG.numNodes dawg
+    , numEdges = DAWG.numEdges dawg
+    , combinable = DAWG.minimality dawg
+    }
 
 
 type Msg
@@ -222,6 +241,7 @@ update msg model =
                 (model.dimensions.leftPanel.width + 10, 10)
                 (ForceDirectedGraph.GraphUpdated dawg)
                 model.forceDirectedGraph
+          , metrics = calcMetrics dawg
         }
       , Cmd.none
       )
@@ -239,6 +259,7 @@ update msg model =
                 (model.dimensions.leftPanel.width + 10, 10)
                 (ForceDirectedGraph.GraphUpdated dawg)
                 model.forceDirectedGraph
+          , metrics = calcMetrics dawg
         }
       , Cmd.none
       )
@@ -411,8 +432,7 @@ view model =
               ]
         -- recognized words zone
         , let
-            recognized = DAWG.verifiedRecognizedWords model.dawg
-            isSame = (String.split "\n" model.text |> List.Extra.unique |> List.filter ((/=) "") |> List.sort) == recognized
+            isSame = (String.split "\n" model.text |> List.Extra.unique |> List.filter ((/=) "") |> List.sort) == model.metrics.recognized
             (fgcolor, bgcolor) = if isSame then (rgb 0 0 0, rgb 208 240 192) else (rgb 255 255 255, rgb 236 88 0)
           in
           div
@@ -433,13 +453,13 @@ view model =
                 ]
             ]
             [ let
-                wordsRecognized = String.join " ◉ " <| recognized
+                wordsRecognized = String.join " ◉ " <| model.metrics.recognized
                 minimality =
-                  case DAWG.isMinimal model.dawg of
-                    Ok _ -> "🟢"
-                    Err e -> "🟠 (" ++ e ++ ") "
+                  case model.metrics.combinable of
+                    [] -> "🟢"
+                    xs -> "🟠 (can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") >> String.join "; ") xs ++ ") "
                 metrics =
-                  String.fromInt (DAWG.numNodes model.dawg) ++ " nodes, " ++ String.fromInt (DAWG.numEdges model.dawg) ++ " edges, " ++ String.fromInt (List.length recognized) ++ " words."
+                  String.fromInt model.metrics.numNodes ++ " nodes, " ++ String.fromInt model.metrics.numEdges ++ " edges, " ++ String.fromInt (List.length model.metrics.recognized) ++ " words."
               in
               Html.Styled.text <| wordsRecognized ++ "      🛈: " ++ minimality ++ " " ++ metrics ]
         ]

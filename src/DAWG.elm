@@ -2257,8 +2257,8 @@ type alias HopcroftRecord =
   , p : List Partition -- partitions
   }
 
-isMinimal : DAWG -> Result String DAWG
-isMinimal dawg =
+minimality : DAWG -> List (List Int)
+minimality dawg =
   -- This is Hopcroft's Algorithm
   let
     edges = -- Edge (Transition)
@@ -2343,9 +2343,9 @@ isMinimal dawg =
     -- |> Debug.log "Hopcroft raw result"
     -- |> debugLog "Hopcroft result" (List.map Set.size)
     |> List.filter (\s -> Set.size s > 1)
-    |>
-    (\l ->
-      case l of
-        [] -> Ok dawg
-        _ -> Err <| "Not minimal; can combine: " ++ (List.map (\s -> "[" ++ (Set.toList s |> List.map String.fromInt |> String.join ", ") ++ "]") l |> String.join "; ")
-    )
+    |> List.map Set.toList
+    -- (\l ->
+    --   case l of
+    --     [] -> Ok dawg
+    --     _ -> Err <| "Not minimal; can combine: " ++ (List.map (\s -> "[" ++ (Set.toList s |> List.map String.fromInt |> String.join ", ") ++ "]") l |> String.join "; ")
+    -- )
