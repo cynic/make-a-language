@@ -5,6 +5,7 @@ import Fuzz
 import Test exposing (..)
 import DAWG as D
 import List.Extra as List
+import Result.Extra
 
 nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
@@ -20,17 +21,21 @@ czech l expectedRecognized expectedNodes expectedEdges =
         dawg = D.fromWordsAlgebraic x
         edges = D.numEdges dawg
         nodes = D.numNodes dawg
+        minimality = D.isMinimal dawg
         recognized = D.verifiedRecognizedWords dawg
       in
         if recognized /= expectedRecognized then
           Debug.log "Failure on recognized words of permutation" x
           |> \_ -> Expect.equal recognized expectedRecognized
-        -- else if nodes /= expectedNodes then
-        --   Debug.log "Failure on node-count of permutation" x
-        --   |> \_ -> Expect.equal nodes expectedNodes
-        -- else if edges /= expectedEdges then
-        --   Debug.log "Failure on edge-count of permutation" x
-        --   |> \_ -> Expect.equal edges expectedEdges
+        else if nodes /= expectedNodes then
+          Debug.log "Failure on node-count of permutation" x
+          |> \_ -> Expect.equal nodes expectedNodes
+        else if edges /= expectedEdges then
+          Debug.log "Failure on edge-count of permutation" x
+          |> \_ -> Expect.equal edges expectedEdges
+        else if Result.Extra.isErr minimality then
+          Debug.log "Failure on minimality" x
+          |> \_ -> Expect.fail (Result.Extra.error minimality |> Maybe.withDefault "…wut wut wut")
         else
           czech rest expectedRecognized expectedNodes expectedEdges
 

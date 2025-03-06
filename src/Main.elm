@@ -28,6 +28,7 @@ import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
 import Html
 import Html.Styled.Attributes exposing (for)
+import Result.Extra
 
 -- MAIN
 
@@ -431,7 +432,16 @@ view model =
                 , color fgcolor
                 ]
             ]
-            [ Html.Styled.text <| (String.join " ◉ " <| recognized) ++ "      🛈: " ++ String.fromInt (DAWG.numNodes model.dawg) ++ " nodes, " ++ String.fromInt (DAWG.numEdges model.dawg) ++ " edges, " ++ String.fromInt (List.length recognized) ++ " words." ]
+            [ let
+                wordsRecognized = String.join " ◉ " <| recognized
+                minimality =
+                  case DAWG.isMinimal model.dawg of
+                    Ok _ -> "🟢"
+                    Err e -> "🟠 (" ++ e ++ ") "
+                metrics =
+                  String.fromInt (DAWG.numNodes model.dawg) ++ " nodes, " ++ String.fromInt (DAWG.numEdges model.dawg) ++ " edges, " ++ String.fromInt (List.length recognized) ++ " words."
+              in
+              Html.Styled.text <| wordsRecognized ++ "      🛈: " ++ minimality ++ " " ++ metrics ]
         ]
       ]
 

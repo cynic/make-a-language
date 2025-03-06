@@ -11,6 +11,8 @@ import Set.Extra
 import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, spaces, end, getChompedString, chompIf, sequence, loop, Step(..))
 import Char.Extra
 import Dict
+import Svg.Attributes exposing (x)
+import Svg.Attributes exposing (in_)
 
 type ExprAST
   = M (List ExprAST)
@@ -774,8 +776,7 @@ fromAlgebra s =
       in
         Maybe.map (\max ->
           DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
-          -- |> \dawg -> List.foldl (checkForCollapse) dawg ((state.maxId + 1)::(List.map (\n -> n.id) nodes))
-
+          |> \dawg -> List.foldl (checkForCollapse) dawg ((max)::(List.map (\n -> n.id) nodes))
         ) maxId
         |> Maybe.withDefault empty
         -- |> debugDAWG "tada"
@@ -2248,3 +2249,103 @@ verifiedRecognizedWords dawg =
         recognizedWords dawg
       Just e ->
         [e]
+
+type alias TupleEdge = (NodeId, NodeId, Transition)
+type alias Partition = Set NodeId
+type alias HopcroftRecord =
+  { w : List Partition -- still to be processed.
+  , p : List Partition -- partitions
+  }
+
+isMinimal : DAWG -> Result String DAWG
+isMinimal dawg =
+  -- This is Hopcroft's Algorithm
+  let
+    edges = -- Edge (Transition)
+      Graph.edges dawg.graph
+      |> List.concatMap
+        (\{from, to, label} ->
+          Set.toList label |> List.map (\l -> (from, to, l))
+        )
+    (finals, nonFinals) = -- the initial partition.
+      -- those which lead to finality, and those which don't.
+      List.partition (\(_, _, (_, isFinal)) -> isFinal == 1) edges
+      |> \(a, b) -> ( List.map (\(_,v,_) -> v) a |> Set.fromList, 0::List.map (\(_,v,_) -> v) b |> Set.fromList )
+      -- |> Debug.log "Finals and non-finals"
+    refine : HopcroftRecord -> List Partition
+    refine r =
+      case (r {- |> Debug.log "hopcropft" -}).w of
+        [] ->
+          r.p
+        a::w_rest ->
+          let
+            xs =
+              List.filterMap
+                (\(from, to, (ch, _)) ->
+                  if Set.member to a then
+                    Just (ch, from)
+                  else
+                    Nothing
+                ) edges
+              |> List.gatherEqualsBy Tuple.first
+              |> List.map (\((ch, h), t) -> (ch, Set.fromList (h::List.map Tuple.second t))) -- Now I should have a list of (ch, {states_from_w_which_go_to_`a`})
+              -- |> Debug.log ("`X` set, given `A` of " ++ (Debug.toString (Set.toList a)))
+            refine_for_input_and_y : Partition -> Partition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
+            refine_for_input_and_y y further_split remaining_after w p =
+              ( if List.member y w then
+                  (further_split :: remaining_after :: List.remove y w)
+                  -- |> Debug.log "Refining w, stage Ⅱa"
+                else
+                  if Set.size further_split <= Set.size remaining_after then
+                    (further_split :: w)
+                    -- |> Debug.log "Refining w, stage Ⅱb"
+                  else
+                    (remaining_after :: w)
+                    -- |> Debug.log "Refining w, stage Ⅱc"
+              , (further_split :: remaining_after :: List.remove y p)
+                -- |> Debug.log "Refining p, stage Ⅱ"
+              )
+            refine_for_input : Char -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
+            refine_for_input ch x w p = -- really, the ch is only there for potential debugging.
+              let
+                candidate_sets =
+                  List.filterMap
+                    (\potential_y ->
+                      let
+                        further_split = Set.intersect x potential_y -- |> Debug.log ("Intersection of " ++ Debug.toString x ++ " and " ++ Debug.toString potential_y)
+                        remaining_after = Set.diff potential_y x -- |> Debug.log ("Subtraction: " ++ Debug.toString potential_y ++ " minus " ++ Debug.toString x)
+                      in
+                        if Set.isEmpty remaining_after || Set.isEmpty further_split then
+                          Nothing
+                        else
+                          Just (potential_y, further_split, remaining_after)
+                    )
+                    p
+              in
+                case candidate_sets of
+                  [] ->
+                    (w, p)
+                  _ ->
+                    -- println ("Refining for input " ++ String.fromChar ch)
+                    List.foldl (\(y, further, remaining) (w_, p_) -> refine_for_input_and_y y further remaining w_ p_) (w, p) candidate_sets
+            (new_w, new_p) =
+              List.foldl (\(ch, x) (w, p) -> refine_for_input ch x w p) (w_rest, r.p) xs
+          in
+            refine
+              { w = new_w
+              , p = new_p
+              }
+  in
+    refine
+      { w = [finals, nonFinals]
+      , p = [finals, nonFinals]
+      }
+    -- |> Debug.log "Hopcroft raw result"
+    -- |> debugLog "Hopcroft result" (List.map Set.size)
+    |> List.filter (\s -> Set.size s > 1)
+    |>
+    (\l ->
+      case l of
+        [] -> Ok dawg
+        _ -> Err <| "Not minimal; can combine: " ++ (List.map (\s -> "[" ++ (Set.toList s |> List.map String.fromInt |> String.join ", ") ++ "]") l |> String.join "; ")
+    )
