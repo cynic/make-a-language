@@ -549,17 +549,38 @@ commonSuffixCollapse xs =
           |> List.map sortAST
           -- |> Debug.log "Result of suffix-collapse"
 
+simplify_inner : List ExprAST -> (List ExprAST -> ExprAST) -> ExprAST
+simplify_inner inner wrap =
+  let
+    inner_simplified =
+      println "Simplifying the inner values individually."
+      List.map simplify inner
+  in
+    case ( inner_simplified, inner_simplified /= inner ) of
+      ( [x], True ) ->
+        println "?-Inner reduced to one value; re-running."
+        simplify x
+      ( _, True ) ->
+        println "Changes made to ?-inner; re-running with outer nesting."
+        simplify <| wrap inner_simplified
+      ( [x], False ) ->
+        println "?-Inner reduced to one value; returning."
+        x
+      ( _, False ) ->
+        println "No changes made to ?-inner; wrapping in ? and returning."
+        wrap inner_simplified
+
 simplify : ExprAST -> ExprAST
 simplify e =
-  case debugLog "Simplifying" exprASTToString e of
+  case e of
     A (A xs::rest) ->
-      -- println "Rephrasing nested +"
+      debugLog "Rephrasing nested +" exprASTToString e |> \_ ->
       simplify <| A (xs ++ rest)
     M (M xs::rest) ->
-      -- println "Rephrasing nested ×"
+      debugLog "Rephrasing nested ×" exprASTToString e |> \_ ->
       simplify <| M (xs ++ rest)
     A xs ->
-      -- See if we can apply Rule 9: Common Prefix Collapse
+      debugLog "Simplifying +" exprASTToString e |> \_ ->
       let
         -- p-collapse, subsumption, s-collapse
         post_simplification =
@@ -571,25 +592,18 @@ simplify e =
         -- println "In +" |> \_ ->
         if post_simplification /= xs then
           case post_simplification of
-            [x] -> simplify x
-            _ -> simplify <| A post_simplification
+            [x] ->
+              println "A-Simplification resulted in the removal of A-nesting; simplifying the result."
+              simplify x
+            _ ->
+              println "A-Simplification resulted in changes; re-running."
+              simplify <| A post_simplification
         else
-          let
-            inner_simplified = List.map simplify post_simplification
-          in
-            case ( inner_simplified, inner_simplified /= post_simplification ) of
-              ( [x], True ) ->
-                simplify x
-              ( _, True ) ->
-                simplify <| A inner_simplified
-              ( [x], False ) ->
-                x
-              ( _, False ) ->
-                A inner_simplified
+          simplify_inner post_simplification A
       -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
-      -- println "In ×"
-      M (List.map simplify xs)
+      debugLog "Simplifying ×" exprASTToString e |> \_ ->
+      simplify_inner xs M
     V x ->
       -- println "In V"
       V x -- base case
@@ -731,18 +745,25 @@ redirectPrefixGraphNodes edges =
             |> Maybe.map (\outgoingEdges ->
               case outgoingEdges of
                 [] ->
-                  [ Graph.Edge newStart to label |> debugLog "confirmed edge B" graphEdgeToString ]
+                  [ Graph.Edge newStart to label
+                    -- |> debugLog "confirmed edge B" graphEdgeToString
+                  ]
                 h::_ ->
-                  (Graph.Edge from to label |> debugLog "confirmed edge C" graphEdgeToString) ::
+                  (Graph.Edge from to label
+                  -- |> debugLog "confirmed edge C" graphEdgeToString
+                  ) ::
                   -- if I am here, then one of the replaced values had this as an input.
                   -- That could cause a loop (SHOULD I CHECK?!!).
                   -- Instead, insert an edge.
                   (List.map (\outgoingEdge ->
-                    Graph.Edge to outgoingEdge.to outgoingEdge.label |> debugLog "inserted edge" graphEdgeToString
+                    Graph.Edge to outgoingEdge.to outgoingEdge.label
+                    |> debugLog "inserted edge" graphEdgeToString
                   ) outgoingEdges)
             )
             |> Maybe.withDefaultLazy (\_ ->
-              [ Graph.Edge newStart to label |> debugLog "confirmed edge A" graphEdgeToString ]
+              [ Graph.Edge newStart to label
+              -- |> debugLog "confirmed edge A" graphEdgeToString
+              ]
             )
         )
         links
@@ -765,7 +786,7 @@ fromAlgebra s =
           |> .edges
           -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
           |> coalesceToGraphNodes
-          |> redirectPrefixGraphNodes
+          -- |> redirectPrefixGraphNodes
         (maxId, nodes) =
           graphEdges
           |> List.foldl
