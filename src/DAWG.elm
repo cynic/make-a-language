@@ -15,98 +15,6 @@ type ExprAST
   | A (List ExprAST)
   | V Transition
 
--- AST for algebraic expressions
--- type Expr
---   = Variable Connection
---   | Add Expr Expr
---   | Multiply Expr Expr
-
--- -- Parser for algebraic expressions
--- expressionParser : Parser Expr
--- expressionParser =
---   Debug.log ("------------------------------ NEW PARSE BEGINNING") () |> \_ ->
---   succeed identity
---     |= term
---     |. spaces
---     |. end
-
--- -- Term: Handles addition
--- term : Parser Expr
--- term =
---   let
---     termHelper left =
---       oneOf
---         [ succeed (Loop << Add left)
---             |. spaces
---             |. symbol "+"
---             |. spaces
---             |= lazy (\_ -> factor)
---         , succeed (Done left)
---         ]
---   in
---     succeed identity
---       |= factor
---       |> P.andThen (\left -> loop left termHelper)
-
--- -- Factor: Handles multiplication
--- factor : Parser Expr
--- factor =
---   succeed identity
---     |= primary -- obtain what will either be a variable or a group.
---     |> P.andThen
---       (\initial -> -- with that variable, proceed.
---           loop initial -- It will be used as the initial value for a (potential) product.
---             (\left -> -- `initial` is the first value here; but if we loop, then this will be a left-associative Multiply.
---               oneOf
---                 [ succeed (Loop << Multiply left) -- Structure & return an indication to continue parsing within Factor.
---                     |. spaces
---                     |. symbol "." -- IF we find a '.', then we take this branch and…
---                     |. spaces
---                     |= lazy (\_ -> primary) -- …grab another primary after the '.'
---                 , succeed (Done left) -- If there is no '.', then this will be hit. Notice that we ONLY return `left` here.
---                 ]
---             )
---       )
-
--- -- Variable: Parses alphabetic variable names
--- variable : Parser Expr
--- variable =
---   let
---     cParser = \c -> not (Char.Extra.isSpace c || c == '+' || c == '.' || c == '(' || c == ')' || c == '!')
---     updateSetParser finality state s =
---       case String.toList s of
---         '!'::[c] ->
---           updateSetParser finality state (String.fromList [c])
---         [c] ->
---           if Set.member (c, 1) state then
---             succeed <| Loop state
---           else if Set.member (c, 0) state then
---             succeed <| Loop <| (Set.remove (c, 0) >> Set.insert (c, finality)) state
---           else
---             succeed <| Loop <| Set.insert (c, finality) state
---         _ -> P.problem <| "Expected a single character, but got \"" ++ s ++ "\" instead."
-
---     tParser state =
---       oneOf
---         [ symbol "!!!" |> P.andThen (\_ -> updateSetParser 1 state "!")
---         , symbol "!!" |> P.andThen (\_ -> updateSetParser 0 state "!")
---         , symbol "!"
---             |. P.chompIf cParser
---             |> getChompedString
---             |> P.andThen (updateSetParser 1 state)
---         , chompIf cParser
---           |> getChompedString
---           |> P.andThen (updateSetParser 0 state)
---         , if Set.isEmpty state then
---             P.problem "Expected a variable"
---           else
---             succeed (Done state)
---         ]
---   in
---     loop Set.empty tParser
---     |> map Variable
-
-
 -- Top-level parser
 expressionParser : Parser ExprAST
 expressionParser =
@@ -172,7 +80,6 @@ variable =
       , parseChar 0
       ]
 
-
 -- Grouped expressions (parentheses)
 grouped : Parser ExprAST
 grouped =
@@ -182,16 +89,6 @@ grouped =
         |= lazy (\_ -> term)
         |. spaces
         |. symbol ")"
-
--- exprToString : Expr -> String
--- exprToString e =
---   case e of
---     Variable conn ->
---       connectionToString conn
---     Multiply a b ->
---       "(× " ++ exprToString a ++ " " ++ exprToString b ++ ")"
---     Add a b ->
---       "(+ " ++ exprToString a ++ " " ++ exprToString b ++ ")"
 
 type alias EdgeRecord =
   { start : Int
@@ -253,19 +150,6 @@ type alias EdgeRecord =
   12.This takes us back to (6).  We can change (Nothing, {f}, )…
 
 -}
-
--- newVar : Connection -> (Int, Int) -> (Adjuster, Adjuster, ToDawgRecord)
--- newVar conn state =
---   let
---     k = state.maxId + 1
---   in
---     ( \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | start = Just (Debug.log ("Adjusting start of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
---     , \n r -> { r | connections = IntDict.update k (Maybe.map <| \v -> { v | end = Just (Debug.log ("Adjusting  end  of " ++ connectionToString v.data ++ ": was " ++ (Maybe.map String.fromInt >> Maybe.withDefault "unset") v.start ++ ", now") n) }) r.connections }
---     , { state
---         | maxId = k
---         , connections = IntDict.insert k (EdgeRecord Nothing (debugLog "Nothing↔️Nothing edge initialized for" connectionToString conn) Nothing) state.connections
---       }
---     )
 
 {-| Like foldl, but do something special with the last one.
 -}
