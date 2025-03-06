@@ -5,14 +5,10 @@ import List.Extra as List exposing (Step(..))
 import Maybe.Extra as Maybe
 import Basics.Extra exposing (..)
 import IntDict
-import Set exposing (Set)
 import Result.Extra
 import Set.Extra
 import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, spaces, end, getChompedString, chompIf, sequence, loop, Step(..))
 import Char.Extra
-import Dict
-import Svg.Attributes exposing (x)
-import Svg.Attributes exposing (in_)
 
 type ExprAST
   = M (List ExprAST)
@@ -489,7 +485,7 @@ commonSuffixCollapse xs =
             M _ -> True
             _ -> False
         )
-        -- (Debug.log "Suffix-collapse; received"
+        -- (debugLog "Suffix-collapse; received" exprASTsToString
         xs
         -- )
       -- triple-check to ensure that the same Multiply values look the same
@@ -498,7 +494,9 @@ commonSuffixCollapse xs =
       |> List.gatherEqualsBy
           (\v ->
             case v of
-              M sequence -> List.last sequence
+              M sequence ->
+                List.last sequence
+                -- |> debugLog "Got a potential" (Maybe.map exprASTToString)
               _ -> Nothing
           )
       |> List.filter (not << (Tuple.second >> List.isEmpty))
@@ -599,11 +597,28 @@ simplify e =
               println "A-Simplification resulted in changes; re-running."
               simplify <| A post_simplification
         else
-          simplify_inner post_simplification A
+          simplify_inner post_simplification
+            ( List.concatMap
+                (\v ->
+                  case v of
+                    A inner -> inner
+                    x -> [x]
+                )
+            >> A
+            )
+
       -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
       debugLog "Simplifying ×" exprASTToString e |> \_ ->
-      simplify_inner xs M
+      simplify_inner xs
+        ( List.concatMap
+            (\v ->
+              case v of
+                M inner -> inner
+                x -> [x]
+            )
+        >> M
+        )
     V x ->
       -- println "In V"
       V x -- base case
@@ -631,6 +646,10 @@ exprASTToString e =
     A xs ->
       -- "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
       "[" ++ (List.map exprASTToString xs |> String.join " + ") ++ "]"
+
+exprASTsToString : List ExprAST -> String
+exprASTsToString es =
+  List.map exprASTToString es |> String.join "; "
 
 sortAST : ExprAST -> ExprAST
 sortAST e =
