@@ -245,7 +245,7 @@ expressionToDAWG expr (start, end) r =
     M (x::_ as xs) ->
       foldlSpecial
         (\item (acc, (start_, end_)) ->
-          expressionToDAWG item (start_, end_) acc
+          expressionToDAWG item (start_, end_) { acc | outer_expr = expr }
           |> \acc2 -> ( { acc2 | unused = acc2.unused + 1, shareable = acc.shareable }, (end_, acc2.unused) )
         )
         (\item (acc, (start_, _)) ->
@@ -257,7 +257,7 @@ expressionToDAWG expr (start, end) r =
     A xs ->
       List.foldl
         (\item acc ->
-          expressionToDAWG item (start, end) acc
+          expressionToDAWG item (start, end) { acc | outer_expr = expr }
         )
         { r | unused = r.unused + 1 }
         xs
