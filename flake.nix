@@ -15,7 +15,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
-        devShells.default = pkgs.mkShell { packages = with pkgs; [ nodejs elmPackages.elm elmPackages.elm-test ]; };
+        devShells.default = pkgs.mkShell { packages = with pkgs; [ nodejs_23 elmPackages.elm elmPackages.elm-test ]; };
       }
     );
 }
