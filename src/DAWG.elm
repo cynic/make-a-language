@@ -9,6 +9,7 @@ import Result.Extra
 import Set.Extra
 import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, spaces, end, getChompedString, chompIf, sequence, loop, Step(..))
 import Char.Extra
+import Dict
 
 type ExprAST
   = M (List ExprAST)
@@ -166,22 +167,38 @@ foldlSpecial func lastItem acc list =
     x :: xs ->
       foldlSpecial func lastItem (func x acc) xs
 
+-- also modified from elm/core 1.0.5 source.
+foldrSpecial : (a -> b -> b) -> (a -> b -> c) -> b -> List a -> Maybe c
+foldrSpecial fn fn2 acc ls =
+  case ls of
+    [] ->
+      Nothing
+    h::t ->
+      Just <| fn2 h <| List.foldr fn acc t
+
 type alias ToDawgRecord =
   { edges : List EdgeRecord
   , unused : Int
+  , shareable : Dict.Dict Transition Int
   }
 
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
   case expr {- |> debugLog "Processing fragment" exprASTToString-} of
     V data ->
-      --println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
-      { r | edges = EdgeRecord start data end :: r.edges }
+      case Dict.get data (debugLog "shareable" Dict.toList r.shareable) of
+        Just existing ->
+          println ("Reusing: redirecting 🞷➜#" ++ String.fromInt start ++ " to #" ++ String.fromInt existing)
+          -- NOTE: this works for now. But it'll be pretty expensive to map through millions in a larger-scale graph!
+          { r | edges = List.map (\e -> if e.end == start then { e | end = existing } else e) r.edges }
+        Nothing ->
+          println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+          { r | edges = EdgeRecord start data end :: r.edges, shareable = Dict.insert data start r.shareable }
     M (x::_ as xs) ->
       foldlSpecial
         (\item (acc, (start_, end_)) ->
           expressionToDAWG item (start_, end_) acc
-          |> \acc2 -> ( { acc2 | unused = acc2.unused + 1 }, (end_, acc2.unused) )
+          |> \acc2 -> ( { acc2 | unused = acc2.unused + 1, shareable = acc.shareable }, (end_, acc2.unused) )
         )
         (\item (acc, (start_, _)) ->
           expressionToDAWG item (start_, end) acc
@@ -196,6 +213,7 @@ expressionToDAWG expr (start, end) r =
         )
         { r | unused = r.unused + 1 }
         xs
+        |> \acc -> { acc | shareable = Dict.empty }
     M [] ->
       r |> Debug.log "ERROR — found an M value with ZERO items!"
 
@@ -793,7 +811,7 @@ fromAlgebra s =
         flattened = sortAST e |> debugLog "flattened" exprASTToString
         simplified = simplify flattened |> debugLog "Simplified, round-trip" exprASTToRTString
         graphEdges =
-          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2)
+          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2 Dict.empty)
           |> .edges
           -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
           |> coalesceToGraphNodes
@@ -808,7 +826,7 @@ fromAlgebra s =
       in
         Maybe.map (\max ->
           DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
-          |> \dawg -> List.foldl (checkForCollapse) dawg (1::(List.map (\n -> n.id) nodes))
+          --|> \dawg -> List.foldl (checkForCollapse) dawg (1::(List.map (\n -> n.id) nodes))
         ) maxId
         |> Maybe.withDefault empty
         -- |> debugDAWG "tada"
