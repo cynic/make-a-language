@@ -176,24 +176,72 @@ foldrSpecial fn fn2 acc ls =
     h::t ->
       Just <| fn2 h <| List.foldr fn acc t
 
+expr_matches : ExprAST -> ExprAST -> Bool
+expr_matches one two =
+  case ( one, two ) of
+    ( V a, V b ) -> a == b
+    ( V _, M _) -> False
+    ( M _, V _ ) -> False
+    ( _, A xs ) -> List.any (expr_matches one) xs
+    ( A xs, _ ) -> List.any (expr_matches two) xs
+    ( M a, M b ) -> a == b
+
+expr_endsWith : ExprAST -> ExprAST -> Bool
+expr_endsWith ending to_check =
+  let
+    rev_ending =
+      case ending of
+        V x -> [V x]
+        M xs -> List.reverse xs
+        A xs ->
+          [A xs]
+    rev_to_check =
+      case to_check of
+        V x -> [V x]
+        M xs -> List.reverse xs
+        A xs ->
+          [A xs]
+  in
+    List.stoppableFoldl
+      (\end_item (checking, _) ->
+        case checking of
+          [] -> -- no characters left to check, so it can't match.
+            Stop ([], False)
+          x::xs ->
+            if expr_matches end_item x then
+              Continue (xs, True)
+            else
+              Stop (xs, False)
+      )
+      (rev_to_check, False)
+      rev_ending
+    |> Tuple.second
+    |> Debug.log (exprASTToString to_check ++ " ends with " ++ exprASTToString ending ++ "? ")
+
 type alias ToDawgRecord =
   { edges : List EdgeRecord
   , unused : Int
   , shareable : Dict.Dict Transition Int
+  , outer_expr : ExprAST
   }
 
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
   case expr {- |> debugLog "Processing fragment" exprASTToString-} of
     V data ->
-      case Dict.get data (debugLog "shareable" Dict.toList r.shareable) of
-        Just existing ->
-          println ("Reusing: redirecting 🞷➜#" ++ String.fromInt start ++ " to #" ++ String.fromInt existing)
-          -- NOTE: this works for now. But it'll be pretty expensive to map through millions in a larger-scale graph!
-          { r | edges = List.map (\e -> if e.end == start then { e | end = existing } else e) r.edges }
-        Nothing ->
-          println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
-          { r | edges = EdgeRecord start data end :: r.edges, shareable = Dict.insert data start r.shareable }
+      if r.outer_expr |> expr_endsWith expr then
+        println ("Force-Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+        { r | edges = EdgeRecord start data end :: r.edges, shareable = Dict.insert data start r.shareable }
+      else
+        -- this is the main case, where we create or reuse an edge.
+        case Dict.get data (debugLog "shareable" Dict.toList r.shareable) of
+          Just existing ->
+            println ("Reusing: redirecting 🞷➜#" ++ String.fromInt start ++ " to #" ++ String.fromInt existing)
+            -- NOTE: this works for now. But it'll be pretty expensive to map through millions in a larger-scale graph!
+            { r | edges = List.map (\e -> if e.end == start then { e | end = existing } else e) r.edges }
+          Nothing ->
+            println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+            { r | edges = EdgeRecord start data end :: r.edges, shareable = Dict.insert data start r.shareable }
     M (x::_ as xs) ->
       foldlSpecial
         (\item (acc, (start_, end_)) ->
@@ -811,7 +859,7 @@ fromAlgebra s =
         flattened = sortAST e |> debugLog "flattened" exprASTToString
         simplified = simplify flattened |> debugLog "Simplified, round-trip" exprASTToRTString
         graphEdges =
-          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2 Dict.empty)
+          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2 Dict.empty simplified)
           |> .edges
           -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
           |> coalesceToGraphNodes
