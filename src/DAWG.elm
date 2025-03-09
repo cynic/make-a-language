@@ -178,90 +178,145 @@ foldrSpecial fn fn2 acc ls =
 
 expr_matches : ExprAST -> ExprAST -> Bool
 expr_matches one two =
-  case ( one, two ) of
+  (case ( one, two ) of
     ( V a, V b ) -> a == b
     ( V _, M _) -> False
     ( M _, V _ ) -> False
     ( _, A xs ) -> List.any (expr_matches one) xs
     ( A xs, _ ) -> List.any (expr_matches two) xs
     ( M a, M b ) -> a == b
+  )
+  |> Debug.log ("expr_matches ( " ++ exprASTToString one ++ " , " ++ exprASTToString two ++ " )")
 
 expr_endsWith : ExprAST -> ExprAST -> Bool
-expr_endsWith ending to_check =
-  let
-    rev_ending =
+expr_endsWith ending to_check = -- we are checking to see if `ending` ends `to_check`
+  (case to_check of
+    V _ ->
+      False -- strict subset
+      -- -- the thing I'm checking within is a single character.
+      -- case ending of
+      --   A xs -> -- if any of the options of the ending are the same character, then this matches.
+      --     List.any ((==) to_check) xs
+      --   M _ -> False -- A sequence cannot possibly be the end of a single character.
+      --   V _ -> to_check == ending -- straight comparison.
+    M xs ->
+      -- the thing I'm checking within is a sequence.
       case ending of
-        V x -> [V x]
-        M xs -> List.reverse xs
-        A xs ->
-          [A xs]
-    rev_to_check =
-      case to_check of
-        V x -> [V x]
-        M xs -> List.reverse xs
-        A xs ->
-          [A xs]
-  in
-    List.stoppableFoldl
-      (\end_item (checking, _) ->
-        case checking of
-          [] -> -- no characters left to check, so it can't match.
-            Stop ([], False)
-          x::xs ->
-            if expr_matches end_item x then
-              Continue (xs, True)
-            else
-              Stop (xs, False)
-      )
-      (rev_to_check, False)
-      rev_ending
-    |> Tuple.second
-    |> Debug.log (exprASTToString to_check ++ " ends with " ++ exprASTToString ending ++ "? ")
+        V _ -> -- Does this sequence end with a single character?
+          List.last xs
+          |> Maybe.map
+            (\x -> -- this is the last item in the sequence.
+              case x of
+                V _ -> x == ending -- if it's the same as the character, all is good!
+                M _ -> False |> Debug.log "ERROR: A sequence cannot nest a sequence" -- a sequence cannot end with a sequence; this is invalid.
+                A ys -> -- so, we end the sequence with options.
+                  List.any (\y -> y |> expr_endsWith ending) ys -- if any of the options is an ending, then return True.
+            )
+          |> Maybe.withDefault False -- if this happens, there are problems; an M should never be empty!
+        A ys ->
+          -- it's okay if the sequence ends with any of the options we're checking against.
+          List.last xs
+          |> Maybe.map
+            (\x -> -- this is the last item in the sequence
+              List.any (\end -> x |> expr_endsWith end) ys -- see if any of the ending-options applies.
+            )
+          |> Maybe.withDefault False -- if this happens, there are problems; an A should never be empty!
+        M ys ->
+          if List.length ys >= List.length xs then
+            False -- we are looking for strict subset; that is impossible in this case, then.
+          else
+            -- we'll have to check each option of the ending against each option of the sequence, one-by-one.
+            -- We can start from the end, and then work our way backwards.
+            case ( List.unconsLast xs, List.unconsLast ys ) of
+              ( Just ( _, [] ), Just ( _, [] ) ) ->
+                False |> Debug.log "Two sequences are potentially EQUAL. But we are looking for strict-subset; so this is false!"
+              ( Just ( x, _ ), Just ( y, [] ) ) ->
+                expr_endsWith y x -- this is the final one!
+              ( Just ( _, [] ), Just ( _, _ ) ) ->
+                -- if the ending to check is longer than the thing I'm checking in, then it can't end it!
+                False
+              ( Just ( x, prefix_to_check ), Just ( y, prefix_of_ending ) ) ->
+                expr_endsWith y x && expr_endsWith (M prefix_of_ending) (M prefix_to_check)
+              ( _ , _ ) ->
+                False |> Debug.log "… but check: how am I here?"
+    A xs ->
+      -- the thing I'm checking within is a set of possibilities.
+      List.any (\x -> x |> expr_endsWith ending) xs -- if any of the possibilities is an ending, then return True.
+  )
+  |> Debug.log (exprASTToString to_check ++ " ends with " ++ exprASTToString ending ++ "? ")
 
 type alias ToDawgRecord =
   { edges : List EdgeRecord
   , unused : Int
   , shareable : Dict.Dict Transition Int
   , outer_expr : ExprAST
+  , sharing_enabled : Bool
   }
+
+dawgRecordToString : ToDawgRecord -> String
+dawgRecordToString r =
+  "unused=" ++ String.fromInt r.unused ++ ", ctx=" ++ exprASTToString r.outer_expr ++ ", shareable=" ++ Debug.toString (Dict.toList r.shareable) ++ ", sharing enabled? " ++ (if r.sharing_enabled then "✅" else "❌")
 
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
-  case expr {- |> debugLog "Processing fragment" exprASTToString-} of
+  case expr |> debugLog "Processing fragment" (\e -> "s=" ++ String.fromInt start ++ ", e=" ++ String.fromInt end ++ ", " ++ dawgRecordToString r ++ ", expr=" ++ exprASTToString e) of
     V data ->
-      if r.outer_expr |> expr_endsWith expr then
-        println ("Force-Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
-        { r | edges = EdgeRecord start data end :: r.edges, shareable = Dict.insert data start r.shareable }
-      else
         -- this is the main case, where we create or reuse an edge.
-        case Dict.get data (debugLog "shareable" Dict.toList r.shareable) of
-          Just existing ->
-            println ("Reusing: redirecting 🞷➜#" ++ String.fromInt start ++ " to #" ++ String.fromInt existing)
-            -- NOTE: this works for now. But it'll be pretty expensive to map through millions in a larger-scale graph!
-            { r | edges = List.map (\e -> if e.end == start then { e | end = existing } else e) r.edges }
-          Nothing ->
-            println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
-            { r | edges = EdgeRecord start data end :: r.edges, shareable = Dict.insert data start r.shareable }
+      case ( r.sharing_enabled, Dict.get data r.shareable ) of
+        (True, Just existing) ->
+          println ("Reusing: redirecting 🞷➜#" ++ String.fromInt start ++ " to #" ++ String.fromInt existing)
+          -- NOTE: this works for now. But it'll be pretty expensive to map through millions in a larger-scale graph!
+          { r | edges = List.map (\e -> if e.end == start then { e | end = existing } else e) r.edges }
+        _ ->
+          println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+          { r
+            | edges = EdgeRecord start data end :: r.edges
+            , shareable = if r.sharing_enabled then Dict.insert data start r.shareable else r.shareable
+          }
     M (x::_ as xs) ->
+      println "Processing ×"
       foldlSpecial
         (\item (acc, (start_, end_)) ->
-          expressionToDAWG item (start_, end_) acc
-          |> \acc2 -> ( { acc2 | unused = acc2.unused + 1, shareable = acc.shareable }, (end_, acc2.unused) )
+          expressionToDAWG item (start_, end_) { acc | outer_expr = expr, sharing_enabled = False }
+          |> debugLog "Moving to next item" dawgRecordToString
+          -- I cannot share in the middle of a sequence, can I?
+          |> \acc2 -> ( { acc2 | shareable = acc.shareable, sharing_enabled = acc.sharing_enabled, unused = acc2.unused + 1 }, (end_, acc2.unused) )
+          |> debugLog "Post-update ×-accumulator" (\(a,(s,e)) -> "s=" ++ String.fromInt s ++ ", e=" ++ String.fromInt e ++ ", " ++ dawgRecordToString a)
         )
         (\item (acc, (start_, _)) ->
-          expressionToDAWG item (start_, end) acc
+          -- I can share at the end of a sequence.
+          expressionToDAWG item (start_, end) { acc | sharing_enabled = True, unused = acc.unused + 1, outer_expr = r.outer_expr }
+          |> debugLog "After handling last ×-item in sequence" dawgRecordToString
         )
-        ( { r | unused = r.unused + 1 }, (start, r.unused))
+        ( { r | unused = r.unused + 1 }, (start, r.unused) )
         xs
       |> Maybe.withDefaultLazy (\_ -> Debug.log "ERROR! M without multiple items!" <| expressionToDAWG x (start, end) r)
     A xs ->
+      println "Processing +"
       List.foldl
         (\item acc ->
-          expressionToDAWG item (start, end) { acc | outer_expr = expr }
+          if r.outer_expr |> expr_endsWith item then -- yes, we want to duplicate!
+            case item of
+              V data ->
+                println ("DUPLICATE 👯 wanted!! Force-Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+                { acc | edges = EdgeRecord start data end :: acc.edges }
+              _ ->
+                r |> Debug.log "UNHANDLED"
+          else
+            expressionToDAWG item (start, end) { acc | outer_expr = expr }
         )
-        { r | unused = r.unused + 1 }
+        r
         xs
-        |> \acc -> { acc | shareable = Dict.empty }
+        |> debugLog "At the end of a +" dawgRecordToString
+        |> \acc ->
+            { acc
+            | outer_expr = r.outer_expr
+            , shareable =
+                case r.outer_expr of
+                  A _ -> acc.shareable -- we can still use this for other parts of the +.
+                  _ -> r.shareable -- reset; this is not a sharing context.
+            }
+        |> debugLog "Post-update +-accumulator" dawgRecordToString
     M [] ->
       r |> Debug.log "ERROR — found an M value with ZERO items!"
 
@@ -609,21 +664,21 @@ simplify_inner : List ExprAST -> (List ExprAST -> ExprAST) -> ExprAST
 simplify_inner inner wrap =
   let
     inner_simplified =
-      println "Simplifying the inner values individually."
+      -- println "Simplifying the inner values individually."
       List.map simplify inner
   in
     case ( inner_simplified, inner_simplified /= inner ) of
       ( [x], True ) ->
-        println "?-Inner reduced to one value; re-running."
+        -- println "?-Inner reduced to one value; re-running."
         simplify x
       ( _, True ) ->
-        println "Changes made to ?-inner; re-running with outer nesting."
+        -- println "Changes made to ?-inner; re-running with outer nesting."
         simplify <| wrap inner_simplified
       ( [x], False ) ->
-        println "?-Inner reduced to one value; returning."
+        -- println "?-Inner reduced to one value; returning."
         x
       ( _, False ) ->
-        println "No changes made to ?-inner; wrapping in ? and returning."
+        -- println "No changes made to ?-inner; wrapping in ? and returning."
         wrap inner_simplified
 
 simplify : ExprAST -> ExprAST
@@ -847,6 +902,9 @@ redirectPrefixGraphNodes edges =
      )
   |> debugLog "Post-redirection" (List.map graphEdgeToString)
 
+-- A [M [V ('q',0),V ('y',0),V ('a',1)],M [V ('p',0),A [V ('y',1),M [V ('x',0),V ('a',1)]]]]
+-- A [M [V ('p',0),A [V ('y',1),M [V ('x',0),V ('a',1)]]],M [V ('q',0),V ('y',0),V ('a',1)]]
+
 fromAlgebra : String -> DAWG
 fromAlgebra s =
   s
@@ -857,9 +915,9 @@ fromAlgebra s =
     (\e ->
       let
         flattened = sortAST e |> debugLog "flattened" exprASTToString
-        simplified = simplify flattened |> debugLog "Simplified, round-trip" exprASTToRTString
+        simplified = simplify flattened |> Debug.log "Simplified, raw" |> debugLog "Simplified, round-trip" exprASTToRTString
         graphEdges =
-          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2 Dict.empty simplified)
+          expressionToDAWG simplified (0, 1) (ToDawgRecord [] 2 Dict.empty simplified True)
           |> .edges
           -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
           |> coalesceToGraphNodes
