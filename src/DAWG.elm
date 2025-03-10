@@ -10,6 +10,7 @@ import Set.Extra
 import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, spaces, end, getChompedString, chompIf, sequence, loop, Step(..))
 import Char.Extra
 import Dict
+import Html exposing (b)
 
 type ExprAST
   = M (List ExprAST)
@@ -176,6 +177,10 @@ foldrSpecial fn fn2 acc ls =
     h::t ->
       Just <| fn2 h <| List.foldr fn acc t
 
+{-  The difference between expr_endsWith and expr_matches is that the former will
+    walk back in the expression and check for the quality of ENDING WITH a particular
+    ending; and the latter will just look at an expression component and say yes-or-no.
+-}
 expr_matches : ExprAST -> ExprAST -> Bool
 expr_matches one two =
   (case ( one, two ) of
@@ -210,7 +215,7 @@ expr_endsWith ending to_check = -- we are checking to see if `ending` ends `to_c
                 V _ -> x == ending -- if it's the same as the character, all is good!
                 M _ -> False |> Debug.log "ERROR: A sequence cannot nest a sequence" -- a sequence cannot end with a sequence; this is invalid.
                 A ys -> -- so, we end the sequence with options.
-                  List.any (\y -> y |> expr_endsWith ending) ys -- if any of the options is an ending, then return True.
+                  List.any (\y -> y |> expr_matches ending) ys -- if any of the options is an ending, then return True.
             )
           |> Maybe.withDefault False -- if this happens, there are problems; an M should never be empty!
         A ys ->
@@ -223,6 +228,7 @@ expr_endsWith ending to_check = -- we are checking to see if `ending` ends `to_c
           |> Maybe.withDefault False -- if this happens, there are problems; an A should never be empty!
         M ys ->
           if List.length ys >= List.length xs then
+            Debug.log ("|ending| ≥ |check_within|, so " ++ exprASTToString ending ++ " cannot possibly end " ++ exprASTToString to_check ++ ".") <|
             False -- we are looking for strict subset; that is impossible in this case, then.
           else
             -- we'll have to check each option of the ending against each option of the sequence, one-by-one.
@@ -231,12 +237,12 @@ expr_endsWith ending to_check = -- we are checking to see if `ending` ends `to_c
               ( Just ( _, [] ), Just ( _, [] ) ) ->
                 False |> Debug.log "Two sequences are potentially EQUAL. But we are looking for strict-subset; so this is false!"
               ( Just ( x, _ ), Just ( y, [] ) ) ->
-                expr_endsWith y x -- this is the final one!
+                expr_matches y x -- this is the final one!
               ( Just ( _, [] ), Just ( _, _ ) ) ->
                 -- if the ending to check is longer than the thing I'm checking in, then it can't end it!
                 False
               ( Just ( x, prefix_to_check ), Just ( y, prefix_of_ending ) ) ->
-                expr_endsWith y x && expr_endsWith (M prefix_of_ending) (M prefix_to_check)
+                expr_matches y x && expr_endsWith (M prefix_of_ending) (M prefix_to_check)
               ( _ , _ ) ->
                 False |> Debug.log "… but check: how am I here?"
     A xs ->
@@ -248,7 +254,7 @@ expr_endsWith ending to_check = -- we are checking to see if `ending` ends `to_c
 type alias ToDawgRecord =
   { edges : List EdgeRecord
   , unused : Int
-  , shareable : Dict.Dict Transition Int
+  , shareable : Dict.Dict (List Transition) Int
   , outer_expr : ExprAST
   , sharing_enabled : Bool
   }
@@ -257,12 +263,32 @@ dawgRecordToString : ToDawgRecord -> String
 dawgRecordToString r =
   "unused=" ++ String.fromInt r.unused ++ ", ctx=" ++ exprASTToString r.outer_expr ++ ", shareable=" ++ Debug.toString (Dict.toList r.shareable) ++ ", sharing enabled? " ++ (if r.sharing_enabled then "✅" else "❌")
 
+symbolFor : ExprAST -> String
+symbolFor expr =
+  case expr of
+    V _ -> "⏺"
+    M _ -> "×"
+    A _ -> "+"
+
+without_expr : ExprAST -> ExprAST -> ExprAST
+without_expr to_remove context =
+  case context of
+    V _ -> context -- not multiple; nothing to remove.
+    A xs ->
+      case List.remove to_remove xs of
+        [v] -> v
+        ys -> A ys
+    M xs ->
+      case List.remove to_remove xs of
+        [v] -> v
+        ys -> M ys
+
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
-  case expr |> debugLog "Processing fragment" (\e -> "s=" ++ String.fromInt start ++ ", e=" ++ String.fromInt end ++ ", " ++ dawgRecordToString r ++ ", expr=" ++ exprASTToString e) of
+  case expr |> debugLog ("Processing " ++ symbolFor expr ++ " fragment") (\e -> "s=" ++ String.fromInt start ++ ", e=" ++ String.fromInt end ++ ", " ++ dawgRecordToString r ++ ", expr=" ++ exprASTToString e) of
     V data ->
         -- this is the main case, where we create or reuse an edge.
-      case ( r.sharing_enabled, Dict.get data r.shareable ) of
+      case ( r.sharing_enabled, Dict.get [data] r.shareable ) of
         (True, Just existing) ->
           println ("Reusing: redirecting 🞷➜#" ++ String.fromInt start ++ " to #" ++ String.fromInt existing)
           -- NOTE: this works for now. But it'll be pretty expensive to map through millions in a larger-scale graph!
@@ -271,10 +297,10 @@ expressionToDAWG expr (start, end) r =
           println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
           { r
             | edges = EdgeRecord start data end :: r.edges
-            , shareable = if r.sharing_enabled then Dict.insert data start r.shareable else r.shareable
+            , shareable = if r.sharing_enabled then Dict.insert [data] start r.shareable else r.shareable
           }
     M (x::_ as xs) ->
-      println "Processing ×"
+      -- println "Processing ×"
       foldlSpecial
         (\item (acc, (start_, end_)) ->
           expressionToDAWG item (start_, end_) { acc | outer_expr = expr, sharing_enabled = False }
@@ -285,23 +311,29 @@ expressionToDAWG expr (start, end) r =
         )
         (\item (acc, (start_, _)) ->
           -- I can share at the end of a sequence.
-          expressionToDAWG item (start_, end) { acc | sharing_enabled = True, unused = acc.unused + 1, outer_expr = r.outer_expr }
+          expressionToDAWG item (start_, end) { acc | sharing_enabled = True, unused = acc.unused + 1, outer_expr = (r.outer_expr |> without_expr expr) }
           |> debugLog "After handling last ×-item in sequence" dawgRecordToString
         )
         ( { r | unused = r.unused + 1 }, (start, r.unused) )
         xs
       |> Maybe.withDefaultLazy (\_ -> Debug.log "ERROR! M without multiple items!" <| expressionToDAWG x (start, end) r)
     A xs ->
-      println "Processing +"
+      -- println "Processing +"
       List.foldl
         (\item acc ->
-          if r.outer_expr |> expr_endsWith item then -- yes, we want to duplicate!
+          if (r.outer_expr |> without_expr item) |> expr_endsWith item then -- yes, we want to duplicate!
             case item of
               V data ->
                 println ("DUPLICATE 👯 wanted!! Force-Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
                 { acc | edges = EdgeRecord start data end :: acc.edges }
               _ ->
                 r |> Debug.log "UNHANDLED"
+              -- A ys ->
+              --   println "DUPLICATE 👩🏾‍🤝‍👩🏽 wanted for A-expr!"
+              --   List.foldl (\y acc2 -> expressionToDAWG y (start, end) { acc2 | sharing_enabled = False } ) acc ys
+              -- M ys ->
+              --   println "DUPLICATE 🧑🏾‍🤝‍🧑🏽 wanted for M-expr!"
+              --   List.foldl (\y acc2 -> expressionToDAWG y (start, end) { acc2 | sharing_enabled = False } ) acc ys
           else
             expressionToDAWG item (start, end) { acc | outer_expr = expr }
         )
