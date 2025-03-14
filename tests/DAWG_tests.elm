@@ -5,7 +5,6 @@ import Fuzz
 import Test exposing (..)
 import DAWG as D
 import List.Extra as List
-import Result.Extra
 
 nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
@@ -372,6 +371,30 @@ suite =
       , test "axax-bx-cx-cxax" <|
         \_ ->
           standardTestForWords ["axax", "bx", "cx", "cxax"] 6 7
+      , test "ad-ars-xrs" <|
+        \_ ->
+          standardTestForWords ["ad", "ars", "xrs"] 5 6
+      , test "skop-rakop-rap" <|
+        \_ ->
+          standardTestForWords ["skop", "rakop", "rap"] 7 8
+      , test "skoz-rakop-rap-raz" <|
+        \_ ->
+          standardTestForWords ["skoz", "rakop", "rap", "raz"] 9 10
+      , test "xaz-yaz-ytp" <|
+        \_ ->
+          standardTestForWords ["xaz", "yaz", "ytp"] 6 7
+      , test "ad-da-dba" <|
+        \_ ->
+          standardTestForWords ["ad", "da", "dba"] 5 6
+      , test "txl-tl" <|
+        \_ ->
+          standardTestForWords ["txl", "tl"] 4 4
+      , test "sy-spw-ow" <|
+        \_ ->
+          standardTestForWords ["sy", "spw", "ow"] 4 5
+      , test "aka-aman-aasn-abasn" <|
+        \_ ->
+          standardTestForWords ["aka", "aman", "aasn", "abasn"] 8 10
       ]
     , describe "basic tests"
       -- Expect.equal is designed to be used in pipeline style, like this.
