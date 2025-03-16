@@ -862,22 +862,6 @@ merge_modifications dst r =
       |> Maybe.map (List.map Tuple.first >> List.unique)
       |> Maybe.withDefault []
       -- |> Debug.log ("incoming (@ #" ++ String.fromInt dst ++ ")")
-    -- halfway_nodes =
-    --   Maybe.map
-    --     (List.gatherEqualsBy Tuple.first -- first, collect transitions going to the same place.
-    --     >> Debug.log ("Raw candidates (1) for #" ++ String.fromInt dst)
-    --     >> List.map
-    --       (\( (src, t), otherTransitions ) ->
-    --         case otherTransitions of
-    --           [] -> -- okay, this is the only one.  That's fine then.  We cannot merge with it.
-    --             (src, Set.singleton t)
-    --           _ ->
-    --             (src, Set.fromList (List.map Tuple.second otherTransitions) |> Set.insert t) -- these are all the ones that can be merged.
-    --       )
-    --     )
-    --     in_nodes
-    --   |> Maybe.withDefault []
-    --   |> Debug.log "Halfway"
     combinable_nodes =
       List.filterMap (\n -> IntDict.get n r.outgoing |> Maybe.map (\v -> ( n, v ) )) in_nodes
       |> List.gatherEqualsBy Tuple.second
@@ -925,7 +909,8 @@ collapse remaining r =
               )
               r
               mods
-            -- hmm. This doesn't work when it's `reCheck ++ rest`.  Why??
+            -- This doesn't work when it's `reCheck ++ rest`, because it needs to take into
+            -- account other changes that happen.
             |> collapse (rest ++ reCheck)
 
 parseAlgebra : String -> Result (List P.DeadEnd) ExprAST
