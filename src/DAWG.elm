@@ -917,6 +917,20 @@ parseAlgebra : String -> Result (List P.DeadEnd) ExprAST
 parseAlgebra =
   P.run expressionParser
 
+stringToExpression : String -> ExprAST
+stringToExpression s =
+  case String.toList s of
+    [] -> A []
+    [x] -> V (x, 1)
+    _ -> wordToTransitions s |> List.map V |> M
+
+wordsToAlgebra : List String -> ExprAST
+wordsToAlgebra xs =
+  case xs of
+    [] -> A []
+    [x] -> stringToExpression x
+    _ -> A <| List.map stringToExpression xs
+
 coalesceToGraphNodes : ToDawgRecord -> List (Graph.Edge Connection)
 coalesceToGraphNodes {outgoing} =
   outgoing
@@ -940,41 +954,42 @@ graphEdgeToString : Graph.Edge Connection -> String
 graphEdgeToString {from, to, label} =
   "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
 
+algebraToDAWG : ExprAST -> DAWG
+algebraToDAWG e =
+  let
+    flattened = sortAST e -- |> debugLog "flattened" exprASTToString
+    simplified = simplify flattened {- |> Debug.log "Simplified, raw" -} |> debugLog "Simplified, round-trip" exprASTToRTString
+    graphEdges =
+      expressionToDAWG simplified (0, 1) (ToDawgRecord 2 IntDict.empty IntDict.empty)
+      -- |> debugLog "Expression to DAWG" dawgRecordToString
+      |> (\r -> collapse (IntDict.keys r.incoming) r)
+      -- |> debugLog "Post-collapse" dawgRecordToString
+      -- |> .edges
+      -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
+      |> coalesceToGraphNodes
+      -- |> redirectPrefixGraphNodes
+    (maxId, nodes) =
+      graphEdges
+      |> List.foldl
+        (\{from, to} acc -> (Set.insert from >> Set.insert to) acc)
+        Set.empty
+      |> Set.toList
+      |> \l -> (List.last l, List.map (\n -> Node n ()) l)
+  in
+    Maybe.map (\max ->
+      DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
+      -- |> \dawg -> List.foldl (checkForCollapse) dawg (1::(List.map (\n -> n.id) nodes))
+    ) maxId
+    |> Maybe.withDefault empty
+    -- |> debugDAWG "tada"
+
 fromAlgebra : String -> DAWG
 fromAlgebra s =
   s
   |> String.replace " " ""
   |> String.replace "\n" ""
   |> parseAlgebra
-  |> Result.map
-    (\e ->
-      let
-        flattened = sortAST e -- |> debugLog "flattened" exprASTToString
-        simplified = simplify flattened {- |> Debug.log "Simplified, raw" -} |> debugLog "Simplified, round-trip" exprASTToRTString
-        graphEdges =
-          expressionToDAWG simplified (0, 1) (ToDawgRecord 2 IntDict.empty IntDict.empty)
-          -- |> debugLog "Expression to DAWG" dawgRecordToString
-          |> (\r -> collapse (IntDict.keys r.incoming) r)
-          -- |> debugLog "Post-collapse" dawgRecordToString
-          -- |> .edges
-          -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
-          |> coalesceToGraphNodes
-          -- |> redirectPrefixGraphNodes
-        (maxId, nodes) =
-          graphEdges
-          |> List.foldl
-            (\{from, to} acc -> (Set.insert from >> Set.insert to) acc)
-            Set.empty
-          |> Set.toList
-          |> \l -> (List.last l, List.map (\n -> Node n ()) l)
-      in
-        Maybe.map (\max ->
-          DAWG (Graph.fromNodesAndEdges nodes graphEdges) max 0 (Just 1)
-          -- |> \dawg -> List.foldl (checkForCollapse) dawg (1::(List.map (\n -> n.id) nodes))
-        ) maxId
-        |> Maybe.withDefault empty
-        -- |> debugDAWG "tada"
-    )
+  |> Result.map algebraToDAWG
   |> Result.withDefault empty
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
