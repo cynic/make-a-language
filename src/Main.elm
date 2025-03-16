@@ -231,7 +231,7 @@ update msg model =
       let
         dawg =
           String.split "\n" text
-          |> if model.useAlgebraic then DAWG.fromWordsAlgebraic else DAWG.fromWordsGraphing
+          |> DAWG.fromWords
       in
       ( { model
           | text = text
@@ -248,7 +248,7 @@ update msg model =
 
     AlgebraicTextInput text ->
       let
-        dawg = DAWG.fromAlgebra text
+        dawg = DAWG.fromLines text
       in
       ( { model
           | algebraic = text

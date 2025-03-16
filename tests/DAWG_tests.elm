@@ -396,63 +396,6 @@ suite =
         \_ ->
           standardTestForWords ["aka", "aman", "aasn", "abasn"]
       ]
-    , describe "basic tests"
-      -- Expect.equal is designed to be used in pipeline style, like this.
-      [ test "adding a string to an empty graph gives us one word" <|
-        \_ ->
-          D.addString "a" D.empty
-          |> nodesAndWords
-          |> Expect.equal (2, ["a"])
-      , test "an empty DAWG has no words in it" <|
-        \_ ->
-          (D.numNodes D.empty, D.recognizedWords D.empty)
-          |> Expect.equal (1, [])
-      , test "we can handle two totally separate words" <|
-        \_ ->
-          standardTestForWords ["abc", "def"]
-      , test "adding a string to a graph with one vertex gives sequential transitions" <|
-        \_ ->
-          D.addString "ab" D.empty
-          |> nodesAndWords
-          |> Expect.equal (3, ["ab"])
-      , test "adding a string to a graph with one vertex gives sequential transitions and another word" <|
-        \_ ->
-          D.addString "a" D.empty
-          |> D.addString "ab"
-          |> nodesAndWords
-          |> Expect.equal (3, ["a", "ab"])
-      , test "adding an empty word does nothing" <|
-        \_ ->
-          D.empty
-          |> D.addString ""
-          |> \d -> (D.numNodes d, D.recognizedWords d) -- note: not `verifiedRecognizedWords`
-          |> Expect.equal (1, [])
-      , test "adding a single letter works" <|
-        \_ ->
-          D.empty
-          |> D.addString "😃"
-          |> nodesAndWords
-          |> Expect.equal (2, ["😃"])
-      , test "adding two single letters works" <|
-        \_ ->
-          D.empty
-          |> D.addString "ab"
-          |> nodesAndWords
-          |> Expect.equal (3, ["ab"])
-      , test "adding multiple letters works" <|
-        \_ ->
-          D.empty
-          |> D.addString "ghafūr"
-          |> nodesAndWords
-          |> Expect.equal (7, ["ghafūr"])
-      , test "repeating an already existing string does nothing" <|
-        \_ ->
-          D.empty
-          |> D.addString "kurremkarmerruk"
-          |> D.addString "kurremkarmerruk" |> D.debugDAWG "check"
-          |> nodesAndWords
-          |> Expect.equal (16, ["kurremkarmerruk"])
-      ]
     , describe "stress-testing via fuzzing"
       [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
           cheapTestForWords

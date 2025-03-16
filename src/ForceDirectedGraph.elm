@@ -129,7 +129,7 @@ toForceGraph g =
 receiveDAWG : DAWG -> (Float, Float) -> Model
 receiveDAWG dawg (w, h) =
   let
-    forceGraph = toForceGraph (DAWG.debugDAWG "Received by ForceDirectedGraph" dawg).graph
+    forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} ).graph
     basic = basicForces forceGraph
     viewport = viewportForces (w, h) forceGraph
   in

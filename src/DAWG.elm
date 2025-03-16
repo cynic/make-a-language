@@ -9,14 +9,16 @@ import Result.Extra
 import Set.Extra
 import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, spaces, end, getChompedString, chompIf, sequence, loop, Step(..))
 import Char.Extra
-import Dict
-import Html exposing (b)
-import Graph exposing (edges)
 
 type ExprAST
   = M (List ExprAST)
   | A (List ExprAST)
   | V Transition
+
+debug_log : String -> a -> a
+debug_log s x =
+  -- Debug.log s x
+  x
 
 -- Top-level parser
 expressionParser : Parser ExprAST
@@ -93,12 +95,6 @@ grouped =
         |. spaces
         |. symbol ")"
 
--- type alias EdgeRecord =
---   { start : Int
---   , data : Transition
---   , end : Int
---   }
-
 {-
   I always know where to attach FROM: it is some node I've already created or know about or have seen.
   But I don't know where to attach TO always, and I think that it is tricky because when I have something
@@ -169,89 +165,6 @@ foldlSpecial func lastItem acc list =
     x :: xs ->
       foldlSpecial func lastItem (func x acc) xs
 
--- also modified from elm/core 1.0.5 source.
-foldrSpecial : (a -> b -> b) -> (a -> b -> c) -> b -> List a -> Maybe c
-foldrSpecial fn fn2 acc ls =
-  case ls of
-    [] ->
-      Nothing
-    h::t ->
-      Just <| fn2 h <| List.foldr fn acc t
-
-{-  The difference between expr_endsWith and expr_matches is that the former will
-    walk back in the expression and check for the quality of ENDING WITH a particular
-    ending; and the latter will just look at an expression component and say yes-or-no.
--}
-expr_matches : ExprAST -> ExprAST -> Bool
-expr_matches one two =
-  (case ( one, two ) of
-    ( V a, V b ) -> a == b
-    ( V _, M _) -> False
-    ( M _, V _ ) -> False
-    ( _, A xs ) -> List.any (expr_matches one) xs
-    ( A xs, _ ) -> List.any (expr_matches two) xs
-    ( M a, M b ) -> a == b
-  )
-  |> Debug.log ("expr_matches ( " ++ exprASTToString one ++ " , " ++ exprASTToString two ++ " )")
-
-expr_endsWith : ExprAST -> ExprAST -> Bool
-expr_endsWith ending to_check = -- we are checking to see if `ending` ends `to_check`
-  (case to_check of
-    V _ ->
-      False -- strict subset
-      -- -- the thing I'm checking within is a single character.
-      -- case ending of
-      --   A xs -> -- if any of the options of the ending are the same character, then this matches.
-      --     List.any ((==) to_check) xs
-      --   M _ -> False -- A sequence cannot possibly be the end of a single character.
-      --   V _ -> to_check == ending -- straight comparison.
-    M xs ->
-      -- the thing I'm checking within is a sequence.
-      case ending of
-        V _ -> -- Does this sequence end with a single character?
-          List.last xs
-          |> Maybe.map
-            (\x -> -- this is the last item in the sequence.
-              case x of
-                V _ -> x == ending -- if it's the same as the character, all is good!
-                M _ -> False |> Debug.log "ERROR: A sequence cannot nest a sequence" -- a sequence cannot end with a sequence; this is invalid.
-                A ys -> -- so, we end the sequence with options.
-                  List.any (\y -> y |> expr_matches ending) ys -- if any of the options is an ending, then return True.
-            )
-          |> Maybe.withDefault False -- if this happens, there are problems; an M should never be empty!
-        A ys ->
-          -- it's okay if the sequence ends with any of the options we're checking against.
-          List.last xs
-          |> Maybe.map
-            (\x -> -- this is the last item in the sequence
-              List.any (\end -> x |> expr_endsWith end) ys -- see if any of the ending-options applies.
-            )
-          |> Maybe.withDefault False -- if this happens, there are problems; an A should never be empty!
-        M ys ->
-          if List.length ys >= List.length xs then
-            Debug.log ("|ending| ≥ |check_within|, so " ++ exprASTToString ending ++ " cannot possibly end " ++ exprASTToString to_check ++ ".") <|
-            False -- we are looking for strict subset; that is impossible in this case, then.
-          else
-            -- we'll have to check each option of the ending against each option of the sequence, one-by-one.
-            -- We can start from the end, and then work our way backwards.
-            case ( List.unconsLast xs, List.unconsLast ys ) of
-              ( Just ( _, [] ), Just ( _, [] ) ) ->
-                False |> Debug.log "Two sequences are potentially EQUAL. But we are looking for strict-subset; so this is false!"
-              ( Just ( x, _ ), Just ( y, [] ) ) ->
-                expr_matches y x -- this is the final one!
-              ( Just ( _, [] ), Just ( _, _ ) ) ->
-                -- if the ending to check is longer than the thing I'm checking in, then it can't end it!
-                False
-              ( Just ( x, prefix_to_check ), Just ( y, prefix_of_ending ) ) ->
-                expr_matches y x && expr_endsWith (M prefix_of_ending) (M prefix_to_check)
-              ( _ , _ ) ->
-                False |> Debug.log "… but check: how am I here?"
-    A xs ->
-      -- the thing I'm checking within is a set of possibilities.
-      List.any (\x -> x |> expr_endsWith ending) xs -- if any of the possibilities is an ending, then return True.
-  )
-  |> Debug.log (exprASTToString to_check ++ " ends with " ++ exprASTToString ending ++ "? ")
-
 type alias EdgeRecord = Graph.Edge Transition
 
 type alias ToDawgRecord =
@@ -260,29 +173,16 @@ type alias ToDawgRecord =
   , outgoing : IntDict.IntDict (Set (Int, Transition)) -- destination nodes, keyed by source
   }
 
-dawgRecordToString : ToDawgRecord -> String
-dawgRecordToString r =
-  "unused=" ++ String.fromInt r.unused ++ ", incoming=" ++ (IntDict.toList r.incoming |> Debug.toString) ++ ", outgoing=" ++ (IntDict.toList r.outgoing |> Debug.toString)
+-- dawgRecordToString : ToDawgRecord -> String
+-- dawgRecordToString r =
+--   "unused=" ++ String.fromInt r.unused ++ ", incoming=" ++ (IntDict.toList r.incoming |> Debug.toString) ++ ", outgoing=" ++ (IntDict.toList r.outgoing |> Debug.toString)
 
-symbolFor : ExprAST -> String
-symbolFor expr =
-  case expr of
-    V _ -> "⏺"
-    M _ -> "×"
-    A _ -> "+"
-
-without_expr : ExprAST -> ExprAST -> ExprAST
-without_expr to_remove context =
-  case context of
-    V _ -> context -- not multiple; nothing to remove.
-    A xs ->
-      case List.remove to_remove xs of
-        [v] -> v
-        ys -> A ys
-    M xs ->
-      case List.remove to_remove xs of
-        [v] -> v
-        ys -> M ys
+-- symbolFor : ExprAST -> String
+-- symbolFor expr =
+--   case expr of
+--     V _ -> "⏺"
+--     M _ -> "×"
+--     A _ -> "+"
 
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
@@ -313,7 +213,7 @@ expressionToDAWG expr (start, end) r =
         )
         ( { r | unused = r.unused + 1 }, (start, r.unused) )
         xs
-      |> Maybe.withDefaultLazy (\_ -> Debug.log "ERROR! M without multiple items!" <| expressionToDAWG x (start, end) r)
+      |> Maybe.withDefaultLazy (\_ -> debug_log "ERROR! M without multiple items!" <| expressionToDAWG x (start, end) r)
     A xs ->
       -- println "Processing +"
       List.foldl
@@ -321,7 +221,7 @@ expressionToDAWG expr (start, end) r =
         r
         xs
     M [] ->
-      r |> Debug.log "ERROR — found an M value with ZERO items!"
+      r |> debug_log "ERROR — found an M value with ZERO items!"
 
 {-|This applies Rule #9, Common Prefix Collapse, to an “Add” value.
 -}
@@ -347,10 +247,10 @@ commonPrefixCollapse xs =
             M (x::_) -> Just x
             _ -> Nothing
         )
-      -- |> Debug.log "All heads"
+      -- |> debug_log "All heads"
       |> List.filter (not << (Tuple.second >> List.isEmpty))
       |> List.map (\(fst, rest) -> fst::rest)
-      -- |> Debug.log "Same-prefix heads"
+      -- |> debug_log "Same-prefix heads"
     replacements =
       samePrefixMuls
       |> List.filterMap
@@ -358,14 +258,14 @@ commonPrefixCollapse xs =
           case l of
             M (h::_)::_ ->
               Just
-                ( {- Debug.log "Common prefix" -} h
+                ( {- debug_log "Common prefix" -} h
                 , List.concatMap
                     (\m ->
                       case m of
                         M [_, A inner] -> inner
                         M [_, v] -> [v]
                         M (_::rest) -> [M rest]
-                        _ -> Debug.log "SHOULD NOT REACH HERE!" [m] -- should not reach here!
+                        _ -> debug_log "SHOULD NOT REACH HERE!" [m] -- should not reach here!
                     )
                     l
                 )
@@ -374,14 +274,14 @@ commonPrefixCollapse xs =
       |> List.map
         (\(head, tails) ->
           M [head, A tails]
-          -- |> Debug.log "replacement"
+          -- |> debug_log "replacement"
         )
   in
     case samePrefixMuls of
       [] -> -- no common prefix collapse. Rely on the caller to simplify within.
         xs
       sames ->
-        -- Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
+        -- debug_log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
         -- remove all the "same-prefix" items from inside.
         List.foldl
           (\same state -> List.foldl List.remove state same)
@@ -389,15 +289,15 @@ commonPrefixCollapse xs =
         -- and replace them with the replacements
         |> (\l -> l ++ replacements)
         |> List.map sortAST
-        -- |> Debug.log "Prefix-collapse result"
+        -- |> debug_log "Prefix-collapse result"
 
 {-|This applies Rule #10, Finality Primacy, to an “Add” value.
 
 Implemented: ẋ + x.y = ẋ + ẋ.y
 …which is slightly different to my notes, but I think it should work.
 -}
-firstFinalityPrimacy : List ExprAST -> List ExprAST
-firstFinalityPrimacy xs =
+finalityPrimacy : List ExprAST -> List ExprAST
+finalityPrimacy xs =
   let
     heads =
       -- get all the initial transitions from "Multiply" values,
@@ -419,7 +319,7 @@ firstFinalityPrimacy xs =
             _ -> []
         ) xs
       |> List.unique
-      -- |> Debug.log "Heads & single values"
+      -- |> debug_log "Heads & single values"
     collected_transitions =
       List.foldl Set.insert Set.empty heads
     to_bump =
@@ -432,13 +332,13 @@ firstFinalityPrimacy xs =
         )
         collected_transitions
       |> Set.toList
-      -- |> Debug.log "Found primacy items"
+      -- |> debug_log "Found primacy items"
   in
     case to_bump of
       [] -> -- Nothing to promote.  Rely on caller to simplify.
         xs
       _ ->
-        -- Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy" () |> \_ ->
+        -- debug_log "Rule #10: ☝🏾 subject to: Finality Primacy" () |> \_ ->
         List.foldl
           (\ch state ->
             List.filterMap
@@ -471,7 +371,7 @@ firstFinalityPrimacy xs =
                           _ -> x
                       )
                       inner
-                      -- |> Debug.log "After map"
+                      -- |> debug_log "After map"
                     |> \out -> Just <| M (A out::rest)
                   x -> Just x
               )
@@ -479,114 +379,6 @@ firstFinalityPrimacy xs =
           )
           xs
           to_bump
-
-lastFinalityPrimacy : List ExprAST -> List ExprAST
-lastFinalityPrimacy xs =
-  let
-    lasts =
-      -- get all the final transitions from "Multiply" values,
-      -- AND all the single variables
-      List.concatMap
-        (\v ->
-          case v of
-            M inner ->
-              List.last inner
-              |> Maybe.map
-                (\v_ ->
-                  case v_ of
-                    V t -> [t]
-                    A inner_ ->
-                      List.filterMap
-                        (\v__ ->
-                          case v__ of
-                            V t -> Just t
-                            M inner__ ->
-                              List.last inner__
-                              |> Maybe.andThen
-                                (\v___ ->
-                                  case v___ of
-                                    V t -> Just t
-                                    _ -> Nothing
-                                )
-                            _ -> Nothing
-                        )
-                        inner_
-                    _ -> []
-                )
-              |> Maybe.withDefault []
-            V t -> [t]
-            _ -> []
-        ) xs
-      |> List.unique
-      -- |> Debug.log "Lasts & single values"
-    collected_transitions =
-      List.foldl Set.insert Set.empty lasts
-    to_bump =
-      Set.Extra.filterMap
-        (\(c, _) ->
-          if Set.member (c, 0) collected_transitions && Set.member (c, 1) collected_transitions then
-            Just c
-          else
-            Nothing
-        )
-        collected_transitions
-      |> Set.toList
-      -- |> Debug.log "Found primacy items"
-  in
-    case to_bump of
-      [] -> -- Nothing to promote.  Rely on caller to simplify.
-        xs
-      _ ->
-        -- Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy Ⅱ" () |> \_ ->
-        List.foldl
-          (\ch state ->
-            List.filterMap
-              (\item ->
-                case item of
-                  M inner ->
-                    List.unconsLast inner
-                    |> Maybe.andThen (\(last, initial) ->
-                      case last of
-                        V x ->
-                          if x == (ch, 0) then
-                            Just <| M (initial ++ [V (ch, 1)])
-                          else
-                            Just item
-                        A inner_ ->
-                          List.map
-                            (\x ->
-                              case x of
-                                V t ->
-                                  if t == (ch, 0) then
-                                    V (ch, 1)
-                                  else
-                                    V t
-                                M (V t::rest_) ->
-                                  if t == (ch, 0) then
-                                    M <| V (ch, 1)::rest_
-                                  else
-                                    M <| V t::rest_
-                                _ -> x
-                            )
-                            inner_
-                          |> \out -> Just <| M (initial ++ [A out])
-                        _ -> Just last
-                    )
-                  V (x, _) ->
-                    if x == ch then
-                      Nothing
-                    else
-                      Just <| item
-                  x -> Just x
-              )
-              state
-          )
-          xs
-          to_bump
-
-finalityPrimacy : List ExprAST -> List ExprAST
-finalityPrimacy =
-  firstFinalityPrimacy -->> lastFinalityPrimacy
 
 {-|This applies Rule #5, Common Suffix Collapse, to an “Add” value.
 -}
@@ -628,7 +420,7 @@ commonSuffixCollapse xs =
               case groupItems of
                 M items::_ ->
                   List.last items
-                  -- |> Debug.log "Common suffix"
+                  -- |> debug_log "Common suffix"
                 _ -> Nothing
             add_part =
               List.filterMap
@@ -655,13 +447,13 @@ commonSuffixCollapse xs =
       [] -> -- no common suffix collapse.
         xs
       _ ->
-          -- Debug.log "Rule #5: ☝🏾 subject to: Common Suffix Collapse" () |> \_ ->
+          -- debug_log "Rule #5: ☝🏾 subject to: Common Suffix Collapse" () |> \_ ->
           -- remove all the "same-suffix" items from inside.
           List.foldl List.remove xs to_remove
           -- and replace them with the replacements
           |> (\l -> l ++ replacements)
           |> List.map sortAST
-          -- |> Debug.log "Result of suffix-collapse"
+          -- |> debug_log "Result of suffix-collapse"
 
 simplify_inner : (ExprAST -> ExprAST) -> List ExprAST -> (List ExprAST -> ExprAST) -> ExprAST
 simplify_inner s inner wrap =
@@ -733,37 +525,9 @@ simplify =
   simplifyWith (finalityPrimacy >> commonPrefixCollapse >> commonSuffixCollapse)
 
 -- JUST AS AN EXAMPLE!  This leads to a NAFSA, of course.
-simplifyBack : ExprAST -> ExprAST
-simplifyBack =
-  simplifyWith (finalityPrimacy >> commonSuffixCollapse >> commonPrefixCollapse)
-
-exprASTToRTString : ExprAST -> String
-exprASTToRTString e =
-  case e of
-    V transition ->
-      case transition of
-        (ch, 0) -> String.fromChar ch
-        (ch, _) -> "!" ++ String.fromChar ch
-    M xs ->
-      List.map exprASTToRTString xs |> String.join "."
-    A xs ->
-      "(" ++ (List.map exprASTToRTString xs |> String.join " + ") ++ ")"
-
-exprASTToString : ExprAST -> String
-exprASTToString e =
-  case e of
-    V t ->
-      transitionToString t
-    M xs ->
-      -- "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
-      List.map exprASTToString xs |> String.join "."
-    A xs ->
-      -- "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
-      "[" ++ (List.map exprASTToString xs |> String.join " + ") ++ "]"
-
-exprASTsToString : List ExprAST -> String
-exprASTsToString es =
-  List.map exprASTToString es |> String.join "; "
+-- simplifyBack : ExprAST -> ExprAST
+-- simplifyBack =
+--   simplifyWith (finalityPrimacy >> commonSuffixCollapse >> commonPrefixCollapse)
 
 sortAST : ExprAST -> ExprAST
 sortAST e =
@@ -792,38 +556,6 @@ sortAST e =
         case List.unique xs |> List.sortWith compare of
           [y] -> y
           ys -> A ys
-
-redirect_outgoings : Int -> Set Int -> IntDict.IntDict (Set (Int, Transition)) -> IntDict.IntDict (Set (Int, Transition))
-redirect_outgoings new_target edges_to_redirect outgoing_dict =
-  -- Debug.log ("Merging " ++ (Debug.toString <| Set.toList edges_to_redirect) ++ " to") new_target |> \_ ->
-  Set.foldl (\k o -> IntDict.remove k o) outgoing_dict edges_to_redirect
-  |> IntDict.map
-    (\_ v ->
-      Set.map (\(edge, transition) ->
-        if Set.member edge edges_to_redirect then
-          (new_target, transition)
-        else
-          (edge, transition)
-      ) v
-    )
-
-redirect_incomings : Int -> Set Int -> IntDict.IntDict (List (Int, Transition)) -> IntDict.IntDict (List (Int, Transition))
-redirect_incomings new_target to_redirect incoming_dict =
-  IntDict.get new_target incoming_dict
-  |> Maybe.map
-    (\new ->
-      Set.foldl
-        (\old new_ ->
-          IntDict.get old incoming_dict
-          |> Maybe.map (\v -> Set.union new_ (Set.fromList v))
-          |> Maybe.withDefault new_
-        )
-        (Set.fromList new)
-        to_redirect
-      |> Set.toList
-      |> \v -> IntDict.insert new_target v incoming_dict
-    )
-  |> Maybe.withDefault IntDict.empty
 
 collapse_nodes : Int -> List Int -> List (Int, (Int, Transition)) -> ToDawgRecord -> ToDawgRecord
 collapse_nodes new_target to_remove edges_to_redirect r =
@@ -861,7 +593,7 @@ merge_modifications dst r =
       IntDict.get dst r.incoming
       |> Maybe.map (List.map Tuple.first >> List.unique)
       |> Maybe.withDefault []
-      -- |> Debug.log ("incoming (@ #" ++ String.fromInt dst ++ ")")
+      -- |> debug_log ("incoming (@ #" ++ String.fromInt dst ++ ")")
     combinable_nodes =
       List.filterMap (\n -> IntDict.get n r.outgoing |> Maybe.map (\v -> ( n, v ) )) in_nodes
       |> List.gatherEqualsBy Tuple.second
@@ -884,7 +616,7 @@ merge_modifications dst r =
                       same
                 } -- these are all the ones that can be merged.
         )
-      -- |> Debug.log "[ ( NewTarget, (ToRemove, EdgesToRedirect) ) ]"
+      -- |> debug_log "[ ( NewTarget, (ToRemove, EdgesToRedirect) ) ]"
     -- Should now be able to remove the excess node(s) from the "incoming" and "outgoing" lists.
   in
     combinable_nodes
@@ -900,7 +632,7 @@ collapse remaining r =
           let
             reCheck =
               List.concatMap (\{edgesToRedirect} -> List.map Tuple.first edgesToRedirect) mods
-              -- |> Debug.log "List for rechecking"
+              -- |> debug_log "List for rechecking"
           in
             List.foldl
               (\mod ->
@@ -950,15 +682,11 @@ coalesceToGraphNodes {outgoing} =
   |> IntDict.values
   |> List.concat
 
-graphEdgeToString : Graph.Edge Connection -> String
-graphEdgeToString {from, to, label} =
-  "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
-
 algebraToDAWG : ExprAST -> DAWG
 algebraToDAWG e =
   let
     flattened = sortAST e -- |> debugLog "flattened" exprASTToString
-    simplified = simplify flattened {- |> Debug.log "Simplified, raw" -} |> debugLog "Simplified, round-trip" exprASTToRTString
+    simplified = simplify flattened {- |> debug_log "Simplified, raw" -} |> debugLog "Simplified, round-trip" exprASTToRTString
     graphEdges =
       expressionToDAWG simplified (0, 1) (ToDawgRecord 2 IntDict.empty IntDict.empty)
       -- |> debugLog "Expression to DAWG" dawgRecordToString
@@ -983,8 +711,8 @@ algebraToDAWG e =
     |> Maybe.withDefault empty
     -- |> debugDAWG "tada"
 
-fromAlgebra : String -> DAWG
-fromAlgebra s =
+fromLines : String -> DAWG
+fromLines s =
   s
   |> String.replace " " ""
   |> String.replace "\n" ""
@@ -1011,48 +739,6 @@ type alias DAWG =
   , final : Maybe NodeId
   }
 
-notFinalState : Int
-notFinalState = 0
-isFinalState : Int
-isFinalState = 1
-
-isRoot : NodeId -> Bool
-isRoot nodeid =
-  nodeid == 0
-
-isConfluence : Connection -> Bool
-isConfluence connection =
-  Set.size connection > 1
-
-isTerminal : Transition -> Bool
-isTerminal (_, f) =
-  f == 1
-
-isConfluenceConnection : NodeId -> NodeId -> DAWG -> Bool
-isConfluenceConnection node1 node2 dawg =
-  Maybe.map2
-    (\a b ->
-      IntDict.get b.node.id a.outgoing
-      |> Maybe.map isConfluence
-      |> Maybe.withDefault False
-    )
-    (Graph.get node1 dawg.graph)
-    (Graph.get node2 dawg.graph)
-  |> Maybe.withDefault False
-
-isForwardSplit : Node -> Bool
-isForwardSplit node =
-  IntDict.size node.outgoing > 1
-
-isBackwardSplit : NodeId -> DAWG -> Bool
-isBackwardSplit nodeid dawg =
-  Graph.get nodeid dawg.graph
-  |> Maybe.map (\node -> IntDict.size node.incoming > 1)
-  |> Maybe.withDefault False
-
-isLeaf : Node -> Bool
-isLeaf node =
-  IntDict.size node.outgoing == 0
 
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : Node -> Bool
@@ -1068,1153 +754,41 @@ isTerminalNode node =
     False
     (node.incoming)
 
-isSingle : Node -> Bool
-isSingle node =
-  IntDict.size node.outgoing == 1 &&
-    List.all (Set.size >> (==) 1) (IntDict.values node.outgoing)
-    -- |> Debug.log ("isSingle for #" ++ String.fromInt node.node.id)
-
-isFinalNode : NodeId -> DAWG -> Bool
-isFinalNode nodeid dawg =
-  dawg.final
-  |> Maybe.andThen (flip Graph.get dawg.graph)
-  |> Maybe.map (\finalNode -> nodeid == finalNode.node.id)
-  |> Maybe.withDefault False
-
-forwardsFollowable : Char -> NodeId -> DAWGGraph -> Maybe Node
-forwardsFollowable ch nodeid graph =
-  Maybe.andThen
-    (\node ->
-      IntDict.foldl
-        (\k conn state ->
-          state
-          |> Maybe.orElseLazy
-            (\() ->
-              if Set.member (ch, 0) conn || Set.member (ch, 1) conn then
-                Just k
-              else
-                Nothing
-            )
-        )
-        Nothing
-        node.outgoing
-      |> Maybe.andThen (flip Graph.get graph)
-    )
-    (Graph.get nodeid graph)
-
-backwardsFollowable : Node -> Char -> DAWGGraph -> List Node
-backwardsFollowable node ch graph =
-  IntDict.foldl
-    (\k conn state ->
-      if Set.member (ch, 0) conn || Set.member (ch, 1) conn then
-        k :: state
-      else
-        state
-    )
-    []
-    node.incoming
-  |> List.filterMap (flip Graph.get graph)
-
-compatibleBackwardsFollowable : NodeId -> Transition -> DAWGGraph -> List Node
-compatibleBackwardsFollowable nodeid transition graph =
-  Maybe.map
-    ( .incoming
-      >> IntDict.foldl
-        (\k conn state ->
-          if Set.member transition conn then
-            k :: state
-          else
-            state
-        )
-        []
-      >> List.filterMap (flip Graph.get graph)
-    )
-    (Graph.get nodeid graph)
-  |> Maybe.withDefault []
-
-{--
-  DAWG-modification functions
--}
-
-dawgUpdate : NodeId -> (Node -> Node) -> DAWG -> DAWG
-dawgUpdate nodeid f dawg =
-  { dawg
-    | graph = Graph.update nodeid (Maybe.map f) dawg.graph
-  }
-
-tryDawgUpdate : NodeId -> (Node -> Maybe Node) -> DAWG -> DAWG
-tryDawgUpdate nodeid f dawg =
-  { dawg
-    | graph = Graph.update nodeid (Maybe.andThen f) dawg.graph
-  }
-
-removeTransitionFromConnection : Transition -> Connection -> Maybe Connection
-removeTransitionFromConnection transition connection =
-  let
-    s = Set.remove transition connection
-  in
-    if Set.isEmpty s then Nothing
-    else Just s
-
-addTransitionToConnection : Transition -> Connection -> Connection
-addTransitionToConnection transition connection =
-  Set.insert transition connection
-
-updateConnectionWith : Transition -> Connection -> Connection
-updateConnectionWith transition conn =
-  case transition of
-    (ch, 1) ->
-      addTransitionToConnection transition conn
-      |> Set.remove (ch, 0)
-    (ch, _) ->
-      if Set.member (ch, 1) conn then
-        conn
-      else
-        addTransitionToConnection transition conn
-
-{-| Merge connections, returning the merged connection.  When a
-    transition character occurs in both with different terminal status,
-    the transition with the terminal value is preserved.
--}
-mergeConnectionWith : Connection -> Connection -> Connection
-mergeConnectionWith =
-  Set.foldl updateConnectionWith
-
-{-| Don't use this; instead, use connectTo. -}
-createOrUpdateOutgoingConnection : Transition -> Node -> NodeId -> IntDict.IntDict Connection
-createOrUpdateOutgoingConnection transition from to =
-  IntDict.update to
-    ( Maybe.map (updateConnectionWith transition)
-      >> Maybe.orElseLazy (\() -> Just (Set.singleton transition))
-    )
-    from.outgoing
-
-createOrUpdateIncomingConnection : Transition -> NodeId -> Node -> Connections
-createOrUpdateIncomingConnection transition from to =
-  IntDict.update from
-    ( Maybe.map (updateConnectionWith transition)
-      >> Maybe.orElseLazy (\() -> Just (Set.singleton transition))
-    )
-    to.incoming
-
-createOrMergeConnections : Connections -> Connections -> Connections
-createOrMergeConnections a b =
-  IntDict.uniteWith (\_ -> mergeConnectionWith) a b
-
-cloneAndMergeOutgoingConnectionsOfNode : NodeId -> NodeId -> DAWG -> DAWG
-cloneAndMergeOutgoingConnectionsOfNode from to dawg = -- from = dr, to = ds
-  let
-    fromOutgoing_ = Graph.get from dawg.graph |> Maybe.map .outgoing
-  in
-    Maybe.map
-      (\fromOutgoing ->
-        dawgUpdate to
-          (\toNode -> { toNode | outgoing = createOrMergeConnections fromOutgoing toNode.outgoing })
-          dawg
-      )
-      fromOutgoing_
-    |> Maybe.withDefault dawg
-
-cloneAndMergeIncomingConnectionsOfNode : NodeId -> NodeId -> DAWG -> DAWG
-cloneAndMergeIncomingConnectionsOfNode from to dawg = -- from = dr, to = ds
-  let
-    fromIncoming_ = Graph.get from dawg.graph |> Maybe.map .incoming
-  in
-    Maybe.map
-      (\fromIncoming ->
-        dawgUpdate to
-          (\toNode -> { toNode | incoming = createOrMergeConnections fromIncoming toNode.incoming })
-          dawg
-      )
-      fromIncoming_
-    |> Maybe.withDefault dawg
-
-{- Connect to a particular node with a particular transition, returning
-    the updated `from` node
-
-  This is a fairly high-level function. It will
-  - create the connection if it needs to, and update it otherwise.
-  - ensure that if the transition is final, there isn't a competing
-    non-final transition.
--}
-{-| Use this if you absolutely need to, but you probably want createTransitionBetween -}
-connectTo : NodeId -> Transition -> Node -> Node
-connectTo to transition from =  
-  { from
-    | outgoing = createOrUpdateOutgoingConnection transition from to
-  }
-
-{-| Connect from a particular node with a particular transition, returning
-    the updated `to` node
-
-  This is a fairly high-level function. It will
-  - create the connection if it needs to, and update it otherwise.
-  - ensure that if the transition is final, there isn't a competing
-    non-final transition.
--}
-connectFrom : NodeId -> Transition -> Node -> Node
-connectFrom from transition to =
-  { to
-    | incoming = createOrUpdateIncomingConnection transition from to
-  }
-
-
-disconnectFrom : NodeId -> Node -> Node
-disconnectFrom to from =
-  { from
-    | outgoing = IntDict.remove to (Debug.log ("Before disconnection of " ++ String.fromInt to) from.outgoing) |> Debug.log "After disconnection"
-  }
-
-obtainConnectionFrom : NodeId -> Node -> Maybe (Node, NodeId, Connection)
-obtainConnectionFrom connectionDestination from =
-  from.outgoing
-  |> IntDict.get connectionDestination
-  |> Maybe.map (\conn -> (from, connectionDestination, conn))
-
-redirectConnectionTo : NodeId -> Maybe (Node, NodeId, Connection) -> Maybe Node
-redirectConnectionTo to maybeRedirect =
-  maybeRedirect
-  |> Maybe.map
-    (\(from, old, conn) ->
-        { from
-          | outgoing =
-              IntDict.remove old from.outgoing
-              |> IntDict.insert to conn
-        }
-    )
-
-mergeConnectionTo : NodeId -> Maybe (Node, NodeId, Connection) -> Maybe Node
-mergeConnectionTo to maybeRedirect =
-  maybeRedirect
-  |> Maybe.map
-    (\(from, _, conn) ->
-        { from
-          | outgoing =
-              IntDict.uniteWith
-                (\_ a b -> Set.foldl (updateConnectionWith) a b)
-                (IntDict.singleton to conn)
-                from.outgoing
-        }
-    )
-
-createNewSuccessorNodeWithConnection : Connection -> NodeId -> DAWG -> (DAWG, NodeId)
-createNewSuccessorNodeWithConnection connection srcNode dawg =
-  let
-    newNode =
-      { node = Node (dawg.maxId + 1) ()
-      , incoming = IntDict.singleton srcNode connection
-      , outgoing = IntDict.empty
-      }
-  in
-    ( { dawg
-        | graph = Graph.insert newNode dawg.graph
-        , maxId = dawg.maxId + 1
-      }
-    , newNode.node.id
-    )
-
-{-| Create a transition to a new node, returning the DAWG and the new node.
--}
-createNewSuccessorNode : Transition -> NodeId -> DAWG -> (DAWG, NodeId)
-createNewSuccessorNode transition srcNode dawg =
-  createNewSuccessorNodeWithConnection (Set.singleton transition) srcNode dawg
-
-{-| Create a transition to a new node, returning the DAWG and the new node.
--}
-createNewPrecursorNode : Transition -> NodeId -> DAWG -> (DAWG, NodeId)
-createNewPrecursorNode transition destNode dawg =
-  let
-    newNode =
-      { node = Node (dawg.maxId + 1) ()
-      , outgoing = IntDict.singleton destNode (Set.singleton transition)
-      , incoming = IntDict.empty
-      }
-  in
-    ( { dawg
-        | graph = Graph.insert newNode dawg.graph
-        , maxId = dawg.maxId + 1
-      }
-    , newNode.node.id
-    )
-
-{-| Internal function.  Merges a series of transitions into the graph prefix.
-
-ASSUMPTIONS: the last Transition is terminal; all others are non-terminal.
--}
-prefixMerge : List Transition -> NodeId -> DAWG -> DAWG
-prefixMerge transitions currentNode dawg =
-  case println ("When currentNode = " ++ String.fromInt currentNode ++ ", transitions = " ++ transitionsToString transitions) transitions of
-    [] -> -- we are at the end.
-      dawg
-
-    (w, isFinal)::transitions_remaining ->
-      case forwardsFollowable w currentNode dawg.graph of
-        Just someNode ->
-          if isFinal == 1 then
-            println ("[Prefix 2.1.1] Created/updated terminal transition to #" ++ String.fromInt someNode.node.id ++ ".  Updating existing transition to be final & exiting unconditionally.")
-            createTransitionBetween (w, 1) currentNode someNode.node.id dawg
-          else
-            if isFinalNode someNode.node.id dawg || isBackwardSplit someNode.node.id dawg || isConfluenceConnection currentNode someNode.node.id dawg then
-              println ("[Prefix 2.2.2] Graph node #" ++ String.fromInt someNode.node.id ++ " is backward-split, or the #" ++ String.fromInt currentNode ++ " → #" ++ String.fromInt someNode.node.id ++ " connection is a confluence, or #" ++ String.fromInt someNode.node.id ++ " is the final-node.  Going to suffix-merging.")
-              mergeSuffixes (List.reverse transitions) currentNode dawg
-            else
-              println ("[Prefix 2.2.3] Graph node #" ++ String.fromInt someNode.node.id ++ " is single.  Continuing prefix-merge.")
-              prefixMerge transitions_remaining someNode.node.id dawg
-        Nothing -> -- there is nothing to follow forward.  Start merging from the other side.
-          mergeSuffixes (List.reverse transitions) currentNode dawg
-
-mergeNodes : (Adjacency Connection, NodeId) -> NodeId -> DAWG -> DAWG
-mergeNodes (adjacency, oldDestination) newDestination dawg =
-  { dawg
-    | graph =
-        IntDict.foldl
-          (\sourceNodeId _ graph ->
-              Graph.update sourceNodeId
-                (Maybe.andThen (obtainConnectionFrom oldDestination >> mergeConnectionTo newDestination))
-                graph
-          )
-          dawg.graph
-          adjacency
-  }
-
-redirectNodes : (Adjacency Connection, NodeId) -> NodeId -> DAWG -> DAWG
-redirectNodes (adjacency, oldDestination) newDestination dawg =
-  { dawg
-    | graph =
-        IntDict.foldl
-          (\sourceNodeId _ graph ->
-              Graph.update sourceNodeId
-                (Maybe.andThen (obtainConnectionFrom oldDestination >> redirectConnectionTo newDestination))
-                graph
-          )
-          dawg.graph
-          adjacency
-  }
-
-replaceNode : NodeId -> NodeId -> DAWG -> DAWG
-replaceNode oldid newid dawg =
-  cloneAndMergeIncomingConnectionsOfNode oldid newid dawg
-  |> cloneAndMergeOutgoingConnectionsOfNode oldid newid
-  |> \dawg_ -> { dawg_ | graph = Graph.remove oldid dawg_.graph }
-
-{-| Take all the previous incoming-connections of the old final-node and
-    redirect them to the new final-node.
--}
-redirectNodesToFinal : (Adjacency Connection, NodeId) -> DAWG -> DAWG
-redirectNodesToFinal redirection dawg =
-  dawg.final
-  |> Maybe.map (flip (redirectNodes redirection) dawg)
-  |> Maybe.withDefault dawg
-
-{-| Combine the `incoming` of nodes `kill` and `keep`; delete `kill` and retain only `keep`.
--}
-combineNodes : NodeId -> NodeId -> DAWG -> DAWG
-combineNodes kill keep dawg =
-  cloneAndMergeIncomingConnectionsOfNode kill keep dawg
-  |> \dawg_ -> { dawg_ | graph = Graph.remove kill dawg_.graph }
-  --|> debugDAWG "After"
-
-checkForCollapse : NodeId -> DAWG -> DAWG
-checkForCollapse nodeid dawg =
-  (Graph.get nodeid dawg.graph)
-  |> Maybe.map
-    (\node ->
-      let
-        sets =
-          node.incoming |> IntDict.toList
-          |> List.gatherEqualsBy (Tuple.first >> (flip allTransitionsFrom dawg))
-          |> List.filter (Tuple.second >> (not << List.isEmpty))
-      in
-        case sets of
-          [] -> dawg
-          ((k, s), _)::_ ->
-            -- … yeah this isn't the MOST effecient, but let's see how it goes.
-            -- println ("[Collapsing] Collapsing #" ++ String.fromInt nodeid ++ " backwards")
-            Set.toList s |> List.head
-            |> Maybe.map (\transition -> createTransitionBetween transition k nodeid dawg)
-            |> Maybe.withDefault dawg
-    )
-  |> Maybe.withDefault dawg
-
-{-| Create a connection between two existing nodes, with the specified
-    transition.  If such a connection already exists, it is updated with
-    the specified transition.  If there is an incoming connection to the
-    destination, and it can be merged, then it is merged and we then check
-    OUR incoming nodes to see whether a merge is possible.
--}
-createTransitionBetween : Transition -> NodeId -> NodeId -> DAWG -> DAWG
-createTransitionBetween transition from to dawg =
-  let
-    to_ = Graph.get to dawg.graph
-    from_ = Graph.get from dawg.graph
-    from_outgoing = -- amend the outgoing to what it _would_ be
-      Maybe.map (\node -> createOrUpdateOutgoingConnection transition node to |> IntDict.toList) from_
-      --|> Debug.log "cmp. base"
-    proposedConnection =
-      Maybe.map (\f ->
-        IntDict.get to f.outgoing
-        |> Maybe.map (updateConnectionWith transition)
-        |> Maybe.withDefaultLazy (\() -> Set.singleton transition)
-      ) from_
-    -- now have a quick look at the "to"'s incoming.  Is this connection already there?  If so, what is its source?
-    existingConnections =
-      Maybe.andThen2 (\t proposedConnection_ ->
-        IntDict.filter (\_ v -> v == proposedConnection_) t.incoming
-        |> IntDict.keys -- |> Debug.log ("potentially combinables with #" ++ String.fromInt from)
-        -- now filter these, so that only the nodes that are combinable are left.
-        -- These are the nodes where the outgoing connections are identical.
-        |> List.filterMap
-            (\e ->
-              if from == e then
-                Nothing -- this can happen if you try to put in the same word that's already in.
-              else
-                Maybe.andThen2
-                  (\f_o other ->
-                    if f_o == {-Debug.log "cmp. with"-} (IntDict.toList other.outgoing) then
-                      Just (from, e)
-                    else
-                      Nothing
-                  )
-                  from_outgoing
-                  (Graph.get e dawg.graph)
-            )
-        |> \l -> if List.isEmpty l then Nothing else Just l
-      ) to_ proposedConnection --|> Debug.log "combinables"
-  in
-    -- Debug.log ("Request to connect #" ++ String.fromInt from ++ " → #" ++ String.fromInt to ++ " with transition " ++ transitionToString transition) () |> \_ ->
-    case existingConnections of
-      Nothing ->
-        dawgUpdate from (connectTo to transition) dawg
-      Just [] -> -- yeah, this one should be impossible to reach, but 🤷 it keeps the compiler quiet.
-        dawgUpdate from (connectTo to transition) dawg
-      Just combinables -> -- oh my.  Well, what can we do about it?
-        -- the first element of these tuples is the `from` that we've been passed.
-
-        -- I'm guaranteed to have a valid connection in this case.
-        combinables
-        |> List.foldl
-          (\(a, b) ->
-            combineNodes b a
-            >> debugDAWG ("Collapsed #" ++ String.fromInt a ++ "|#" ++ String.fromInt b ++ ", both →#" ++ String.fromInt to ++ " via " ++ transitionToString transition ++ ", into one.")
-          )
-          (dawgUpdate from (connectTo to transition)
-          (debugDAWG "Pre-collapse" dawg))
-        |> checkForCollapse from
-
-{-| Unconditionally creates a chain, using all the specified transitions and
-    creating nodes as necessary, that begins at `from` and terminates at `to`.
--}
-createTransitionChainBetween : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
-createTransitionChainBetween transitions from to dawg =
-  case transitions of
-    [] ->
-      dawg
-    [t] ->
-      createTransitionBetween t from to dawg
-    _ -> -- we know that `rest` is NOT [] here; otherwise, it'd be caught at [t]
-      Maybe.map2
-        (\(lastTransition, rest) fromNode ->
-          List.foldl
-            (\t (dawg_, prevNode) ->
-              createNewSuccessorNode t prevNode dawg_
-            )
-            (dawg, fromNode.node.id)
-            rest
-          |> \(dawg_, prevNode) -> createTransitionBetween lastTransition prevNode to dawg_
-        )
-        (List.unconsLast transitions)
-        (Graph.get from dawg.graph)
-      |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in createTransitionChainBetween." dawg)
-
--- returns the nodeId we stopped on and the number of transitions we consumed
-followSuffixes : List Transition -> List Transition -> NodeId -> NodeId -> DAWG -> (NodeId, Int)
-followSuffixes transitions followed prefixEnd currentNode dawg =
-  if False then -- mark as True to totally remove all suffix-following (just to experiment).
-    --createChain (List.reverse transitions) prefixEnd currentNode followed dawg
-    ( currentNode, 0 ) 
-  else
-    println ("[Suffix 2] Suffixes to follow from #" ++ String.fromInt currentNode ++ ", moving back towards #" ++ String.fromInt prefixEnd ++ ": " ++ transitionsToString transitions) |> \_ ->
-    case transitions of
-      [] ->
-        ( currentNode, List.length followed )
-        -- dawg
-      (w, isFinal)::transitions_remaining ->
-        case compatibleBackwardsFollowable currentNode (w, isFinal) dawg.graph of
-          [] ->
-            ( currentNode, List.length followed )
-            -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
-          candidateBackwardNodes ->
-            case List.partition isSingle candidateBackwardNodes of
-              ([single], _) ->
-                case transitions_remaining of
-                  [] ->
-                    if prefixEnd == single.node.id then
-                      println ("[Suffix 3.1] No more transitions to follow; ending as expected at prefix-node #" ++ String.fromInt prefixEnd ++ ".")
-                      ( currentNode, List.length followed )
-                      -- dawg
-                    else
-                      ( currentNode, List.length followed )
-                      -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
-                  _ ->
-                    if prefixEnd == single.node.id then
-                      println ("[Suffix 2.1.1] Word is longer than graph; we must add in nodes.")
-                      ( currentNode, List.length followed )
-                      -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
-                    else
-                      println ("[Suffix 2.2.1] Single backwards-node (#" ++ String.fromInt single.node.id ++ ") found for " ++ transitionToString (w, isFinal) ++ ".  Following back.")
-                      followSuffixes transitions_remaining ((w, isFinal)::followed) prefixEnd single.node.id dawg
-              ([], dcdf) ->
-                Debug.log ("[Suffix 2.2.2] Confluence/forward-split found for backwards-split from " ++ String.fromInt currentNode ++ " via " ++ transitionToString (w, isFinal) ++ "; stopping backtrack here.")
-                  dcdf
-                |> \_ ->
-                ( currentNode, List.length followed )
-                  -- createChain (List.reverse transitions) prefixEnd currentNode followed dawg
-              (possible, _) ->
-                println ("[Suffix] Multiple backwards nodes found for " ++ transitionToString (w, isFinal) ++ " from #" ++ String.fromInt currentNode ++ ".  Should they have been merged??  In any event, I'll pick the longest suffix I can.")
-                List.map (\n -> followSuffixes transitions_remaining ((w, isFinal)::followed) prefixEnd n.node.id dawg) possible
-                |> List.maximumBy Tuple.second
-                |> Maybe.withDefault ( currentNode, List.length followed )
-                  -- dawg
-
-addFinalNode : DAWG -> (Node, DAWG)
-addFinalNode dawg =
-  let
-    newFinalNode =
-      { node = Node (dawg.maxId + 1) ()
-      , incoming = IntDict.empty
-      , outgoing = IntDict.empty
-      }
-  in
-    ( newFinalNode
-    , { dawg
-        | graph = Graph.insert newFinalNode dawg.graph
-        , maxId = dawg.maxId + 1
-        , final = Just <| dawg.maxId + 1
-      }
-    )
-
-{-| Find the outgoing node from the given node for a given transition-character. -}
-outgoingConnectionWith : Char -> NodeId -> DAWG -> Maybe (Node, Transition)
-outgoingConnectionWith w nodeid dawg =
-  Graph.get nodeid dawg.graph
-  |> Maybe.andThen
-    (\node ->
-      IntDict.filter
-        (\_ v -> Set.member (w, 0) v || Set.member (w, 1) v)
-        node.outgoing
-      |> IntDict.toList
-      |> List.filterMap
-        (\(k, conn) ->
-          Graph.get k dawg.graph
-          |> Maybe.map (\existing -> (existing, if Set.member (w, 0) conn then (w, 0) else (w, 1)))
-        )
-      |> List.head
-    )
-
-maxTerminality : Transition -> Transition -> Transition
-maxTerminality (ch, t0) (_, t1) =
-  if t0 > t1 then (ch, t0) else (ch, t1)
-
-transitionMatching : Char -> Connection -> Bool
-transitionMatching ch connection =
-  Set.member (ch, 0) connection || Set.member (ch, 1) connection
-
-getConnection : NodeId -> NodeId -> DAWG -> Maybe Connection
-getConnection from to dawg =
-  Graph.get from dawg.graph
-  |> Maybe.andThen (\{ outgoing } -> IntDict.get to outgoing)
-
-duplicateOutgoingConnectionsExcluding : NodeId -> NodeId -> NodeId -> DAWG -> DAWG
-duplicateOutgoingConnectionsExcluding excluded from to dawg =
-  Maybe.map2
-    (\fromNode toNode ->
-      { dawg
-        | graph =
-            Graph.update to
-              (\_ -> Just <|
-                { toNode
-                  | outgoing =
-                      createOrMergeConnections
-                        (IntDict.remove excluded fromNode.outgoing)
-                        toNode.outgoing
-                }
-              )
-              dawg.graph
-      }
-    )
-    (Graph.get from dawg.graph)
-    (Graph.get to dawg.graph)
-  |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnectionsExcluding? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
-
-duplicateOutgoingConnectionsExcludingTransitions : List Transition -> NodeId -> NodeId -> DAWG -> DAWG
-duplicateOutgoingConnectionsExcludingTransitions transitions from to dawg =
-  let
-    to_remove = Set.fromList transitions
-  in
-  Maybe.map2
-    (\fromNode toNode ->
-      { dawg
-        | graph =
-            Graph.update to
-              (\_ -> Just <|
-                { toNode
-                  | outgoing =
-                      ( fromNode.outgoing
-                        |> IntDict.map (\_ s -> Set.diff s to_remove)
-                        |> IntDict.filter (\_ -> not << Set.isEmpty) -- kill invalid connections!
-                      )
-                      |> createOrMergeConnections toNode.outgoing
-                }
-              )
-              dawg.graph
-      }
-    )
-    (Graph.get from dawg.graph)
-    (Graph.get to dawg.graph)
-  |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnectionsExcludingTransition? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
-
-duplicateOutgoingConnections : NodeId -> NodeId -> DAWG -> DAWG
-duplicateOutgoingConnections from to dawg =
-  Maybe.map2
-    (\fromNode toNode ->
-      let
-        merged = createOrMergeConnections fromNode.outgoing toNode.outgoing
-      in
-      { dawg
-        | graph = Graph.update to (\_ -> Just { toNode | outgoing = merged }) dawg.graph
-      }
-      -- I _could_ include this.  But it has nasty consequences for later duplicate checks
-      -- because the node might not exist!!  Better to do this in the caller, after all
-      -- duplicate checks are completed?
-      -- |> withOutgoingNodesOf [to] checkForCollapse
-    )
-    (Graph.get from dawg.graph)
-    (Graph.get to dawg.graph)
-  |> Maybe.withDefaultLazy (\() -> debugDAWG ("👽 BUG 👽 in duplicateOutgoingConnections? Could not find either/both of #" ++ String.fromInt from ++ " or #" ++ String.fromInt to) dawg)
-
-type alias CurrentNodeData =
-  { chosenTransition : Transition -- tC in text. Maximum-terminality among available options.
-  , otherOutgoingConnectionsOfPrefix : Connections
-  , id : NodeId -- d' in text
-  , completeIncoming : Connections
-  , isFinal : Bool
-  }
-
-type alias LinkingForwardData =
-  { graphPrefixEnd : NodeId -- dP in text
-  -- there is always precisely one connection from graphPrefixEnd (dP) to currentNode (d')
-  , lastConstructed : Maybe NodeId -- c in text
-  , graphSuffixEnd : NodeId -- dS in text
-  , suffixPath : List Transition
-  }
-
-{-| Updates incoming nodes to exclude a particular transition to a target.
-    If no incoming nodes remain, then the connection itself is removed.
--}
-incomingWithoutTransitionFrom : Transition -> NodeId -> Connections -> Connections
-incomingWithoutTransitionFrom (w, _) target incoming =
-  IntDict.update target
-    (Maybe.andThen <| (\conn ->
-      Set.remove (w, 0) conn
-      |> Set.remove (w, 1)
-      |> \removed ->
-          if Set.isEmpty removed then Nothing
-          else Just removed
-    ))
-    incoming
-
-
-{-| A helper function for `createForwardsChain` -}
-getForwardNodeData : NodeId -> Transition -> DAWG -> Maybe CurrentNodeData
-getForwardNodeData nodeid (w, isFinal) dawg_ =
-  Graph.get nodeid dawg_.graph
-  |> Maybe.andThen
-    (\{ outgoing } ->
-      IntDict.filter (\_ -> transitionMatching w) outgoing
-      |> IntDict.toList
-      |> List.head
-      |> Maybe.andThen
-        (\(k, v) ->
-          Maybe.map
-            (\d_ ->
-              let
-                t = if Set.member (w, 0) v then (w, 0) else (w, 1)
-              in
-                { chosenTransition = maxTerminality t (w, isFinal)
-                , id = k
-                , otherOutgoingConnectionsOfPrefix =
-                    IntDict.remove k d_.outgoing
-                , completeIncoming = d_.incoming
-                , isFinal = IntDict.isEmpty d_.outgoing
-                }
-            )
-            (Graph.get k dawg_.graph)
-        )
-    )
-
-connectsToFinalNode : NodeId -> DAWG -> Maybe NodeId
-connectsToFinalNode nodeid dawg =
-  dawg.final
-  |> Maybe.andThen
-    (\final ->
-      Graph.get nodeid dawg.graph
-      |> Maybe.andThen
-        (\node ->
-          IntDict.get final node.outgoing
-          |> Maybe.map (\_ -> final)
-        )
-    )
-
-type SplitPathResult
-  = SplitOff NodeId
-  | Straight NodeId
-
-{-| Accepts a `from` and `to` node, which MUST already be Connected by one or more transitions
-   including `transition`.  Accepts a continuation to pass forward to.
-   
-   - If `from`→`to` is a confluence, it will be split off and the new node will be passed forward.
-   - If `to` is a backwards-split, it will be split off and the new node will be passed forward.
-   - Otherwise, `to` will be passed forward verbatim.
--}
-splitAwayPathThenContinue : NodeId -> NodeId -> Transition -> (SplitPathResult -> DAWG -> DAWG) -> DAWG -> DAWG
-splitAwayPathThenContinue from to transition continuation dawg =
-  if isConfluenceConnection from to dawg then
-    println ("Found #" ++ String.fromInt from ++ "→#" ++ String.fromInt to ++ " confluence " ++ (getConnection from to dawg |> Maybe.map connectionToString |> Maybe.withDefault "ERROR!NoConnection!") ++ ".  Chosen transition is " ++ transitionToString transition ++ ".")
-    -- remove the transition from the confluence node
-    dawgUpdate to (\d_ -> { d_ | incoming = incomingWithoutTransitionFrom transition from d_.incoming }) dawg
-    |> createNewSuccessorNode transition from
-    |> \(dawg_, successor) -> continuation (SplitOff successor) dawg_
-  else if isBackwardSplit to dawg then
-    -- by now, we are sure that we DON'T have a confluence.  This makes the logic easier!
-    println ("Found backward-split centered on #" ++ String.fromInt to ++ ".  Chosen transition is " ++ transitionToString transition ++ ".")
-    -- remove the transition from the backward-split
-    dawgUpdate to (\d_ -> { d_ | incoming = incomingWithoutTransitionFrom transition from d_.incoming }) dawg
-    |> createNewSuccessorNode transition from
-    |> \(dawg_, successor) -> continuation (SplitOff successor) dawg_
-  else
-    continuation (Straight to) dawg
-
-withSplitPath : NodeId -> NodeId -> Transition -> (NodeId -> DAWG -> DAWG) -> DAWG -> DAWG
-withSplitPath from to transition continuation dawg =
-  splitAwayPathThenContinue from to transition
-    (\splitResult dawg_ ->
-      case splitResult of
-        Straight _ ->
-          debugDAWG "👾 BUG 👾 Impossible path hit." empty
-        SplitOff c -> continuation c dawg_
-    )
-    dawg
-
-allTransitionsFrom : NodeId -> DAWG -> Set Transition
-allTransitionsFrom nodeid dawg =
-  Graph.get nodeid dawg.graph
-  |> Maybe.map
-    (\node -> IntDict.values node.outgoing |> List.foldl Set.union Set.empty)
-  |> Maybe.withDefault Set.empty
-
-getTransitionFrom : NodeId -> Char -> DAWG -> Maybe Transition
-getTransitionFrom source w dawg =
-  allTransitionsFrom source dawg
-  |> \s ->
-    if Set.member (w, 1) s then
-      Just (w, 1)
-    else if Set.member (w, 0) s then
-      Just (w, 0)
-    else
-      Nothing
-
-removeTransitionBetweenNodes : NodeId -> NodeId -> Transition -> DAWG -> DAWG
-removeTransitionBetweenNodes source destination transition dawg =
-  dawgUpdate source
-    (\node ->
-      { node
-        | outgoing =
-            IntDict.update destination
-              (Maybe.andThen (removeTransitionFromConnection transition))
-              node.outgoing
-      }
-    )
-    dawg
-
-addTransitionBetweenNodes : NodeId -> NodeId -> Transition -> DAWG -> DAWG
-addTransitionBetweenNodes source destination transition dawg =
-  dawgUpdate source
-    (\node ->
-      { node
-        | outgoing =
-            IntDict.update destination
-              (Maybe.map (addTransitionToConnection transition)
-              >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
-              )
-              node.outgoing
-      }
-    )
-    dawg
-
-{-| Returns conflicting transitions betweeen 'a' and 'b' -}
-outgoingConflict : NodeId -> NodeId -> DAWG -> List Transition
-outgoingConflict a b dawg =
-  let
-    a_out = allTransitionsFrom a dawg
-    b_out = allTransitionsFrom b dawg
-    a_chars = Set.map Tuple.first a_out
-    b_chars = Set.map Tuple.first b_out
-  in
-    Set.intersect a_chars b_chars
-    |> Set.toList
-    |> List.map
-      (\w ->
-        maxTerminality
-          (if Set.member (w, 0) a_out then (w, 0) else (w, 1))
-          (if Set.member (w, 0) b_out then (w, 0) else (w, 1))
-      )
-
-switchTransitionToNewPath : Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
-switchTransitionToNewPath transition linking d dawg =
-  case outgoingConflict d.id linking.graphSuffixEnd dawg of
-    [] ->
-      println ("Switching an existing transition (" ++ transitionToString transition ++ "), originating at #" ++ String.fromInt linking.graphPrefixEnd ++ ", from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-      createNewSuccessorNode transition linking.graphPrefixEnd dawg
-      |> \(dawg_, successor) ->
-        removeTransitionBetweenNodes linking.graphPrefixEnd d.id transition dawg_
-        -- |> addTransitionBetweenNodes linking.graphPrefixEnd linking.graphSuffixEnd transition
-        |> duplicateOutgoingConnections linking.graphSuffixEnd successor
-        |> duplicateOutgoingConnections d.id successor
-        |> withOutgoingNodesOf [linking.graphSuffixEnd, d.id] checkForCollapse
-    transitions -> -- e.g. teste-ne-neste
-      -- shift the window forward & reconsider?  If I try to do a direct link, I will end up with
-      -- a nondeterministic graph.
-      case linking.suffixPath of
-        [] -> debugDAWG "[M] Impossible case." empty
-        h::rest ->
-          Debug.log ("Conflicting transitions (" ++ transitionsToString transitions ++ ") of #" ++ String.fromInt d.id ++ " and #" ++ String.fromInt linking.graphSuffixEnd ++ " prevent a direct switch.  Shifting window & retrying instead.") () |> \_ ->
-          case forwardsFollowable (Tuple.first h) linking.graphSuffixEnd dawg.graph of
-            Nothing ->
-              debugDAWG "[M-2] Impossible case." empty
-            Just newSuffix ->
-              traceForwardChainTo transition [h]
-                { linking | graphSuffixEnd = newSuffix.node.id, suffixPath = rest }
-                d dawg
-
-connectIndependentPaths : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
-connectIndependentPaths transition rest linking d dawg =
-  -- e.g. a-ab
-  -- I connect directly to the final node, AND `d` is the final node.  The path has not
-  -- split, so I know that the prefix is exact.  If this is the final transition, then
-  -- whether this is straight, confluence, or backward-split does NOT matter: the "suffix"
-  -- is correct anyway because the suffix is final.
-
-  -- however, if /w/ is longer than the graph, then there will be are additional transitions.
-  -- then we must split any confluence/backward-split, and rejoin at the final node after.
-  case rest of
-    [] -> 
-      -- The word in the graph is actually a prefix of the word that is being added.
-      -- Within the graph, there is a suffix that will correctly extend the word.
-      -- We must preserve both the word in the graph AND extend it.
-      let
-        outgoingIsSuperset : NodeId -> NodeId -> Bool
-        outgoingIsSuperset newDest currentDest =
-          allTransitionsFrom newDest dawg
-          |> Set.Extra.isSupersetOf (allTransitionsFrom currentDest dawg)
-      in
-        if isConfluenceConnection linking.graphPrefixEnd d.id dawg && not (outgoingIsSuperset linking.graphSuffixEnd d.id) then
-          -- Alright!  This looks to be a valid test for when we must create a chain INSTEAD of joining.
-          -- The essential point is this: if, by switching the transition, we would affect an existing
-          -- graph-word, then we must create a chain instead.  And how do we know if we would affect an
-          -- existing graph word?  Well, the outgoing connections of the suffix must be a superset of the
-          -- outgoing connections of the `d` node (which we are currently looking at).  If they are NOT,
-          -- then we would be affecting an existing graph word.
-          case outgoingConflict d.id linking.graphSuffixEnd dawg of
-            [] ->
-              -- e.g. ax-gx-kp-gp
-              println ("Switching to meet the independent suffix would destroy an existing graph word. Cloning outgoing connections to a new " ++ transitionToString transition ++ " node instead.")
-              withSplitPath linking.graphPrefixEnd d.id transition
-                (\c ->
-                  duplicateOutgoingConnections linking.graphSuffixEnd c
-                  >> duplicateOutgoingConnections d.id c
-                )
-                dawg
-            transitions -> -- e.g. teste-ne-neste
-              -- shift the window forward & reconsider?  If I try to do a direct link, I will end up with
-              -- a nondeterministic graph.
-              case linking.suffixPath of
-                [] -> debugDAWG "[O] Impossible case." empty
-                h::rest_ -> -- e.g. axax-bx-cx-cxax
-                  -- if there is an existing prefix/suffix pair that feeds forward with this, then let's shift the window and re-check.
-                  Debug.log ("Conflicting transitions (" ++ transitionsToString transitions ++ ") of #" ++ String.fromInt d.id ++ " and #" ++ String.fromInt linking.graphSuffixEnd ++ " prevent a direct switch.  Shifting window & retrying instead.") () |> \_ ->
-                  case forwardsFollowable (Tuple.first h) linking.graphSuffixEnd dawg.graph of
-                    Nothing ->
-                      debugDAWG "[O-2] Impossible case." empty
-                    Just newSuffix ->
-                      traceForwardChainTo transition (rest ++ [h])
-                        { linking | graphSuffixEnd = newSuffix.node.id, suffixPath = rest_ }
-                        d dawg
-
-        else if d.isFinal == False && ([linking.graphPrefixEnd, linking.graphSuffixEnd] |> List.map (flip Graph.get dawg.graph) |> List.all (Maybe.map (\n -> IntDict.member d.id n.outgoing) >> Maybe.withDefault False)) then
-          -- e.g. ttal-tyal-ntl-ntal
-          println "Not enough space to enact a join; must create an ancillary node to compensate."
-          -- `dS`-`d` already exists.  (the if-statement checks for this).
-          -- We will redirect it later, but first, we will create the node
-          -- that it will be redirect _to_.
-          -- We will now create a new node from `d`.
-          getConnection linking.graphSuffixEnd d.id dawg
-          |> Maybe.map
-            (\ds_d_connection ->
-              createNewSuccessorNodeWithConnection ds_d_connection {-root-}d.id dawg
-              |> \(dawg_, successor) ->
-                println ("Created new redirection node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt d.id)
-                -- now, redirect ds_d_connection to meet the successor node.
-                tryDawgUpdate linking.graphSuffixEnd
-                  (obtainConnectionFrom d.id >> redirectConnectionTo successor)
-                  dawg_
-                |> debugDAWG ("Redirected #" ++ String.fromInt linking.graphSuffixEnd ++ "→#" ++ String.fromInt d.id ++ " connection to #" ++ String.fromInt successor)
-                -- lastly, replicate all of the outgoing connections from `d` to `successor`,
-                -- EXCEPT for the connection that we created to `successor`.
-                |> duplicateOutgoingConnectionsExcluding successor d.id successor
-                |> debugDAWG ("Duplicated outgoing connections from #" ++ String.fromInt d.id ++ " to #" ++ String.fromInt successor)
-            )
-          |> Maybe.withDefaultLazy (\() -> debugDAWG "👽 BUG!! 👽 in connectIndependentPaths, second case" dawg)
-        else
-          -- This is a valid test for when we must create a chain INSTEAD of joining.
-          -- The essential point is this: if, by switching the transition, we would affect an existing
-          -- graph-word, then we must create a chain instead.
-          -- println ("d = #" ++ String.fromInt d.id ++ ", dP = #" ++ String.fromInt linking.graphPrefixEnd ++ ", dS = #" ++ String.fromInt linking.graphSuffixEnd ++ ".")
-
-          
-          -- println ("There is an existing suffix for this word elsewhere in the graph. Connecting the path to that suffix.")
-          switchTransitionToNewPath transition linking d dawg
-    _ ->
-      splitAwayPathThenContinue linking.graphPrefixEnd d.id transition
-        (\splitResult dawg_ ->
-          case splitResult of
-            Straight g -> -- e.g. a-ab
-              -- We are still on a straight path past the final; I can extend straight out.
-              println ("[J] On a straight prefix #" ++ String.fromInt g ++ ", past the final; extending straight to new final & redirecting.")
-              addFinalNode dawg_
-              |> \(newFinal, dawg__) ->
-                  createTransitionChainBetween rest g newFinal.node.id dawg__
-                  |> redirectNodesToFinal (IntDict.remove linking.graphPrefixEnd d.completeIncoming, d.id)
-            SplitOff c -> -- e.g. xa-y-yaa
-              println ("[J] On an alt-path now (#" ++ String.fromInt c ++ "), continuing to follow, upcoming transitions are: " ++ transitionsToString rest)
-              createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just c } dawg_
-        )
-        dawg
-
-{-| In a case such as teve-ceve-ce , the graph-suffix starts with the same
-    character that the graph-prefix ends with (i.e., 'e', in this case).  This
-    can also happen for longer runs (see ayxpayx… in tests).  In that case,
-    we should consider moving along the prefix rather than connecting to the
-    suffix.  This function checks for whether a repeated suffix exists, and
-    should only be called once we have reached the end of the transitions.
--}
-prefixRepeatsSuffix : List Transition -> NodeId -> NodeId -> DAWG -> Bool
-prefixRepeatsSuffix suffixTransitions_ lastPrefix_ firstSuffix_ dawg =
-  let
-    prefixRepeatsSuffixReal : List Transition -> NodeId -> NodeId -> Bool
-    prefixRepeatsSuffixReal suffixTransitions lastPrefix firstSuffix =
-      if lastPrefix == firstSuffix then
-        False -- e.g. pqt-zvt-zvxt
-      else
-        case suffixTransitions of
-          [] ->
-            -- can't be true if we don't end at the final.
-            isFinalNode firstSuffix dawg
-          (w, _)::rest ->
-            case ( forwardsFollowable w lastPrefix dawg.graph, forwardsFollowable w firstSuffix dawg.graph ) of
-              ( Just inPrefix , Just inSuffix ) ->
-                prefixRepeatsSuffixReal rest inPrefix.node.id inSuffix.node.id
-              _ ->
-                False
-  in
-    if List.isEmpty suffixTransitions_ then
-      -- d'uh. 🤦 infinite loop in caller otherwise, eh? Silly billy.
-      False
-    else
-      prefixRepeatsSuffixReal suffixTransitions_ lastPrefix_ firstSuffix_
-
-traceForwardOnThisChain : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
-traceForwardOnThisChain transition rest linking d dawg =
-  debugDAWG ("There is no alt-chain; I am tracing forward on the main chain, #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ ".  Before doing anything") dawg |> \_ ->
-  case ( connectsToFinalNode linking.graphPrefixEnd dawg, d.isFinal ) of
-    ( Nothing, True ) ->
-      debugDAWG "[F] Impossible path" empty
-    _ ->
-      -- e.g. kp-gx-ax-gp , zv-kv-rv-kva , an-tn-x-tx , x-b-bc-ac-bx
-      connectIndependentPaths transition rest linking d dawg
-
-withOutgoingNodesOf : List NodeId -> (NodeId -> DAWG -> DAWG) -> DAWG -> DAWG
-withOutgoingNodesOf nodeids f dawg =
-  List.filterMap (flip Graph.get dawg.graph >> Maybe.map (.outgoing >> IntDict.keys)) nodeids
-  |> List.concat
-  |> List.unique |> Debug.log "folding with"
-  |> List.foldl f dawg
-
-traceForwardOnAlternateChain : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> NodeId -> DAWG -> DAWG
-traceForwardOnAlternateChain transition rest linking d c dawg =
-  -- `c` is the alternate chain.
-  -- `d` is the trace on the main chain.
-  debugDAWG ("Tracing forward on alt-chain that ends on #" ++ String.fromInt c ++ "; on main chain, the trace is from, #" ++ String.fromInt linking.graphPrefixEnd ++ "→#" ++ String.fromInt d.id ++ ".  Before doing anything") dawg |> \_ ->
-  case ( connectsToFinalNode linking.graphPrefixEnd dawg, rest, d.isFinal ) of
-    ( Nothing, [], False ) -> -- e.g. ato-cto-atoz
-      if List.isEmpty linking.suffixPath then -- if this is terminal
-          -- e.g. ato-cto-at
-        println ("[G] Inserted word is a prefix of an existing word. Connecting alt-path #" ++ String.fromInt c ++ " to encountered node #" ++ String.fromInt d.id ++ " and exiting.")
-        -- createTransitionBetween transition c d.id dawg
-        duplicateOutgoingConnections linking.graphPrefixEnd c dawg
-        |> dawgUpdate c (connectTo d.id transition) -- in case the transition is terminal, this will merge
-        |> checkForCollapse d.id
-      else
-        case outgoingConflict d.id linking.graphSuffixEnd dawg of
-          [] ->
-            -- e.g. tsbl-nsbl-nsl
-            createNewSuccessorNode d.chosenTransition c dawg
-            |> (\(dawg_, successor) ->
-                println ("[G] Inserted word is a (possibly partial) prefix. Created #" ++ String.fromInt successor ++ ", and duplicating the outgoing transitions of #" ++ String.fromInt linking.graphSuffixEnd ++ " and #" ++ String.fromInt d.id ++ " to it.")
-                duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
-                |> duplicateOutgoingConnections linking.graphSuffixEnd successor
-                |> duplicateOutgoingConnections d.id successor
-                |> withOutgoingNodesOf [successor, d.id] checkForCollapse
-              )
-          transitions -> -- e.g. teste-ne-neste
-            -- shift the window forward & reconsider?  If I try to do a direct link, I will end up with
-            -- a nondeterministic graph.
-            case linking.suffixPath of
-              [] -> debugDAWG "[N] Impossible case." empty
-              h::rest_ ->
-                Debug.log ("Conflicting transitions (" ++ transitionsToString transitions ++ ") of #" ++ String.fromInt d.id ++ " and #" ++ String.fromInt linking.graphSuffixEnd ++ " prevent a direct switch.  Shifting window & retrying instead.") () |> \_ ->
-                case forwardsFollowable (Tuple.first h) linking.graphSuffixEnd dawg.graph of
-                  Nothing ->
-                    debugDAWG "[N-2] Impossible case." empty
-                  Just newSuffix ->
-                    traceForwardChainTo transition (rest ++ [h])
-                      { linking | graphSuffixEnd = newSuffix.node.id, suffixPath = rest_ }
-                      d dawg
-    ( Nothing, _, False) ->
-      createNewSuccessorNode d.chosenTransition c dawg
-      |> \(dawg_, successor) ->
-        println ("[G] Trace-forward with an alt-path.  Duplicating past nodes of #" ++ String.fromInt linking.graphPrefixEnd ++" to #" ++ String.fromInt c ++ ", creating new alt-path node #" ++ String.fromInt successor ++ ", linked from #" ++ String.fromInt c ++ ", then continuing.")
-        duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg_ -- CHECK HERE!!!
-        |> createForwardsChain rest { linking | graphPrefixEnd = d.id, lastConstructed = Just successor }
-        |> checkForCollapse successor
-    ( Just final, _, True ) ->
-      -- I am on an alt path and the graph connects to a final.  Am I also ending, though?
-      -- Let me connect myself to the graphSuffixEnd, using the current transition.
-      println ("[L] On an alt-path; the graph ends here. My remaining transitions are " ++ transitionsToString rest ++ ".  Creating chain between #" ++ String.fromInt c ++ " and #" ++ String.fromInt linking.graphSuffixEnd)
-      duplicateOutgoingConnectionsExcludingTransitions [transition] linking.graphPrefixEnd c dawg -- CHECK HERE!!!
-      |> checkForCollapse c
-      |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd 
-    ( Nothing, _, True ) ->
-      debugDAWG "[H] Impossible path" empty
-    ( Just final, _, False ) ->
-      debugDAWG "[K] Impossible path" empty
-
-{-| Called when there IS a path forward from `.graphPrefixEnd` to `d`. -}
-traceForwardChainTo : Transition -> List Transition -> LinkingForwardData -> CurrentNodeData -> DAWG -> DAWG
-traceForwardChainTo transition rest linking d dawg =
-  if List.isEmpty rest && prefixRepeatsSuffix linking.suffixPath d.id linking.graphSuffixEnd dawg then
-    println ("The prefix (#" ++ String.fromInt linking.graphPrefixEnd ++ ") mirrors the suffix (#" ++ String.fromInt linking.graphSuffixEnd ++ ") using transitions " ++ transitionsToString linking.suffixPath ++ ".  I will shift the prefix-suffix window and reconsider what to do.")
-    dawg.final
-    |> Maybe.map (\final ->
-      createForwardsChain (transition::linking.suffixPath)
-        { linking
-          | graphSuffixEnd = final
-          , suffixPath = []
-        }
-        dawg
-    )
-    |> Maybe.withDefaultLazy (\() -> Debug.log "wtf??  final is not set?!!" empty)
-  else
-    case linking.lastConstructed of
-      Nothing ->
-        traceForwardOnThisChain transition rest linking d dawg
-      Just c ->
-        traceForwardOnAlternateChain transition rest linking d c dawg
-    -- if there is a connection to final BUT `d` is NOT the final node, that is a separate case!
-
-{-| When there is NO corresponding forward-move on the graph, we call this function
-    to forge a path forward.  There is at least one forward-transition, so this will
-    involve forging some alternate path/connection, at a minimum.
--}
-forgeForwardChain : Transition -> List Transition -> LinkingForwardData -> DAWG -> DAWG
-forgeForwardChain transition rest linking dawg =
-  case ( connectsToFinalNode linking.graphPrefixEnd dawg, linking.lastConstructed ) of
-    ( Nothing, Nothing ) ->
-      -- e.g.: a
-      -- make a new chain between prefix and suffix, and we are done.
-      createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
-      |> debugDAWG "[A] No forward-path, no alt-path, no final-connection: connect prefix to suffix, and exit."
-    ( Nothing, Just c ) ->
-      duplicateOutgoingConnections linking.graphPrefixEnd c dawg
-      |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
-      |> debugDAWG "[B] No forward-path, no final-connection, but we have an alt-path: connect alt-path to suffix, and exit."
-    ( Just final, Nothing ) ->
-      -- e.g. a-b
-      -- Straightforward, create a confluence or connection and we are done.
-      createTransitionChainBetween (transition::rest) linking.graphPrefixEnd linking.graphSuffixEnd dawg
-      |> debugDAWG ("[C] No forward-path from " ++ String.fromInt linking.graphPrefixEnd ++ " using " ++ transitionToString transition ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ "; I'll create one.")
-    ( Just final, Just c) -> -- ato-cto-ati
-      duplicateOutgoingConnections linking.graphPrefixEnd c dawg |> debugDAWG "step 1"
-      |> createTransitionChainBetween (transition::rest) c linking.graphSuffixEnd
-      |> debugDAWG ("[D] On an alt-path. No forward-path from #" ++ String.fromInt linking.graphPrefixEnd ++ " to #" ++ String.fromInt linking.graphSuffixEnd ++ " using " ++ transitionToString transition ++ "; I'll create one.")
-
-{-| Create a forwards-chain going from dP (the prefix-node) to dS (the
-    suffix-node).  The suffix-node might be the final (dω).
--}
-createForwardsChain : List Transition -> LinkingForwardData -> DAWG -> DAWG
-createForwardsChain transitions linking dawg =
-  Debug.log ("[Chaining] Remaining transitions " ++ transitionsToString transitions ++ " with linking ") linking |> \_ ->
-  case transitions of
-    [] ->
-      Debug.log ("[Chaining 1] NO TRANSITIONS?? Probably a bug!") linking
-      |> \_ -> dawg
-    transition::rest ->
-      case getForwardNodeData linking.graphPrefixEnd transition dawg of
-        Nothing ->
-          -- There's nothing that will take me forward.
-          -- Therefore, if I'm going to connect to the suffix, I've got to
-          -- forge a new forward chain.
-          forgeForwardChain transition rest linking dawg
-        Just d ->
-          -- I have something that can take me forward, so I may be able
-          -- to follow it.
-          traceForwardChainTo d.chosenTransition rest linking d dawg
-
-createChain : List Transition -> NodeId -> NodeId -> List Transition -> DAWG -> DAWG
-createChain transitions prefixEnd suffixEnd suffixTransitions dawg =
-  println ("[Chaining] Creating chain from #" ++ String.fromInt prefixEnd ++ " to #" ++ String.fromInt suffixEnd ++ " with transitions " ++ transitionsToString transitions ++ ".  Suffix-path was " ++ transitionsToString suffixTransitions ++ ".")
-  createForwardsChain
-    transitions
-    { graphPrefixEnd = prefixEnd
-    , lastConstructed = Nothing
-    , graphSuffixEnd = suffixEnd
-    , suffixPath = suffixTransitions
-    }
-    dawg
-
--- transitions are provided in REVERSE order to mergeSuffixes.
-mergeSuffixes : List Transition -> NodeId -> DAWG -> DAWG
-mergeSuffixes transitions prefixEnd dawg =
-  case dawg.final of
-    Nothing ->
-      -- create a final-terminated chain going backwards, culminating at `prefixEnd`
-      println "[Suffix] No final exists; creating it."
-      addFinalNode dawg
-      |> \(finalnode, dawg_) ->
-        mergeSuffixes transitions prefixEnd dawg_
-    Just final ->
-      println ("[Suffix] Using final #" ++ String.fromInt final ++ ", following suffixes back to get close to prefix-node #" ++ String.fromInt prefixEnd)
-      followSuffixes transitions [] prefixEnd final dawg
-      |> \(suffixStart, numTaken) ->
-        let
-          (a, b) = List.splitAt numTaken transitions
-          followed = List.reverse a
-          to_chain_with = List.reverse b
-        in
-          createChain to_chain_with prefixEnd suffixStart followed dawg
-
 {--
   Output/debugging functions
 --}
+
+exprASTToRTString : ExprAST -> String
+exprASTToRTString e =
+  case e of
+    V transition ->
+      case transition of
+        (ch, 0) -> String.fromChar ch
+        (ch, _) -> "!" ++ String.fromChar ch
+    M xs ->
+      List.map exprASTToRTString xs |> String.join "."
+    A xs ->
+      "(" ++ (List.map exprASTToRTString xs |> String.join " + ") ++ ")"
+
+exprASTToString : ExprAST -> String
+exprASTToString e =
+  case e of
+    V t ->
+      transitionToString t
+    M xs ->
+      -- "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+      List.map exprASTToString xs |> String.join "."
+    A xs ->
+      -- "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
+      "[" ++ (List.map exprASTToString xs |> String.join " + ") ++ "]"
+
+exprASTsToString : List ExprAST -> String
+exprASTsToString es =
+  List.map exprASTToString es |> String.join "; "
+
+graphEdgeToString : Graph.Edge Connection -> String
+graphEdgeToString {from, to, label} =
+  "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
 
 transitionsToString : List Transition -> String
 transitionsToString transitions =
@@ -2243,22 +817,22 @@ graphToString graph =
 
 debugGraph : String -> DAWGGraph -> DAWGGraph
 debugGraph txt graph =
-  Debug.log txt (graphToString graph)
+  debug_log txt (graphToString graph)
   |> \_ -> graph
 
 debugDAWG : String -> DAWG -> DAWG
 debugDAWG txt dawg =
-  Debug.log txt
+  debug_log txt
     (graphToString dawg.graph)
   |> \_ -> dawg
 
 println : String -> a -> a
 println txt x =
-  Debug.log txt () |> \_ -> x
+  debug_log txt () |> \_ -> x
 
 debugLog : String -> (a -> b) -> a -> a
 debugLog s f v =
-  Debug.log s (f v) |> \_ -> v
+  debug_log s (f v) |> \_ -> v
 
 {--
   User-facing functions (and a few helpers thereof)
@@ -2289,40 +863,9 @@ empty =
     , final = Nothing
     }
 
-isEmpty : DAWG -> Bool
-isEmpty d =
-  d.maxId == 0
-
-addString : String -> DAWG -> DAWG
-addString txt dawg =
-  wordToTransitions txt
-  |> \transitions -> prefixMerge transitions dawg.root dawg
-
-fromWordsGraphing : List String -> DAWG
-fromWordsGraphing =
-  List.foldl (\s a -> addString s a |> debugDAWG ("🔻 Post-insertion of '" ++ s ++ "'")) empty
-
-fromWordsAlgebraic : List String -> DAWG
-fromWordsAlgebraic =
-  List.map (String.replace " " "" >> String.replace "\n" "")
-  >> List.filterMap
-    (\s ->
-      case (String.dropRight 1 s, String.right 1 s) of
-        ( _, "" ) -> Nothing
-        ( "", x ) -> Just <| "!" ++ x
-        ( a, b ) ->
-          String.toList a
-          |> List.intersperse '.'
-          |> String.fromList
-          |> \initial -> initial ++ ".!" ++ b
-          |> Just
-    )
-  >> String.join "+"
-  >> Debug.log "Sending to algebra…"
-  >> fromAlgebra
-
 fromWords : List String -> DAWG
-fromWords = fromWordsGraphing
+fromWords =
+  wordsToAlgebra >> algebraToDAWG
 
 numNodes : DAWG -> Int
 numNodes dawg =
@@ -2391,14 +934,14 @@ exploreDeterministic node finalId graph =
           allSets =
             node.outgoing
             |> IntDict.values
-            |> List.map (Set.map Tuple.first) -- |> Debug.log ("CHECK for #" ++ String.fromInt node.node.id)
+            |> List.map (Set.map Tuple.first) -- |> debug_log ("CHECK for #" ++ String.fromInt node.node.id)
           allTransitions =
-            List.foldl Set.union Set.empty allSets -- |> Debug.log "All transitions"
+            List.foldl Set.union Set.empty allSets -- |> debug_log "All transitions"
           duplicate =
             List.foldl
               (\currentSet (result, all) ->
-                Set.diff all currentSet -- (Debug.log "Checking against" currentSet)
-                |> (\diff -> (Set.diff (Set.union currentSet result) all, diff)) -- |> Debug.log "now")
+                Set.diff all currentSet -- (debug_log "Checking against" currentSet)
+                |> (\diff -> (Set.diff (Set.union currentSet result) all, diff)) -- |> debug_log "now")
               )
               (Set.empty, allTransitions)
               allSets
@@ -2481,10 +1024,10 @@ minimality dawg =
       -- those which lead to finality, and those which don't.
       List.partition (\(_, _, (_, isFinal)) -> isFinal == 1) edges
       |> \(a, b) -> ( List.map (\(_,v,_) -> v) a |> Set.fromList, 0::List.map (\(_,v,_) -> v) b |> Set.fromList )
-      -- |> Debug.log "Finals and non-finals"
+      -- |> debug_log "Finals and non-finals"
     refine : HopcroftRecord -> List Partition
     refine r =
-      case (r {- |> Debug.log "hopcroft"-}).w of
+      case (r {- |> debug_log "hopcroft"-}).w of
         [] ->
           r.p
         a::w_rest ->
@@ -2499,21 +1042,21 @@ minimality dawg =
                 ) edges
               |> List.gatherEqualsBy Tuple.first
               |> List.map (\((transition, h), t) -> (transition, Set.fromList (h::List.map Tuple.second t))) -- Now I should have a list of (ch, {states_from_w_which_go_to_`a`})
-              -- |> Debug.log ("`X` set, given `A` of " ++ (Debug.toString (Set.toList a)))
+              -- |> debug_log ("`X` set, given `A` of " ++ (Debug.toString (Set.toList a)))
             refine_for_input_and_y : Partition -> Partition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
             refine_for_input_and_y y further_split remaining_after w p =
               ( if List.member y w then
                   (further_split :: remaining_after :: List.remove y w)
-                  -- |> Debug.log "Refining w, stage Ⅱa"
+                  -- |> debug_log "Refining w, stage Ⅱa"
                 else
                   if Set.size further_split <= Set.size remaining_after then
                     (further_split :: w)
-                    -- |> Debug.log "Refining w, stage Ⅱb"
+                    -- |> debug_log "Refining w, stage Ⅱb"
                   else
                     (remaining_after :: w)
-                    -- |> Debug.log "Refining w, stage Ⅱc"
+                    -- |> debug_log "Refining w, stage Ⅱc"
               , (further_split :: remaining_after :: List.remove y p)
-                -- |> Debug.log "Refining p, stage Ⅱ"
+                -- |> debug_log "Refining p, stage Ⅱ"
               )
             refine_for_input : Transition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
             refine_for_input t x w p = -- really, the ch is only there for potential debugging.
@@ -2522,8 +1065,8 @@ minimality dawg =
                   List.filterMap
                     (\potential_y ->
                       let
-                        further_split = Set.intersect x potential_y -- |> Debug.log ("Intersection of " ++ Debug.toString x ++ " and " ++ Debug.toString potential_y)
-                        remaining_after = Set.diff potential_y x -- |> Debug.log ("Subtraction: " ++ Debug.toString potential_y ++ " minus " ++ Debug.toString x)
+                        further_split = Set.intersect x potential_y -- |> debug_log ("Intersection of " ++ Debug.toString x ++ " and " ++ Debug.toString potential_y)
+                        remaining_after = Set.diff potential_y x -- |> debug_log ("Subtraction: " ++ Debug.toString potential_y ++ " minus " ++ Debug.toString x)
                       in
                         if Set.isEmpty remaining_after || Set.isEmpty further_split then
                           Nothing
@@ -2550,7 +1093,7 @@ minimality dawg =
       { w = [finals, nonFinals]
       , p = [finals, nonFinals]
       }
-    -- |> Debug.log "Hopcroft raw result"
+    -- |> debug_log "Hopcroft raw result"
     -- |> debugLog "Hopcroft result" (List.map Set.size)
     |> List.filter (\s -> Set.size s > 1)
     |> List.map Set.toList
