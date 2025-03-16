@@ -11,6 +11,7 @@ import Parser as P exposing (Parser, (|.), (|=), succeed, symbol, oneOf, lazy, s
 import Char.Extra
 import Dict
 import Html exposing (b)
+import Graph exposing (edges)
 
 type ExprAST
   = M (List ExprAST)
@@ -285,10 +286,10 @@ without_expr to_remove context =
 
 expressionToDAWG : ExprAST -> (Int, Int) -> ToDawgRecord -> ToDawgRecord
 expressionToDAWG expr (start, end) r =
-  case expr |> debugLog ("Processing " ++ symbolFor expr ++ " fragment") (\e -> "s=" ++ String.fromInt start ++ ", e=" ++ String.fromInt end ++ ", " ++ dawgRecordToString r ++ ", expr=" ++ exprASTToString e) of
+  case expr {- |> debugLog ("Processing " ++ symbolFor expr ++ " fragment") (\e -> "s=" ++ String.fromInt start ++ ", e=" ++ String.fromInt end ++ ", " ++ dawgRecordToString r ++ ", expr=" ++ exprASTToString e) -} of
     V data ->
         -- this is the main case, where we create or reuse an edge.
-        println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
+        -- println ("Creating #" ++ String.fromInt start ++ "➜#" ++ String.fromInt end ++ " for " ++ transitionToString data)
         { r
           | incoming = IntDict.update end (Maybe.map (\l -> (start, data) :: l) >> Maybe.orElseLazy (\_ -> Just <| [(start, data)])) r.incoming
           , outgoing = IntDict.update start (Maybe.map (Set.insert (end, data)) >> Maybe.orElseLazy (\_ -> Just <| Set.singleton (end, data))) r.outgoing
@@ -299,15 +300,16 @@ expressionToDAWG expr (start, end) r =
       foldlSpecial
         (\item (acc, (start_, end_)) ->
           expressionToDAWG item (start_, end_) acc
-          |> debugLog "Moving to next item" dawgRecordToString
+          -- |> debugLog "Moving to next item" dawgRecordToString
           -- I cannot share in the middle of a sequence, can I?
           |> \acc2 -> ( { acc2 | unused = acc2.unused + 1 }, (end_, acc2.unused) )
-          |> debugLog "Post-update ×-accumulator" (\(a,(s,e)) -> "s=" ++ String.fromInt s ++ ", e=" ++ String.fromInt e ++ ", " ++ dawgRecordToString a)
+          -- |> debugLog "Post-update ×-accumulator" (\(a,(s,e)) -> "s=" ++ String.fromInt s ++ ", e=" ++ String.fromInt e ++ ", " ++ dawgRecordToString a)
         )
         (\item (acc, (start_, _)) ->
           -- I can share at the end of a sequence.
           expressionToDAWG item (start_, end) acc
-          |> debugLog "After handling last ×-item in sequence" dawgRecordToString
+          |> \acc2 -> ( { acc2 | unused = acc2.unused + 1 } )
+          -- |> debugLog "After handling last ×-item in sequence" dawgRecordToString
         )
         ( { r | unused = r.unused + 1 }, (start, r.unused) )
         xs
@@ -356,7 +358,7 @@ commonPrefixCollapse xs =
           case l of
             M (h::_)::_ ->
               Just
-                ( Debug.log "Common prefix" h
+                ( {- Debug.log "Common prefix" -} h
                 , List.concatMap
                     (\m ->
                       case m of
@@ -379,7 +381,7 @@ commonPrefixCollapse xs =
       [] -> -- no common prefix collapse. Rely on the caller to simplify within.
         xs
       sames ->
-        Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
+        -- Debug.log "Rule #9: ☝🏾 subject to: Common Prefix Collapse" () |> \_ ->
         -- remove all the "same-prefix" items from inside.
         List.foldl
           (\same state -> List.foldl List.remove state same)
@@ -436,7 +438,7 @@ firstFinalityPrimacy xs =
       [] -> -- Nothing to promote.  Rely on caller to simplify.
         xs
       _ ->
-        Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy" () |> \_ ->
+        -- Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy" () |> \_ ->
         List.foldl
           (\ch state ->
             List.filterMap
@@ -516,7 +518,7 @@ lastFinalityPrimacy xs =
             _ -> []
         ) xs
       |> List.unique
-      |> Debug.log "Lasts & single values"
+      -- |> Debug.log "Lasts & single values"
     collected_transitions =
       List.foldl Set.insert Set.empty lasts
     to_bump =
@@ -535,7 +537,7 @@ lastFinalityPrimacy xs =
       [] -> -- Nothing to promote.  Rely on caller to simplify.
         xs
       _ ->
-        Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy Ⅱ" () |> \_ ->
+        -- Debug.log "Rule #10: ☝🏾 subject to: Finality Primacy Ⅱ" () |> \_ ->
         List.foldl
           (\ch state ->
             List.filterMap
@@ -626,7 +628,7 @@ commonSuffixCollapse xs =
               case groupItems of
                 M items::_ ->
                   List.last items
-                  |> Debug.log "Common suffix"
+                  -- |> Debug.log "Common suffix"
                 _ -> Nothing
             add_part =
               List.filterMap
@@ -653,7 +655,7 @@ commonSuffixCollapse xs =
       [] -> -- no common suffix collapse.
         xs
       _ ->
-          Debug.log "Rule #5: ☝🏾 subject to: Common Suffix Collapse" () |> \_ ->
+          -- Debug.log "Rule #5: ☝🏾 subject to: Common Suffix Collapse" () |> \_ ->
           -- remove all the "same-suffix" items from inside.
           List.foldl List.remove xs to_remove
           -- and replace them with the replacements
@@ -686,7 +688,7 @@ simplifyWith : (List ExprAST -> List ExprAST) -> ExprAST -> ExprAST
 simplifyWith simplifier e =
   case e of
     A xs ->
-      debugLog "Simplifying +" exprASTToString e |> \_ ->
+      -- debugLog "Simplifying +" exprASTToString e |> \_ ->
       let
         post_simplification = simplifier xs
       in
@@ -694,10 +696,10 @@ simplifyWith simplifier e =
         if post_simplification /= xs then
           case post_simplification of
             [x] ->
-              println "A-Simplification resulted in the removal of A-nesting; simplifying the result."
+              -- println "A-Simplification resulted in the removal of A-nesting; simplifying the result."
               simplifyWith simplifier x
             _ ->
-              println "A-Simplification resulted in changes; re-running."
+              -- println "A-Simplification resulted in changes; re-running."
               simplifyWith simplifier <| A post_simplification
         else
           simplify_inner (simplifyWith simplifier) post_simplification
@@ -712,7 +714,7 @@ simplifyWith simplifier e =
 
       -- Also see if we can apply Rule 5: Common Suffix Collapse
     M xs -> -- generic.
-      debugLog "Simplifying ×" exprASTToString e |> \_ ->
+      -- debugLog "Simplifying ×" exprASTToString e |> \_ ->
       simplify_inner (simplifyWith simplifier) xs
         ( List.concatMap
             (\v ->
@@ -791,78 +793,140 @@ sortAST e =
           [y] -> y
           ys -> A ys
 
-mergeIdenticalNodes : ToDawgRecord -> ToDawgRecord
-mergeIdenticalNodes ({incoming,outgoing,unused} as r) =
-  List.foldl
-    (\sources (in_, out) ->
-      let
-        to_merge =
-          -- this will give me a list containing sets of (src, (dest, transition)) pairs.
-          -- If /n/ of those sets are the same, then we can merge them!
-          List.filterMap (\(src, _) -> IntDict.get src out |> Maybe.map (\v -> ( src, v ))) (Debug.log "sources" sources)
-          |> List.gatherEqualsBy Tuple.second
-          |> Debug.log "Raw candidates"
-          |> List.filterMap
-            (\( (src, _), same ) ->
-              case same of
-                [] -> -- okay, this is the only one.  That's fine then.  We cannot merge with it.
-                  Nothing
-                _ ->
-                  Just <| (src, Set.fromList (List.map Tuple.first same) |> Set.remove src) -- these are all the ones that can be merged.
-            )
-        redirect_outgoings : Int -> Set Int -> IntDict.IntDict (Set (Int, Transition)) -> IntDict.IntDict (Set (Int, Transition))
-        redirect_outgoings new_target to_redirect outgoing_dict =
-          IntDict.map
-            (\_ v ->
-              Set.map (\(edge, transition) ->
-                if Set.member edge to_redirect then
-                  (new_target, transition)
-                else
-                  (edge, transition)
-              ) v
-            )
-            outgoing_dict
-        redirect_incomings : Int -> Set Int -> IntDict.IntDict (List (Int, Transition)) -> IntDict.IntDict (List (Int, Transition))
-        redirect_incomings new_target to_redirect incoming_dict =
-          IntDict.get new_target incoming_dict
-          |> Maybe.map
-            (\new ->
-              Set.foldl
-                (\old new_ ->
-                  IntDict.get old incoming_dict
-                  |> Maybe.map (\v -> Set.union new_ (Set.fromList v))
-                  |> Maybe.withDefault new_
-                )
-                (Set.fromList new)
-                to_redirect
-              |> Set.toList
-              |> \v -> IntDict.insert new_target v incoming_dict
-            )
-          |> Maybe.withDefault IntDict.empty
-      in
-        List.foldl
-          (\(collapse_into, collapse_froms) (in_edges, out_edges) ->
-            let
-              new_out =
-                -- redirect the outgoing edges of other nodes so that they are
-                -- pointing to collapse_into, if they were pointing to collapse_froms.
-                Debug.log ("Merging " ++ (Debug.toString <| Set.toList collapse_froms) ++ " to") collapse_into |> \_ ->
-                Set.foldl (\k o -> IntDict.remove k o) out_edges collapse_froms
-                |> redirect_outgoings collapse_into collapse_froms
-              new_in =
-              -- redirect the incoming edges of the collapse_into node, so that everything
-              -- that was pointing from collapse_from now points to collapse_into
-                redirect_incomings collapse_into collapse_froms in_edges
-            in
-              (new_in, new_out)
-          )
-          (in_, out)
-          to_merge
-          -- |> debugLog "Post-merge outgoing" IntDict.toList
+redirect_outgoings : Int -> Set Int -> IntDict.IntDict (Set (Int, Transition)) -> IntDict.IntDict (Set (Int, Transition))
+redirect_outgoings new_target edges_to_redirect outgoing_dict =
+  -- Debug.log ("Merging " ++ (Debug.toString <| Set.toList edges_to_redirect) ++ " to") new_target |> \_ ->
+  Set.foldl (\k o -> IntDict.remove k o) outgoing_dict edges_to_redirect
+  |> IntDict.map
+    (\_ v ->
+      Set.map (\(edge, transition) ->
+        if Set.member edge edges_to_redirect then
+          (new_target, transition)
+        else
+          (edge, transition)
+      ) v
     )
-    (incoming, outgoing)
-    (IntDict.values incoming)
-  |> \(i,o) -> { r | incoming = i, outgoing = o }
+
+redirect_incomings : Int -> Set Int -> IntDict.IntDict (List (Int, Transition)) -> IntDict.IntDict (List (Int, Transition))
+redirect_incomings new_target to_redirect incoming_dict =
+  IntDict.get new_target incoming_dict
+  |> Maybe.map
+    (\new ->
+      Set.foldl
+        (\old new_ ->
+          IntDict.get old incoming_dict
+          |> Maybe.map (\v -> Set.union new_ (Set.fromList v))
+          |> Maybe.withDefault new_
+        )
+        (Set.fromList new)
+        to_redirect
+      |> Set.toList
+      |> \v -> IntDict.insert new_target v incoming_dict
+    )
+  |> Maybe.withDefault IntDict.empty
+
+collapse_nodes : Int -> List Int -> List (Int, (Int, Transition)) -> ToDawgRecord -> ToDawgRecord
+collapse_nodes new_target to_remove edges_to_redirect r =
+  { r
+    | incoming =
+        IntDict.update new_target
+          (Maybe.map
+            (\xs ->
+              Set.union
+                (Set.fromList <| List.map (\(a, (_, t)) -> (a, t)) edges_to_redirect)
+                (Set.fromList xs)
+              |> Set.toList
+            )
+          )
+          r.incoming
+    , outgoing =
+        List.foldl IntDict.remove r.outgoing to_remove
+        |>( \o ->
+            List.foldl (\(k, (old, t)) o_ -> IntDict.update k (Maybe.map (Set.remove (old, t) >> Set.insert (new_target, t))) o_) o edges_to_redirect
+          )
+  }
+
+type alias MergeModification =
+  { newTarget : Int
+  , toRemove : List Int
+  , edgesToRedirect : List (Int, (Int, Transition))
+  }
+
+merge_modifications : Int -> ToDawgRecord -> List MergeModification
+merge_modifications dst r =
+  -- this will give me a list containing sets of (src, (dest, transition)) pairs.
+  -- If /n/ of those sets are the same, then we can merge them!
+  let
+    in_nodes =
+      IntDict.get dst r.incoming
+      |> Maybe.map (List.map Tuple.first >> List.unique)
+      |> Maybe.withDefault []
+      -- |> Debug.log ("incoming (@ #" ++ String.fromInt dst ++ ")")
+    -- halfway_nodes =
+    --   Maybe.map
+    --     (List.gatherEqualsBy Tuple.first -- first, collect transitions going to the same place.
+    --     >> Debug.log ("Raw candidates (1) for #" ++ String.fromInt dst)
+    --     >> List.map
+    --       (\( (src, t), otherTransitions ) ->
+    --         case otherTransitions of
+    --           [] -> -- okay, this is the only one.  That's fine then.  We cannot merge with it.
+    --             (src, Set.singleton t)
+    --           _ ->
+    --             (src, Set.fromList (List.map Tuple.second otherTransitions) |> Set.insert t) -- these are all the ones that can be merged.
+    --       )
+    --     )
+    --     in_nodes
+    --   |> Maybe.withDefault []
+    --   |> Debug.log "Halfway"
+    combinable_nodes =
+      List.filterMap (\n -> IntDict.get n r.outgoing |> Maybe.map (\v -> ( n, v ) )) in_nodes
+      |> List.gatherEqualsBy Tuple.second
+      |> List.filterMap
+        (\( (src, _), same ) ->
+          case same of
+            [] -> -- okay, this is the only one.  That's fine then.  We cannot merge with it.
+              Nothing
+            _ ->
+              Just <|
+                { newTarget = src
+                , toRemove = List.map Tuple.first same
+                , edgesToRedirect =
+                    List.concatMap
+                      (\(d, _) ->
+                        IntDict.get d r.incoming -- get all the incoming nodes, which should be redirected.
+                        |> Maybe.map (\xs -> List.map (\(src_, t) -> (src_, (d, t))) xs)
+                        |> Maybe.withDefault []
+                      )
+                      same
+                } -- these are all the ones that can be merged.
+        )
+      -- |> Debug.log "[ ( NewTarget, (ToRemove, EdgesToRedirect) ) ]"
+    -- Should now be able to remove the excess node(s) from the "incoming" and "outgoing" lists.
+  in
+    combinable_nodes
+
+collapse : List Int -> ToDawgRecord -> ToDawgRecord
+collapse remaining r =
+  case remaining of
+    [] -> r
+    x::rest ->
+      case merge_modifications x r of
+        [] -> collapse rest r
+        mods ->
+          let
+            reCheck =
+              List.concatMap (\{edgesToRedirect} -> List.map Tuple.first edgesToRedirect) mods
+              -- |> Debug.log "List for rechecking"
+          in
+            List.foldl
+              (\mod ->
+                collapse_nodes mod.newTarget mod.toRemove mod.edgesToRedirect
+                -- >> debugLog "Now" dawgRecordToString
+              )
+              r
+              mods
+            -- hmm. This doesn't work when it's `reCheck ++ rest`.  Why??
+            |> collapse (rest ++ reCheck)
 
 parseAlgebra : String -> Result (List P.DeadEnd) ExprAST
 parseAlgebra =
@@ -900,13 +964,13 @@ fromAlgebra s =
   |> Result.map
     (\e ->
       let
-        flattened = sortAST e |> debugLog "flattened" exprASTToString
-        simplified = simplify flattened |> Debug.log "Simplified, raw" |> debugLog "Simplified, round-trip" exprASTToRTString
+        flattened = sortAST e -- |> debugLog "flattened" exprASTToString
+        simplified = simplify flattened {- |> Debug.log "Simplified, raw" -} |> debugLog "Simplified, round-trip" exprASTToRTString
         graphEdges =
           expressionToDAWG simplified (0, 1) (ToDawgRecord 2 IntDict.empty IntDict.empty)
-          |> debugLog "Expression to DAWG" dawgRecordToString
-          |> mergeIdenticalNodes
-          |> debugLog "Post-collapse" dawgRecordToString
+          -- |> debugLog "Expression to DAWG" dawgRecordToString
+          |> (\r -> collapse (IntDict.keys r.incoming) r)
+          -- |> debugLog "Post-collapse" dawgRecordToString
           -- |> .edges
           -- |> List.map (\{start, end, data} -> Graph.Edge start end (Set.singleton data))
           |> coalesceToGraphNodes
