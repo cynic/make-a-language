@@ -38,6 +38,7 @@ type alias Model =
   , dimensions : (Float, Float) -- (w,h) of svg element
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
+  , specificForces : IntDict.IntDict (List (Force.Force NodeId))
   }
 
 
@@ -90,37 +91,48 @@ viewportForces (w, h) graph =
   --       )
   --       (Graph.nodes graph)
   ]
-basicForces : Graph Entity Connection -> List (Force.Force NodeId)
-basicForces graph =
+basicForces : Graph Entity Connection -> Maybe Int -> (Int, Int) -> List (Force.Force NodeId)
+basicForces graph final (width, height) =
   [
     Force.customLinks 3 <|
       List.map
         (\e ->
           { source = e.from
           , target = e.to
-          , distance = 40.0 + 25.0 * toFloat (Set.size e.label) --35-40 seems like a good distance
-          , strength = Just <| 0.4 * (toFloat <| Set.size e.label)
+          , distance = 10.0 + 25.0 * toFloat (Set.size e.label) --35-40 seems like a good distance
+          , strength = Just 0.7 -- * (toFloat <| Set.size e.label)
           }
         )
       (Graph.edges graph)
     -- Force.links <| List.map link <| Graph.edges graph
-  , Force.manyBodyStrength -800.0 <| List.map .id <| Graph.nodes graph
+  , Force.manyBodyStrength -8000.0 <| List.map .id <| Graph.nodes graph
   -- , Force.manyBody <| List.map .id <| Graph.nodes graph
   , Force.towardsX <|
       List.filterMap
         (\n ->
           if n.id == 0 then
-            Just { node = 0, strength = 0.15, target = 0 }
+            Just { node = 0, strength = 0.1, target = 0 }
+          else if final == Just n.id then
+            Just { node = n.id, strength = 0.1, target = toFloat width }
+          else
+            Nothing
+        )
+        (Graph.nodes graph)
+  , Force.towardsY <|
+      List.filterMap
+        (\n ->
+          if n.id == 0 || final == Just n.id then
+            Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
           else
             Nothing
         )
         (Graph.nodes graph)
   ]
 
-makeSimulation : (Float, Float) -> Graph Entity Connection -> Force.State NodeId
-makeSimulation (w, h) graph =
+makeSimulation : (Float, Float) -> Maybe Int -> Graph Entity Connection -> Force.State NodeId
+makeSimulation (w, h) final graph =
   Force.simulation
-    (basicForces graph ++ viewportForces (w, h) graph)
+    (basicForces graph final (round w, round h) ++ viewportForces (w, h) graph)
 
 toForceGraph : DAWGGraph -> Graph Entity Connection
 toForceGraph g =
@@ -130,7 +142,7 @@ receiveDAWG : DAWG -> (Float, Float) -> Model
 receiveDAWG dawg (w, h) =
   let
     forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} ).graph
-    basic = basicForces forceGraph
+    basic = basicForces forceGraph dawg.final (round w, round h)
     viewport = viewportForces (w, h) forceGraph
   in
     { drag = Nothing
@@ -139,6 +151,7 @@ receiveDAWG dawg (w, h) =
     , dimensions = (w, h)
     , basicForces = basic
     , viewportForces = viewport
+    , specificForces = IntDict.empty
     }
 
 init : DAWG -> (Float, Float) -> (Model, Cmd Msg)
@@ -218,19 +231,29 @@ update offset_amount msg model =
           { model
             | drag = Just <| Drag start xy index
             , graph = Graph.update index (Maybe.map (updateNode xy)) model.graph
-            , simulation = Force.reheat model.simulation
+            -- , simulation = Force.reheat model.simulation
           }
 
         Nothing ->
           { model | drag = Nothing }
 
-    DragEnd xy ->
+    DragEnd (x,y) ->
       case model.drag of
         Just { index } ->
-          { model
-            | drag = Nothing
-            , graph = Graph.update index (Maybe.map (updateNode xy)) model.graph
-          }
+          let
+            sf =
+              IntDict.insert index
+                [ Force.towardsX [{ node = index, strength = 2.5, target = x }]
+                , Force.towardsY [{ node = index, strength = 2.5, target = y }]
+                ]
+                model.specificForces
+          in
+            { model
+              | drag = Nothing
+              , graph = Graph.update index (Maybe.map (updateNode (x,y))) model.graph
+              , specificForces = sf
+              , simulation = Force.simulation (model.basicForces ++ model.viewportForces ++ List.concat (IntDict.values sf))
+            }
 
         Nothing ->
           { model | drag = Nothing }
