@@ -19,20 +19,12 @@ czech l expectedRecognized =
       let
         dawg =
           D.algebraToDAWG <| D.wordsToAlgebra x
-        -- edges = D.numEdges dawg
-        -- nodes = D.numNodes dawg
         minimality = D.minimality dawg
         recognized = D.verifiedRecognizedWords dawg
       in
         if recognized /= expectedRecognized then
           Debug.log "Failure on recognized words of permutation" x
           |> \_ -> Expect.equal recognized expectedRecognized
-        -- else if nodes /= expectedNodes then
-        --   Debug.log "Failure on node-count of permutation" x
-        --   |> \_ -> Expect.equal nodes expectedNodes
-        -- else if edges /= expectedEdges then
-        --   Debug.log "Failure on edge-count of permutation" x
-        --   |> \_ -> Expect.equal edges expectedEdges
         else if not (List.isEmpty minimality) then
           Debug.log "Failure on minimality" x
           |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality |> String.join "; "))
@@ -182,17 +174,9 @@ suite =
     , describe "stress-testing via fuzzing"
       [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
           cheapTestForWords
-        -- \listOfStrings ->
-        --   D.fromWords (List.unique listOfStrings)
-        --   |> D.verifiedRecognizedWords
-        --   |> Expect.equal (List.sort <| List.unique listOfStrings)
 
       , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
           cheapTestForWords
-        -- \listOfStrings ->
-          -- D.fromWords (List.unique listOfStrings)
-          -- |> D.verifiedRecognizedWords
-          -- |> Expect.equal (List.sort <| List.unique listOfStrings)
 
       , fuzz (Fuzz.listOfLengthBetween 3 15 (Fuzz.asciiStringOfLengthBetween 1 10)) "always recognizes exactly the unique short or long words that it is given" <|
           cheapTestForWords
@@ -202,11 +186,6 @@ suite =
 
       , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
           \s -> cheapTestForWords [s]
-        -- \randomlyGeneratedString ->
-        --   D.empty
-        --   |> D.addString randomlyGeneratedString
-        --   |> nodesAndWords
-        --   |> Expect.equal (String.length randomlyGeneratedString + 1, [randomlyGeneratedString])
       ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
