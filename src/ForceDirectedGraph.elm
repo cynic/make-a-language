@@ -105,7 +105,7 @@ basicForces graph final (width, height) =
         )
       (Graph.edges graph)
     -- Force.links <| List.map link <| Graph.edges graph
-  , Force.manyBodyStrength -8000.0 <| List.map .id <| Graph.nodes graph
+  , Force.manyBodyStrength -3000.0 <| List.map .id <| Graph.nodes graph
   -- , Force.manyBody <| List.map .id <| Graph.nodes graph
   , Force.towardsX <|
       List.filterMap
@@ -223,7 +223,10 @@ update offset_amount msg model =
       }
 
     DragStart index xy ->
-      { model | drag = Just <| Drag (offset offset_amount xy) (offset offset_amount xy) index, simulation = Force.reheat model.simulation }
+      { model
+      | drag = Just <| Drag (offset offset_amount xy) (offset offset_amount xy) index
+      -- , simulation = Force.reheat model.simulation
+      }
 
     DragAt xy ->
       case model.drag of
@@ -252,7 +255,7 @@ update offset_amount msg model =
               | drag = Nothing
               , graph = Graph.update index (Maybe.map (updateNode (x,y))) model.graph
               , specificForces = sf
-              , simulation = Force.simulation (model.basicForces ++ model.viewportForces ++ List.concat (IntDict.values sf))
+              , simulation = Force.simulation (List.concat (IntDict.values sf))
             }
 
         Nothing ->
