@@ -170,6 +170,9 @@ suite =
       , "aka-aman-aasn-abasn"
       , "hazsu-hosu-ssu-hap"
       , "pa-az-pxz"
+      , "s-ps-as-pss-pp"
+      , "s-ps-aps-as"
+      , "nest-nestable-nester-test-testable-tester"
       ]
     , describe "stress-testing via fuzzing"
       [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
