@@ -17,7 +17,8 @@ import TypedSvg.Attributes.InPx as Px exposing
   , markerWidth, markerHeight)
 import TypedSvg.Core exposing (Attribute, Svg, text)
 import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..), Cursor(..))
-import DAWG exposing (DAWGGraph, Node, Connection, DAWG)
+import DAWG.Data exposing (DAWGGraph, Node, Connection, DAWG)
+import DAWG
 import Html.Attributes exposing (attribute)
 import Set
 import IntDict
@@ -356,7 +357,7 @@ linkElement graph edge =
           , y2 target.y
           , markerEnd "url(#arrowhead)"
           ]
-          [ title [] [ text <| DAWG.connectionToString edge.label ] ]
+          [ title [] [ text <| DAWG.Data.connectionToString edge.label ] ]
       -- , rect
       --     [ x <| midPoint.x - (width / 2)
       --     , y <| midPoint.y - (height / 2)

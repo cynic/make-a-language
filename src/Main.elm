@@ -19,6 +19,8 @@ import Json.Encode as E
 import Json.Decode as D
 import ForceDirectedGraph
 import DAWG
+import DAWG.Data as DAWG exposing (DAWG)
+import DAWG.Verification
 import Basics.Extra exposing (..)
 import Browser.Dom
 import Task
@@ -71,7 +73,7 @@ type alias Model =
   { dragState : DragState
   , text : String
   , algebraic : String
-  , dawg : DAWG.DAWG
+  , dawg : DAWG
   , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
@@ -187,12 +189,12 @@ init flags =
 calcMetrics : DAWG.DAWG -> DAWGMetrics
 calcMetrics dawg =
   let
-    words = DAWG.verifiedRecognizedWords dawg
+    words = DAWG.Verification.verifiedRecognizedWords dawg
   in
     { recognized = words
-    , numNodes = DAWG.numNodes dawg
-    , numEdges = DAWG.numEdges dawg
-    , combinable = DAWG.minimality dawg
+    , numNodes = DAWG.Verification.numNodes dawg
+    , numEdges = DAWG.Verification.numEdges dawg
+    , combinable = DAWG.Verification.minimality dawg
     }
 
 
@@ -252,7 +254,7 @@ update msg model =
       in
       ( { model
           | algebraic = text
-          , text = DAWG.recognizedWords dawg |> String.join "\n"
+          , text = DAWG.Verification.recognizedWords dawg |> String.join "\n"
           , dawg = dawg
           , forceDirectedGraph =
               ForceDirectedGraph.update

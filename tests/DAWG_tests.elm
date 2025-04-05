@@ -4,6 +4,10 @@ import Expect
 import Fuzz
 import Test exposing (..)
 import DAWG as D
+import DAWG.Data as D
+import DAWG.Verification as D
+import DAWG.ExpressionParser as D
+import DAWG.Simplify as D
 import List.Extra as List
 
 nodesAndWords : D.DAWG -> (Int, List String)
