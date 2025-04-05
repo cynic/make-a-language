@@ -1,0 +1,10 @@
+{
+    "targets": {
+        "Benchmarks": {
+            "inputs": [
+                "DAWG_benchmarks.elm"
+            ],
+            "output": "build/benchmarks.js"
+        }
+    }
+}

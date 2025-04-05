@@ -1,0 +1,32 @@
+<!doctype html>
+<html class="no-js" lang="">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Benchmarks</title>
+  <style>
+    body {
+      margin: 0;
+      /* overflow-y: hidden; */
+    }
+    textarea {
+      transition: background-color 0.35s ease;
+    }
+    textarea:focus {
+      outline: none;
+      background-color: lightgrey;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="elm"></div>
+  <script src="build/benchmarks.js"></script>
+  <script>
+    const app = Elm.DAWG_benchmarks.init({ node: document.getElementById('elm') });
+  </script>
+
+</body>
+
+</html>
