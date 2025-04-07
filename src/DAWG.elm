@@ -5,6 +5,7 @@ import DAWG.Debugging exposing (..)
 import Set
 import IntDict
 import DAWG.Simplify as Simplify
+import DAWG.Simplify3 as Simplify3
 
 fromLines : String -> DAWG
 fromLines s =
@@ -36,3 +37,7 @@ isTerminalNode node =
 fromWords : List String -> DAWG
 fromWords =
   wordsToAlgebra >> Simplify.algebraToDAWG
+
+fromWords3 : List String -> DAWG
+fromWords3 =
+  wordsToAlgebra >> Simplify3.algebraToDAWG
