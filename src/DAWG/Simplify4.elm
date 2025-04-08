@@ -6,7 +6,7 @@ import IntDict exposing (IntDict)
 import Dict exposing (update)
 
 type CustomTree a
-  = LeftRight (Dict a (CustomTree a)) -- "Dict a" gives you the left-right, CustomTree gives you the depth
+  = LeftRight (Dict a (Bool, CustomTree a)) -- "Dict a" gives you the left-right, CustomTree gives you the depth, the Bool gives you whether it's terminal.
 
 type UpDownAxis a
   = UpDown (CustomTree a) (List (a, CustomTree a)) -- root, up, down
@@ -24,10 +24,10 @@ insertDown cx (LeftRight dict) =
           (\node ->
             case node of
               Nothing -> -- then, I should insert it here.
-                Just empty -- |> Debug.log "Adding final (new) item"
-              Just existing ->
+                Just (True, empty) -- |> Debug.log "Adding final (new) item"
+              Just (_, existing) ->
                 -- aand, we're done.
-                Just existing -- |> Debug.log "Final item already exists"
+                Just (True, existing) -- |> Debug.log "Final item already exists"
           )
           dict
     c::rest ->
@@ -36,10 +36,11 @@ insertDown cx (LeftRight dict) =
           (\node ->
             case node of
               Nothing -> -- then, I should insert it here.
-                Just (insertDown rest empty) -- |> Debug.log "Inserted new"
-              Just (sublevel) ->
+                -- this is a new path, and it's continuing, so this isn't terminal.
+                Just (False, insertDown rest empty) -- |> Debug.log "Inserted new"
+              Just (isT, sublevel) ->
                 -- this already exists, so just follow it.
-                Just <| insertDown rest sublevel -- |> Debug.log "Already exists, following"
+                Just <| (isT, insertDown rest sublevel) -- |> Debug.log "Already exists, following"
           )
           dict
 
@@ -64,7 +65,7 @@ down key ((UpDown (LeftRight rootDict as root) path) as nav) =
         _ -> rootDict
   in
     Dict.get key search_dict
-    |> Maybe.map (\lr_result -> UpDown root ((key, lr_result) :: path))
+    |> Maybe.map (\(_, lr_result) -> UpDown root ((key, lr_result) :: path))
     |> Maybe.withDefault nav
 
 get : UpDownAxis comparable -> Maybe comparable
