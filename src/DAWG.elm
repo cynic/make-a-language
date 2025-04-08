@@ -6,6 +6,7 @@ import Set
 import IntDict
 import DAWG.Simplify as Simplify
 import DAWG.Simplify3 as Simplify3
+import DAWG.Simplify4 as Simplify4
 
 fromLines : String -> DAWG
 fromLines s =
@@ -41,3 +42,7 @@ fromWords =
 fromWords3 : List String -> DAWG
 fromWords3 =
   wordsToAlgebra >> Simplify3.algebraToDAWG
+
+fromWords4 : List String -> DAWG
+fromWords4 =
+  Simplify4.toDAWG

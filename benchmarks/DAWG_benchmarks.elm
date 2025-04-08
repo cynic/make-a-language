@@ -26,6 +26,10 @@ suite =
         [ benchmark "50 words" <|
             \_ -> fromWords3 fifty_words
         ]
+      , describe "(Simplify4) fromWords" <|
+        [ benchmark "50 words" <|
+            \_ -> fromWords4 fifty_words
+        ]
       ]
     -- describe "Array"
     --   [ -- nest as many descriptions as you like
