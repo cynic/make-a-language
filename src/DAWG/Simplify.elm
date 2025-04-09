@@ -383,7 +383,7 @@ simplify_inner s inner wrap =
 
 simplifyWith : (List ExprAST -> List ExprAST) -> ExprAST -> ExprAST
 simplifyWith simplifier e =
-  case e of
+  case e |> debugLog "simplifyWith" exprASTToRTString of
     A xs ->
       -- debugLog "Simplifying +" exprASTToString e |> \_ ->
       let
