@@ -400,7 +400,7 @@ type alias Formulaic2 a =
   }
 
 type Sharing
-  = SharedLinks
+  = Shared Int -- this is the "group" identifier.
   | NotShared
 
 type Terminality
@@ -418,8 +418,40 @@ type ExprAST a
 -- recreateFormula formula =
 --   -- Start from the ends.
 
+--to_exprAST : Formulaic2 comparable -> ExprAST comparable
+to_exprAST zippers = -- acc is a List (ExprAST a)
+  let
+     -- each of these will be a separate part of a "+".
+    down_a_notch = Dict.toList zippers -- a list of (key, zipperValue).  O(e), where /e/ = number of keys
+    -- now, I want to group the last sibling-groups.
+    -- so, first, find the sibling-groups.
+    uniqueNodes =
+      down_a_notch
+      |> List.concatMap
+        (\(k, paths) ->
+          paths
+          |> List.map (fullChildren) -- the terminality DOES matter for this.
+        )
+      |> List.Extra.unique -- and now make a list of the unique ones.
+    -- Okay, those sibling-groups are going to either be the Variables (if single)
+    -- or the Adds (if multiple).  In either case, they will be shared.
+  in
+    uniqueNodes
+        -- Now, each of these must certainly appear as the last item.
+        -- The only question is: which ones are shared, and which ones
+        -- are not shared?
+        -- We will work from back to front, and build up the entire expression
+        -- in a breadth-first way.
+        -- First of all, if there are multiple paths, then they will
+        -- have the same shared thing, as long as the siblings are the
+        -- same.  So, let us check the sibling groups.
+{-
+  o .. b
+  w    w
+  x    x
 
-
+So, we see the matching suffixes, and we join them into a group.
+-}
 
 
 
