@@ -4,8 +4,7 @@ import Tree.Diff exposing (Tail(..))
 import Dict exposing (Dict(..))
 import Set exposing (Set)
 import Array
-import Cone3d exposing (along)
--- import List.Extra
+import List.Extra
 
 type CustomTree a
   = LeftRight
@@ -160,7 +159,7 @@ insert cx {tree, pathsToEnd} =
             paths
   in
   { tree = insert_ cx tree
-  , pathsToEnd =
+  , pathsToEnd = -- Dict.empty
       case checkNewEntry cx tree [] of
         NewEntryIsPrefix ->
           pathsToEnd
@@ -172,6 +171,10 @@ insert cx {tree, pathsToEnd} =
           addOrUpdatePath pathsToEnd
           |> removePath old
   }
+
+insertS : String -> Formulaic Char -> Formulaic Char
+insertS s t =
+  insert (String.toList s) t
 
 
 binarySearch : comparable -> Array.Array comparable -> Maybe Int
@@ -253,19 +256,19 @@ get (UpDown _ path) =
 getTransition : UpDownAxis comparable -> Maybe (comparable, Terminality)
 getTransition ((UpDown (LeftRight rootDict) _) as nav) =
   let
-    search_dict (UpDown _ upPath) =
+    search_dict (UpDown _ upPath) = -- O(1)
       case upPath of
         (_, LeftRight result)::_ -> result
         _ -> rootDict
   in
-  get nav
+  get nav -- O(1)
   |> Maybe.andThen
     (\key ->
-      up nav
+      up nav -- O(1)
       |> Maybe.map search_dict
       |> Maybe.withDefault rootDict
-      |> Dict.get key
-      |> Maybe.map (\(finality, _) ->
+      |> Dict.get key -- O(log_2 n)
+      |> Maybe.map (\(finality, _) -> -- O(1)
           ( key, if finality then Terminal else NotTerminal )
         )
     )
@@ -296,6 +299,20 @@ thenGetChildren : Maybe (UpDownAxis comparable) -> Maybe (List comparable)
 -- same Big-O as `children`
 thenGetChildren = Maybe.map children
 
+fullChildren : UpDownAxis comparable -> List (comparable, Terminality)
+-- O(2 * n) where /n/ = |children|
+fullChildren (UpDown (LeftRight rootDict) path) =
+  case path of
+    [] ->
+      Dict.toList rootDict -- O(n)
+      |> List.map (\(k, (t, _)) -> (k, if t then Terminal else NotTerminal))
+    (_, LeftRight lastResult)::_ ->
+      Dict.toList lastResult
+      |> List.map (\(k, (t, _)) -> (k, if t then Terminal else NotTerminal))
+
+thenGetFullChildren : Maybe (UpDownAxis comparable) -> Maybe (List (comparable, Terminality))
+thenGetFullChildren = Maybe.map fullChildren
+
 siblings : UpDownAxis comparable -> Maybe (List comparable)
 -- O(log_2 n)
 siblings =
@@ -304,6 +321,13 @@ siblings =
 thenGetSiblings : Maybe (UpDownAxis comparable) -> Maybe (List comparable)
 -- Same Big-O as `children`; `up` is O(1)
 thenGetSiblings = Maybe.andThen siblings
+
+fullSiblings : UpDownAxis comparable -> Maybe (List (comparable, Terminality))
+fullSiblings =
+  up >> thenGetFullChildren
+
+thenGetFullSiblings : Maybe (UpDownAxis comparable) -> Maybe (List (comparable, Terminality))
+thenGetFullSiblings = Maybe.andThen fullSiblings
 
 first : UpDownAxis comparable -> Maybe (UpDownAxis comparable)
 -- O(2 * log_2 n)
@@ -423,7 +447,8 @@ type ExprAST a
 -- NONSENSE (for now)
 toDAWG : List String -> DAWG
 toDAWG xs =
-  xs |> List.map String.toList -- trivial. ≈112k, 56.2k, 10.5k for 50, 100, 500 respectively.
+  xs |> List.map String.toList -- trivial. ≈112k, 56.2k, 10.5k for 50, 100, 500 respectively. Linear.
   |> List.foldl insert emptyFormula -- ≈6.1k, 2.7k, 410 for 50, 100, 500 respectively.  This is WITH updating "paths" during.
+                                    -- WITHOUT updating "paths" during, we get 9.4k, 4.8k, 760 respectively.  MUCH better figures & trend (1x, ≈0.5x, 0.08x), nearly linear.
   |> formulaic_to_formulaic2 -- ≈3.7k, 1.7k, 243 for 50, 100, 500 respectively.  That's actually not as horrific as I was expecting, but still pretty bad.
   |> \_ -> DAWG.Data.empty
