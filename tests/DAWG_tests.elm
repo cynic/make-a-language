@@ -9,6 +9,7 @@ import DAWG.Verification as D
 import DAWG.ExpressionParser as D
 import DAWG.Simplify as D
 import List.Extra as List
+import DAWG.Simplify3
 
 nodesAndWords : D.DAWG -> (Int, List String)
 nodesAndWords d =
@@ -22,7 +23,8 @@ czech l expectedRecognized =
     x::rest ->
       let
         dawg =
-          D.algebraToDAWG <| D.wordsToAlgebra x
+          -- D.algebraToDAWG <| D.wordsToAlgebra x
+          DAWG.Simplify3.fromWords x
         minimality = D.minimality dawg
         recognized = D.verifiedRecognizedWords dawg
       in
