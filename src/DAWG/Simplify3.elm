@@ -7,8 +7,11 @@ import Maybe.Extra as Maybe
 import Html.Attributes exposing (src)
 import Dict exposing (Dict)
 import DAWG.Data exposing (..)
+import Svg.Attributes exposing (k)
+import Html.Attributes exposing (checked)
+import DAWG.Debugging
 
-type alias EdgeRecord = Edge Transition
+type alias EdgeRecord = Edge MTransition
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -16,16 +19,16 @@ type alias EdgeRecord = Edge Transition
 -- This is superior to marking finality on a vertex, because
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
-type alias Transition = Char
--- type alias Connection = Set Transition -- a Connection is a link between two nodes.
--- type alias Connections = IntDict Connection
-type alias Node = NodeContext Bool Transition -- a Node indicates terminality
-type alias FAGraph = Graph Bool Transition -- finally, the Finite Automaton.
+type alias MTransition = Char
+type alias MConnection = Set MTransition -- a MConnection is a link between two nodes.
+-- type alias Connections = IntDict MConnection
+type alias Node = NodeContext Bool MConnection -- a Node indicates terminality
+type alias FAGraph = Graph Bool MConnection -- finally, the Finite Automaton.
 type Automaton
   = MADFA MADFARecord -- minimal acyclic deterministic finite automaton
 --  | DFA -- deterministic finite automaton
 
-type alias RegisterValue = ( Int, List ( NodeId, Transition ) ) -- (isFinal, list-of-outgoing)
+type alias RegisterValue = ( Int, List ( NodeId, List MTransition ) ) -- (isFinal, list-of-outgoing)
 
 type alias MADFARecord =
   { graph : FAGraph
@@ -49,7 +52,7 @@ foldlSpecial func lastItem acc list =
     x :: xs ->
       foldlSpecial func lastItem (func x acc) xs
 
-wordToTransitions : String -> List (Transition, Bool)
+wordToTransitions : String -> List (MTransition, Bool)
 wordToTransitions txt =
   String.toList txt
   |> List.unconsLast
@@ -65,12 +68,12 @@ type InsertOptions
   | MarkAsFinal
   | MarkAsInitial
 
-follow_transition : Transition -> Maybe NodeId -> MADFARecord -> Maybe NodeId
+follow_transition : MTransition -> Maybe NodeId -> MADFARecord -> Maybe NodeId
 follow_transition transition source madfa =
   source
   |> Maybe.andThen (\src -> Graph.get src madfa.graph)
   |> Maybe.andThen (\node ->
-    case IntDict.toList node.outgoing |> List.filter (\(_, t) -> t == transition) of
+    case IntDict.toList node.outgoing |> List.filter (\(_, conn) -> Set.member transition conn) of
       [] -> Nothing
       -- NOTE: we ASSUME determinism here.
       (dest, _)::_ -> Just dest
@@ -112,7 +115,7 @@ queue isFinal madfa =
     }
   )
 
-addTransition : NodeId -> Transition -> NodeId -> MADFARecord -> MADFARecord
+addTransition : NodeId -> MTransition -> NodeId -> MADFARecord -> MADFARecord
 addTransition source transition destination madfa =
   { madfa
   | graph =
@@ -120,15 +123,23 @@ addTransition source transition destination madfa =
         (Maybe.map (\src_node ->
           { src_node
           | outgoing =
-              IntDict.filter (\_ t -> t /= transition) src_node.outgoing -- get rid of any existing identical transitions
-              |> IntDict.insert destination transition -- add the transition
+              -- this is WAY too expensive. 3 log2(s), where /s/ is the number of outgoing edges.
+              IntDict.map (\_ conn -> Set.remove transition conn) src_node.outgoing -- get rid of any existing identical transitions
+              |> IntDict.filter (\_ conn -> not (Set.isEmpty conn))
+              |> IntDict.update destination (\possible -> -- add the transition
+                case possible of
+                  Nothing ->
+                    Just (Set.singleton transition)
+                  Just existing ->
+                    Just (Set.insert transition existing)
+              )
               |> \v -> Debug.log ("Creating edge: #" ++ String.fromInt source ++ " -> #" ++ String.fromInt destination ++ " on transition " ++ String.fromChar transition ++ ", outgoing is now " ++ Debug.toString (IntDict.toList v)) () |> \_ -> v
           }
         ))
         madfa.graph
   }
 
-remove_unreachable : NodeId -> List Transition -> MADFARecord -> MADFARecord
+remove_unreachable : NodeId -> List MTransition -> MADFARecord -> MADFARecord
 remove_unreachable current transitions madfa =
   case transitions of
     [] ->
@@ -139,7 +150,7 @@ remove_unreachable current transitions madfa =
           Graph.get current madfa.graph
           |> Maybe.map (\node ->
             let
-              next = IntDict.toList node.outgoing |> List.filter (\(_, t) -> t == h) |> List.map Tuple.first |> List.head
+              next = IntDict.toList node.outgoing |> List.filter (\(_, conn) -> Set.member h conn) |> List.map Tuple.first |> List.head
             in
             ( IntDict.isEmpty node.incoming, next )
           )
@@ -171,6 +182,7 @@ toRegisterValue q madfa =
   |> Maybe.map (\node ->
     ( if node.node.label then 1 else 0
     , IntDict.toList node.outgoing
+      |> List.map (\(k, v) -> (k, Set.toList v))
     )
   )
   |> Maybe.withDefault (-1, []) -- nonsense default, should never appear.
@@ -185,17 +197,17 @@ merge new original madfa =
       Graph.get new madfa.graph
       |> Maybe.map .incoming
       |> Maybe.withDefault IntDict.empty -- nonsense
-    new_incoming_states =
-      IntDict.keys new_incoming
-    new_incoming_keys =
-      List.map (\k -> toRegisterValue k madfa) new_incoming_states
+    -- new_incoming_states =
+    --   IntDict.keys new_incoming
+    -- new_incoming_keys =
+    --   List.map (\k -> toRegisterValue k madfa) new_incoming_states
     new_madfa =
       { madfa
       | graph =
           Graph.update original
             (Maybe.map (\orig_node ->
               { orig_node
-              | incoming = IntDict.union orig_node.incoming new_incoming
+              | incoming = IntDict.uniteWith (\_ -> Set.union) orig_node.incoming new_incoming
               }
             ))
             madfa.graph
@@ -233,7 +245,7 @@ replace_or_register current madfa =
       }
 
 -- the same as `addstring` algorithm from the paper (Figure 1)
-addWordString : List (Transition, Bool) -> MADFARecord -> MADFARecord
+addWordString : List (MTransition, Bool) -> MADFARecord -> MADFARecord
 addWordString w existing =
   let
     original_q0 = existing.root |> Debug.log "Existing root"
@@ -303,24 +315,185 @@ seedMADFARecord =
   in
     MADFARecord (Graph.insert initialNode Graph.empty) 0 0 Set.empty Set.empty Dict.empty
 
-
 toMADFA : List String -> Maybe MADFARecord
 toMADFA words =
-  foldlSpecial wordToMADFA wordToMADFA seedMADFARecord words
+  case words of
+    [] ->
+      Nothing
+    _ ->
+      Just <| List.foldl wordToMADFA seedMADFARecord words
 
 
 
 
+redirect : List NodeId -> DAWGGraph -> DAWGGraph
+redirect all_nodes graph =
+  -- all of the incoming transitions of the `new` node need to be
+  -- redirected into the `original` node, and then the `new` node
+  -- is removed.
+  case all_nodes of
+    [] ->
+      graph
+    target::deletions -> -- pick one, whichever is first; collapse down into that one.
+      let
+        collective_nodes =
+          List.filterMap (\id -> Graph.get id graph) all_nodes
+        collective_incoming =
+          List.foldl
+            (\node state -> IntDict.uniteWith (\_ -> Set.union) state node.incoming)
+            IntDict.empty
+            collective_nodes
+        collective_outgoing =
+          List.foldl
+            (\node state -> IntDict.uniteWith (\_ -> Set.union) state node.outgoing)
+            IntDict.empty
+            collective_nodes
+        new_graph =
+          Graph.update target
+            (Maybe.map (\target_node ->
+              { target_node
+              | incoming = collective_incoming
+              , outgoing = collective_outgoing
+              }
+            ))
+            graph
+        without_collapsed =
+          List.foldl Graph.remove new_graph deletions
+      in
+        without_collapsed
 
-transitionToString : Transition -> String
+check_identical_outgoing : List NodeId -> Maybe (List Connection) -> DAWGGraph -> Bool
+check_identical_outgoing states baseline graph =
+  case states of
+    [] ->
+      True
+    h::t ->
+      let
+        thisOutgoing =
+          Graph.get h graph |> Maybe.map (.outgoing >> IntDict.values)
+          |> Maybe.withDefault [] -- nonsense
+      in
+        case baseline of
+          Nothing ->
+            check_identical_outgoing t (Just thisOutgoing) graph
+          Just baselineOutgoing ->
+            thisOutgoing == baselineOutgoing && check_identical_outgoing t (Just thisOutgoing) graph
+
+collapse : NodeId -> DAWGGraph -> ( IntDict (), DAWGGraph )
+collapse node_id graph =
+  let
+    incoming_states =
+      Graph.get node_id graph
+      |> Maybe.map (.incoming >> IntDict.keys)
+      |> Maybe.andThen (\candidates ->
+        -- if there are only 1 or 0, then there's nothing to collapse.
+        case candidates of
+          [] -> Nothing
+          [_] -> Nothing
+          _ -> Just candidates
+      )
+      |> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Incoming states")
+    -- if the outgoing transitions of ALL the incoming states are IDENTICAL, then we can collapse.
+    outgoing_transitions_identical =
+      incoming_states
+      |> Maybe.map (\states -> check_identical_outgoing states Nothing graph)
+      |> Maybe.withDefault False
+      |> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Outgoing transitions identical?")
+    new_graph =
+      DAWG.Debugging.debugGraph ("[collapse #" ++ String.fromInt node_id ++ "] after redirection") <|   
+      if outgoing_transitions_identical then
+        Maybe.map (\states -> redirect states graph) incoming_states
+        |> Maybe.withDefault graph -- nonsense
+      else
+        graph
+    -- and now that we have done one redirection, we must examine the input nodes & redirect if possible.
+    ancestors =
+      if outgoing_transitions_identical then
+        Graph.get node_id new_graph
+        |> Maybe.map (.incoming >> IntDict.keys >> List.map (\k -> (k, ())))
+        |> Maybe.withDefault []
+        |> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Additional nodes to process")
+        |> IntDict.fromList
+      else
+        IntDict.empty
+  in
+    ( ancestors, new_graph )
+
+collapse_from : IntDict () -> IntDict () -> DAWGGraph -> DAWGGraph
+collapse_from to_process processed graph =
+  case IntDict.findMax to_process |> Debug.log "Collapsing, starting from" of
+    Just (node_id, _) ->
+      let
+        ( ancestors, new_graph ) = collapse node_id graph
+        -- never re-process a node
+        new_to_process =
+          IntDict.union to_process ancestors |> IntDict.diff processed
+        new_processed =
+          IntDict.insert node_id () processed
+      in
+      collapse_from new_to_process new_processed new_graph
+    Nothing ->
+      graph
+      |> DAWG.Debugging.debugGraph "Post-collapse"
+
+toDAWG : MADFARecord -> DAWG
+toDAWG madfa =
+  {- The difference between a FAGraph and a DAWGGraph is that the finality is kept
+     in the transition (D) rather than in the state (F).
+
+     Other than that, should be pretty straightforward.
+  -}
+  let
+    finalNodes =
+      Graph.nodes madfa.graph
+      |> List.filterMap (\node -> if node.label then Just node.id else Nothing)
+    finalNodesSet =
+      Set.fromList finalNodes
+    yesMap t = (t, 1)
+    noMap t = (t, 0)
+    graph =
+      -- basically, the idea here is to "slide" all the finality information
+      -- onto the incoming transitions.
+      Graph.mapContexts
+        (\{node, incoming, outgoing} ->
+          let
+            mapper = if node.label then yesMap else noMap
+          in
+          NodeContext
+            (Node node.id ())
+            (IntDict.map (\_ conn -> Set.map mapper conn) incoming)
+            (IntDict.map (\k v -> if Set.member k finalNodesSet then Set.map yesMap v else Set.map noMap v) outgoing)
+        )
+        madfa.graph
+    collapsed = collapse_from (finalNodes |> List.map (\x -> (x, ())) |> IntDict.fromList) IntDict.empty graph
+    max = madfa.maxId
+    root = madfa.root
+    final = -- just pick a final one with no outgoing transitions.
+      List.find (\x -> Graph.get x collapsed |> Maybe.map (.outgoing >> IntDict.isEmpty) |> Maybe.withDefault False) finalNodes
+  in
+    DAWG collapsed max root final
+
+fromWords : List String -> DAWG
+fromWords words =
+  toMADFA words
+  |> Maybe.map toDAWG
+  |> Maybe.withDefault empty
+
+transitionToString : MTransition -> String
 transitionToString =
   String.fromChar
+
+connectionToString : MConnection -> String
+connectionToString =
+  Set.map transitionToString
+  >> Set.toList
+  >> String.concat
 
 graphToString : FAGraph -> String
 graphToString graph =
   Graph.toString
     (\node -> Just <| if node then "⭐" else "🟢")
-    (Just << transitionToString)
+    (Just << connectionToString)
     graph
 
 madfaToString : MADFARecord -> String

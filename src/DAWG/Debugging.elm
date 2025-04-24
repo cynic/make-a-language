@@ -5,8 +5,8 @@ import Graph
 
 debug_log : String -> a -> a
 debug_log s x =
-  -- Debug.log s x
-  x
+  Debug.log s x
+  -- x
 
 debugGraph : String -> DAWGGraph -> DAWGGraph
 debugGraph txt graph =

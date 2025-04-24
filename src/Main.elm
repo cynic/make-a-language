@@ -31,6 +31,7 @@ import List.Extra
 import Html
 import Html.Styled.Attributes exposing (for)
 import Result.Extra
+import DAWG.Simplify3
 
 -- MAIN
 
@@ -233,7 +234,8 @@ update msg model =
       let
         dawg =
           String.split "\n" text
-          |> DAWG.fromWords
+          --|> DAWG.fromWords
+          |> DAWG.Simplify3.fromWords
       in
       ( { model
           | text = text
