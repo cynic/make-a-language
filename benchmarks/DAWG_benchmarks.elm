@@ -3,10 +3,15 @@ import Array
 import Benchmark exposing (..)
 import Benchmark.Runner exposing (BenchmarkProgram, program)
 import DAWG exposing (..)
+import DAWG.Simplify
+import DAWG.Simplify3
 
 suite : Benchmark
 suite =
   let
+    ten_words =
+      [ "campstools", "oxidiser", "deoppilate", "straky", "reinvites", "colorizations", "kumbi", "broomshank", "tricolor", "moit"
+      ]
     fifty_words =
       [ "automaticity", "heartsomeness", "cisterna", "barometz", "unhealing", "rat's", "gloea", "drepanoid", "klystrons", "annulettee" , "sphenotemporal"
       , "bromauric", "lecithin", "digitonin", "briefnesses", "tungstite", "signaling", "yclad", "astrophysicist's", "endoprocta", "myelobrachium"
@@ -82,27 +87,31 @@ suite =
         -- [ benchmark "50 words" <|
         --     \_ -> fromWords3 fifty_words
         -- ]
-        describe "(Simplify) fromWords" <|
-          [ benchmark "50 words" <|
-              \_ -> DAWG.Simplify.fromWords fifty_words
-          , benchmark "100 words" <|
-              \_ -> DAWG.Simplify.fromWords hundred_words
+        -- describe "(Simplify) fromWords" <|
+        --   [ benchmark "50 words" <|
+        --       \_ -> DAWG.fromWords fifty_words
+          -- , benchmark "100 words" <|
+          --     \_ -> DAWG.fromWords hundred_words
           -- , benchmark "500 words" <|
           --     \_ -> fromWords4 five_hundred_words
-          ]
-      , describe "(Carrasco & Forcada) fromWords, algorithm only" <|
-        [ benchmark "50 words" <|
-            \_ -> DAWG.Simplify3.toMADFA fifty_words
-        , benchmark "100 words" <|
-            \_ -> DAWG.Simplify3.toMADFA hundred_words
+          -- ]
+        describe "(Carrasco & Forcada) fromWords, algorithm only" <|
+        [ benchmark "10 words" <|
+            \_ -> DAWG.Simplify3.toMADFA ten_words
+        -- , benchmark "50 words" <|
+        --     \_ -> DAWG.Simplify3.toMADFA fifty_words
+        -- , benchmark "100 words" <|
+        --     \_ -> DAWG.Simplify3.toMADFA hundred_words
         -- , benchmark "500 words" <|
         --     \_ -> fromWords4 five_hundred_words
         ]
       , describe "(Carrasco & Forcada) fromWords, + DAWG transform" <|
-        [ benchmark "50 words" <|
-            \_ -> DAWG.Simplify3.fromWords fifty_words
-        , benchmark "100 words" <|
-            \_ -> DAWG.Simplify3.fromWords hundred_words
+        [ benchmark "10 words" <|
+            \_ -> DAWG.Simplify3.fromWords ten_words
+        -- , benchmark "50 words" <|
+        --     \_ -> DAWG.Simplify3.fromWords fifty_words
+        -- , benchmark "100 words" <|
+        --     \_ -> DAWG.Simplify3.fromWords hundred_words
         -- , benchmark "500 words" <|
         --     \_ -> fromWords4 five_hundred_words
         ]
