@@ -83,7 +83,7 @@ clone : NodeId -> Bool -> MADFARecord -> (NodeId, MADFARecord)
 clone source isFinal madfa =
   Graph.get source madfa.graph
   |> Maybe.map (\src_node ->
-    ( madfa.maxId + 1 |> Debug.log ("Cloning #" ++ String.fromInt source ++ " with new id")
+    ( madfa.maxId + 1 --|> Debug.log ("Cloning #" ++ String.fromInt source ++ " with new id")
     , { madfa
       | graph =
           Graph.insert
@@ -101,7 +101,7 @@ clone source isFinal madfa =
 
 queue : Bool -> MADFARecord -> (NodeId, MADFARecord)
 queue isFinal madfa =
-  ( madfa.maxId + 1 |> Debug.log "Queuing new NodeId"
+  ( madfa.maxId + 1 --|> Debug.log "Queuing new NodeId"
   , { madfa
     | graph =
         Graph.insert
@@ -133,7 +133,7 @@ addTransition source transition destination madfa =
                   Just existing ->
                     Just (Set.insert transition existing)
               )
-              |> \v -> Debug.log ("Creating edge: #" ++ String.fromInt source ++ " -> #" ++ String.fromInt destination ++ " on transition " ++ String.fromChar transition ++ ", outgoing is now " ++ Debug.toString (IntDict.toList v)) () |> \_ -> v
+--              |> \v -> Debug.log ("Creating edge: #" ++ String.fromInt source ++ " -> #" ++ String.fromInt destination ++ " on transition " ++ String.fromChar transition ++ ", outgoing is now " ++ Debug.toString (IntDict.toList v)) () |> \_ -> v
           }
         ))
         madfa.graph
@@ -161,13 +161,13 @@ remove_unreachable current transitions madfa =
             | graph = Graph.remove current madfa.graph
             , register =
                 Dict.remove (toRegisterValue current madfa) madfa.register
-                |> (Debug.log ("Removing unreachable node #" ++ String.fromInt current ++ ", remaining in register"))
+--                |> (Debug.log ("Removing unreachable node #" ++ String.fromInt current ++ ", remaining in register"))
             }
           else
-            Debug.log ("Node #" ++ String.fromInt current ++ " is not unreachable") () |> \_ ->
+--            Debug.log ("Node #" ++ String.fromInt current ++ " is not unreachable") () |> \_ ->
             madfa
       in
-        case q_next |> Debug.log "Next node to check for unreachability" of
+        case q_next {- |> Debug.log "Next node to check for unreachability" -} of
           Nothing ->
             updated_madfa
           Just next ->
@@ -222,7 +222,7 @@ merge new original madfa =
   in
     --with_updated_register
     new_madfa
-    |> madfaLog ("MERGED 🧑🏼‍🤝‍🧑🏼 new #" ++ String.fromInt new ++ " to original #" ++ String.fromInt original) "\n"
+--    |> madfaLog ("MERGED 🧑🏼‍🤝‍🧑🏼 new #" ++ String.fromInt new ++ " to original #" ++ String.fromInt original) "\n"
 
 equiv_in_register : NodeId -> MADFARecord -> Maybe NodeId
 equiv_in_register q madfa =
@@ -230,9 +230,9 @@ equiv_in_register q madfa =
   -- (1) either both are final, or both are not final; and
   -- (2) both have exactly the same outgoing transitions (i.e. transition & destination state matches)
   let
-    q_key = toRegisterValue q madfa |> Debug.log ("Generated key for node #" ++ String.fromInt q)
+    q_key = toRegisterValue q madfa -- |> Debug.log ("Generated key for node #" ++ String.fromInt q)
   in
-    Dict.get q_key madfa.register |> Debug.log ("Equivalent for cloned/queued node #" ++ String.fromInt q)
+    Dict.get q_key madfa.register -- |> Debug.log ("Equivalent for cloned/queued node #" ++ String.fromInt q)
 
 replace_or_register : NodeId -> MADFARecord -> MADFARecord
 replace_or_register current madfa =
@@ -244,39 +244,80 @@ replace_or_register current madfa =
       | register = Dict.insert (toRegisterValue current madfa) current madfa.register
       }
 
+phase1 : List (MTransition, Bool) -> NodeId -> NodeId -> MADFARecord -> MADFARecord
+phase1 w original_q0 new_q0 original_madfa =
+  -- w |> Debug.log "[1] w" |> \_ -> 
+  -- original_q0 |> Debug.log "[1] original_q0" |> \_ -> 
+  -- new_q0 |> Debug.log "[1] new_q0" |> \_ -> 
+  -- Graph.nodes original_madfa.graph |> Debug.log "[1] original_madfa nodes" |> \_ -> 
+  -- Graph.edges original_madfa.graph |> Debug.log "[1] original_madfa edges" |> \_ -> 
+  -- original_madfa.maxId |> Debug.log "[1] original_madfa maxId" |> \_ ->
+  -- original_madfa.cloned |> Debug.log "[1] original_madfa cloned" |> \_ ->
+  -- original_madfa.queue |> Debug.log "[1] original_madfa queue" |> \_ ->
+  -- original_madfa.register |> Debug.log "[1] original_madfa register" |> \_ ->
+  -- original_madfa.root |> Debug.log "[1] original_madfa root" |> \_ ->
+  List.foldl
+    (\(transition, isFinal) (m_branch, q_last, madfa) ->
+      let
+        destination =
+          follow_transition transition m_branch madfa -- attempt to follow a transition from the last-seen state in M
+          -- |> Debug.log ("Trying to follow transition " ++ String.fromChar transition ++ " from NodeId " ++ Debug.toString m_branch ++ ", result is")
+        (q, madfa_with_q) =
+          destination
+          |> Maybe.map (\exists_in_M -> -- there is something in M, so we will clone it.
+            clone exists_in_M isFinal madfa
+          )
+          |> Maybe.withDefaultLazy (\() -> -- there is no compatible path, so we must place this onto the queue
+            queue isFinal madfa
+          )
+        with_w_transition =
+          addTransition q_last transition q madfa_with_q
+      in
+        ( destination, q, with_w_transition )
+    )
+    (Just original_q0, new_q0, original_madfa)
+    w
+  |> \(_, _, madfa) -> madfa
+
+phase2 : NodeId -> List (MTransition, Bool) -> MADFARecord -> MADFARecord
+phase2 original_q0 w original_madfa =
+  -- w |> Debug.log "[2] w" |> \_ -> 
+  -- original_q0 |> Debug.log "[2] original_q0" |> \_ -> 
+  -- Graph.nodes original_madfa.graph |> Debug.log "[2] original_madfa nodes" |> \_ -> 
+  -- Graph.edges original_madfa.graph |> Debug.log "[2] original_madfa edges" |> \_ -> 
+  -- original_madfa.maxId |> Debug.log "[2] original_madfa maxId" |> \_ ->
+  -- original_madfa.cloned |> Debug.log "[2] original_madfa cloned" |> \_ ->
+  -- original_madfa.queue |> Debug.log "[2] original_madfa queue" |> \_ ->
+  -- original_madfa.register |> Debug.log "[2] original_madfa register" |> \_ ->
+  -- original_madfa.root |> Debug.log "[2] original_madfa root" |> \_ ->
+  remove_unreachable original_q0 (List.map Tuple.first w) original_madfa
+
+phase3 : List NodeId -> MADFARecord -> MADFARecord
+phase3 clones_and_queued original_madfa =
+  -- clones_and_queued |> Debug.log "[3] clones_and_queued" |> \_ ->
+  -- Graph.nodes original_madfa.graph |> Debug.log "[3] original_madfa nodes" |> \_ -> 
+  -- Graph.edges original_madfa.graph |> Debug.log "[3] original_madfa edges" |> \_ -> 
+  -- original_madfa.maxId |> Debug.log "[3] original_madfa maxId" |> \_ ->
+  -- original_madfa.cloned |> Debug.log "[3] original_madfa cloned" |> \_ ->
+  -- original_madfa.queue |> Debug.log "[3] original_madfa queue" |> \_ ->
+  -- original_madfa.register |> Debug.log "[3] original_madfa register" |> \_ ->
+  -- original_madfa.root |> Debug.log "[3] original_madfa root" |> \_ ->
+  List.foldr
+    (\w_state madfa -> replace_or_register w_state madfa)
+    original_madfa
+    (clones_and_queued {- |> Debug.log "Cloned/Queued states" -})
+
 -- the same as `addstring` algorithm from the paper (Figure 1)
 addWordString : List (MTransition, Bool) -> MADFARecord -> MADFARecord
 addWordString w existing =
   let
-    original_q0 = existing.root |> Debug.log "Existing root"
+    original_q0 = existing.root -- |> Debug.log "Existing root"
     (new_q0, phase_1_setup) = clone original_q0 False existing
-    phase_1 = -- here, we do the initial insertion of w
-      List.foldl
-        (\(transition, isFinal) (m_branch, q_last, madfa) ->
-          let
-            destination =
-              follow_transition transition m_branch madfa -- attempt to follow a transition from the last-seen state in M
-              |> Debug.log ("Trying to follow transition " ++ String.fromChar transition ++ " from NodeId " ++ Debug.toString m_branch ++ ", result is")
-            (q, madfa_with_q) =
-              destination
-              |> Maybe.map (\exists_in_M -> -- there is something in M, so we will clone it.
-                clone exists_in_M isFinal madfa
-              )
-              |> Maybe.withDefaultLazy (\() -> -- there is no compatible path, so we must place this onto the queue
-                queue isFinal madfa
-              )
-            with_w_transition =
-              addTransition q_last transition q madfa_with_q
-          in
-            ( destination, q, with_w_transition )
-        )
-        (Just existing.root, new_q0, phase_1_setup)
-        w
-      |> \(_, _, madfa) ->
-          madfa
-          |> madfaLog "🤖 AFTER PHASE 1 (clone & queue)" "🎯 BEGINNING PHASE 2 (handle reachability)"
+    phase_1 =
+      phase1 w original_q0 new_q0 phase_1_setup -- here, we do the initial insertion of w
+      -- |> madfaLog "🤖 AFTER PHASE 1 (clone & queue)" "🎯 BEGINNING PHASE 2 (handle reachability)"
     phase_2 = -- here, we remove unreachable states
-      remove_unreachable original_q0 (List.map Tuple.first w) phase_1
+      phase2 original_q0 w phase_1
     -- CHECK ALGORITHM: why is there _another_ if-statement after, to handle a node at |w|+1?  Can unreachable go that far?
     -- Now, after this I need to replace the original_q0 with the cloned one.  The tough thing is that… I haven't kept track of it!
     -- However, I WILL find it as the smallest number in the list of cloned/queued states.
@@ -287,20 +328,18 @@ addWordString w existing =
         Nothing ->
           phase_2 -- this can only happen if NOTHING has been cloned OR queued
         Just min ->
-          { phase_2 | root = min |> Debug.log "Setting new root node to" }
-      )|> madfaLog "🤖 AFTER PHASE 2 (handle reachability)" "🎯 BEGINNING PHASE 3 (replace-or-register)"
+          { phase_2 | root = min {- |> Debug.log "Setting new root node to" -} }
+      )
+--      |> madfaLog "🤖 AFTER PHASE 2 (handle reachability)" "🎯 BEGINNING PHASE 3 (replace-or-register)"
     phase_3 =
-      List.foldr
-        (\w_state madfa -> replace_or_register w_state madfa)
-        phase_2_end
-        (clones_and_queued |> Debug.log "Cloned/Queued states")
+      phase3 clones_and_queued phase_2_end
   in
     -- finally, get rid of the clones and the queued; we don't need them.
     { phase_3
     | cloned = Set.empty
     , queue = Set.empty
     }
-    |> madfaLog "🤖 AFTER PHASE 3 (replace-or-register)" "👍🏽 COMPLETE!\n\n***\n\n"
+--    |> madfaLog "🤖 AFTER PHASE 3 (replace-or-register)" "👍🏽 COMPLETE!\n\n***\n\n"
 
 wordToMADFA : String -> MADFARecord -> MADFARecord
 wordToMADFA s existing =
@@ -392,13 +431,13 @@ collapse node_id graph =
           [_] -> Nothing
           _ -> Just candidates
       )
-      |> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Incoming states")
+      --|> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Incoming states")
     -- if the outgoing transitions of ALL the incoming states are IDENTICAL, then we can collapse.
     outgoing_transitions_identical =
       incoming_states
       |> Maybe.map (\states -> check_identical_outgoing states Nothing graph)
       |> Maybe.withDefault False
-      |> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Outgoing transitions identical?")
+      --|> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Outgoing transitions identical?")
     new_graph =
       DAWG.Debugging.debugGraph ("[collapse #" ++ String.fromInt node_id ++ "] after redirection") <|   
       if outgoing_transitions_identical then
@@ -412,7 +451,7 @@ collapse node_id graph =
         Graph.get node_id new_graph
         |> Maybe.map (.incoming >> IntDict.keys >> List.map (\k -> (k, ())))
         |> Maybe.withDefault []
-        |> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Additional nodes to process")
+        --|> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Additional nodes to process")
         |> IntDict.fromList
       else
         IntDict.empty
@@ -421,7 +460,7 @@ collapse node_id graph =
 
 collapse_from : IntDict () -> IntDict () -> DAWGGraph -> DAWGGraph
 collapse_from to_process processed graph =
-  case IntDict.findMax to_process |> Debug.log "Collapsing, starting from" of
+  case IntDict.findMax to_process {- |> Debug.log "Collapsing, starting from" -} of
     Just (node_id, _) ->
       let
         ( ancestors, new_graph ) = collapse node_id graph
@@ -434,7 +473,7 @@ collapse_from to_process processed graph =
       collapse_from new_to_process new_processed new_graph
     Nothing ->
       graph
-      |> DAWG.Debugging.debugGraph "Post-collapse"
+      --|> DAWG.Debugging.debugGraph "Post-collapse"
 
 toDAWG : MADFARecord -> DAWG
 toDAWG madfa =
