@@ -40,33 +40,12 @@ type alias MADFARecord =
   , register : Dict RegisterValue NodeId -- these ones do not need to be minimised. ( isFinal, list-of-outgoing )
   }
 
-foldlSpecial : (a -> b -> b) -> (a -> b -> c) -> b -> List a -> Maybe c
-foldlSpecial func lastItem acc list =
-  case list of
-    [] ->
-      Nothing
-
-    [x] ->
-      Just <| lastItem x acc
-
-    x :: xs ->
-      foldlSpecial func lastItem (func x acc) xs
-
 wordToTransitions : String -> List (MTransition, Bool)
 wordToTransitions txt =
   String.toList txt
   |> List.unconsLast
   |> Maybe.map (\(last, rest) -> List.map (\ch -> (ch, False)) rest ++ [(last, True)])
   |> Maybe.withDefault []
-
-type DestinationSet
-  = Queue
-  | Cloned
-  | Register
-type InsertOptions
-  = AddTo DestinationSet
-  | MarkAsFinal
-  | MarkAsInitial
 
 follow_transition : MTransition -> Maybe NodeId -> MADFARecord -> Maybe NodeId
 follow_transition transition source madfa =

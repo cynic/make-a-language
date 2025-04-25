@@ -146,15 +146,15 @@ suite =
         -- , benchmark "500 words" <|
         --     \_ -> fromWords4 five_hundred_words
         -- ]
-      -- , describe "(Carrasco & Forcada) fromWords, + DAWG transform" <|
-      --   [ benchmark "10 words" <|
-      --       \_ -> DAWG.Simplify3.fromWords ten_words
-        -- , benchmark "50 words" <|
+        -- describe "(Carrasco & Forcada) fromWords, + DAWG transform" <|
+        -- [-- benchmark "10 words" <|
+        --  --   \_ -> DAWG.Simplify3.fromWords ten_words
+        --   benchmark "50 words" <|
         --     \_ -> DAWG.Simplify3.fromWords fifty_words
-        -- , benchmark "100 words" <|
-        --     \_ -> DAWG.Simplify3.fromWords hundred_words
-        -- , benchmark "500 words" <|
-        --     \_ -> fromWords4 five_hundred_words
+        -- -- , benchmark "100 words" <|
+        -- --     \_ -> DAWG.Simplify3.fromWords hundred_words
+        -- -- , benchmark "500 words" <|
+        -- --     \_ -> fromWords4 five_hundred_words
         -- ]
         describe "Individual phases (Carrasco & Forcada)" <|
         [ describe "Phase 1" <|
@@ -168,6 +168,52 @@ suite =
         , describe "Phase 3" <|
           [ benchmark "50 words check" <|
               \_ -> DAWG.Simplify3.phase3 clones_and_queued p3_original_madfa
+          ]
+        ]
+      , describe "Underlying benchmarks" <|
+        [ describe "Graph.get" <|
+          [ benchmark "with small id" <|
+              \_ -> Graph.get 3 p1_original_madfa_graph
+          , benchmark "with large id" <|
+              \_ -> Graph.get 502 p1_original_madfa_graph 
+          , benchmark "with middling id" <|
+              \_ -> Graph.get 250 p1_original_madfa_graph 
+          ]
+        ]
+      , describe "Helper functions" <|
+        [ describe "follow_transition" <|
+          [ benchmark "with small id" <|
+              \_ -> DAWG.Simplify3.follow_transition 't' (Just 3) p1_original_madfa
+          , benchmark "with large id" <|
+              \_ -> DAWG.Simplify3.follow_transition 'u' (Just 502) p1_original_madfa
+          , benchmark "with middling id" <|
+              \_ -> DAWG.Simplify3.follow_transition 't' (Just 250) p1_original_madfa
+          ]
+        , describe "clone" <|
+          [ benchmark "with small id" <|
+              \_ -> DAWG.Simplify3.clone 3 True p1_original_madfa
+          , benchmark "with large id" <|
+              \_ -> DAWG.Simplify3.clone 502 True p1_original_madfa
+          , benchmark "with middling id" <|
+              \_ -> DAWG.Simplify3.clone 250 True p1_original_madfa
+          ]
+        , benchmark "queue" <|
+            \_ -> DAWG.Simplify3.queue True p1_original_madfa
+        , describe "addTransition" <|
+          [ benchmark "with small-large id" <|
+              \_ -> DAWG.Simplify3.addTransition 3 '@' 502 p1_original_madfa
+          , benchmark "with large-small id" <|
+              \_ -> DAWG.Simplify3.addTransition 502 '@' 3 p1_original_madfa
+          , benchmark "with small-mid id" <|
+              \_ -> DAWG.Simplify3.addTransition 3 '@' 250 p1_original_madfa
+          , benchmark "with mid-small id" <|
+              \_ -> DAWG.Simplify3.addTransition 250 '@' 3 p1_original_madfa
+          , benchmark "with mid-mid id" <|
+              \_ -> DAWG.Simplify3.addTransition 250 '@' 251 p1_original_madfa
+          , benchmark "with mid-large id" <|
+              \_ -> DAWG.Simplify3.addTransition 250 '@' 502 p1_original_madfa
+          , benchmark "with large-mid id" <|
+              \_ -> DAWG.Simplify3.addTransition 502 '@' 250 p1_original_madfa
           ]
         ]
       ]
