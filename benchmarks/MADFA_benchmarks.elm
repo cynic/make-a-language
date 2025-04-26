@@ -2,9 +2,7 @@ module DAWG_benchmarks exposing (..)
 import Array
 import Benchmark exposing (..)
 import Benchmark.Runner exposing (BenchmarkProgram, program)
-import DAWG exposing (..)
-import DAWG.Simplify
-import DAWG.Simplify3
+import Automata.MADFA exposing (..)
 import Set
 import Graph
 import Dict
@@ -147,36 +145,36 @@ suite =
         --   ]
         describe "(Carrasco & Forcada) fromWords, algorithm only" <|
         [ benchmark "10 words" <|
-            \_ -> DAWG.Simplify3.toMADFA ten_words
+            \_ -> toMADFA ten_words
         -- , benchmark "50 words" <|
-        --     \_ -> DAWG.Simplify3.toMADFA fifty_words
+        --     \_ -> toMADFA fifty_words
         -- , benchmark "100 words" <|
-        --     \_ -> DAWG.Simplify3.toMADFA hundred_words
+        --     \_ -> toMADFA hundred_words
         -- , benchmark "500 words" <|
         --     \_ -> fromWords4 five_hundred_words
         -- ]
         -- describe "(Carrasco & Forcada) fromWords, + DAWG transform" <|
         -- [-- benchmark "10 words" <|
-        --  --   \_ -> DAWG.Simplify3.fromWords ten_words
+        --  --   \_ -> fromWords ten_words
         --   benchmark "50 words" <|
-        --     \_ -> DAWG.Simplify3.fromWords fifty_words
+        --     \_ -> fromWords fifty_words
         -- -- , benchmark "100 words" <|
-        -- --     \_ -> DAWG.Simplify3.fromWords hundred_words
+        -- --     \_ -> fromWords hundred_words
         -- -- , benchmark "500 words" <|
         -- --     \_ -> fromWords4 five_hundred_words
         ]
       , describe "Individual phases (Carrasco & Forcada)" <|
         [ describe "Phase 1" <|
           [ benchmark "50 words check" <|
-              \_ -> DAWG.Simplify3.phase1 w original_q0 new_q0 p1_original_madfa
+              \_ -> phase1 w original_q0 new_q0 p1_original_madfa
           ]
         , describe "Phase 2" <|
           [ benchmark "50 words check" <|
-              \_ -> DAWG.Simplify3.phase2 original_q0 w p2_original_madfa
+              \_ -> phase2 original_q0 w p2_original_madfa
           ]
         , describe "Phase 3" <|
           [ benchmark "50 words check" <|
-              \_ -> DAWG.Simplify3.phase3 clones_and_queued p3_original_madfa
+              \_ -> phase3 clones_and_queued p3_original_madfa
           ]
         ]
       -- , describe "Underlying benchmarks" <|
@@ -192,34 +190,34 @@ suite =
       , describe "Helper functions" <|
         [ describe "follow_transition" <|
           [ benchmark "with small id" <|
-              \_ -> DAWG.Simplify3.follow_transition 't' (Just 3) p1_original_madfa
+              \_ -> follow_transition 't' (Just 3) p1_original_madfa
           , benchmark "with large id" <|
-              \_ -> DAWG.Simplify3.follow_transition 'u' (Just 502) p1_original_madfa
+              \_ -> follow_transition 'u' (Just 502) p1_original_madfa
           , benchmark "with middling id" <|
-              \_ -> DAWG.Simplify3.follow_transition 't' (Just 250) p1_original_madfa
+              \_ -> follow_transition 't' (Just 250) p1_original_madfa
           ]
         , describe "clone" <|
           [ benchmark "with small-small id" <|
-              \_ -> DAWG.Simplify3.clone 3 True (Just (5, '@')) p1_original_madfa
+              \_ -> clone 3 True (Just (5, '@')) p1_original_madfa
           , benchmark "with small-large id" <|
-              \_ -> DAWG.Simplify3.clone 3 True (Just (502, '@')) p1_original_madfa
+              \_ -> clone 3 True (Just (502, '@')) p1_original_madfa
           , benchmark "with small-mid id" <|
-              \_ -> DAWG.Simplify3.clone 3 True (Just (250, '@')) p1_original_madfa
+              \_ -> clone 3 True (Just (250, '@')) p1_original_madfa
           , benchmark "with large-large id" <|
-              \_ -> DAWG.Simplify3.clone 502 True (Just (498, '@')) p1_original_madfa
+              \_ -> clone 502 True (Just (498, '@')) p1_original_madfa
           , benchmark "with large-small id" <|
-              \_ -> DAWG.Simplify3.clone 502 True (Just (3, '@')) p1_original_madfa
+              \_ -> clone 502 True (Just (3, '@')) p1_original_madfa
           , benchmark "with large-mid id" <|
-              \_ -> DAWG.Simplify3.clone 502 True (Just (250, '@')) p1_original_madfa
+              \_ -> clone 502 True (Just (250, '@')) p1_original_madfa
           , benchmark "with mid-mid id" <|
-              \_ -> DAWG.Simplify3.clone 250 True (Just (251, '@')) p1_original_madfa
+              \_ -> clone 250 True (Just (251, '@')) p1_original_madfa
           , benchmark "with mid-small id" <|
-              \_ -> DAWG.Simplify3.clone 250 True (Just (3, '@')) p1_original_madfa
+              \_ -> clone 250 True (Just (3, '@')) p1_original_madfa
           , benchmark "with mid-large id" <|
-              \_ -> DAWG.Simplify3.clone 250 True (Just (502, '@')) p1_original_madfa
+              \_ -> clone 250 True (Just (502, '@')) p1_original_madfa
           ]
         , benchmark "queue" <|
-            \_ -> DAWG.Simplify3.queue True ('@', 3) p1_original_madfa
+            \_ -> queue True ('@', 3) p1_original_madfa
         ]
       ]
 

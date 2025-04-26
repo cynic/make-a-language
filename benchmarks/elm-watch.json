@@ -2,7 +2,7 @@
     "targets": {
         "Benchmarks": {
             "inputs": [
-                "DAWG_benchmarks.elm"
+                "MADFA_benchmarks.elm"
             ],
             "output": "build/benchmarks.js"
         }
