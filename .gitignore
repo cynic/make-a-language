@@ -3,3 +3,5 @@ main.js
 node_modules
 elm-stuff
 build
+.vscode
+tmp

@@ -1,22 +1,22 @@
-module DAWG.Verification exposing (..)
-import DAWG.Data exposing (..)
-import Graph exposing (NodeId)
+module Automata.Verification exposing (..)
+import Automata.Data exposing (..)
+import Graph exposing (NodeId, Graph)
 import IntDict
 import Set exposing (Set)
 import Result.Extra
 import List.Extra as List
 
-numNodes : DAWG -> Int
+numNodes : AutomatonGraph -> Int
 numNodes dawg =
   Graph.size dawg.graph
 
-numEdges : DAWG -> Int
+numEdges : AutomatonGraph -> Int
 numEdges dawg =
   List.length <| Graph.edges dawg.graph
 
 {-| Explores incrementally in a breadth-first manner, returning a
     LIST of (node-found, new-string, is-final) -}
-explore : Node -> String -> DAWGGraph -> List (Node, String, Bool)
+explore : Node -> String -> Graph () Connection -> List (Node, String, Bool)
 explore node s graph =
   node.outgoing
   |> IntDict.map
@@ -35,7 +35,7 @@ explore node s graph =
   |> List.filterMap identity
   |> List.concat
 
-processStack : List (Node, String, Bool) -> List String -> DAWGGraph -> List String
+processStack : List (Node, String, Bool) -> List String -> Graph () Connection -> List String
 processStack stack acc graph =
   case stack of
     [] -> acc
@@ -45,7 +45,7 @@ processStack stack acc graph =
         (if f then s::acc else acc)
         graph
 
-recognizedWordsFrom : DAWG -> Node -> Result String (List String)
+recognizedWordsFrom : AutomatonGraph -> Node -> Result String (List String)
 recognizedWordsFrom dawg root =
   case Graph.checkAcyclic dawg.graph of
     Err edge ->
@@ -54,7 +54,7 @@ recognizedWordsFrom dawg root =
       Ok <| processStack [(root, "", False)] [] dawg.graph
 
 -- Entry point function
-recognizedWords : DAWG -> List String
+recognizedWords : AutomatonGraph -> List String
 recognizedWords dawg =
   Maybe.map
     (recognizedWordsFrom dawg >> Result.map List.sort >> Result.mapError identity)
@@ -62,8 +62,8 @@ recognizedWords dawg =
   |> Maybe.withDefault (Err "Couldn't find the root in the DAWG…!  What on earth is going on?!")
   |> Result.Extra.extract (\e -> [e])
 
-exploreDeterministic : Node -> NodeId -> DAWGGraph -> Result String (List Node)
-exploreDeterministic node finalId graph =
+exploreDeterministic : Node -> Graph () Connection -> Result String (List Node)
+exploreDeterministic node graph =
   let
     foundNonDeterminism =
       if IntDict.size node.outgoing <= 1 then
@@ -91,35 +91,30 @@ exploreDeterministic node finalId graph =
           else
             Just (Set.toList duplicate)
   in
-    if IntDict.isEmpty node.outgoing && node.node.id /= finalId then
-      -- not strictly about being deterministic but eh, while I'm here, right?
-      Err "More than one 'final' node was found, which is incorrect."
-    else
-      case foundNonDeterminism of
-        Nothing -> -- No intersection, or no outgoing values—same difference here.
-          node.outgoing
-          |> IntDict.map (\k _ -> Graph.get k graph)
-          |> IntDict.values
-          |> List.filterMap identity
-          |> Ok
-        Just found ->
-          Err ("Transition(s) «" ++ String.fromList found ++ "» from node #" ++ String.fromInt node.node.id ++ " are not deterministic.")
+    case foundNonDeterminism of
+      Nothing -> -- No intersection, or no outgoing values—same difference here.
+        node.outgoing
+        |> IntDict.map (\k _ -> Graph.get k graph)
+        |> IntDict.values
+        |> List.filterMap identity
+        |> Ok
+      Just found ->
+        Err ("Transition(s) «" ++ String.fromList found ++ "» from node #" ++ String.fromInt node.node.id ++ " are not deterministic.")
 
-findNonDeterministic : List Node -> NodeId -> DAWGGraph -> Maybe String
-findNonDeterministic stack finalId graph =
+findNonDeterministic : List Node -> Graph () Connection -> Maybe String
+findNonDeterministic stack graph =
   case stack of
     [] -> Nothing
     n::rest ->
-      case exploreDeterministic n finalId graph of
+      case exploreDeterministic n graph of
         Err e -> Just e
         Ok nodes ->
           findNonDeterministic
             (nodes ++ rest)
-            finalId
             graph
 
 {-| Same as recognizedWords, but also verifies that the graph is deterministic. -}
-verifiedRecognizedWords : DAWG -> List String
+verifiedRecognizedWords : AutomatonGraph -> List String
 verifiedRecognizedWords dawg =
   let
     nonDeterministic =
@@ -127,13 +122,9 @@ verifiedRecognizedWords dawg =
         Err _ ->
           Just "The DAWG is not acyclic."
         Ok _ ->
-          case dawg.final of
-            Nothing ->
-              Just "The DAWG has no final node."
-            Just final ->
-              Graph.get dawg.root dawg.graph
-              |> Maybe.andThen
-                (\root -> findNonDeterministic [root] final dawg.graph)
+          Graph.get dawg.root dawg.graph
+          |> Maybe.andThen
+            (\root -> findNonDeterministic [root] dawg.graph)
   in
     case nonDeterministic of
       Nothing ->
@@ -148,7 +139,7 @@ type alias HopcroftRecord =
   , p : List Partition -- partitions
   }
 
-minimality : DAWG -> List (List Int)
+minimality : AutomatonGraph -> List (List Int)
 minimality dawg =
   -- This is Hopcroft's Algorithm
   let
@@ -198,7 +189,7 @@ minimality dawg =
                 -- |> debug_log "Refining p, stage Ⅱ"
               )
             refine_for_input : Transition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
-            refine_for_input t x w p = -- really, the ch is only there for potential debugging.
+            refine_for_input _ x w p = -- really, the transition _ is only there for potential debugging.
               let
                 candidate_sets =
                   List.filterMap

@@ -1,4 +1,4 @@
-module DAWG.Simplify3 exposing (..)
+module Automata.MADFA exposing (..)
 import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import IntDict exposing (IntDict)
 import Set exposing (Set)
@@ -6,12 +6,9 @@ import List.Extra as List
 import Maybe.Extra as Maybe
 import Html.Attributes exposing (src)
 import Dict exposing (Dict)
-import DAWG.Data exposing (..)
+import Automata.Data exposing (..)
 import Svg.Attributes exposing (k)
-import Html.Attributes exposing (checked)
-import DAWG.Debugging
-import Svg.Attributes exposing (to)
-import Html exposing (tr)
+import Automata.Debugging
 
 type alias EdgeRecord = Edge MTransition
 
@@ -377,7 +374,7 @@ toMADFA words =
 
 
 
-redirect : List NodeId -> DAWGGraph -> DAWGGraph
+redirect : List NodeId -> Graph () Connection -> Graph () Connection
 redirect all_nodes graph =
   -- all of the incoming transitions of the `new` node need to be
   -- redirected into the `original` node, and then the `new` node
@@ -413,7 +410,7 @@ redirect all_nodes graph =
       in
         without_collapsed
 
-check_identical_outgoing : List NodeId -> Maybe (List Connection) -> DAWGGraph -> Bool
+check_identical_outgoing : List NodeId -> Maybe (List Connection) -> Graph () Connection -> Bool
 check_identical_outgoing states baseline graph =
   case states of
     [] ->
@@ -430,7 +427,7 @@ check_identical_outgoing states baseline graph =
           Just baselineOutgoing ->
             thisOutgoing == baselineOutgoing && check_identical_outgoing t (Just thisOutgoing) graph
 
-collapse : NodeId -> DAWGGraph -> ( IntDict (), DAWGGraph )
+collapse : NodeId -> Graph () Connection -> ( IntDict (), Graph () Connection )
 collapse node_id graph =
   let
     incoming_states =
@@ -451,7 +448,7 @@ collapse node_id graph =
       |> Maybe.withDefault False
       --|> Debug.log ("[collapse #" ++ String.fromInt node_id ++ "] Outgoing transitions identical?")
     new_graph =
-      DAWG.Debugging.debugGraph ("[collapse #" ++ String.fromInt node_id ++ "] after redirection") <|   
+      Automata.Debugging.debugGraph ("[collapse #" ++ String.fromInt node_id ++ "] after redirection") <|   
       if outgoing_transitions_identical then
         Maybe.map (\states -> redirect states graph) incoming_states
         |> Maybe.withDefault graph -- nonsense
@@ -470,7 +467,7 @@ collapse node_id graph =
   in
     ( ancestors, new_graph )
 
-collapse_from : IntDict () -> IntDict () -> DAWGGraph -> DAWGGraph
+collapse_from : IntDict () -> IntDict () -> Graph () Connection -> Graph () Connection
 collapse_from to_process processed graph =
   case IntDict.findMax to_process {- |> Debug.log "Collapsing, starting from" -} of
     Just (node_id, _) ->
@@ -487,7 +484,7 @@ collapse_from to_process processed graph =
       graph
       --|> DAWG.Debugging.debugGraph "Post-collapse"
 
-toDAWG : MADFARecord -> DAWG
+toDAWG : MADFARecord -> AutomatonGraph
 toDAWG madfa =
   {- The difference between a FAGraph and a DAWGGraph is that the finality is kept
      in the transition (D) rather than in the state (F).
@@ -519,12 +516,10 @@ toDAWG madfa =
     collapsed = collapse_from (finalNodes |> List.map (\x -> (x, ())) |> IntDict.fromList) IntDict.empty graph
     max = madfa.maxId
     root = madfa.root
-    final = -- just pick a final one with no outgoing transitions.
-      List.find (\x -> Graph.get x collapsed |> Maybe.map (.outgoing >> IntDict.isEmpty) |> Maybe.withDefault False) finalNodes
   in
-    DAWG collapsed max root final
+    AutomatonGraph collapsed max root
 
-fromWords : List String -> DAWG
+fromWords : List String -> AutomatonGraph
 fromWords words =
   toMADFA words
   |> Maybe.map toDAWG

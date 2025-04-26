@@ -1,20 +1,7 @@
-module DAWG.Data exposing (..)
+module Automata.Data exposing (..)
 import IntDict exposing (IntDict(..))
 import Set exposing (Set)
-import Graph exposing (Graph, NodeContext, Adjacency, NodeId)
-
-type ExprAST
-  = M (List ExprAST)
-  | A (List ExprAST)
-  | V Transition
-
-type alias EdgeRecord = Graph.Edge Transition
-
-type alias ToDawgRecord =
-  { unused : Int
-  , incoming : IntDict.IntDict (List (Int, Transition)) -- source nodes, keyed by destination
-  , outgoing : IntDict.IntDict (Set (Int, Transition)) -- destination nodes, keyed by source
-  }
+import Graph exposing (Graph, NodeContext, NodeId)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -24,18 +11,15 @@ type alias ToDawgRecord =
 -- vertex.
 type alias Transition = (Char, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
 type alias Connection = Set Transition -- a Connection is a link between two nodes.
-type alias Connections = IntDict.IntDict Connection
 type alias Node = NodeContext () Connection -- a Node itself does not carry any data, hence the ()
-type alias DAWGGraph = Graph () Connection -- finally, the complete directed acyclic word graph.
-type alias DAWG =
-  { graph : DAWGGraph
-    {- The maximum ID-value in this DAWG graph -}
+type alias AutomatonGraph =
+  { graph : Graph () Connection -- finally, the complete graph.
+    {- The maximum ID-value in this Automaton graph -}
   , maxId : NodeId
   , root : NodeId
-  , final : Maybe NodeId
   }
 
-empty : DAWG
+empty : AutomatonGraph
 empty =
   let
     initial =
@@ -47,36 +31,7 @@ empty =
     { graph = Graph.insert initial Graph.empty
     , maxId = 0
     , root = 0
-    , final = Nothing
     }
-
-exprASTToRTString : ExprAST -> String
-exprASTToRTString e =
-  case e of
-    V transition ->
-      case transition of
-        (ch, 0) -> String.fromChar ch
-        (ch, _) -> "!" ++ String.fromChar ch
-    M xs ->
-      List.map exprASTToRTString xs |> String.join ""
-    A xs ->
-      "(" ++ (List.map exprASTToRTString xs |> String.join " + ") ++ ")"
-
-exprASTToString : ExprAST -> String
-exprASTToString e =
-  case e of
-    V t ->
-      transitionToString t
-    M xs ->
-      -- "[× " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
-      List.map exprASTToString xs |> String.join ""
-    A xs ->
-      -- "[+ " ++ (List.map exprASTToString xs |> String.join ", ") ++ "]"
-      "(" ++ (List.map exprASTToString xs |> String.join " + ") ++ ")"
-
-exprASTsToString : List ExprAST -> String
-exprASTsToString es =
-  List.map exprASTToString es |> String.join "; "
 
 graphEdgeToString : Graph.Edge Connection -> String
 graphEdgeToString {from, to, label} =
@@ -100,7 +55,7 @@ connectionToString =
   >> Set.toList
   >> String.join "\u{FEFF}" -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
 
-graphToString : DAWGGraph -> String
+graphToString : Graph () Connection -> String
 graphToString graph =
   Graph.toString
     (\_ -> Nothing)

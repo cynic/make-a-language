@@ -1,19 +1,18 @@
-module DAWG.Debugging exposing (..)
-import DAWG.Data exposing (..)
-import Set
-import Graph
+module Automata.Debugging exposing (..)
+import Automata.Data exposing (..)
+import Graph exposing (Graph)
 
 debug_log : String -> a -> a
 debug_log s x =
-  Debug.log s x
-  -- x
+  -- Debug.log s x
+  x
 
-debugGraph : String -> DAWGGraph -> DAWGGraph
+debugGraph : String -> Graph () Connection -> Graph () Connection
 debugGraph txt graph =
   debug_log txt (graphToString graph)
   |> \_ -> graph
 
-debugDAWG : String -> DAWG -> DAWG
+debugDAWG : String -> AutomatonGraph -> AutomatonGraph
 debugDAWG txt dawg =
   debug_log txt
     (graphToString dawg.graph)

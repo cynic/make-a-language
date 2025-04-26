@@ -9,18 +9,15 @@ APPROACH:
   3. Check which buttons are down on mouse moves to detect a weird scenario.
 -}
 
-
 import Browser
 import Browser.Events as BE
 import Html.Styled exposing (..)
---import Html.Attributes exposing (..)
 import Html.Styled.Events exposing (..)
 import Json.Encode as E
 import Json.Decode as D
 import ForceDirectedGraph
-import DAWG
-import DAWG.Data as DAWG exposing (DAWG)
-import DAWG.Verification
+import Automata.Data exposing (AutomatonGraph)
+import Automata.Verification
 import Basics.Extra exposing (..)
 import Browser.Dom
 import Task
@@ -28,8 +25,7 @@ import Platform.Cmd as Cmd
 import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
-import Html.Styled.Attributes exposing (for)
-import DAWG.Simplify3
+import Automata.MADFA
 
 -- MAIN
 
@@ -71,7 +67,7 @@ type alias DAWGMetrics =
 type alias Model =
   { dragState : DragState
   , text : String
-  , dawg : DAWG
+  , dawg : AutomatonGraph
   , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
@@ -143,9 +139,9 @@ defaultModel : Model
 defaultModel =
   { dragState = Static
   , text = ""
-  , dawg = DAWG.empty
+  , dawg = Automata.Data.empty
   , forceDirectedGraph =
-      ForceDirectedGraph.init DAWG.empty (0, 0)
+      ForceDirectedGraph.init Automata.Data.empty (0, 0)
       |> Tuple.first
   , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
   , layoutConfiguration = initialLayoutConfig
@@ -168,7 +164,7 @@ init flags =
       ( { defaultModel
           | forceDirectedGraph =
             ForceDirectedGraph.init
-              DAWG.empty
+              Automata.Data.empty
               ( layout.rightPanel.width - 10
               , layout.rightPanel.height - 10
               )
@@ -183,15 +179,15 @@ init flags =
 
 -- UPDATE
 
-calcMetrics : DAWG.DAWG -> DAWGMetrics
+calcMetrics : AutomatonGraph -> DAWGMetrics
 calcMetrics dawg =
   let
-    words = DAWG.Verification.verifiedRecognizedWords dawg
+    words = Automata.Verification.verifiedRecognizedWords dawg
   in
     { recognized = words
-    , numNodes = DAWG.Verification.numNodes dawg
-    , numEdges = DAWG.Verification.numEdges dawg
-    , combinable = DAWG.Verification.minimality dawg
+    , numNodes = Automata.Verification.numNodes dawg
+    , numEdges = Automata.Verification.numEdges dawg
+    , combinable = Automata.Verification.minimality dawg
     }
 
 
@@ -229,7 +225,7 @@ update msg model =
         dawg =
           String.split "\n" text
           --|> DAWG.fromWords
-          |> DAWG.Simplify3.fromWords
+          |> Automata.MADFA.fromWords
       in
       ( { model
           | text = text

@@ -1,17 +1,14 @@
-module DAWG_tests exposing (..)
+module MADFA_tests exposing (..)
 
 import Expect
 import Fuzz
 import Test exposing (..)
-import DAWG as D
-import DAWG.Data as D
-import DAWG.Verification as D
-import DAWG.ExpressionParser as D
-import DAWG.Simplify as D
+import Automata.Data as D
+import Automata.Verification as D
 import List.Extra as List
-import DAWG.Simplify3
+import Automata.MADFA
 
-nodesAndWords : D.DAWG -> (Int, List String)
+nodesAndWords : D.AutomatonGraph -> (Int, List String)
 nodesAndWords d =
   (D.numNodes d, D.verifiedRecognizedWords d)
 
@@ -24,7 +21,7 @@ czech l expectedRecognized =
       let
         dawg =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
-          DAWG.Simplify3.fromWords x
+          Automata.MADFA.fromWords x
         minimality = D.minimality dawg
         recognized = D.verifiedRecognizedWords dawg
       in

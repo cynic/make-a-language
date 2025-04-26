@@ -1,6 +1,4 @@
 module ForceDirectedGraph exposing (..)
-
-import Browser
 import Browser.Events
 import Color
 import Force
@@ -8,17 +6,16 @@ import Graph exposing (Edge, Graph, NodeContext, NodeId)
 import Html.Events.Extra.Mouse as Mouse
 import Json.Decode as Decode
 import TypedSvg exposing
-  (circle, g, line, svg, title, rect, text_, marker, path, defs, tspan)
+  (circle, g, line, svg, title, text_, marker, path, defs, tspan)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd)
-import TypedSvg.Attributes.InPx as Px exposing
-  ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, rx, width, height, fontSize
+import TypedSvg.Attributes.InPx exposing
+  ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
   , markerWidth, markerHeight)
 import TypedSvg.Core exposing (Attribute, Svg, text)
 import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..), Cursor(..))
-import DAWG.Data exposing (DAWGGraph, Node, Connection, DAWG)
-import DAWG
+import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import Html.Attributes exposing (attribute)
 import Set
 import IntDict
@@ -28,7 +25,7 @@ type Msg
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
-  | GraphUpdated DAWG
+  | GraphUpdated AutomatonGraph
   | ViewportUpdated (Float, Float)
 
 
@@ -53,13 +50,26 @@ type alias Drag =
 type alias Entity =
     Force.Entity NodeId { value : { isTerminal : Bool, isFinal : Bool } }
 
+{-| True if at least one transition terminates at this node -}
+isTerminalNode : Node -> Bool
+isTerminalNode node =
+  IntDict.foldl
+    (\_ conn state ->
+      state || 
+        Set.foldl
+          (\(_, isFinal) state_ -> state_ || isFinal == 1)
+          False
+          conn
+    )
+    False
+    (node.incoming)
 
 initializeNode : Node -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
         Force.entity ctx.node.id
-          { isTerminal = DAWG.isTerminalNode ctx
+          { isTerminal = isTerminalNode ctx
           , isFinal = IntDict.isEmpty ctx.outgoing
           }
     , id = ctx.node.id
@@ -69,7 +79,7 @@ initializeNode ctx =
   }
 
 viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
-viewportForces (w, h) graph =
+viewportForces (w, h) _ =
   [ Force.center (w / 2) (h / 2)
   --   Force.towardsX <|
   --     List.filterMap
@@ -92,8 +102,8 @@ viewportForces (w, h) graph =
   --       )
   --       (Graph.nodes graph)
   ]
-basicForces : Graph Entity Connection -> Maybe Int -> (Int, Int) -> List (Force.Force NodeId)
-basicForces graph final (width, height) =
+basicForces : Graph Entity Connection -> (Int, Int) -> List (Force.Force NodeId)
+basicForces graph (width, height) =
   [
     Force.customLinks 3 <|
       List.map
@@ -113,8 +123,6 @@ basicForces graph final (width, height) =
         (\n ->
           if n.id == 0 then
             Just { node = 0, strength = 0.1, target = 0 }
-          else if final == Just n.id then
-            Just { node = n.id, strength = 0.1, target = toFloat width }
           else
             Nothing
         )
@@ -122,7 +130,7 @@ basicForces graph final (width, height) =
   , Force.towardsY <|
       List.filterMap
         (\n ->
-          if n.id == 0 || final == Just n.id then
+          if n.id == 0 then
             Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
           else
             Nothing
@@ -130,20 +138,20 @@ basicForces graph final (width, height) =
         (Graph.nodes graph)
   ]
 
-makeSimulation : (Float, Float) -> Maybe Int -> Graph Entity Connection -> Force.State NodeId
-makeSimulation (w, h) final graph =
+makeSimulation : (Float, Float) -> Graph Entity Connection -> Force.State NodeId
+makeSimulation (w, h) graph =
   Force.simulation
-    (basicForces graph final (round w, round h) ++ viewportForces (w, h) graph)
+    (basicForces graph (round w, round h) ++ viewportForces (w, h) graph)
 
-toForceGraph : DAWGGraph -> Graph Entity Connection
+toForceGraph : AutomatonGraph -> Graph Entity Connection
 toForceGraph g =
-  Graph.mapContexts initializeNode g
+  Graph.mapContexts initializeNode g.graph
 
-receiveDAWG : DAWG -> (Float, Float) -> Model
+receiveDAWG : AutomatonGraph -> (Float, Float) -> Model
 receiveDAWG dawg (w, h) =
   let
-    forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} ).graph
-    basic = basicForces forceGraph dawg.final (round w, round h)
+    forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} )
+    basic = basicForces forceGraph (round w, round h)
     viewport = viewportForces (w, h) forceGraph
   in
     { drag = Nothing
@@ -155,7 +163,7 @@ receiveDAWG dawg (w, h) =
     , specificForces = IntDict.empty
     }
 
-init : DAWG -> (Float, Float) -> (Model, Cmd Msg)
+init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
 init dawg (w, h) =
   ( receiveDAWG dawg (w, h), Cmd.none )
 
@@ -326,16 +334,16 @@ linkElement graph edge =
       Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
     label = connectionToSvgText edge.label
     em_to_px em_value = font_size * em_value
-    (padding, width, height) =
+    padding =
       let
         padding_em = 0.3
 
-        width_em = padding_em + (toFloat <| Set.size edge.label)
-        height_em = 1 + padding_em -- in em
+        -- width_em = padding_em + (toFloat <| Set.size edge.label)
+        -- height_em = 1 + padding_em -- in em
       in
         ( padding_em |> em_to_px
-        , width_em |> em_to_px
-        , height_em |> em_to_px
+        -- , width_em |> em_to_px
+        -- , height_em |> em_to_px
         )
     font_size = 16.0 -- this is the default, if not otherwise set
     m = (source.y - target.y) / (source.x - target.x)
@@ -357,7 +365,7 @@ linkElement graph edge =
           , y2 target.y
           , markerEnd "url(#arrowhead)"
           ]
-          [ title [] [ text <| DAWG.Data.connectionToString edge.label ] ]
+          [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
       -- , rect
       --     [ x <| midPoint.x - (width / 2)
       --     , y <| midPoint.y - (height / 2)
