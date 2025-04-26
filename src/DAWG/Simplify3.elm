@@ -10,6 +10,8 @@ import DAWG.Data exposing (..)
 import Svg.Attributes exposing (k)
 import Html.Attributes exposing (checked)
 import DAWG.Debugging
+import Svg.Attributes exposing (to)
+import Html exposing (tr)
 
 type alias EdgeRecord = Edge MTransition
 
@@ -58,35 +60,87 @@ follow_transition transition source madfa =
       (dest, _)::_ -> Just dest
   )
 
-clone : NodeId -> Bool -> MADFARecord -> (NodeId, MADFARecord)
-clone source isFinal madfa =
-  Graph.get source madfa.graph
-  |> Maybe.map (\src_node ->
+clone : NodeId -> Bool -> Maybe (NodeId, MTransition) -> MADFARecord -> (NodeId, MADFARecord)
+clone source_id isFinal redirectionData madfa =
+  let
+    to_clone = Graph.get source_id madfa.graph
+    created_clone =
+      to_clone
+      |> Maybe.map (\src_node ->
+        ( NodeContext
+            (Node (madfa.maxId + 1) (src_node.node.label || isFinal)) -- new state that I'm creating.
+            IntDict.empty -- if needed, will redirect a node to this.
+            src_node.outgoing
+        )
+      )
+      -- |> DAWG.Debugging.debugLog ("[clone] Cloning #" ++ String.fromInt source_id ++ " to #" ++ String.fromInt (madfa.maxId + 1))
+      --   (Maybe.map (\n -> { outgoing = IntDict.toList n.outgoing, incoming = IntDict.toList n.incoming }))
+    new_redirected_node =
+      Maybe.map
+        (\(target_node, t) ->
+          { target_node
+          | outgoing =
+            -- I know that there is at least one transition.
+            (case IntDict.toList target_node.outgoing of
+              [] ->
+                IntDict.empty -- this is nonsense
+              [(k, v)] ->
+                case Set.toList v of
+                  [] ->
+                    IntDict.empty
+                  [_] -> -- this must be the only transition in the only outgoing. Replace it.
+                    IntDict.singleton (madfa.maxId + 1) v
+                  _ -> -- there is more than one item in the set
+                    IntDict.fromList [( madfa.maxId + 1, Set.singleton t ), (k, Set.remove t v)]
+              xs -> -- there are outgoing connections to multiple nodes
+                ( ( madfa.maxId + 1, Set.singleton t ) :: (List.filterMap
+                  (\(k, v) ->
+                    let
+                      new_v = Set.remove t v
+                    in
+                      if Set.isEmpty new_v then Nothing else Just (k, new_v)
+                  )
+                  xs)
+                )
+                |> IntDict.fromList
+            )
+            -- |> DAWG.Debugging.debugLog "[clone] After redirect" (IntDict.toList >> List.map (\(a, b) -> (a, connectionToString b)))
+          }
+        )
+        (redirectionData |> Maybe.andThen (\(id, t) -> Graph.get id madfa.graph |> Maybe.map (\n -> (n, t))))
+      -- |> DAWG.Debugging.debugLog ("[clone] Redirecting (" ++ Debug.toString redirectionData ++ ") to " ++ String.fromInt (madfa.maxId + 1))
+      --     (Maybe.map (\n -> Debug.toString { outgoing = IntDict.toList n.outgoing, incoming = IntDict.toList n.incoming })
+      --      >> Maybe.withDefault "NO REDIRECTED NODE"
+      --     )
+  in
+  created_clone
+  |> Maybe.map (\the_clone ->
     ( madfa.maxId + 1 --|> Debug.log ("Cloning #" ++ String.fromInt source ++ " with new id")
     , { madfa
       | graph =
-          Graph.insert
-            ( NodeContext
-                (Node (madfa.maxId + 1) (src_node.node.label || isFinal)) -- new state that I'm creating.
-                IntDict.empty -- incoming, which is empty.
-                src_node.outgoing
-            ) madfa.graph
+          case new_redirected_node of
+            Nothing ->
+              Graph.insert the_clone madfa.graph
+            Just updated_node ->
+              Graph.insert the_clone madfa.graph
+              |> Graph.insert updated_node
       , maxId = madfa.maxId + 1
       , cloned = Set.insert (madfa.maxId + 1) madfa.cloned
-      } --|> madfaLog
+      }
+      -- |> madfaLog "[clone] done" "\n"
     )
   )
-  |> Maybe.withDefault (source, madfa) -- which is total nonsense.
+  |> Maybe.withDefault (source_id, madfa) -- which is total nonsense.
 
-queue : Bool -> MADFARecord -> (NodeId, MADFARecord)
-queue isFinal madfa =
-  ( madfa.maxId + 1 --|> Debug.log "Queuing new NodeId"
+queue : Bool -> (MTransition, NodeId) -> MADFARecord -> (NodeId, MADFARecord)
+queue isFinal (transitionFromSource, source) madfa =
+  ( madfa.maxId + 1 -- |> Debug.log ("[queue] source = #" ++ String.fromInt source ++ " via transition " ++ String.fromChar transitionFromSource ++ ", new node created is")
   , { madfa
     | graph =
         Graph.insert
           ( NodeContext
               (Node (madfa.maxId + 1) isFinal) -- new state that I'm creating.
-              IntDict.empty
+              (IntDict.singleton source <| Set.singleton transitionFromSource)
               IntDict.empty
           ) madfa.graph
     , maxId = madfa.maxId + 1
@@ -94,29 +148,7 @@ queue isFinal madfa =
     }
   )
 
-addTransition : NodeId -> MTransition -> NodeId -> MADFARecord -> MADFARecord
-addTransition source transition destination madfa =
-  { madfa
-  | graph =
-      Graph.update source
-        (Maybe.map (\src_node ->
-          { src_node
-          | outgoing =
-              -- this is WAY too expensive. 3 log2(s), where /s/ is the number of outgoing edges.
-              IntDict.map (\_ conn -> Set.remove transition conn) src_node.outgoing -- get rid of any existing identical transitions
-              |> IntDict.filter (\_ conn -> not (Set.isEmpty conn))
-              |> IntDict.update destination (\possible -> -- add the transition
-                case possible of
-                  Nothing ->
-                    Just (Set.singleton transition)
-                  Just existing ->
-                    Just (Set.insert transition existing)
-              )
---              |> \v -> Debug.log ("Creating edge: #" ++ String.fromInt source ++ " -> #" ++ String.fromInt destination ++ " on transition " ++ String.fromChar transition ++ ", outgoing is now " ++ Debug.toString (IntDict.toList v)) () |> \_ -> v
-          }
-        ))
-        madfa.graph
-  }
+--|> \v -> Debug.log ("Creating edge: #" ++ String.fromInt source ++ " -> #" ++ String.fromInt destination ++ " on transition " ++ String.fromChar transition ++ ", outgoing is now " ++ Debug.toString (IntDict.toList v)) () |> \_ -> v
 
 remove_unreachable : NodeId -> List MTransition -> MADFARecord -> MADFARecord
 remove_unreachable current transitions madfa =
@@ -244,15 +276,14 @@ phase1 w original_q0 new_q0 original_madfa =
         (q, madfa_with_q) =
           destination
           |> Maybe.map (\exists_in_M -> -- there is something in M, so we will clone it.
-            clone exists_in_M isFinal madfa
+            --Debug.log ("Calling clone") { m_branch = m_branch, q_last = q_last, transition = transition, isFinal = isFinal } |> \_ ->
+            clone exists_in_M isFinal (Just (q_last, transition)) madfa
           )
           |> Maybe.withDefaultLazy (\() -> -- there is no compatible path, so we must place this onto the queue
-            queue isFinal madfa
+            queue isFinal (transition, q_last) madfa
           )
-        with_w_transition =
-          addTransition q_last transition q madfa_with_q
       in
-        ( destination, q, with_w_transition )
+        ( destination, q, madfa_with_q )
     )
     (Just original_q0, new_q0, original_madfa)
     w
@@ -291,7 +322,7 @@ addWordString : List (MTransition, Bool) -> MADFARecord -> MADFARecord
 addWordString w existing =
   let
     original_q0 = existing.root -- |> Debug.log "Existing root"
-    (new_q0, phase_1_setup) = clone original_q0 False existing
+    (new_q0, phase_1_setup) = clone original_q0 False Nothing existing
     phase_1 =
       phase1 w original_q0 new_q0 phase_1_setup -- here, we do the initial insertion of w
       -- |> madfaLog "🤖 AFTER PHASE 1 (clone & queue)" "🎯 BEGINNING PHASE 2 (handle reachability)"
@@ -323,7 +354,10 @@ addWordString w existing =
 wordToMADFA : String -> MADFARecord -> MADFARecord
 wordToMADFA s existing =
   wordToTransitions s
-  |> \wordGraph -> addWordString wordGraph existing
+  |> \transitions ->
+    case transitions of
+      [] -> existing
+      _ -> addWordString transitions existing
 
 seedMADFARecord : MADFARecord
 seedMADFARecord =

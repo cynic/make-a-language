@@ -82,6 +82,7 @@ suite =
       ]
 
   -- For testing of phase1
+
     w = [('b',False),('a',False),('c',False),('t',False),('e',False),('r',False),('i',False),('s',False),('e',True)]
     original_q0 = 493
     new_q0 = 502
@@ -94,6 +95,7 @@ suite =
     p1_original_madfa = { graph = p1_original_madfa_graph, root = 493, cloned = Set.singleton 502, queue = Set.empty, maxId = 502, register = p1_original_madfa_register }
 
   -- For testing of phase2
+
     p2_original_madfa_graph =
       Graph.fromNodesAndEdges
         [{ id = 3, label = False },{ id = 4, label = False },{ id = 5, label = False },{ id = 6, label = False },{ id = 7, label = False },{ id = 8, label = False },{ id = 9, label = False },{ id = 10, label = False },{ id = 11, label = False },{ id = 12, label = False },{ id = 13, label = True },{ id = 15, label = False },{ id = 16, label = False },{ id = 17, label = False },{ id = 18, label = False },{ id = 19, label = False },{ id = 20, label = False },{ id = 21, label = False },{ id = 22, label = False },{ id = 23, label = False },{ id = 24, label = False },{ id = 25, label = False },{ id = 26, label = False },{ id = 30, label = False },{ id = 31, label = False },{ id = 32, label = False },{ id = 33, label = False },{ id = 34, label = False },{ id = 35, label = False },{ id = 39, label = False },{ id = 40, label = False },{ id = 41, label = False },{ id = 42, label = False },{ id = 43, label = False },{ id = 44, label = False },{ id = 49, label = False },{ id = 50, label = False },{ id = 51, label = False },{ id = 52, label = False },{ id = 53, label = False },{ id = 54, label = False },{ id = 58, label = False },{ id = 59, label = False },{ id = 63, label = False },{ id = 64, label = False },{ id = 65, label = False },{ id = 70, label = False },{ id = 71, label = False },{ id = 72, label = False },{ id = 73, label = False },{ id = 74, label = False },{ id = 75, label = False },{ id = 76, label = False },{ id = 79, label = False },{ id = 80, label = False },{ id = 81, label = False },{ id = 82, label = False },{ id = 83, label = False },{ id = 84, label = False },{ id = 85, label = False },{ id = 90, label = False },{ id = 91, label = False },{ id = 92, label = False },{ id = 93, label = False },{ id = 94, label = False },{ id = 95, label = False },{ id = 96, label = False },{ id = 97, label = False },{ id = 101, label = False },{ id = 102, label = False },{ id = 103, label = False },{ id = 104, label = False },{ id = 105, label = False },{ id = 106, label = False },{ id = 107, label = False },{ id = 108, label = False },{ id = 109, label = False },{ id = 110, label = False },{ id = 111, label = False },{ id = 112, label = False },{ id = 117, label = False },{ id = 118, label = False },{ id = 119, label = False },{ id = 120, label = False },{ id = 121, label = False },{ id = 122, label = False },{ id = 125, label = False },{ id = 126, label = False },{ id = 127, label = False },{ id = 128, label = False },{ id = 129, label = False },{ id = 130, label = False },{ id = 131, label = False },{ id = 136, label = False },{ id = 137, label = False },{ id = 138, label = False },{ id = 139, label = False },{ id = 144, label = False },{ id = 145, label = False },{ id = 146, label = False },{ id = 147, label = False },{ id = 148, label = False },{ id = 149, label = False },{ id = 150, label = False },{ id = 151, label = False },{ id = 152, label = False },{ id = 157, label = False },{ id = 158, label = False },{ id = 159, label = False },{ id = 160, label = False },{ id = 161, label = False },{ id = 162, label = False },{ id = 167, label = False },{ id = 168, label = False },{ id = 176, label = False },{ id = 177, label = False },{ id = 178, label = False },{ id = 182, label = False },{ id = 183, label = False },{ id = 184, label = False },{ id = 185, label = False },{ id = 186, label = False },{ id = 187, label = False },{ id = 188, label = False },{ id = 189, label = False },{ id = 190, label = False },{ id = 191, label = False },{ id = 192, label = False },{ id = 193, label = False },{ id = 200, label = False },{ id = 201, label = False },{ id = 202, label = False },{ id = 203, label = False },{ id = 204, label = False },{ id = 205, label = False },{ id = 206, label = False },{ id = 211, label = False },{ id = 212, label = False },{ id = 213, label = False },{ id = 214, label = False },{ id = 215, label = False },{ id = 216, label = False },{ id = 217, label = False },{ id = 218, label = False },{ id = 219, label = False },{ id = 220, label = False },{ id = 221, label = False },{ id = 226, label = False },{ id = 227, label = False },{ id = 228, label = False },{ id = 229, label = False },{ id = 230, label = False },{ id = 231, label = False },{ id = 232, label = False },{ id = 233, label = False },{ id = 238, label = False },{ id = 239, label = False },{ id = 240, label = False },{ id = 241, label = False },{ id = 242, label = False },{ id = 243, label = False },{ id = 244, label = False },{ id = 245, label = False },{ id = 248, label = False },{ id = 249, label = False },{ id = 250, label = False },{ id = 251, label = False },{ id = 252, label = False },{ id = 253, label = False },{ id = 254, label = False },{ id = 255, label = False },{ id = 259, label = False },{ id = 260, label = False },{ id = 261, label = False },{ id = 262, label = False },{ id = 268, label = False },{ id = 269, label = False },{ id = 270, label = False },{ id = 271, label = False },{ id = 272, label = False },{ id = 273, label = False },{ id = 274, label = False },{ id = 280, label = False },{ id = 281, label = False },{ id = 282, label = False },{ id = 288, label = False },{ id = 294, label = False },{ id = 295, label = False },{ id = 296, label = False },{ id = 297, label = False },{ id = 298, label = False },{ id = 305, label = False },{ id = 306, label = False },{ id = 307, label = False },{ id = 308, label = False },{ id = 309, label = False },{ id = 310, label = False },{ id = 315, label = False },{ id = 316, label = False },{ id = 317, label = False },{ id = 318, label = False },{ id = 319, label = False },{ id = 320, label = False },{ id = 321, label = False },{ id = 322, label = False },{ id = 323, label = False },{ id = 324, label = False },{ id = 329, label = False },{ id = 330, label = False },{ id = 331, label = False },{ id = 332, label = False },{ id = 338, label = False },{ id = 339, label = False },{ id = 340, label = False },{ id = 341, label = False },{ id = 342, label = False },{ id = 343, label = False },{ id = 344, label = False },{ id = 345, label = False },{ id = 346, label = False },{ id = 347, label = False },{ id = 348, label = False },{ id = 353, label = False },{ id = 354, label = False },{ id = 355, label = False },{ id = 356, label = False },{ id = 357, label = False },{ id = 358, label = False },{ id = 362, label = False },{ id = 363, label = False },{ id = 364, label = False },{ id = 365, label = False },{ id = 366, label = False },{ id = 367, label = False },{ id = 368, label = False },{ id = 369, label = False },{ id = 370, label = False },{ id = 371, label = False },{ id = 372, label = False },{ id = 377, label = False },{ id = 378, label = False },{ id = 379, label = False },{ id = 383, label = False },{ id = 389, label = False },{ id = 390, label = False },{ id = 391, label = False },{ id = 392, label = False },{ id = 393, label = False },{ id = 394, label = False },{ id = 395, label = False },{ id = 400, label = False },{ id = 401, label = False },{ id = 402, label = False },{ id = 403, label = False },{ id = 404, label = False },{ id = 405, label = False },{ id = 410, label = False },{ id = 411, label = False },{ id = 412, label = False },{ id = 413, label = False },{ id = 414, label = False },{ id = 415, label = False },{ id = 420, label = False },{ id = 421, label = False },{ id = 422, label = False },{ id = 423, label = False },{ id = 424, label = False },{ id = 430, label = False },{ id = 431, label = False },{ id = 432, label = False },{ id = 433, label = False },{ id = 439, label = False },{ id = 440, label = False },{ id = 441, label = False },{ id = 442, label = False },{ id = 443, label = False },{ id = 444, label = False },{ id = 445, label = False },{ id = 451, label = False },{ id = 452, label = False },{ id = 453, label = False },{ id = 459, label = False },{ id = 460, label = False },{ id = 461, label = False },{ id = 462, label = False },{ id = 463, label = False },{ id = 464, label = False },{ id = 465, label = False },{ id = 469, label = False },{ id = 470, label = False },{ id = 471, label = False },{ id = 472, label = False },{ id = 477, label = False },{ id = 478, label = False },{ id = 479, label = False },{ id = 484, label = False },{ id = 485, label = False },{ id = 486, label = False },{ id = 487, label = False },{ id = 488, label = False },{ id = 489, label = False },{ id = 493, label = False },{ id = 494, label = False },{ id = 495, label = False },{ id = 496, label = False },{ id = 497, label = False },{ id = 498, label = False },{ id = 502, label = False },{ id = 503, label = False },{ id = 504, label = False },{ id = 505, label = False },{ id = 506, label = False },{ id = 507, label = False },{ id = 508, label = False },{ id = 509, label = False },{ id = 510, label = False },{ id = 511, label = True }]
@@ -118,6 +120,13 @@ suite =
     p3_register = Dict.fromList [((0,[(3,['u']),(90,['n']),(183,['s'])]),182),((0,[(4,['t'])]),3),((0,[(5,['o'])]),4),((0,[(6,['m'])]),5),((0,[(7,['a'])]),6),((0,[(8,['t'])]),7),((0,[(9,['i'])]),8),((0,[(10,['c'])]),9),((0,[(11,['i'])]),10),((0,[(12,['c'])]),453),((0,[(12,['p'])]),233),((0,[(12,['t'])]),11),((0,[(13,['a'])]),35),((0,[(13,['c'])]),122),((0,[(13,['d'])]),76),((0,[(13,['e'])]),97),((0,[(13,['g'])]),54),((0,[(13,['l'])]),112),((0,[(13,['m'])]),221),((0,[(13,['n'])]),131),((0,[(13,['o'])]),379),((0,[(13,['s'])]),26),((0,[(13,['t'])]),245),((0,[(13,['y'])]),12),((0,[(13,['z'])]),44),((0,[(16,['e'])]),15),((0,[(17,['a'])]),16),((0,[(18,['r'])]),17),((0,[(19,['t'])]),18),((0,[(20,['s'])]),19),((0,[(21,['o'])]),20),((0,[(22,['m'])]),21),((0,[(23,['e'])]),22),((0,[(24,['l'])]),433),((0,[(24,['n'])]),23),((0,[(25,['e'])]),24),((0,[(26,['\''])]),59),((0,[(26,['a'])]),445),((0,[(26,['e'])]),152),((0,[(26,['f'])]),395),((0,[(26,['i'])]),348),((0,[(26,['l'])]),274),((0,[(26,['n'])]),85),((0,[(26,['r'])]),358),((0,[(26,['s'])]),25),((0,[(30,['i']),(294,['e']),(440,['h'])]),439),((0,[(31,['s'])]),30),((0,[(32,['t'])]),31),((0,[(33,['e'])]),32),((0,[(34,['r'])]),33),((0,[(35,['e'])]),65),((0,[(35,['n'])]),34),((0,[(35,['t'])]),206),((0,[(41,['o'])]),40),((0,[(42,['m'])]),41),((0,[(43,['e'])]),42),((0,[(44,['t'])]),43),((0,[(49,['h']),(280,['p']),(451,['f']),(459,['r']),(496,['m'])]),495),((0,[(50,['e'])]),49),((0,[(50,['n'])]),168),((0,[(51,['a'])]),50),((0,[(52,['l'])]),51),((0,[(53,['i'])]),52),((0,[(54,['n'])]),53),((0,[(58,['s'])]),193),((0,[(59,['n'])]),372),((0,[(59,['t'])]),58),((0,[(59,['t']),(486,['p'])]),485),((0,[(64,['l'])]),63),((0,[(65,['o'])]),64),((0,[(70,['r']),(260,['i'])]),259),((0,[(71,['e'])]),70),((0,[(72,['p'])]),71),((0,[(73,['a'])]),72),((0,[(74,['n'])]),73),((0,[(75,['o'])]),74),((0,[(76,['a'])]),178),((0,[(76,['e'])]),255),((0,[(76,['i'])]),75),((0,[(80,['l'])]),79),((0,[(81,['y'])]),80),((0,[(82,['s'])]),81),((0,[(83,['t'])]),82),((0,[(84,['r'])]),83),((0,[(85,['o'])]),84),((0,[(91,['n'])]),90),((0,[(92,['u'])]),91),((0,[(93,['l'])]),92),((0,[(94,['e'])]),93),((0,[(95,['t'])]),94),((0,[(96,['t'])]),95),((0,[(97,['e'])]),96),((0,[(97,['t'])]),162),((0,[(97,['z'])]),324),((0,[(101,['p']),(167,['i']),(268,['t']),(288,['a']),(390,['u'])]),389),((0,[(102,['h'])]),101),((0,[(103,['e'])]),102),((0,[(104,['n'])]),103),((0,[(105,['o'])]),104),((0,[(106,['t'])]),105),((0,[(107,['e'])]),106),((0,[(108,['m'])]),107),((0,[(109,['p'])]),108),((0,[(110,['o'])]),109),((0,[(110,['u'])]),383),((0,[(111,['d'])]),405),((0,[(111,['i'])]),489),((0,[(111,['l'])]),288),((0,[(111,['r'])]),110),((0,[(112,['a'])]),111),((0,[(117,['o']),(146,['i'])]),145),((0,[(118,['m'])]),117),((0,[(119,['a'])]),118),((0,[(120,['u'])]),119),((0,[(121,['r'])]),120),((0,[(121,['t'])]),479),((0,[(122,['i'])]),121),((0,[(126,['e'])]),125),((0,[(127,['c'])]),126),((0,[(128,['i'])]),127),((0,[(128,['o'])]),298),((0,[(129,['t'])]),128),((0,[(130,['h'])]),129),((0,[(130,['n'])]),139),((0,[(131,['i'])]),130),((0,[(136,['g']),(261,['b'])]),260),((0,[(137,['i'])]),136),((0,[(138,['t'])]),137),((0,[(139,['o'])]),138),((0,[(147,['e'])]),146),((0,[(148,['f'])]),147),((0,[(149,['n'])]),148),((0,[(150,['e'])]),149),((0,[(151,['s'])]),150),((0,[(152,['i'])]),332),((0,[(152,['k'])]),472),((0,[(152,['l'])]),262),((0,[(152,['n'])]),310),((0,[(152,['s'])]),151),((0,[(157,['u']),(400,['h']),(431,['i'])]),430),((0,[(158,['n'])]),157),((0,[(159,['g'])]),158),((0,[(160,['s'])]),159),((0,[(161,['t'])]),160),((0,[(162,['i'])]),161),((0,[(168,['g'])]),167),((0,[(177,['c'])]),176),((0,[(178,['l'])]),177),((0,[(184,['t'])]),183),((0,[(185,['r'])]),184),((0,[(186,['o'])]),185),((0,[(187,['p'])]),186),((0,[(188,['h'])]),187),((0,[(189,['y'])]),188),((0,[(190,['s'])]),189),((0,[(191,['i'])]),190),((0,[(192,['c'])]),191),((0,[(193,['i'])]),192),((0,[(200,['n']),(411,['s'])]),410),((0,[(201,['d'])]),200),((0,[(202,['o'])]),201),((0,[(203,['p'])]),202),((0,[(204,['r'])]),203),((0,[(205,['o'])]),204),((0,[(206,['c'])]),205),((0,[(211,['y']),(306,['a'])]),305),((0,[(212,['e'])]),211),((0,[(213,['l'])]),212),((0,[(214,['o'])]),213),((0,[(215,['b'])]),214),((0,[(216,['r'])]),215),((0,[(217,['a'])]),216),((0,[(218,['c'])]),217),((0,[(219,['h'])]),218),((0,[(220,['i'])]),219),((0,[(221,['u'])]),220),((0,[(226,['r']),(295,['p'])]),294),((0,[(227,['a'])]),226),((0,[(228,['u'])]),227),((0,[(229,['n'])]),228),((0,[(230,['o'])]),229),((0,[(231,['s'])]),230),((0,[(232,['c'])]),231),((0,[(233,['o'])]),232),((0,[(238,['c']),(316,['n'])]),315),((0,[(239,['o'])]),238),((0,[(240,['n'])]),239),((0,[(241,['o'])]),240),((0,[(242,['c'])]),241),((0,[(243,['l'])]),242),((0,[(244,['a'])]),243),((0,[(245,['n'])]),465),((0,[(245,['s'])]),244),((0,[(249,['i'])]),248),((0,[(250,['c'])]),249),((0,[(251,['t'])]),250),((0,[(252,['i'])]),251),((0,[(253,['t'])]),252),((0,[(254,['a'])]),253),((0,[(255,['c'])]),282),((0,[(255,['g'])]),415),((0,[(255,['l'])]),498),((0,[(255,['t'])]),254),((0,[(262,['b'])]),261),((0,[(269,['o'])]),268),((0,[(270,['n'])]),269),((0,[(271,['e'])]),270),((0,[(272,['w'])]),271),((0,[(273,['a'])]),272),((0,[(274,['l'])]),273),((0,[(281,['r'])]),280),((0,[(282,['i'])]),281),((0,[(296,['h'])]),295),((0,[(297,['a'])]),296),((0,[(298,['l'])]),297),((0,[(307,['i'])]),306),((0,[(308,['n'])]),307),((0,[(309,['l'])]),308),((0,[(310,['i'])]),309),((0,[(317,['d'])]),316),((0,[(318,['o'])]),317),((0,[(319,['c'])]),318),((0,[(320,['t'])]),319),((0,[(321,['r'])]),320),((0,[(322,['i'])]),321),((0,[(323,['n'])]),322),((0,[(324,['i'])]),323),((0,[(329,['o']),(338,['e']),(383,['l']),(470,['i'])]),469),((0,[(330,['e'])]),329),((0,[(331,['t'])]),330),((0,[(332,['r'])]),331),((0,[(339,['r'])]),338),((0,[(340,['i'])]),339),((0,[(341,['c'])]),340),((0,[(342,['o'])]),341),((0,[(343,['w'])]),342),((0,[(344,['p'])]),343),((0,[(345,['e'])]),344),((0,[(346,['r'])]),345),((0,[(347,['i'])]),346),((0,[(348,['t'])]),347),((0,[(353,['e']),(485,['a'])]),484),((0,[(354,['g'])]),353),((0,[(355,['i'])]),354),((0,[(356,['s'])]),355),((0,[(357,['t'])]),356),((0,[(358,['e'])]),357),((0,[(363,['e'])]),362),((0,[(364,['t'])]),363),((0,[(365,['e'])]),364),((0,[(366,['r'])]),365),((0,[(367,['i'])]),366),((0,[(368,['n'])]),367),((0,[(369,['a'])]),368),((0,[(370,['r'])]),369),((0,[(371,['i'])]),370),((0,[(372,['a'])]),371),((0,[(378,['s'])]),377),((0,[(379,['l'])]),378),((0,[(391,['b'])]),390),((0,[(392,['c'])]),391),((0,[(393,['h'])]),392),((0,[(394,['i'])]),393),((0,[(395,['e'])]),394),((0,[(401,['y'])]),400),((0,[(402,['r'])]),401),((0,[(403,['s'])]),402),((0,[(404,['o'])]),403),((0,[(405,['i'])]),404),((0,[(412,['t'])]),411),((0,[(413,['r'])]),412),((0,[(414,['a'])]),413),((0,[(415,['g'])]),424),((0,[(415,['n'])]),414),((0,[(421,['i'])]),420),((0,[(422,['g'])]),421),((0,[(423,['w'])]),422),((0,[(424,['a'])]),423),((0,[(432,['m'])]),431),((0,[(433,['e'])]),432),((0,[(441,['a'])]),440),((0,[(442,['s'])]),441),((0,[(443,['s'])]),442),((0,[(444,['e'])]),443),((0,[(445,['l'])]),444),((0,[(452,['a'])]),451),((0,[(453,['n'])]),452),((0,[(460,['e'])]),459),((0,[(461,['c'])]),460),((0,[(462,['u'])]),461),((0,[(463,['r'])]),462),((0,[(464,['r'])]),463),((0,[(465,['e'])]),464),((0,[(471,['k'])]),470),((0,[(472,['a'])]),471),((0,[(478,['i'])]),477),((0,[(479,['s'])]),478),((0,[(487,['t'])]),486),((0,[(488,['o'])]),487),((0,[(489,['r'])]),488),((0,[(495,['n'])]),494),((0,[(497,['i'])]),496),((0,[(498,['s'])]),497),((1,[]),13)]
     p3_root = 502
     p3_original_madfa = { graph = p3_original_madfa_graph, root = p3_root, cloned = p3_cloned, queue = p3_queue, maxId = p3_maxId, register = p3_register }
+
+  -- for testing of addTransition
+
+    small_node = Graph.get 3 p1_original_madfa_graph |> Maybe.map .outgoing
+    mid_node = Graph.get 250 p1_original_madfa_graph |> Maybe.map .outgoing
+    mid_node_ = Graph.get 251 p1_original_madfa_graph |> Maybe.map .outgoing
+    large_node = Graph.get 502 p1_original_madfa_graph |> Maybe.map .outgoing
   in
     describe "MADFA"
       [ --describe "(Original Simplify) fromWords" <|
@@ -170,16 +179,16 @@ suite =
               \_ -> DAWG.Simplify3.phase3 clones_and_queued p3_original_madfa
           ]
         ]
-      , describe "Underlying benchmarks" <|
-        [ describe "Graph.get" <|
-          [ benchmark "with small id" <|
-              \_ -> Graph.get 3 p1_original_madfa_graph
-          , benchmark "with large id" <|
-              \_ -> Graph.get 502 p1_original_madfa_graph 
-          , benchmark "with middling id" <|
-              \_ -> Graph.get 250 p1_original_madfa_graph 
-          ]
-        ]
+      -- , describe "Underlying benchmarks" <|
+      --   [ describe "Graph.get" <|
+      --     [ benchmark "with small id" <|
+      --         \_ -> Graph.get 3 p1_original_madfa_graph
+      --     , benchmark "with large id" <|
+      --         \_ -> Graph.get 502 p1_original_madfa_graph 
+      --     , benchmark "with middling id" <|
+      --         \_ -> Graph.get 250 p1_original_madfa_graph 
+      --     ]
+      --   ]
       , describe "Helper functions" <|
         [ describe "follow_transition" <|
           [ benchmark "with small id" <|
@@ -190,31 +199,27 @@ suite =
               \_ -> DAWG.Simplify3.follow_transition 't' (Just 250) p1_original_madfa
           ]
         , describe "clone" <|
-          [ benchmark "with small id" <|
-              \_ -> DAWG.Simplify3.clone 3 True p1_original_madfa
-          , benchmark "with large id" <|
-              \_ -> DAWG.Simplify3.clone 502 True p1_original_madfa
-          , benchmark "with middling id" <|
-              \_ -> DAWG.Simplify3.clone 250 True p1_original_madfa
+          [ benchmark "with small-small id" <|
+              \_ -> DAWG.Simplify3.clone 3 True (Just (5, '@')) p1_original_madfa
+          , benchmark "with small-large id" <|
+              \_ -> DAWG.Simplify3.clone 3 True (Just (502, '@')) p1_original_madfa
+          , benchmark "with small-mid id" <|
+              \_ -> DAWG.Simplify3.clone 3 True (Just (250, '@')) p1_original_madfa
+          , benchmark "with large-large id" <|
+              \_ -> DAWG.Simplify3.clone 502 True (Just (498, '@')) p1_original_madfa
+          , benchmark "with large-small id" <|
+              \_ -> DAWG.Simplify3.clone 502 True (Just (3, '@')) p1_original_madfa
+          , benchmark "with large-mid id" <|
+              \_ -> DAWG.Simplify3.clone 502 True (Just (250, '@')) p1_original_madfa
+          , benchmark "with mid-mid id" <|
+              \_ -> DAWG.Simplify3.clone 250 True (Just (251, '@')) p1_original_madfa
+          , benchmark "with mid-small id" <|
+              \_ -> DAWG.Simplify3.clone 250 True (Just (3, '@')) p1_original_madfa
+          , benchmark "with mid-large id" <|
+              \_ -> DAWG.Simplify3.clone 250 True (Just (502, '@')) p1_original_madfa
           ]
         , benchmark "queue" <|
-            \_ -> DAWG.Simplify3.queue True p1_original_madfa
-        , describe "addTransition" <|
-          [ benchmark "with small-large id" <|
-              \_ -> DAWG.Simplify3.addTransition 3 '@' 502 p1_original_madfa
-          , benchmark "with large-small id" <|
-              \_ -> DAWG.Simplify3.addTransition 502 '@' 3 p1_original_madfa
-          , benchmark "with small-mid id" <|
-              \_ -> DAWG.Simplify3.addTransition 3 '@' 250 p1_original_madfa
-          , benchmark "with mid-small id" <|
-              \_ -> DAWG.Simplify3.addTransition 250 '@' 3 p1_original_madfa
-          , benchmark "with mid-mid id" <|
-              \_ -> DAWG.Simplify3.addTransition 250 '@' 251 p1_original_madfa
-          , benchmark "with mid-large id" <|
-              \_ -> DAWG.Simplify3.addTransition 250 '@' 502 p1_original_madfa
-          , benchmark "with large-mid id" <|
-              \_ -> DAWG.Simplify3.addTransition 502 '@' 250 p1_original_madfa
-          ]
+            \_ -> DAWG.Simplify3.queue True ('@', 3) p1_original_madfa
         ]
       ]
 
