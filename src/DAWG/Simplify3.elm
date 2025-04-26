@@ -108,14 +108,10 @@ clone source_id isFinal redirectionData madfa =
           }
         )
         (redirectionData |> Maybe.andThen (\(id, t) -> Graph.get id madfa.graph |> Maybe.map (\n -> (n, t))))
-      -- |> DAWG.Debugging.debugLog ("[clone] Redirecting (" ++ Debug.toString redirectionData ++ ") to " ++ String.fromInt (madfa.maxId + 1))
-      --     (Maybe.map (\n -> Debug.toString { outgoing = IntDict.toList n.outgoing, incoming = IntDict.toList n.incoming })
-      --      >> Maybe.withDefault "NO REDIRECTED NODE"
-      --     )
   in
   created_clone
   |> Maybe.map (\the_clone ->
-    ( madfa.maxId + 1 --|> Debug.log ("Cloning #" ++ String.fromInt source ++ " with new id")
+    ( madfa.maxId + 1 -- |> Debug.log ("Cloning #" ++ String.fromInt source_id ++ " with new id")
     , { madfa
       | graph =
           case new_redirected_node of
@@ -150,12 +146,26 @@ queue isFinal (transitionFromSource, source) madfa =
 
 --|> \v -> Debug.log ("Creating edge: #" ++ String.fromInt source ++ " -> #" ++ String.fromInt destination ++ " on transition " ++ String.fromChar transition ++ ", outgoing is now " ++ Debug.toString (IntDict.toList v)) () |> \_ -> v
 
-remove_unreachable : NodeId -> List MTransition -> MADFARecord -> MADFARecord
+remove_unreachable : NodeId -> Maybe (List MTransition) -> MADFARecord -> MADFARecord
 remove_unreachable current transitions madfa =
   case transitions of
-    [] ->
+    Nothing ->
       madfa
-    h::rest ->
+    Just [] ->
+      Graph.get current madfa.graph
+      |> Maybe.map (\node ->
+        if IntDict.isEmpty node.incoming then
+          { madfa
+          | graph = Graph.remove current madfa.graph
+          , register =
+              Dict.remove (toRegisterValue current madfa) madfa.register
+              -- |> (Debug.log ("Removing(Ⅱ) unreachable node #" ++ String.fromInt current ++ ", remaining in register"))
+          }
+        else
+          madfa
+      )
+      |> Maybe.withDefault madfa
+    Just (h::rest) ->
       let
         ( is_unreachable, q_next ) =
           Graph.get current madfa.graph
@@ -172,7 +182,7 @@ remove_unreachable current transitions madfa =
             | graph = Graph.remove current madfa.graph
             , register =
                 Dict.remove (toRegisterValue current madfa) madfa.register
---                |> (Debug.log ("Removing unreachable node #" ++ String.fromInt current ++ ", remaining in register"))
+                -- |> (Debug.log ("Removing unreachable node #" ++ String.fromInt current ++ ", remaining in register"))
             }
           else
 --            Debug.log ("Node #" ++ String.fromInt current ++ " is not unreachable") () |> \_ ->
@@ -183,7 +193,7 @@ remove_unreachable current transitions madfa =
             updated_madfa
           Just next ->
             if is_unreachable then
-              remove_unreachable next rest updated_madfa
+              remove_unreachable next (Just rest) updated_madfa
             else
               updated_madfa
 
@@ -290,7 +300,7 @@ phase2 original_q0 w original_madfa =
   -- original_madfa.queue |> Debug.log "[2] original_madfa queue" |> \_ ->
   -- original_madfa.register |> Debug.log "[2] original_madfa register" |> \_ ->
   -- original_madfa.root |> Debug.log "[2] original_madfa root" |> \_ ->
-  remove_unreachable original_q0 (List.map Tuple.first w) original_madfa
+  remove_unreachable original_q0 (Just <| List.map Tuple.first w) original_madfa
 
 phase3 : List NodeId -> MADFARecord -> MADFARecord
 phase3 clones_and_queued original_madfa =
@@ -318,13 +328,12 @@ addWordString w existing =
       -- |> madfaLog "🤖 AFTER PHASE 1 (clone & queue)" "🎯 BEGINNING PHASE 2 (handle reachability)"
     phase_2 = -- here, we remove unreachable states
       phase2 original_q0 w phase_1
-    -- CHECK ALGORITHM: why is there _another_ if-statement after, to handle a node at |w|+1?  Can unreachable go that far?
     -- Now, after this I need to replace the original_q0 with the cloned one.  The tough thing is that… I haven't kept track of it!
     -- However, I WILL find it as the smallest number in the list of cloned/queued states.
     clones_and_queued =
       Set.toList phase_2.cloned ++ Set.toList phase_2.queue
     phase_2_end =
-      (case List.minimum clones_and_queued of
+      (case List.head clones_and_queued of -- a set will give me things in sorted order; and cloned always precedes queued.
         Nothing ->
           phase_2 -- this can only happen if NOTHING has been cloned OR queued
         Just min ->

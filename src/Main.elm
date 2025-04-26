@@ -28,9 +28,7 @@ import Platform.Cmd as Cmd
 import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
-import Html
 import Html.Styled.Attributes exposing (for)
-import Result.Extra
 import DAWG.Simplify3
 
 -- MAIN
@@ -73,7 +71,6 @@ type alias DAWGMetrics =
 type alias Model =
   { dragState : DragState
   , text : String
-  , algebraic : String
   , dawg : DAWG
   , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
@@ -146,7 +143,6 @@ defaultModel : Model
 defaultModel =
   { dragState = Static
   , text = ""
-  , algebraic = ""
   , dawg = DAWG.empty
   , forceDirectedGraph =
       ForceDirectedGraph.init DAWG.empty (0, 0)
@@ -207,8 +203,6 @@ type Msg
   | ForceDirectedMsg ForceDirectedGraph.Msg
   | ViewportResizeTrigger
   | OnResize (Float, Float)
-  | AlgebraicTextInput String
-  | SetAlgebraicUse Bool
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -249,30 +243,6 @@ update msg model =
         }
       , Cmd.none
       )
-
-    AlgebraicTextInput text ->
-      let
-        dawg = DAWG.fromLines text
-      in
-      ( { model
-          | algebraic = text
-          , text = DAWG.Verification.recognizedWords dawg |> String.join "\n"
-          , dawg = dawg
-          , forceDirectedGraph =
-              ForceDirectedGraph.update
-                (model.dimensions.leftPanel.width + 10, 10)
-                (ForceDirectedGraph.GraphUpdated dawg)
-                model.forceDirectedGraph
-          , metrics = calcMetrics dawg
-        }
-      , Cmd.none
-      )
-
-    SetAlgebraicUse yesno ->
-      ( { model
-          | useAlgebraic = yesno
-        }
-      , Cmd.none )
 
     ViewportResizeTrigger ->
       ( model
@@ -356,42 +326,42 @@ view model =
               , onInput TextInput
               ]
               [ Html.Styled.text model.text ]
-          , textarea
-              [ css
-                  [ flexGrow (num 1)
-                  , resize none
-                  , border (px 0)
-                  , padding4 (px 4) (px 0) (px 4) (px 10)
-                  , borderRadius4 (px 0) (px 0) (px 0) (px 8)
-                  , marginBottom (px 5)
-                  -- , backgroundColor (rgb 90 200 120)
-                  , border3 (px 1) solid (rgb 128 128 128)
-                  , fontSize (px 18)
-                  , fontFamilyMany
-                      ["Baskerville", "Libre Baskerville", "Consolas", "Cascadia Code", "Fira Code"]
-                      serif
-                  ]
-              , HA.placeholder "Algebraic input here"
-              , onInput AlgebraicTextInput
-              ]
-              [ Html.Styled.text model.algebraic ]
-          , div
-              [ css
-                  [ height (Css.em 2.2)
-                  , flexGrow (num 0)
-                  ]
-              ]
-              [ input
-                  [ HA.type_ "checkbox"
-                  , HA.id "useAlgebraic"
-                  , onCheck SetAlgebraicUse
-                  ]
-                  []
-              , label
-                  [ for "checkbox" ]
-                  [ Html.Styled.text "Use algebraic?" ]
+          -- , textarea
+          --     [ css
+          --         [ flexGrow (num 1)
+          --         , resize none
+          --         , border (px 0)
+          --         , padding4 (px 4) (px 0) (px 4) (px 10)
+          --         , borderRadius4 (px 0) (px 0) (px 0) (px 8)
+          --         , marginBottom (px 5)
+          --         -- , backgroundColor (rgb 90 200 120)
+          --         , border3 (px 1) solid (rgb 128 128 128)
+          --         , fontSize (px 18)
+          --         , fontFamilyMany
+          --             ["Baskerville", "Libre Baskerville", "Consolas", "Cascadia Code", "Fira Code"]
+          --             serif
+          --         ]
+          --     , HA.placeholder "Algebraic input here"
+          --     , onInput AlgebraicTextInput
+          --     ]
+          --     [ Html.Styled.text model.algebraic ]
+          -- , div
+          --     [ css
+          --         [ height (Css.em 2.2)
+          --         , flexGrow (num 0)
+          --         ]
+          --     ]
+          --     [ input
+          --         [ HA.type_ "checkbox"
+          --         , HA.id "useAlgebraic"
+          --         , onCheck SetAlgebraicUse
+          --         ]
+          --         []
+          --     , label
+          --         [ for "checkbox" ]
+          --         [ Html.Styled.text "Use algebraic?" ]
 
-              ]
+          --     ]
           ]
       -- splitter
       , div
