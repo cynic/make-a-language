@@ -145,9 +145,9 @@ suite =
         --   -- , benchmark "500 words" <|
         --   --     \_ -> fromWords4 five_hundred_words
         --   ]
-        -- describe "(Carrasco & Forcada) fromWords, algorithm only" <|
-        -- [ benchmark "10 words" <|
-        --     \_ -> DAWG.Simplify3.toMADFA ten_words
+        describe "(Carrasco & Forcada) fromWords, algorithm only" <|
+        [ benchmark "10 words" <|
+            \_ -> DAWG.Simplify3.toMADFA ten_words
         -- , benchmark "50 words" <|
         --     \_ -> DAWG.Simplify3.toMADFA fifty_words
         -- , benchmark "100 words" <|
@@ -164,8 +164,8 @@ suite =
         -- --     \_ -> DAWG.Simplify3.fromWords hundred_words
         -- -- , benchmark "500 words" <|
         -- --     \_ -> fromWords4 five_hundred_words
-        -- ]
-        describe "Individual phases (Carrasco & Forcada)" <|
+        ]
+      , describe "Individual phases (Carrasco & Forcada)" <|
         [ describe "Phase 1" <|
           [ benchmark "50 words check" <|
               \_ -> DAWG.Simplify3.phase1 w original_q0 new_q0 p1_original_madfa

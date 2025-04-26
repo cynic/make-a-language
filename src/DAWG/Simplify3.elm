@@ -208,10 +208,6 @@ merge new original madfa =
       Graph.get new madfa.graph
       |> Maybe.map .incoming
       |> Maybe.withDefault IntDict.empty -- nonsense
-    -- new_incoming_states =
-    --   IntDict.keys new_incoming
-    -- new_incoming_keys =
-    --   List.map (\k -> toRegisterValue k madfa) new_incoming_states
     new_madfa =
       { madfa
       | graph =
@@ -224,12 +220,6 @@ merge new original madfa =
             madfa.graph
           |> Graph.remove new
       }
-    -- with_updated_register =
-    --   { new_madfa
-    --   | register =
-    --       List.foldl Dict.remove madfa.register new_incoming_keys -- these are the states affected by the merge. Remove their original keys…
-    --       |> \d -> List.foldl (\node state -> Dict.insert (toRegisterValue node new_madfa) node state) d new_incoming_states -- … and recompute them.
-    --   }
   in
     --with_updated_register
     new_madfa
