@@ -1,16 +1,12 @@
 module Automata.MADFA exposing (..)
-import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
+import Graph exposing (Graph, NodeContext, Node, NodeId)
 import IntDict exposing (IntDict)
 import Set exposing (Set)
 import List.Extra as List
 import Maybe.Extra as Maybe
-import Html.Attributes exposing (src)
 import Dict exposing (Dict)
 import Automata.Data exposing (..)
-import Svg.Attributes exposing (k)
 import Automata.Debugging
-
-type alias EdgeRecord = Edge MTransition
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -23,9 +19,6 @@ type alias MConnection = Set MTransition -- a MConnection is a link between two 
 -- type alias Connections = IntDict MConnection
 type alias Node = NodeContext Bool MConnection -- a Node indicates terminality
 type alias FAGraph = Graph Bool MConnection -- finally, the Finite Automaton.
-type Automaton
-  = MADFA MADFARecord -- minimal acyclic deterministic finite automaton
---  | DFA -- deterministic finite automaton
 
 type alias RegisterValue = ( Int, List ( NodeId, List MTransition ) ) -- (isFinal, list-of-outgoing)
 
