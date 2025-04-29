@@ -468,9 +468,10 @@ collapse_from to_process processed graph =
         ( ancestors, new_graph ) = collapse node_id graph
         -- never re-process a node
         new_to_process =
-          IntDict.union to_process ancestors |> IntDict.diff processed
+          IntDict.diff (IntDict.union to_process ancestors) processed
+          -- |> Debug.log "Result"
         new_processed =
-          IntDict.insert node_id () processed
+          IntDict.insert node_id () processed --|> Debug.log "Processed"
       in
       collapse_from new_to_process new_processed new_graph
     Nothing ->
@@ -488,6 +489,7 @@ toDAWG madfa =
     finalNodes =
       Graph.nodes madfa.graph
       |> List.filterMap (\node -> if node.label then Just node.id else Nothing)
+      -- |> Debug.log "Final nodes"
     finalNodesSet =
       Set.fromList finalNodes
     yesMap t = (t, 1)
@@ -506,7 +508,10 @@ toDAWG madfa =
             (IntDict.map (\k v -> if Set.member k finalNodesSet then Set.map yesMap v else Set.map noMap v) outgoing)
         )
         madfa.graph
-    collapsed = collapse_from (finalNodes |> List.map (\x -> (x, ())) |> IntDict.fromList) IntDict.empty graph
+      -- |> Automata.Debugging.debugGraph "Pre-collapse"
+    collapsed =
+      collapse_from (finalNodes |> List.map (\x -> (x, ())) |> IntDict.fromList) IntDict.empty graph
+      -- |> Automata.Debugging.debugGraph "Post-collapse"
     max = madfa.maxId
     root = madfa.root
   in

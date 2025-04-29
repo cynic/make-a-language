@@ -4,8 +4,8 @@ import Graph exposing (Graph)
 
 debug_log : String -> a -> a
 debug_log s x =
-  -- Debug.log s x
-  x
+  Debug.log s x
+  -- x
 
 debugGraph : String -> Graph () Connection -> Graph () Connection
 debugGraph txt graph =
