@@ -32,6 +32,7 @@ type Msg
 type alias Model =
   { drag : Maybe Drag
   , graph : Graph Entity Connection
+  , start : NodeId
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
@@ -102,8 +103,8 @@ viewportForces (w, h) _ =
   --       )
   --       (Graph.nodes graph)
   ]
-basicForces : Graph Entity Connection -> (Int, Int) -> List (Force.Force NodeId)
-basicForces graph (width, height) =
+basicForces : NodeId -> Graph Entity Connection -> (Int, Int) -> List (Force.Force NodeId)
+basicForces start graph (width, height) =
   [
     Force.customLinks 3 <|
       List.map
@@ -121,8 +122,8 @@ basicForces graph (width, height) =
   , Force.towardsX <|
       List.filterMap
         (\n ->
-          if n.id == 0 then
-            Just { node = 0, strength = 0.1, target = 0 }
+          if n.id == start then
+            Just { node = start, strength = 0.1, target = 0 }
           else
             Nothing
         )
@@ -130,7 +131,7 @@ basicForces graph (width, height) =
   , Force.towardsY <|
       List.filterMap
         (\n ->
-          if n.id == 0 then
+          if n.id == start then
             Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
           else
             Nothing
@@ -138,10 +139,10 @@ basicForces graph (width, height) =
         (Graph.nodes graph)
   ]
 
-makeSimulation : (Float, Float) -> Graph Entity Connection -> Force.State NodeId
-makeSimulation (w, h) graph =
+makeSimulation : NodeId -> (Float, Float) -> Graph Entity Connection -> Force.State NodeId
+makeSimulation start (w, h) graph =
   Force.simulation
-    (basicForces graph (round w, round h) ++ viewportForces (w, h) graph)
+    (basicForces start graph (round w, round h) ++ viewportForces (w, h) graph)
 
 toForceGraph : AutomatonGraph -> Graph Entity Connection
 toForceGraph g =
@@ -151,7 +152,7 @@ receiveDAWG : AutomatonGraph -> (Float, Float) -> Model
 receiveDAWG dawg (w, h) =
   let
     forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} )
-    basic = basicForces forceGraph (round w, round h)
+    basic = basicForces dawg.root forceGraph (round w, round h)
     viewport = viewportForces (w, h) forceGraph
   in
     { drag = Nothing
@@ -161,6 +162,7 @@ receiveDAWG dawg (w, h) =
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
+    , start = dawg.root
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -394,13 +396,13 @@ linkElement graph edge =
       ]
 
 
-nodeElement : { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
-nodeElement node =
+nodeElement : NodeId -> { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
+nodeElement start node =
   let
     radius = 8
     outerRadius = radius + 3.5
     color =
-      if node.id == 0 then
+      if node.id == start then
         Color.rgb 0.8 0.0 0.7
       else if node.label.value.isFinal then
         Color.rgb255 255 255 8
@@ -421,7 +423,7 @@ nodeElement node =
           , cy node.label.y
           ]
           [ title [] [ text <| String.fromInt node.id ] ]
-      ::  if node.label.value.isFinal || node.id == 0 then
+      ::  if node.label.value.isFinal || node.id == start then
             [ circle
                 [ r outerRadius
                 , fill <| Paint <| Color.rgba 0 0 0 0
@@ -463,7 +465,7 @@ view model =
       |> List.map (linkElement model.graph)
       |> g [ class [ "links" ] ]
     , Graph.nodes model.graph
-      |> List.map nodeElement
+      |> List.map (nodeElement model.start)
       |> g [ class [ "nodes" ] ]
     ]
 
