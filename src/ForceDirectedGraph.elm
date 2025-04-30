@@ -500,17 +500,18 @@ nodeElement start node =
         paletteColors.state.normal
   in
     g
-      []
+      [ onMouseDown node.id
+      , class ["state-node"]
+      ]
       [ circle
           [ r radius
-          , fill <| Paint color
-          , stroke <| Paint color
-          , strokeWidth 1
-          , onMouseDown node.id
+          -- , fill <| Paint color
+          -- , stroke <| Paint color
+          , strokeWidth 2
           , cx node.label.x
           , cy node.label.y
           ]
-          [ title [] [ text <| String.fromInt node.id ] ]
+          []
        ,  if node.label.value.isTerminal then
             text_
               [ x <| node.label.x
@@ -542,6 +543,12 @@ nodeElement start node =
               [ text "⭐" ]
           else
             g [] []
+      , title
+          []
+          [ text <|
+              -- String.fromInt node.id
+              "Drag to reposition\nClick to create new transition"
+          ]
       ]
       -- ::  if node.label.value.isFinal || node.id == start then
       --       [ circle
