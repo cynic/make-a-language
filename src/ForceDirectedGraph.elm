@@ -9,12 +9,15 @@ import TypedSvg exposing
   (circle, g, line, svg, title, text_, marker, path, defs, tspan)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
-  , textAnchor, cursor, id, refX, refY, orient, d, markerEnd)
+  , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
+  , color)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
   , markerWidth, markerHeight)
 import TypedSvg.Core exposing (Attribute, Svg, text)
-import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..), Cursor(..))
+import TypedSvg.Types exposing
+  (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
+  , Cursor(..), DominantBaseline(..))
 import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import Html.Attributes exposing (attribute)
 import Set
@@ -313,18 +316,43 @@ transitionToTextSpan : (Char, Int) -> Svg msg
 transitionToTextSpan transition =
   case transition of
     (ch, 0) ->
-      tspan [] [ text <| textChar ch ]
+      tspan
+        [ fill <| Paint <| paletteColors.transition.nonFinal
+        , strokeWidth 4
+        , stroke <| Paint <| paletteColors.transition.textBackground
+        ]
+        [ text <| textChar ch
+        ]
     (ch, _) ->
       tspan
         [ fontWeight FontWeightBolder
-        , fill <| Paint <| Color.darkOrange
+        , fill <| Paint <| paletteColors.transition.final
+        , strokeWidth 4
+        , stroke <| Paint <| paletteColors.transition.textBackground
         ]
-        [ text <| textChar ch ]
+        [ text <| textChar ch
+        ]
 
 connectionToSvgText : Connection -> List (Svg msg)
 connectionToSvgText =
   Set.toList
   >> List.map transitionToTextSpan
+
+paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color, textBackground : Color.Color } }
+paletteColors =
+  { state =
+    { normal = Color.rgb255 0 222 255
+    , start = Color.rgb255 0 35 135
+    , terminal = Color.rgb255 0 123 167
+    }
+  , edge = Color.hsl 1 0 0.35
+  , transition =
+      { nonFinal = Color.hsl 1 0 0.25
+      -- orange is from ≈31°-39° (←red, orange, yellow→).
+      , final = Color.darkOrange
+      , textBackground = Color.grey
+      }
+  }
 
 linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
 linkElement graph edge =
@@ -358,9 +386,10 @@ linkElement graph edge =
   in
     g
       []
-      [ line
+      [
+        line
           [ strokeWidth 3
-          , stroke <| Paint <| Color.rgba 0 0.3 1.0 0.3
+          , stroke <| Paint <| paletteColors.edge
           , x1 source.x
           , y1 source.y
           , x2 target.x
@@ -386,9 +415,6 @@ linkElement graph edge =
           , fontWeight FontWeightNormal
           , textAnchor AnchorMiddle
           , alignmentBaseline AlignmentCentral
-          , fill <| Paint <| Color.black
-          , strokeWidth 3
-          , stroke <| Paint <| Color.grey
           , attribute "paint-order" "stroke fill markers"
           , cursor CursorDefault
           ]
@@ -399,21 +425,23 @@ linkElement graph edge =
 nodeElement : NodeId -> { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
 nodeElement start node =
   let
-    radius = 8
+    radius =
+      if node.id == start || node.label.value.isTerminal then
+        9
+      else
+        7
     outerRadius = radius + 3.5
     color =
       if node.id == start then
-        Color.rgb 0.8 0.0 0.7
-      else if node.label.value.isFinal then
-        Color.rgb255 255 255 8
-      else if node.label.value.isTerminal then
-        Color.rgb255 25 165 25
+        paletteColors.state.start
+      else if node.label.value.isTerminal  then
+        paletteColors.state.terminal
       else
-        Color.black
+        paletteColors.state.normal
   in
     g
       []
-      ( circle
+      [ circle
           [ r radius
           , fill <| Paint color
           , stroke <| Paint color
@@ -423,21 +451,53 @@ nodeElement start node =
           , cy node.label.y
           ]
           [ title [] [ text <| String.fromInt node.id ] ]
-      ::  if node.label.value.isFinal || node.id == start then
-            [ circle
-                [ r outerRadius
-                , fill <| Paint <| Color.rgba 0 0 0 0
-                , stroke <| Paint Color.darkCharcoal
-                , strokeWidth 2.5
-                , onMouseDown node.id
-                , cx node.label.x
-                , cy node.label.y
-                ]
-                [ title [] [ text <| String.fromInt node.id ] ]
-            ]
+       ,  if node.label.value.isTerminal then
+            text_
+              [ x <| node.label.x
+              , y <| (node.label.y + 1)
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentBaseline
+              , dominantBaseline DominantBaselineMiddle
+              , attribute "paint-order" "stroke fill markers"
+              , cursor CursorDefault
+              ]
+              [ text "🎯" ]
+          else if node.id == start then
+            text_
+              [ x <| node.label.x
+              , y <| (node.label.y + 1)
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentBaseline
+              , dominantBaseline DominantBaselineMiddle
+              , attribute "paint-order" "stroke fill markers"
+              , cursor CursorDefault
+              , fill <| Paint <| Color.grey
+              ]
+              [ text "⭐" ]
           else
-            []
-      )
+            g [] []
+      ]
+      -- ::  if node.label.value.isFinal || node.id == start then
+      --       [ circle
+      --           [ r outerRadius
+      --           , fill <| Paint <| Color.rgba 0 0 0 0 -- transparent
+      --           , stroke <| Paint color
+      --           , strokeWidth 2.5
+      --           , onMouseDown node.id
+      --           , cx node.label.x
+      --           , cy node.label.y
+      --           ]
+      --           [ title [] [ text <| String.fromInt node.id ] ]
+      --       ]
+      --     else
+      --       []
+      -- )
 
 arrowheadMarker : Svg msg
 arrowheadMarker =
@@ -449,7 +509,7 @@ arrowheadMarker =
     , orient "auto-start-reverse"
     , markerWidth 5
     , markerHeight 5
-    , fill <| Paint <| Color.rgba 0 0.3 1.0 0.5
+    , fill <| Paint <| paletteColors.edge
     ]
     [ path
         [ d "M 0 0 L 10 5 L 0 10 z" ]

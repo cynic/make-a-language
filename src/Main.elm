@@ -285,6 +285,7 @@ view model =
       [ css
           [ margin (px 0)
           , padding (px 0)
+          , backgroundColor (hsl 1 0 0.85) -- off-white / light gray
           , Css.width (vw 100)
           , Css.height (vh 100)
           , gridTemplateColumns <| trackList (px model.dimensions.leftPanel.width) [px model.layoutConfiguration.leftRightSplitterWidth, fr 1]
