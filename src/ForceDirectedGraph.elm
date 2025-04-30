@@ -10,7 +10,7 @@ import TypedSvg exposing
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , color)
+  , color, noFill)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
   , markerWidth, markerHeight)
@@ -319,7 +319,7 @@ transitionToTextSpan transition =
       tspan
         [ fill <| Paint <| paletteColors.transition.nonFinal
         , strokeWidth 4
-        , stroke <| Paint <| paletteColors.transition.textBackground
+        , stroke <| Paint <| paletteColors.background
         ]
         [ text <| textChar ch
         ]
@@ -328,7 +328,7 @@ transitionToTextSpan transition =
         [ fontWeight FontWeightBolder
         , fill <| Paint <| paletteColors.transition.final
         , strokeWidth 4
-        , stroke <| Paint <| paletteColors.transition.textBackground
+        , stroke <| Paint <| paletteColors.background
         ]
         [ text <| textChar ch
         ]
@@ -338,7 +338,7 @@ connectionToSvgText =
   Set.toList
   >> List.map transitionToTextSpan
 
-paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color, textBackground : Color.Color } }
+paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
 paletteColors =
   { state =
     { normal = Color.rgb255 0 222 255
@@ -350,8 +350,8 @@ paletteColors =
       { nonFinal = Color.hsl 1 0 0.25
       -- orange is from ≈31°-39° (←red, orange, yellow→).
       , final = Color.darkOrange
-      , textBackground = Color.grey
       }
+  , background = Color.grey -- for painting a surrounding stroke
   }
 
 linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
@@ -376,27 +376,87 @@ linkElement graph edge =
         -- , height_em |> em_to_px
         )
     font_size = 16.0 -- this is the default, if not otherwise set
-    m = (source.y - target.y) / (source.x - target.x)
+    d_y = source.y - target.y
+    d_x = source.x - target.x
+    line_len = sqrt (d_x * d_x + d_y * d_y)
+    m = d_y / d_x
     c = source.y - (m * source.x)
     y_value y = m * y + c
     midPoint =
       { x = (source.x + target.x) / 2
       , y = y_value <| (source.x + target.x) / 2
       }
+    {- we're doing a curved line, using a quadratic path.
+       So, let's make a triangle. The two points at the "base" are the
+       start and end of the connection ("source" and "target").  Now,
+       take two lines at an angle Θ from both sides, and where they
+       meet is our control point.  We can then adjust the angle "up" and
+       "down" until we are satisfied with the look.
+       
+       Of course, because the angles are equal, the length of the lines is
+       also equal.  So another equivalent way of going about it is by getting
+       the midpoint and then pushing a line "up", orthogonal to that midpoint,
+       and saying that this is the control point.  As the length of the line
+       increases, the angle increases too.
+    --}
+    parametric_direction_vector =
+      -- normalised
+      { x = -(target.y - source.y) / line_len
+      , y = -(target.x - source.x) / line_len
+      }
+    desired_length = 0.4 * line_len -- increase/decrease for a larger/smaller angle
+    control_vector =
+      { y = desired_length * parametric_direction_vector.y
+      , x = -desired_length * parametric_direction_vector.x
+      }
+    control_point =
+      { x = midPoint.x + control_vector.x
+      , y = midPoint.y + control_vector.y
+      }
+    transition_coordinates =
+      { x = midPoint.x + control_vector.x / 2
+      , y = midPoint.y + control_vector.y / 2
+      }
   in
     g
       []
       [
-        line
-          [ strokeWidth 3
-          , stroke <| Paint <| paletteColors.edge
-          , x1 source.x
-          , y1 source.y
-          , x2 target.x
-          , y2 target.y
-          , markerEnd "url(#arrowhead)"
+        -- line
+        --   [ strokeWidth 3
+        --   , stroke <| Paint <| paletteColors.edge
+        --   , x1 source.x
+        --   , y1 source.y
+        --   , x2 target.x
+        --   , y2 target.y
+        --   , markerEnd "url(#arrowhead)"
+        --   ]
+        --   [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
+        path
+          [ strokeWidth 5
+          , stroke <| Paint <| paletteColors.background
+          , d <| "M " ++ String.fromFloat source.x ++ " " ++ String.fromFloat source.y ++
+              " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
+              " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
+          , noFill
           ]
           [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
+      , path
+          [ strokeWidth 3
+          , stroke <| Paint <| paletteColors.edge
+          , d <| "M " ++ String.fromFloat source.x ++ " " ++ String.fromFloat source.y ++
+              " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
+              " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
+          , markerEnd "url(#arrowhead)"
+          , noFill
+          ]
+          [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
+      -- , circle -- show where the control point is
+      --     [ r 4
+      --     , fill <| Paint <| paletteColors.edge
+      --     , cx control_point.x
+      --     , cy control_point.y
+      --     ]
+      --     []
       -- , rect
       --     [ x <| midPoint.x - (width / 2)
       --     , y <| midPoint.y - (height / 2)
@@ -408,8 +468,8 @@ linkElement graph edge =
       --     ]
       --     []
       , text_
-          [ x <| midPoint.x
-          , y <| midPoint.y + (padding / 2)
+          [ x <| transition_coordinates.x
+          , y <| transition_coordinates.y + (padding / 2)
           , fontFamily ["sans-serif"]
           , fontSize font_size
           , fontWeight FontWeightNormal
