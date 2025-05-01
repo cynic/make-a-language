@@ -31,3 +31,14 @@ textarea:focus {
   fill: rgb(9, 255, 0);
   cursor: pointer;
 }
+#reset-zoom rect {
+  fill: rgba(255, 255, 255, 0.8);
+  transition: all 0.25s ease;
+}
+#reset-zoom rect:hover {
+  fill: gray;
+  cursor: pointer;
+}
+#reset-zoom text {
+  pointer-events: none;
+}

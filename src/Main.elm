@@ -26,6 +26,7 @@ import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
 import Automata.MADFA
+import Html.Events as HE
 
 -- MAIN
 
@@ -90,7 +91,7 @@ viewportDimensionsToLayoutDimensions : Dimensions -> LayoutConfiguration -> Layo
 viewportDimensionsToLayoutDimensions viewport config =
   let
     recognizedWordsHeight = 38
-    rightPanelHeight = viewport.height - recognizedWordsHeight - 6
+    rightPanelHeight = viewport.height - recognizedWordsHeight
   in
   { viewport = viewport
   , leftPanel =

@@ -3,25 +3,29 @@ import Browser.Events
 import Color
 import Force
 import Graph exposing (Edge, Graph, NodeContext, NodeId)
+import Html.Events as HE
 import Html.Events.Extra.Mouse as Mouse
 import Json.Decode as Decode
 import TypedSvg exposing
-  (circle, g, line, svg, title, text_, marker, path, defs, tspan)
+  (circle, g, line, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , color, noFill)
+  , transform, noFill, width, rx, ry)
+import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
   , markerWidth, markerHeight)
 import TypedSvg.Core exposing (Attribute, Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
-  , Cursor(..), DominantBaseline(..))
+  , Cursor(..), DominantBaseline(..), Transform(..))
 import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import Html.Attributes exposing (attribute)
+import Html
 import Set
 import IntDict
+import TypedSvg.Attributes.InPx as Px
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -30,7 +34,10 @@ type Msg
   | Tick
   | GraphUpdated AutomatonGraph
   | ViewportUpdated (Float, Float)
+  | Zoom Float (Float, Float)
+  | ResetZoom
 
+-- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
 type alias Model =
   { drag : Maybe Drag
@@ -41,6 +48,7 @@ type alias Model =
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
+  , zoom : ( Float, ( Float, Float ) ) -- zoom-factor, center-x, center-y
   }
 
 
@@ -166,6 +174,7 @@ receiveDAWG dawg (w, h) =
     , viewportForces = viewport
     , specificForces = IntDict.empty
     , start = dawg.root
+    , zoom = ( 1.0, ( 0, 0 ) )
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -274,6 +283,20 @@ update offset_amount msg model =
 
         Nothing ->
           { model | drag = Nothing }
+
+    Zoom amount (cx, cy) ->
+      let
+        newZoom = clamp 0.5 2.5 (Tuple.first model.zoom - 0.0003 * amount)
+      in
+        if newZoom == Tuple.first model.zoom then
+          model
+        else
+          { model
+          | zoom = ( newZoom, (cx, cy) )
+          }
+
+    ResetZoom ->
+      { model | zoom = (1.0, (0, 0)) }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -583,19 +606,91 @@ arrowheadMarker =
         []
     ]
 
+matrixFromZoom : (Float, Float) -> (Float, ( Float, Float )) -> Transform
+matrixFromZoom (w, h) (factor, (centerX, centerY)) =
+{- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
+
+  The matrix is the "usual":
+
+  ⎾ a c e ⏋ ⎾ x ⏋
+  | b d f | | y |
+  ⎿ 0 0 1 ⏌ ⎿ 1 ⏌
+
+  - the new x-coordinate of each element is a・x + c・y + e
+  - the new y-coordinate of each element is b・x + d・y + f
+-}
+
+  Matrix
+    factor
+    0
+    0
+    factor
+    ( (1 - factor) * centerX)
+    ( (1 - factor) * centerY)
+  -- |> Debug.log "matrix transform applied"
+
 view : Model -> Svg Msg
 view model =
   svg
-    [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions) ]
-    [ defs [] [ arrowheadMarker ]
-    , Graph.edges model.graph
-      |> List.map (linkElement model.graph)
-      |> g [ class [ "links" ] ]
-    , Graph.nodes model.graph
-      |> List.map (nodeElement model.start)
-      |> g [ class [ "nodes" ] ]
+    [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
+    , onMouseScroll Zoom
+    ]
+    [ g
+      [ transform [ matrixFromZoom model.dimensions (model.zoom {- |> Debug.log "zoom" -} ) ] ]
+      [ defs [] [ arrowheadMarker ]
+      , Graph.edges model.graph
+        |> List.map (linkElement model.graph)
+        |> g [ class [ "links" ] ]
+      , Graph.nodes model.graph
+        |> List.map (nodeElement model.start)
+        |> g [ class [ "nodes" ] ]
+      ]
+      , if model.zoom /= ( 1.0, ( 0, 0 ) ) then
+          -- put in a "reset zoom" button which will ALWAYS be at the bottom-right.
+          g
+            [ cursor CursorPointer
+            , id "reset-zoom"
+            , onClick ResetZoom
+            ]
+            [ rect
+                [ x (Tuple.first model.dimensions - 121)
+                , y (Tuple.second model.dimensions - 30)
+                , Px.width 120
+                , Px.height 30
+                , stroke <| Paint <| Color.black
+                , strokeWidth 1
+                , Px.rx 5
+                , Px.ry 5
+                ]
+                []
+            , text_
+                [ x (Tuple.first model.dimensions - 61)
+                , y (Tuple.second model.dimensions - 15)
+                , fill <| Paint <| Color.black
+                , fontFamily ["sans-serif"]
+                , fontSize 14
+                , textAnchor AnchorMiddle
+                , alignmentBaseline AlignmentCentral
+                , dominantBaseline DominantBaselineCentral
+                ]
+                [ text " 🔍 Reset zoom" ]
+
+            ]
+        else
+          g [] []
     ]
 
+onMouseScroll : (Float -> (Float, Float) -> msg) -> Html.Attribute msg
+onMouseScroll msg =
+  HE.on "wheel"
+    (Decode.map2 msg
+      (Decode.at [ "deltaY" ] Decode.float)
+      (Decode.map2 Tuple.pair
+        (Decode.at [ "offsetX" ] Decode.float)
+        (Decode.at [ "offsetY" ] Decode.float)
+      )
+    )
+  
 
 -- main : Program DAWGGraph Model Msg
 -- main =
