@@ -31,6 +31,9 @@ textarea:focus {
   fill: rgb(9, 255, 0);
   cursor: pointer;
 }
+.state-node.selected {
+  fill: rgb(255, 0, 179)
+}
 #reset-zoom rect {
   fill: rgba(255, 255, 255, 0.8);
   transition: all 0.25s ease;

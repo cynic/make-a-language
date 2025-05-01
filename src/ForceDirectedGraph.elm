@@ -4,7 +4,7 @@ import Color
 import Force
 import Graph exposing (Edge, Graph, NodeContext, NodeId)
 import Html.Events as HE
-import Html.Events.Extra.Mouse as Mouse
+import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
 import Json.Decode as Decode
 import TypedSvg exposing
   (circle, g, line, svg, title, text_, marker, path, defs, tspan, rect)
@@ -26,6 +26,8 @@ import Html
 import Set
 import IntDict
 import TypedSvg.Attributes.InPx as Px
+import Html.Attributes exposing (selected)
+import Maybe.Extra exposing (prev)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -37,6 +39,8 @@ type Msg
   | MouseMove Float Float
   | Zoom Float
   | ResetZoom
+  | SelectNode NodeId
+  | DeselectNode
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -51,6 +55,7 @@ type alias Model =
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
   , zoom : Float -- zoom-factor
   , mouseCoords : ( Float, Float )
+  , selectedNode : Maybe NodeId
   }
 
 
@@ -178,6 +183,7 @@ receiveDAWG dawg (w, h) =
     , start = dawg.root
     , zoom = 1.0
     , mouseCoords = ( 0, 0 )
+    , selectedNode = Nothing
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -302,6 +308,12 @@ update offset_amount msg model =
     MouseMove x y ->
       { model | mouseCoords = (x, y) }
 
+    SelectNode index ->
+      { model | selectedNode = Just index }
+
+    DeselectNode ->
+      { model | selectedNode = Nothing }
+
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
   (x - offset_x, y - offset_y)
@@ -329,7 +341,15 @@ subscriptions offset_amount model =
 
 onMouseDown : NodeId -> Attribute Msg
 onMouseDown index =
-  Mouse.onDown (.clientPos >> DragStart index)
+  Mouse.onWithOptions
+    "mousedown"
+    { stopPropagation = True, preventDefault = True }
+    (\e ->
+      if e.button == SecondButton then
+        e.clientPos |> DragStart index
+      else
+        SelectNode index
+    )
 
 textChar : Char -> String
 textChar ch =
@@ -511,8 +531,8 @@ linkElement graph edge =
       ]
 
 
-nodeElement : NodeId -> { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
-nodeElement start node =
+nodeElement : NodeId -> Bool -> { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
+nodeElement start selected node =
   let
     radius =
       if node.id == start || node.label.value.isTerminal then
@@ -530,7 +550,7 @@ nodeElement start node =
   in
     g
       [ onMouseDown node.id
-      , class ["state-node"]
+      , class ("state-node" :: if selected then [ "selected" ] else [])
       ]
       [ circle
           [ r radius
@@ -576,7 +596,7 @@ nodeElement start node =
           []
           [ text <|
               -- String.fromInt node.id
-              "Drag to reposition\nClick to create new transition"
+              "Drag with right button to reposition\nClick to create new transition"
           ]
       ]
       -- ::  if node.label.value.isFinal || node.id == start then
@@ -641,6 +661,10 @@ view model =
     [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
     , onMouseScroll Zoom
     , onMouseMove MouseMove
+    , Mouse.onWithOptions
+        "mousedown"
+        { stopPropagation = True, preventDefault = True }
+        (\_ -> DeselectNode)
     ]
     [ g
       [ transform [ matrixFromZoom model.dimensions model.zoom model.mouseCoords ] ]
@@ -649,7 +673,7 @@ view model =
         |> List.map (linkElement model.graph)
         |> g [ class [ "links" ] ]
       , Graph.nodes model.graph
-        |> List.map (nodeElement model.start)
+        |> List.map (\n -> nodeElement model.start (Just n.id == model.selectedNode) n)
         |> g [ class [ "nodes" ] ]
       ]
       , if model.zoom /= 1.0 then
