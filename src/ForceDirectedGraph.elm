@@ -34,7 +34,8 @@ type Msg
   | Tick
   | GraphUpdated AutomatonGraph
   | ViewportUpdated (Float, Float)
-  | Zoom Float (Float, Float)
+  | MouseMove Float Float
+  | Zoom Float
   | ResetZoom
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
@@ -48,7 +49,8 @@ type alias Model =
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
-  , zoom : ( Float, ( Float, Float ) ) -- zoom-factor, center-x, center-y
+  , zoom : Float -- zoom-factor
+  , mouseCoords : ( Float, Float )
   }
 
 
@@ -174,7 +176,8 @@ receiveDAWG dawg (w, h) =
     , viewportForces = viewport
     , specificForces = IntDict.empty
     , start = dawg.root
-    , zoom = ( 1.0, ( 0, 0 ) )
+    , zoom = 1.0
+    , mouseCoords = ( 0, 0 )
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -284,19 +287,20 @@ update offset_amount msg model =
         Nothing ->
           { model | drag = Nothing }
 
-    Zoom amount (cx, cy) ->
+    Zoom amount ->
       let
-        newZoom = clamp 0.5 2.5 (Tuple.first model.zoom - 0.0003 * amount)
+        newZoom = clamp 0.5 2.5 (model.zoom - 0.0003 * amount)
       in
-        if newZoom == Tuple.first model.zoom then
+        if newZoom == model.zoom then
           model
         else
-          { model
-          | zoom = ( newZoom, (cx, cy) )
-          }
+          { model | zoom = newZoom }
 
     ResetZoom ->
-      { model | zoom = (1.0, (0, 0)) }
+      { model | zoom = 1.0 }
+
+    MouseMove x y ->
+      { model | mouseCoords = (x, y) }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -461,6 +465,7 @@ linkElement graph edge =
               " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
               " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
           , noFill
+          , class [ "link" ]
           ]
           [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
       , path
@@ -471,6 +476,7 @@ linkElement graph edge =
               " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
           , markerEnd "url(#arrowhead)"
           , noFill
+          , class [ "link" ]
           ]
           [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
       -- , circle -- show where the control point is
@@ -513,14 +519,14 @@ nodeElement start node =
         9
       else
         7
-    outerRadius = radius + 3.5
-    color =
-      if node.id == start then
-        paletteColors.state.start
-      else if node.label.value.isTerminal  then
-        paletteColors.state.terminal
-      else
-        paletteColors.state.normal
+    -- outerRadius = radius + 3.5
+    -- color =
+    --   if node.id == start then
+    --     paletteColors.state.start
+    --   else if node.label.value.isTerminal  then
+    --     paletteColors.state.terminal
+    --   else
+    --     paletteColors.state.normal
   in
     g
       [ onMouseDown node.id
@@ -606,8 +612,8 @@ arrowheadMarker =
         []
     ]
 
-matrixFromZoom : (Float, Float) -> (Float, ( Float, Float )) -> Transform
-matrixFromZoom (w, h) (factor, (centerX, centerY)) =
+matrixFromZoom : (Float, Float) -> Float -> ( Float, Float ) -> Transform
+matrixFromZoom (w, h) factor (pointerX, pointerY) =
 {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
   The matrix is the "usual":
@@ -625,8 +631,8 @@ matrixFromZoom (w, h) (factor, (centerX, centerY)) =
     0
     0
     factor
-    ( (1 - factor) * centerX)
-    ( (1 - factor) * centerY)
+    ( (1 - factor) * pointerX)
+    ( (1 - factor) * pointerY)
   -- |> Debug.log "matrix transform applied"
 
 view : Model -> Svg Msg
@@ -634,9 +640,10 @@ view model =
   svg
     [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
     , onMouseScroll Zoom
+    , onMouseMove MouseMove
     ]
     [ g
-      [ transform [ matrixFromZoom model.dimensions (model.zoom {- |> Debug.log "zoom" -} ) ] ]
+      [ transform [ matrixFromZoom model.dimensions model.zoom model.mouseCoords ] ]
       [ defs [] [ arrowheadMarker ]
       , Graph.edges model.graph
         |> List.map (linkElement model.graph)
@@ -645,7 +652,7 @@ view model =
         |> List.map (nodeElement model.start)
         |> g [ class [ "nodes" ] ]
       ]
-      , if model.zoom /= ( 1.0, ( 0, 0 ) ) then
+      , if model.zoom /= 1.0 then
           -- put in a "reset zoom" button which will ALWAYS be at the bottom-right.
           g
             [ cursor CursorPointer
@@ -680,17 +687,25 @@ view model =
           g [] []
     ]
 
-onMouseScroll : (Float -> (Float, Float) -> msg) -> Html.Attribute msg
+onMouseScroll : (Float -> msg) -> Html.Attribute msg
 onMouseScroll msg =
-  HE.on "wheel"
-    (Decode.map2 msg
-      (Decode.at [ "deltaY" ] Decode.float)
-      (Decode.map2 Tuple.pair
-        (Decode.at [ "offsetX" ] Decode.float)
-        (Decode.at [ "offsetY" ] Decode.float)
-      )
+  HE.on "wheel" <|
+    Decode.map msg <| Decode.field "deltaY" Decode.float
+
+onMouseMove : (Float -> Float -> msg) -> Html.Attribute msg
+onMouseMove msg =
+  HE.on "mousemove"
+    ( Decode.at ["target", "tagName"] Decode.string
+      |> Decode.andThen
+        (\tagName ->
+          if String.toUpper tagName == "SVG" then
+            Decode.map2 msg
+              (Decode.field "offsetX" Decode.float)
+              (Decode.field "offsetY" Decode.float)
+          else
+            Decode.fail "Ignoring non-SVG target"
+        )
     )
-  
 
 -- main : Program DAWGGraph Model Msg
 -- main =

@@ -42,3 +42,6 @@ textarea:focus {
 #reset-zoom text {
   pointer-events: none;
 }
+path.link {
+  pointer-events: none;
+}
