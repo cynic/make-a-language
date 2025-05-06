@@ -7,7 +7,7 @@ import Html.Events as HE
 import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
 import Json.Decode as Decode
 import TypedSvg exposing
-  (circle, g, line, svg, title, text_, marker, path, defs, tspan, rect)
+  (circle, g, svg, title, line, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
@@ -21,13 +21,12 @@ import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..))
 import Automata.Data exposing (Node, Connection, AutomatonGraph)
-import Html.Attributes exposing (attribute)
+import TypedSvg.Attributes.InPx as Px
 import Html
+import Html.Attributes
 import Set
 import IntDict
-import TypedSvg.Attributes.InPx as Px
-import Html.Attributes exposing (selected)
-import Maybe.Extra exposing (prev)
+import Time
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -38,9 +37,11 @@ type Msg
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
   | Zoom Float
-  | ResetZoom
+  | ResetView
   | SelectNode NodeId
   | DeselectNode
+  | SetMouseOver
+  | SetMouseOut
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -54,8 +55,10 @@ type alias Model =
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
   , zoom : Float -- zoom-factor
+  , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
   , selectedNode : Maybe NodeId
+  , mouseIsHere : Bool
   }
 
 
@@ -68,6 +71,10 @@ type alias Drag =
 
 type alias Entity =
     Force.Entity NodeId { value : { isTerminal : Bool, isFinal : Bool } }
+
+{-| The buffer from the edges within which panning occurs -}
+panBuffer : Float
+panBuffer = 40
 
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : Node -> Bool
@@ -184,6 +191,8 @@ receiveDAWG dawg (w, h) =
     , zoom = 1.0
     , mouseCoords = ( 0, 0 )
     , selectedNode = Nothing
+    , pan = (0, 0)
+    , mouseIsHere = False
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -216,6 +225,24 @@ updateGraphWithList =
   in
     List.foldr (\node graph -> Graph.update node.id (graphUpdater node) graph)
 
+{-| What is the amount to pan by, given the x-coordinate of the mouse? -}
+xPanAt : Model -> Float -> Float
+xPanAt model x =
+  if x >= ( Tuple.first model.dimensions - panBuffer ) then
+    1
+  else if x <= panBuffer then
+    -1
+  else
+    0
+
+yPanAt : Model -> Float -> Float
+yPanAt model y =
+  if y >= ( Tuple.second model.dimensions - panBuffer ) then
+    1
+  else if y <= panBuffer then
+    -1
+  else
+    0
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -302,17 +329,29 @@ update offset_amount msg model =
         else
           { model | zoom = newZoom }
 
-    ResetZoom ->
-      { model | zoom = 1.0 }
+    ResetView ->
+      { model | zoom = 1.0, pan = ( 0, 0 ) }
 
     MouseMove x y ->
-      { model | mouseCoords = (x, y) }
+      let
+        ( xPan, yPan ) = model.pan
+      in
+      { model
+      | mouseCoords = (x, y)
+      , pan = ( xPan + xPanAt model x, yPan + yPanAt model y )
+      }
 
     SelectNode index ->
       { model | selectedNode = Just index }
 
     DeselectNode ->
       { model | selectedNode = Nothing }
+
+    SetMouseOver ->
+      { model | mouseIsHere = True }
+
+    SetMouseOut ->
+      { model | mouseIsHere = False }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -321,21 +360,30 @@ offset (offset_x, offset_y) (x, y) =
 
 subscriptions : (Float, Float) -> Model -> Sub Msg
 subscriptions offset_amount model =
+  let
+    ( xCoord, yCoord ) = model.mouseCoords
+    panSubscription =
+      if model.mouseIsHere && (xPanAt model xCoord /= 0 || yPanAt model yCoord /= 0) then
+        Time.every 10 (\_ -> MouseMove xCoord yCoord)
+      else
+        Sub.none
+  in
   case model.drag of
     Nothing ->
       -- This allows us to save resources, as if the simulation is done, there is no point in subscribing
       -- to the rAF.
       if Force.isCompleted model.simulation then
-        Sub.none
+        panSubscription
 
       else
-        Browser.Events.onAnimationFrame (always Tick)
+        Sub.batch [ panSubscription, Browser.Events.onAnimationFrame (always Tick) ]
 
     Just _ ->
       Sub.batch
         [ Browser.Events.onMouseMove (Decode.map (.clientPos >> (offset offset_amount) >> DragAt) Mouse.eventDecoder)
         , Browser.Events.onMouseUp (Decode.map (.clientPos >> (offset offset_amount) >> DragEnd) Mouse.eventDecoder)
         , Browser.Events.onAnimationFrame (always Tick)
+        , panSubscription
         ]
 
 
@@ -524,7 +572,7 @@ linkElement graph edge =
           , fontWeight FontWeightNormal
           , textAnchor AnchorMiddle
           , alignmentBaseline AlignmentCentral
-          , attribute "paint-order" "stroke fill markers"
+          , Html.Attributes.attribute "paint-order" "stroke fill markers"
           , cursor CursorDefault
           ]
           label
@@ -539,14 +587,6 @@ nodeElement start selected node =
         9
       else
         7
-    -- outerRadius = radius + 3.5
-    -- color =
-    --   if node.id == start then
-    --     paletteColors.state.start
-    --   else if node.label.value.isTerminal  then
-    --     paletteColors.state.terminal
-    --   else
-    --     paletteColors.state.normal
   in
     g
       [ onMouseDown node.id
@@ -554,8 +594,6 @@ nodeElement start selected node =
       ]
       [ circle
           [ r radius
-          -- , fill <| Paint color
-          -- , stroke <| Paint color
           , strokeWidth 2
           , cx node.label.x
           , cy node.label.y
@@ -571,7 +609,7 @@ nodeElement start selected node =
               , textAnchor AnchorMiddle
               , alignmentBaseline AlignmentBaseline
               , dominantBaseline DominantBaselineMiddle
-              , attribute "paint-order" "stroke fill markers"
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , cursor CursorDefault
               ]
               [ text "🎯" ]
@@ -585,7 +623,7 @@ nodeElement start selected node =
               , textAnchor AnchorMiddle
               , alignmentBaseline AlignmentBaseline
               , dominantBaseline DominantBaselineMiddle
-              , attribute "paint-order" "stroke fill markers"
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , cursor CursorDefault
               , fill <| Paint <| Color.grey
               ]
@@ -596,24 +634,9 @@ nodeElement start selected node =
           []
           [ text <|
               -- String.fromInt node.id
-              "Drag with right button to reposition\nClick to create new transition"
+              "Drag with right button to reposition\nClick to create or link a new transition"
           ]
       ]
-      -- ::  if node.label.value.isFinal || node.id == start then
-      --       [ circle
-      --           [ r outerRadius
-      --           , fill <| Paint <| Color.rgba 0 0 0 0 -- transparent
-      --           , stroke <| Paint color
-      --           , strokeWidth 2.5
-      --           , onMouseDown node.id
-      --           , cx node.label.x
-      --           , cy node.label.y
-      --           ]
-      --           [ title [] [ text <| String.fromInt node.id ] ]
-      --       ]
-      --     else
-      --       []
-      -- )
 
 arrowheadMarker : Svg msg
 arrowheadMarker =
@@ -632,8 +655,8 @@ arrowheadMarker =
         []
     ]
 
-matrixFromZoom : (Float, Float) -> Float -> ( Float, Float ) -> Transform
-matrixFromZoom (w, h) factor (pointerX, pointerY) =
+matrixFromZoom : (Float, Float) -> (Float, Float) -> Float -> ( Float, Float ) -> Transform
+matrixFromZoom (w, h) (panX, panY) factor (pointerX, pointerY) =
 {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
   The matrix is the "usual":
@@ -651,8 +674,8 @@ matrixFromZoom (w, h) factor (pointerX, pointerY) =
     0
     0
     factor
-    ( (1 - factor) * pointerX)
-    ( (1 - factor) * pointerY)
+    ( (1 - factor) * pointerX - panX )
+    ( (1 - factor) * pointerY - panY )
   -- |> Debug.log "matrix transform applied"
 
 view : Model -> Svg Msg
@@ -661,13 +684,27 @@ view model =
     [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
     , onMouseScroll Zoom
     , onMouseMove MouseMove
+    , Mouse.onOver (\_ -> SetMouseOver)
+    , Mouse.onOut (\_ -> SetMouseOut)
     , Mouse.onWithOptions
         "mousedown"
         { stopPropagation = True, preventDefault = True }
         (\_ -> DeselectNode)
+    , cursor <|
+        -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
+        case ( 1 + round (xPanAt model (Tuple.first model.mouseCoords)), 1 + round (yPanAt model (Tuple.second model.mouseCoords)) ) of
+          ( 2, 2 ) -> CursorSEResize
+          ( 0, 2 ) -> CursorSWResize
+          ( 2, 0 ) -> CursorNEResize
+          ( 0, 0 ) -> CursorNWResize
+          ( 1, 2 ) -> CursorNResize
+          ( 0, 1 ) -> CursorWResize
+          ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
+          ( 2, 1 ) -> CursorEResize
+          _ -> CursorDefault
     ]
     [ g
-      [ transform [ matrixFromZoom model.dimensions model.zoom model.mouseCoords ] ]
+      [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ] ]
       [ defs [] [ arrowheadMarker ]
       , Graph.edges model.graph
         |> List.map (linkElement model.graph)
@@ -676,12 +713,12 @@ view model =
         |> List.map (\n -> nodeElement model.start (Just n.id == model.selectedNode) n)
         |> g [ class [ "nodes" ] ]
       ]
-      , if model.zoom /= 1.0 then
-          -- put in a "reset zoom" button which will ALWAYS be at the bottom-right.
+      , if model.zoom /= 1.0 || model.pan /= ( 0, 0 ) then
+          -- put in a "reset view" button which will ALWAYS be at the bottom-right.
           g
             [ cursor CursorPointer
-            , id "reset-zoom"
-            , onClick ResetZoom
+            , id "reset-view"
+            , onClick ResetView
             ]
             [ rect
                 [ x (Tuple.first model.dimensions - 121)
@@ -704,7 +741,7 @@ view model =
                 , alignmentBaseline AlignmentCentral
                 , dominantBaseline DominantBaselineCentral
                 ]
-                [ text " 🔍 Reset zoom" ]
+                [ text " 🔍 Reset view" ]
 
             ]
         else

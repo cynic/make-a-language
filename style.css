@@ -34,15 +34,15 @@ textarea:focus {
 .state-node.selected {
   fill: rgb(255, 0, 179)
 }
-#reset-zoom rect {
+#reset-view rect {
   fill: rgba(255, 255, 255, 0.8);
   transition: all 0.25s ease;
 }
-#reset-zoom rect:hover {
+#reset-view rect:hover {
   fill: gray;
   cursor: pointer;
 }
-#reset-zoom text {
+#reset-view text {
   pointer-events: none;
 }
 path.link {
