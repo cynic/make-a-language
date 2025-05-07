@@ -34,7 +34,7 @@ textarea:focus {
 .state-node.selected {
   fill: rgb(255, 0, 179)
 }
-#reset-view rect {
+/* #reset-view rect {
   fill: rgba(255, 255, 255, 0.8);
   transition: all 0.25s ease;
 }
@@ -44,7 +44,7 @@ textarea:focus {
 }
 #reset-view text {
   pointer-events: none;
-}
+} */
 path.link {
   pointer-events: none;
 }

@@ -27,6 +27,7 @@ import Html.Attributes
 import Set
 import IntDict
 import Time
+import Svg.Attributes exposing (pointerEvents)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -36,7 +37,7 @@ type Msg
   | GraphUpdated AutomatonGraph
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
-  | Zoom Float
+  | Zoom Float (Float, Float)
   | ResetView
   | SelectNode NodeId
   | DeselectNode
@@ -54,7 +55,7 @@ type alias Model =
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
-  , zoom : Float -- zoom-factor
+  , zoom : ( Float, ( Float, Float ) ) -- ( zoom-factor, zoom-center-coordinates )
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
   , selectedNode : Maybe NodeId
@@ -188,10 +189,10 @@ receiveDAWG dawg (w, h) =
     , viewportForces = viewport
     , specificForces = IntDict.empty
     , start = dawg.root
-    , zoom = 1.0
-    , mouseCoords = ( 0, 0 )
+    , zoom = ( 1.0, ( w/2, h/2 ) )
+    , mouseCoords = ( w/2, h/2 )
     , selectedNode = Nothing
-    , pan = (0, 0)
+    , pan = ( 0, 0)
     , mouseIsHere = False
     }
 
@@ -320,17 +321,18 @@ update offset_amount msg model =
         Nothing ->
           { model | drag = Nothing }
 
-    Zoom amount ->
+    Zoom amount ( x, y ) ->
       let
-        newZoom = clamp 0.5 2.5 (model.zoom - 0.0003 * amount)
+        zoomAmount = if amount < 0 then 0.05 else -0.05
+        newZoom = clamp 0.5 2.5 (Tuple.first model.zoom + zoomAmount)
       in
-        if newZoom == model.zoom then
+        if newZoom == Tuple.first model.zoom then
           model
         else
-          { model | zoom = newZoom }
+          { model | zoom = ( newZoom, ( x, y ) ) }
 
     ResetView ->
-      { model | zoom = 1.0, pan = ( 0, 0 ) }
+      { model | zoom = ( 1.0, Tuple.mapBoth (\x -> x/2) (\y -> y/2) model.dimensions ), pan = ( 0, 0 ) }
 
     MouseMove x y ->
       let
@@ -367,16 +369,36 @@ subscriptions offset_amount model =
         Time.every 10 (\_ -> MouseMove xCoord yCoord)
       else
         Sub.none
+    keyboardSubscription =
+      if model.mouseIsHere then
+        Browser.Events.onKeyDown
+          ( Decode.map2
+              (\key ctrlPressed -> ( key, ctrlPressed ))
+              (Decode.field "key" Decode.string)
+              (Decode.field "ctrlKey" Decode.bool)
+            |> Decode.andThen
+              (\v ->
+                case v of
+                  ( "1", True ) ->
+                    Debug.log "yup" v |> \_ ->
+                    Decode.succeed ResetView
+                  _ ->
+                    Debug.log "hmm" v |> \_ ->
+                    Decode.fail "Not a recognized key combination"
+              )
+          )
+      else
+        Sub.none
   in
   case model.drag of
     Nothing ->
       -- This allows us to save resources, as if the simulation is done, there is no point in subscribing
       -- to the rAF.
       if Force.isCompleted model.simulation then
-        panSubscription
+        Sub.batch [ keyboardSubscription, panSubscription ]
 
       else
-        Sub.batch [ panSubscription, Browser.Events.onAnimationFrame (always Tick) ]
+        Sub.batch [ keyboardSubscription, panSubscription, Browser.Events.onAnimationFrame (always Tick) ]
 
     Just _ ->
       Sub.batch
@@ -384,6 +406,7 @@ subscriptions offset_amount model =
         , Browser.Events.onMouseUp (Decode.map (.clientPos >> (offset offset_amount) >> DragEnd) Mouse.eventDecoder)
         , Browser.Events.onAnimationFrame (always Tick)
         , panSubscription
+        , keyboardSubscription
         ]
 
 
@@ -448,6 +471,16 @@ paletteColors =
       }
   , background = Color.grey -- for painting a surrounding stroke
   }
+
+type Cardinality
+  = Bidirectional
+  | Unidirectional
+
+type LinkType
+  = Confirmed Cardinality -- in the confirmed graph.
+  | Prospective Cardinality -- user is playing around, hasn't clicked yet.
+  | New Cardinality -- user has clicked, but entirety isn't approved yet.
+                    -- When it is approved, we'll see it under Confirmed.
 
 linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
 linkElement graph edge =
@@ -655,8 +688,8 @@ arrowheadMarker =
         []
     ]
 
-matrixFromZoom : (Float, Float) -> (Float, Float) -> Float -> ( Float, Float ) -> Transform
-matrixFromZoom (w, h) (panX, panY) factor (pointerX, pointerY) =
+matrixFromZoom : (Float, Float) -> (Float, Float) -> ( Float, ( Float, Float ) ) -> ( Float, Float ) -> Transform
+matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
 {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
   The matrix is the "usual":
@@ -713,45 +746,68 @@ view model =
         |> List.map (\n -> nodeElement model.start (Just n.id == model.selectedNode) n)
         |> g [ class [ "nodes" ] ]
       ]
-      , if model.zoom /= 1.0 || model.pan /= ( 0, 0 ) then
-          -- put in a "reset view" button which will ALWAYS be at the bottom-right.
-          g
-            [ cursor CursorPointer
-            , id "reset-view"
-            , onClick ResetView
-            ]
-            [ rect
-                [ x (Tuple.first model.dimensions - 121)
-                , y (Tuple.second model.dimensions - 30)
-                , Px.width 120
-                , Px.height 30
-                , stroke <| Paint <| Color.black
-                , strokeWidth 1
-                , Px.rx 5
-                , Px.ry 5
-                ]
-                []
-            , text_
-                [ x (Tuple.first model.dimensions - 61)
-                , y (Tuple.second model.dimensions - 15)
-                , fill <| Paint <| Color.black
-                , fontFamily ["sans-serif"]
-                , fontSize 14
-                , textAnchor AnchorMiddle
-                , alignmentBaseline AlignmentCentral
-                , dominantBaseline DominantBaselineCentral
-                ]
-                [ text " 🔍 Reset view" ]
-
-            ]
-        else
-          g [] []
+      , g
+          [ cursor CursorPointer
+          , id "reset-view"
+          , onClick ResetView
+          ]
+          [ --rect
+              -- [ x (Tuple.first model.dimensions - 121)
+              -- , y (Tuple.second model.dimensions - 30)
+              -- , Px.width 120
+              -- , Px.height 30
+              -- , stroke <| Paint <| Color.black
+              -- , strokeWidth 1
+              -- , Px.rx 5
+              -- , Px.ry 5
+              -- ]
+              -- []
+            text_
+              [ x (Tuple.first model.dimensions - 15)
+              , y (Tuple.second model.dimensions - 15)
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorEnd
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text (" 🔍 " ++ String.fromInt (round <| Tuple.first model.zoom * 100) ++ "%") ]
+          , text_
+              [ x (Tuple.first model.dimensions - 90)
+              , y (Tuple.second model.dimensions - 15)
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorEnd
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text (" 🧭 " ++
+                  (case Tuple.mapBoth round round model.pan of
+                    ( 0, 0 ) -> "centered"
+                    ( x, y) ->
+                      let
+                        xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
+                        yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
+                      in
+                      ("(" ++ xString ++ ", " ++ yString ++ ")")
+                  )
+                )
+              ]
+          ]
     ]
 
-onMouseScroll : (Float -> msg) -> Html.Attribute msg
+onMouseScroll : (Float -> (Float, Float) -> msg) -> Html.Attribute msg
 onMouseScroll msg =
   HE.on "wheel" <|
-    Decode.map msg <| Decode.field "deltaY" Decode.float
+    Decode.map3
+      (\x y deltaY -> msg deltaY (x, y))
+      (Decode.field "offsetX" Decode.float)
+      (Decode.field "offsetY" Decode.float)
+      (Decode.field "deltaY" Decode.float)
 
 onMouseMove : (Float -> Float -> msg) -> Html.Attribute msg
 onMouseMove msg =
