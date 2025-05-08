@@ -11,7 +11,8 @@ import TypedSvg exposing
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , transform, noFill, width, rx, ry)
+  , transform, noFill, width, rx, ry, strokeDasharray, strokeLinecap
+  , markerStart)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
@@ -19,7 +20,7 @@ import TypedSvg.Attributes.InPx exposing
 import TypedSvg.Core exposing (Attribute, Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
-  , Cursor(..), DominantBaseline(..), Transform(..))
+  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
 import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import TypedSvg.Attributes.InPx as Px
 import Html
@@ -28,6 +29,8 @@ import Set
 import IntDict
 import Time
 import Svg.Attributes exposing (pointerEvents)
+import Maybe.Extra
+import Tuple.Extra
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -43,8 +46,15 @@ type Msg
   | DeselectNode
   | SetMouseOver
   | SetMouseOut
+  | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
+  | CreateNewNodeAt ( Float, Float )
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
+
+type LinkDestination
+  = NoDestination
+  | ExistingNode NodeId
+  | NewNode ( Float, Float ) -- with X and Y coordinates
 
 type alias Model =
   { drag : Maybe Drag
@@ -58,10 +68,40 @@ type alias Model =
   , zoom : ( Float, ( Float, Float ) ) -- ( zoom-factor, zoom-center-coordinates )
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
-  , selectedNode : Maybe NodeId
+  , selectedSource : Maybe NodeId
+  , selectedDest : LinkDestination
   , mouseIsHere : Bool
+  , userRequestedChanges : List RequestedGraphChanges
+  , unusedId : NodeId
   }
 
+type RequestedGraphChanges
+  = FinalToNonFinal
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | NonFinalToFinal
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | AddTransition
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | RemoveTransition
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | AddNewNode
+      { from : NodeId
+      , newNodeId : NodeId
+      , label : Char
+      }
+  | RemoveNode NodeId
 
 type alias Drag =
   { start : ( Float, Float )
@@ -69,20 +109,37 @@ type alias Drag =
   , index : NodeId
   }
 
+getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Char }
+getProspective model id =
+  let
+    getProspective_ : List RequestedGraphChanges -> List { from : NodeId, to : NodeId, label : Char } -> List { from : NodeId, to : NodeId, label : Char }
+    getProspective_ changes acc =
+      case changes of
+        [] -> []
+        AddNewNode v :: rest ->
+          if v.newNodeId == id then
+            getProspective_ rest ({ from = v.from, to = v.newNodeId, label = v.label } :: acc)
+          else
+            getProspective_ rest acc
+        _::rest ->
+          getProspective_ rest acc
+  in
+    getProspective_ model.userRequestedChanges []
 
 type alias Entity =
-    Force.Entity NodeId { value : { isTerminal : Bool, isFinal : Bool } }
+    Force.Entity NodeId { value : { isProspective : Bool } }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
 panBuffer = 40
 
 {-| True if at least one transition terminates at this node -}
-isTerminalNode : Node -> Bool
+isTerminalNode : NodeContext a Connection -> Bool
 isTerminalNode node =
-  IntDict.foldl
+  IntDict.isEmpty node.outgoing ||
+  ( IntDict.foldl
     (\_ conn state ->
-      state || 
+      state ||
         Set.foldl
           (\(_, isFinal) state_ -> state_ || isFinal == 1)
           False
@@ -90,14 +147,14 @@ isTerminalNode node =
     )
     False
     (node.incoming)
+  )
 
 initializeNode : Node -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
         Force.entity ctx.node.id
-          { isTerminal = isTerminalNode ctx
-          , isFinal = IntDict.isEmpty ctx.outgoing
+          { isProspective = False
           }
     , id = ctx.node.id
     }
@@ -191,9 +248,12 @@ receiveDAWG dawg (w, h) =
     , start = dawg.root
     , zoom = ( 1.0, ( w/2, h/2 ) )
     , mouseCoords = ( w/2, h/2 )
-    , selectedNode = Nothing
+    , selectedSource = Nothing
+    , selectedDest = NoDestination
     , pan = ( 0, 0)
     , mouseIsHere = False
+    , userRequestedChanges = []
+    , unusedId = dawg.maxId + 1
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -344,16 +404,25 @@ update offset_amount msg model =
       }
 
     SelectNode index ->
-      { model | selectedNode = Just index }
+      if model.selectedSource == Just index then
+        { model | selectedSource = Nothing }
+      else
+        { model | selectedSource = Just index }
 
     DeselectNode ->
-      { model | selectedNode = Nothing }
+      { model | selectedSource = Nothing }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
 
     SetMouseOut ->
       { model | mouseIsHere = False }
+
+    CreateOrUpdateLinkTo dest ->
+      { model | selectedDest = ExistingNode dest }
+
+    CreateNewNodeAt ( x, y ) ->
+      { model | selectedDest = NewNode ( x, y ) }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -408,20 +477,6 @@ subscriptions offset_amount model =
         , panSubscription
         , keyboardSubscription
         ]
-
-
-onMouseDown : NodeId -> Attribute Msg
-onMouseDown index =
-  Mouse.onWithOptions
-    "mousedown"
-    { stopPropagation = True, preventDefault = True }
-    (\e ->
-      if e.button == SecondButton then
-        e.clientPos |> DragStart index
-      else
-        SelectNode index
-    )
-
 textChar : Char -> String
 textChar ch =
   case ch of
@@ -482,14 +537,39 @@ type LinkType
   | New Cardinality -- user has clicked, but entirety isn't approved yet.
                     -- When it is approved, we'll see it under Confirmed.
 
-linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
-linkElement graph edge =
+linkExists : Model -> NodeId -> NodeId -> Bool
+linkExists model from to =
+  -- does a link exist from `from` to `to`?
+  Graph.get from model.graph
+  |> Maybe.map (.outgoing >> IntDict.member to)
+  |> Maybe.Extra.withDefaultLazy (\() ->
+    -- if I'm here, then the `from` isn't in the Graph.
+    -- Is it in the prospective nodes?
+    case getProspective model from of
+      [] ->
+        -- Nope! Nothing here!
+        False
+      xs ->
+        -- now look at the "to" and see if it's there.
+        List.any (\x -> x.to == to) xs
+  )
+
+identifyCardinality : Model -> Edge Connection -> Cardinality
+identifyCardinality model { to, from } =
+  if linkExists model to from then
+    Bidirectional
+  else
+    Unidirectional
+
+linkElement : Model -> Edge Connection -> Svg msg
+linkElement ({ graph } as model) edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
+      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
 
     target =
-      Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+    cardinality = identifyCardinality model edge
     label = connectionToSvgText edge.label
     em_to_px em_value = font_size * em_value
     padding =
@@ -532,7 +612,12 @@ linkElement graph edge =
       { x = -(target.y - source.y) / line_len
       , y = -(target.x - source.x) / line_len
       }
-    desired_length = 0.4 * line_len -- increase/decrease for a larger/smaller angle
+    desired_length =
+      case cardinality of
+        Bidirectional ->
+          0.4 * line_len -- increase/decrease for a larger/smaller angle
+        Unidirectional ->
+          0
     control_vector =
       { y = desired_length * parametric_direction_vector.y
       , x = -desired_length * parametric_direction_vector.x
@@ -612,30 +697,51 @@ linkElement graph edge =
       ]
 
 
-nodeElement : NodeId -> Bool -> { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
-nodeElement start selected node =
+nodeElement : Model -> Graph.Node Entity -> Svg Msg
+nodeElement { start, graph, selectedSource } { label, id } =
   let
+    isSelected = selectedSource == Just id
+    graphNode =
+      Graph.get id graph
+    isTerminal =
+      Maybe.map isTerminalNode graphNode
+      |> Maybe.withDefault False
     radius =
-      if node.id == start || node.label.value.isTerminal then
+      if id == start || isTerminal then
         9
       else
         7
   in
     g
-      [ onMouseDown node.id
-      , class ("state-node" :: if selected then [ "selected" ] else [])
+      [ Mouse.onWithOptions
+          "mousedown"
+          { stopPropagation = True, preventDefault = True }
+          (\e ->
+            if e.button == SecondButton then
+              e.clientPos |> DragStart id
+            else
+              case selectedSource of
+                Just alreadySelected ->
+                  if alreadySelected == id then
+                    DeselectNode
+                  else
+                    CreateOrUpdateLinkTo id
+                Nothing ->
+                  SelectNode id
+          )
+      , class ("state-node" :: if isSelected then [ "selected" ] else [])
       ]
       [ circle
           [ r radius
           , strokeWidth 2
-          , cx node.label.x
-          , cy node.label.y
+          , cx label.x
+          , cy label.y
           ]
           []
-       ,  if node.label.value.isTerminal then
+       ,  if isTerminal then
             text_
-              [ x <| node.label.x
-              , y <| (node.label.y + 1)
+              [ x <| label.x
+              , y <| (label.y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 14
               , fontWeight FontWeightNormal
@@ -646,10 +752,10 @@ nodeElement start selected node =
               , cursor CursorDefault
               ]
               [ text "🎯" ]
-          else if node.id == start then
+          else if id == start then
             text_
-              [ x <| node.label.x
-              , y <| (node.label.y + 1)
+              [ x <| label.x
+              , y <| (label.y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 14
               , fontWeight FontWeightNormal
@@ -671,6 +777,102 @@ nodeElement start selected node =
           ]
       ]
 
+{-| A "phantom move" that the user MIGHT make, or might not -}
+showPhantom : Model -> NodeContext Entity Connection -> Svg Msg
+showPhantom model sourceNode =
+  let
+    radius = 9
+    ( xPan, yPan ) = model.pan
+    ( target_x, target_y ) = Tuple.mapBoth ((+) xPan) ((+) yPan) model.mouseCoords
+
+    source = sourceNode.node.label
+    cardinality = Unidirectional --identifyCardinality model edge
+    d_y = source.y - target_y
+    d_x = source.x - target_x
+    line_len = sqrt (d_x * d_x + d_y * d_y)
+    m = d_y / d_x
+    c = source.y - (m * source.x)
+    y_value y_ = m * y_ + c
+    midPoint =
+      { x = (source.x + target_x) / 2
+      , y = y_value <| (source.x + target_x) / 2
+      }
+    parametric_direction_vector =
+      -- normalised
+      { y = (target_y - source.y) / line_len
+      , x = (target_x - source.x) / line_len
+      }
+    shorter_target =
+      { x = target_x - parametric_direction_vector.x * 2 * (radius + 2.5)
+      , y = target_y - parametric_direction_vector.y * 2 * (radius + 2.5)
+      }
+    shorter_source =
+      { x = source.x + parametric_direction_vector.x * radius
+      , y = source.y + parametric_direction_vector.y * radius
+      }
+    orthogonal_parametric_direction_vector =
+      -- normalised
+      { x = -(target_y - source.y) / line_len
+      , y = -(target_x - source.x) / line_len
+      }
+    desired_length =
+      case cardinality of
+        Bidirectional ->
+          0.4 * line_len -- increase/decrease for a larger/smaller angle
+        Unidirectional ->
+          0
+    control_vector =
+      { y = desired_length * orthogonal_parametric_direction_vector.y
+      , x = -desired_length * orthogonal_parametric_direction_vector.x
+      }
+    control_point =
+      { x = midPoint.x + control_vector.x
+      , y = midPoint.y + control_vector.y
+      }
+    linePath =
+      "M " ++ String.fromFloat shorter_source.x ++ " " ++ String.fromFloat shorter_source.y ++
+      " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
+      " " ++ String.fromFloat shorter_target.x ++ " " ++ String.fromFloat shorter_target.y
+  in
+    g
+      [ Mouse.onWithOptions
+          "mousedown"
+          { stopPropagation = True, preventDefault = True }
+          (\_ -> CreateNewNodeAt model.mouseCoords)
+      ]
+      [ circle
+          [ r radius
+          , cx (target_x)
+          , cy (target_y)
+          , noFill
+          , strokeWidth 2
+          , strokeDasharray "1 5.2"
+          , strokeLinecap StrokeLinecapRound
+          , class ["phantom-state-node"]
+          ]
+          []
+      -- now draw the path to it
+      , path
+          [ strokeWidth 5
+          , stroke <| Paint <| paletteColors.background
+          , d linePath
+          , noFill
+          , class [ "link" ]
+          ]
+          []
+      , path
+          [ strokeWidth 2
+          , d linePath
+          , if line_len > 10 then markerEnd "url(#phantom-arrowhead)" else markerStart "url(#phantom-arrowhead)"
+          , noFill
+          , strokeDasharray "1 5"
+          , strokeLinecap StrokeLinecapRound
+          , class [ "phantom-link" ]
+          ]
+          []
+      ]
+
+
 arrowheadMarker : Svg msg
 arrowheadMarker =
   marker
@@ -682,6 +884,27 @@ arrowheadMarker =
     , markerWidth 5
     , markerHeight 5
     , fill <| Paint <| paletteColors.edge
+    ]
+    [ path
+        [ d "M 0 0 L 10 5 L 0 10 z" ]
+        []
+    ]
+
+phantomArrowheadMarker : Svg msg
+phantomArrowheadMarker =
+  marker
+    [ id "phantom-arrowhead"
+    , viewBox 0 0 10 10
+    , refX "0"
+    , refY "5"
+    , orient "auto-start-reverse"
+    , markerWidth 5
+    , markerHeight 5
+    , strokeWidth 1.5
+    , strokeDasharray "1.5 2"
+    , strokeLinecap StrokeLinecapRound
+    , stroke <| Paint <| Color.rgb255 102 102 102
+    , noFill
     ]
     [ path
         [ d "M 0 0 L 10 5 L 0 10 z" ]
@@ -734,17 +957,27 @@ view model =
           ( 0, 1 ) -> CursorWResize
           ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
           ( 2, 1 ) -> CursorEResize
-          _ -> CursorDefault
+          _ ->
+            case model.selectedSource of
+              Just _ -> Cursor "none"
+              _ -> CursorDefault
     ]
     [ g
       [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ] ]
-      [ defs [] [ arrowheadMarker ]
+      [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.graph
-        |> List.map (linkElement model.graph)
+        |> List.map (linkElement model)
         |> g [ class [ "links" ] ]
       , Graph.nodes model.graph
-        |> List.map (\n -> nodeElement model.start (Just n.id == model.selectedNode) n)
+        |> List.map (nodeElement model)
         |> g [ class [ "nodes" ] ]
+      , case model.selectedSource of
+          Just id ->
+            Graph.get id model.graph
+            |> Maybe.map (showPhantom model)
+            |> Maybe.withDefault (g [] [])
+          Nothing ->
+            g [] []
       ]
       , g
           [ cursor CursorPointer
@@ -797,6 +1030,21 @@ view model =
                   )
                 )
               ]
+          , if Maybe.Extra.isJust model.selectedSource then
+              text_
+                [ Px.x 15
+                , Px.y (Tuple.second model.dimensions - 15)
+                , fill <| Paint <| Color.black
+                , fontFamily ["sans-serif"]
+                , fontSize 14
+                , textAnchor AnchorStart
+                , alignmentBaseline AlignmentCentral
+                , dominantBaseline DominantBaselineCentral
+                , pointerEvents "none"
+                ]
+                [ text "Press «Esc» to cancel link creation" ]
+            else
+              g [] []
           ]
     ]
 

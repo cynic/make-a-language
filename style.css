@@ -26,6 +26,12 @@ textarea:focus {
   fill: rgb(0,222,255);
   transition: all 0.25s ease;
 }
+.phantom-state-node {
+  stroke: rgb(102, 102, 102);
+}
+.phantom-link {
+  stroke: rgb(102, 102, 102);
+}
 .state-node:hover {
   animation: pulse 1.25s ease-in-out infinite;
   fill: rgb(9, 255, 0);
