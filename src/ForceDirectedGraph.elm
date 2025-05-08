@@ -11,7 +11,8 @@ import TypedSvg exposing
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , transform, noFill, width, rx, ry)
+  , transform, noFill, width, rx, ry, strokeDasharray, strokeLinecap
+  , markerStart, pointerEvents)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
@@ -19,7 +20,7 @@ import TypedSvg.Attributes.InPx exposing
 import TypedSvg.Core exposing (Attribute, Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
-  , Cursor(..), DominantBaseline(..), Transform(..))
+  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
 import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import TypedSvg.Attributes.InPx as Px
 import Html
@@ -27,7 +28,7 @@ import Html.Attributes
 import Set
 import IntDict
 import Time
-import Svg.Attributes exposing (pointerEvents)
+import Maybe.Extra
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -43,8 +44,15 @@ type Msg
   | DeselectNode
   | SetMouseOver
   | SetMouseOut
+  | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
+  | CreateNewNodeAt ( Float, Float )
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
+
+type LinkDestination
+  = NoDestination
+  | ExistingNode NodeId
+  | NewNode ( Float, Float ) -- with X and Y coordinates
 
 type alias Model =
   { drag : Maybe Drag
@@ -58,10 +66,40 @@ type alias Model =
   , zoom : ( Float, ( Float, Float ) ) -- ( zoom-factor, zoom-center-coordinates )
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
-  , selectedNode : Maybe NodeId
+  , selectedSource : Maybe NodeId
+  , selectedDest : LinkDestination
   , mouseIsHere : Bool
+  , userRequestedChanges : List RequestedGraphChanges
+  , unusedId : NodeId
   }
 
+type RequestedGraphChanges
+  = FinalToNonFinal
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | NonFinalToFinal
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | AddTransition
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | RemoveTransition
+      { from : NodeId
+      , to : NodeId
+      , label : Char
+      }
+  | AddNewNode
+      { from : NodeId
+      , newNodeId : NodeId
+      , label : Char
+      }
+  | RemoveNode NodeId
 
 type alias Drag =
   { start : ( Float, Float )
@@ -69,20 +107,41 @@ type alias Drag =
   , index : NodeId
   }
 
+sign : Float -> Float
+sign x =
+  if x < 0 then -1 else 1
+
+getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Char }
+getProspective model id =
+  let
+    getProspective_ : List RequestedGraphChanges -> List { from : NodeId, to : NodeId, label : Char } -> List { from : NodeId, to : NodeId, label : Char }
+    getProspective_ changes acc =
+      case changes of
+        [] -> []
+        AddNewNode v :: rest ->
+          if v.newNodeId == id then
+            getProspective_ rest ({ from = v.from, to = v.newNodeId, label = v.label } :: acc)
+          else
+            getProspective_ rest acc
+        _::rest ->
+          getProspective_ rest acc
+  in
+    getProspective_ model.userRequestedChanges []
 
 type alias Entity =
-    Force.Entity NodeId { value : { isTerminal : Bool, isFinal : Bool } }
+    Force.Entity NodeId { value : { isProspective : Bool } }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
 panBuffer = 40
 
 {-| True if at least one transition terminates at this node -}
-isTerminalNode : Node -> Bool
+isTerminalNode : NodeContext a Connection -> Bool
 isTerminalNode node =
-  IntDict.foldl
+  IntDict.isEmpty node.outgoing ||
+  ( IntDict.foldl
     (\_ conn state ->
-      state || 
+      state ||
         Set.foldl
           (\(_, isFinal) state_ -> state_ || isFinal == 1)
           False
@@ -90,14 +149,14 @@ isTerminalNode node =
     )
     False
     (node.incoming)
+  )
 
 initializeNode : Node -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
         Force.entity ctx.node.id
-          { isTerminal = isTerminalNode ctx
-          , isFinal = IntDict.isEmpty ctx.outgoing
+          { isProspective = False
           }
     , id = ctx.node.id
     }
@@ -191,9 +250,12 @@ receiveDAWG dawg (w, h) =
     , start = dawg.root
     , zoom = ( 1.0, ( w/2, h/2 ) )
     , mouseCoords = ( w/2, h/2 )
-    , selectedNode = Nothing
+    , selectedSource = Nothing
+    , selectedDest = NoDestination
     , pan = ( 0, 0)
     , mouseIsHere = False
+    , userRequestedChanges = []
+    , unusedId = dawg.maxId + 1
     }
 
 init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
@@ -344,16 +406,25 @@ update offset_amount msg model =
       }
 
     SelectNode index ->
-      { model | selectedNode = Just index }
+      if model.selectedSource == Just index then
+        { model | selectedSource = Nothing }
+      else
+        { model | selectedSource = Just index }
 
     DeselectNode ->
-      { model | selectedNode = Nothing }
+      { model | selectedSource = Nothing }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
 
     SetMouseOut ->
       { model | mouseIsHere = False }
+
+    CreateOrUpdateLinkTo dest ->
+      { model | selectedDest = ExistingNode dest }
+
+    CreateNewNodeAt ( x, y ) ->
+      { model | selectedDest = NewNode ( x, y ) }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -408,20 +479,6 @@ subscriptions offset_amount model =
         , panSubscription
         , keyboardSubscription
         ]
-
-
-onMouseDown : NodeId -> Attribute Msg
-onMouseDown index =
-  Mouse.onWithOptions
-    "mousedown"
-    { stopPropagation = True, preventDefault = True }
-    (\e ->
-      if e.button == SecondButton then
-        e.clientPos |> DragStart index
-      else
-        SelectNode index
-    )
-
 textChar : Char -> String
 textChar ch =
   case ch of
@@ -482,124 +539,177 @@ type LinkType
   | New Cardinality -- user has clicked, but entirety isn't approved yet.
                     -- When it is approved, we'll see it under Confirmed.
 
-linkElement : Graph Entity Connection -> Edge Connection -> Svg msg
-linkElement graph edge =
+linkExists : Model -> NodeId -> NodeId -> Bool
+linkExists model from to =
+  -- does a link exist from `from` to `to`?
+  Graph.get from model.graph
+  |> Maybe.map (.outgoing >> IntDict.member to)
+  |> Maybe.Extra.withDefaultLazy (\() ->
+    -- if I'm here, then the `from` isn't in the Graph.
+    -- Is it in the prospective nodes?
+    case getProspective model from of
+      [] ->
+        -- Nope! Nothing here!
+        False
+      xs ->
+        -- now look at the "to" and see if it's there.
+        List.any (\x -> x.to == to) xs
+  )
+
+identifyCardinality : Model -> Edge Connection -> Cardinality
+identifyCardinality model { to, from } =
+  if linkExists model to from then
+    Bidirectional
+  else
+    Unidirectional
+
+type alias PathBetweenReturn =
+  { pathString : String
+  , transition_coordinates : { x : Float, y : Float }
+  , length : Float
+  , control_point : { x : Float, y : Float }
+  , source_connection_point : { x : Float, y : Float }
+  , target_connection_point : { x : Float, y : Float }
+  }
+
+path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
+path_between sourceXY destXY cardinality radius_from radius_to =
+  {- we're doing a curved line, using a quadratic path.
+      So, let's make a triangle. The two points at the "base" are the
+      start and end of the connection ("source" and "target").  Now,
+      take two lines at an angle Θ from both sides, and where they
+      meet is our control point.  We can then adjust the angle "up" and
+      "down" until we are satisfied with the look.
+      
+      Of course, because the angles are equal, the length of the lines is
+      also equal.  So another equivalent way of going about it is by getting
+      the midpoint and then pushing a line "up", orthogonal to that midpoint,
+      and saying that this is the control point.  As the length of the line
+      increases, the angle increases too.
+  --}
   let
-    source =
-      Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
-
-    target =
-      Maybe.withDefault (Force.entity 0 { isTerminal = False, isFinal = False}) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
-    label = connectionToSvgText edge.label
-    em_to_px em_value = font_size * em_value
-    padding =
-      let
-        padding_em = 0.3
-
-        -- width_em = padding_em + (toFloat <| Set.size edge.label)
-        -- height_em = 1 + padding_em -- in em
-      in
-        ( padding_em |> em_to_px
-        -- , width_em |> em_to_px
-        -- , height_em |> em_to_px
-        )
-    font_size = 16.0 -- this is the default, if not otherwise set
-    d_y = source.y - target.y
-    d_x = source.x - target.x
-    line_len = sqrt (d_x * d_x + d_y * d_y)
-    m = d_y / d_x
-    c = source.y - (m * source.x)
-    y_value y = m * y + c
-    midPoint =
-      { x = (source.x + target.x) / 2
-      , y = y_value <| (source.x + target.x) / 2
+    d_y = sourceXY.y - destXY.y
+    d_x = sourceXY.x - destXY.x
+    orig_line_len = sqrt (d_x * d_x + d_y * d_y)
+    curvature =
+      case cardinality of
+        Bidirectional ->
+          0.4 -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
+        Unidirectional ->
+          0
+    orthogonal_len =
+      curvature * orig_line_len
+    orthogonal_vector =
+      -- normalised
+      { x = (destXY.y - sourceXY.y) / orig_line_len
+      , y = (destXY.x - sourceXY.x) / orig_line_len
       }
-    {- we're doing a curved line, using a quadratic path.
-       So, let's make a triangle. The two points at the "base" are the
-       start and end of the connection ("source" and "target").  Now,
-       take two lines at an angle Θ from both sides, and where they
-       meet is our control point.  We can then adjust the angle "up" and
-       "down" until we are satisfied with the look.
-       
-       Of course, because the angles are equal, the length of the lines is
-       also equal.  So another equivalent way of going about it is by getting
-       the midpoint and then pushing a line "up", orthogonal to that midpoint,
-       and saying that this is the control point.  As the length of the line
-       increases, the angle increases too.
-    --}
     parametric_direction_vector =
       -- normalised
-      { x = -(target.y - source.y) / line_len
-      , y = -(target.x - source.x) / line_len
+      { y = (destXY.y - sourceXY.y) / orig_line_len
+      , x = (destXY.x - sourceXY.x) / orig_line_len
       }
-    desired_length = 0.4 * line_len -- increase/decrease for a larger/smaller angle
-    control_vector =
-      { y = desired_length * parametric_direction_vector.y
-      , x = -desired_length * parametric_direction_vector.x
+    half_len = orig_line_len / 2
+    midPoint =
+      -- I can do this early because the midpoint should remain the midpoint,
+      -- no matter how I place the actual targets
+      { x = destXY.x - half_len * parametric_direction_vector.x
+      , y = destXY.y - half_len * parametric_direction_vector.y
       }
+    -- with the midpoint, I can work out the control points.
     control_point =
-      { x = midPoint.x + control_vector.x
-      , y = midPoint.y + control_vector.y
+      { x = midPoint.x + orthogonal_len * orthogonal_vector.x
+      , y = midPoint.y - orthogonal_len * orthogonal_vector.y
       }
+    hypotenuse_len =
+      sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
+    -- now, with the control point, I can make the source & target hypotenuse vectors
+    source_hypotenuse_vector =
+      -- normalised
+      { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
+      , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
+      }
+    dest_hypotenuse_vector =
+      { x = -( control_point.x - destXY.x ) / hypotenuse_len
+      , y = -( control_point.y - destXY.y ) / hypotenuse_len
+      }
+    shorten_source =
+      { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
+      , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
+      }
+    shorten_target =
+      -- the extra addition is for the stroke-width (which is 3px)
+      { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
+      , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
+      }
+    line_len =
+      let
+        dx = shorten_target.x - shorten_source.x
+        dy = shorten_target.y - shorten_source.y
+      in
+        sqrt (dx * dx + dy * dy)
+    -- control_point =
+    --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
+    --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
+    --   }
+    linePath =
+      "M " ++ String.fromFloat (shorten_source.x)
+      ++ " " ++ String.fromFloat (shorten_source.y)
+      ++ " Q " ++ String.fromFloat control_point.x
+      ++ " " ++ String.fromFloat control_point.y
+      ++ " " ++ String.fromFloat (shorten_target.x)
+      ++ " " ++ String.fromFloat (shorten_target.y)
     transition_coordinates =
-      { x = midPoint.x + control_vector.x / 2
-      , y = midPoint.y + control_vector.y / 2
+      { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
+      , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
       }
+  in
+    { pathString = linePath
+    , transition_coordinates = transition_coordinates
+    , length = line_len
+    , control_point = control_point
+    , source_connection_point = shorten_source
+    , target_connection_point = shorten_target
+    }
+
+
+linkElement : Model -> Edge Connection -> Svg msg
+linkElement ({ graph } as model) edge =
+  let
+    source =
+      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
+
+    target =
+      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+    cardinality = Unidirectional -- identifyCardinality model edge
+    positioning =
+      path_between source target cardinality 7 7
+    label = connectionToSvgText edge.label
+    font_size = 16.0 -- this is the default, if not otherwise set
   in
     g
       []
       [
-        -- line
-        --   [ strokeWidth 3
-        --   , stroke <| Paint <| paletteColors.edge
-        --   , x1 source.x
-        --   , y1 source.y
-        --   , x2 target.x
-        --   , y2 target.y
-        --   , markerEnd "url(#arrowhead)"
-        --   ]
-        --   [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
         path
           [ strokeWidth 5
           , stroke <| Paint <| paletteColors.background
-          , d <| "M " ++ String.fromFloat source.x ++ " " ++ String.fromFloat source.y ++
-              " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
-              " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
+          , d positioning.pathString
           , noFill
           , class [ "link" ]
           ]
-          [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
+          [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , path
           [ strokeWidth 3
           , stroke <| Paint <| paletteColors.edge
-          , d <| "M " ++ String.fromFloat source.x ++ " " ++ String.fromFloat source.y ++
-              " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
-              " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
+          , d positioning.pathString
           , markerEnd "url(#arrowhead)"
           , noFill
           , class [ "link" ]
           ]
-          [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
-      -- , circle -- show where the control point is
-      --     [ r 4
-      --     , fill <| Paint <| paletteColors.edge
-      --     , cx control_point.x
-      --     , cy control_point.y
-      --     ]
-      --     []
-      -- , rect
-      --     [ x <| midPoint.x - (width / 2)
-      --     , y <| midPoint.y - (height / 2)
-      --     , Px.width width
-      --     , Px.height height
-      --     , fill <| Paint <| Color.rgba 0.0 0.5 1.0 0.5
-      --     -- , stroke <| Paint <| Color.black
-      --     , rx 5
-      --     ]
-      --     []
+          [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , text_
-          [ x <| transition_coordinates.x
-          , y <| transition_coordinates.y + (padding / 2)
+          [ x <| positioning.transition_coordinates.x
+          , y <| positioning.transition_coordinates.y
           , fontFamily ["sans-serif"]
           , fontSize font_size
           , fontWeight FontWeightNormal
@@ -609,33 +719,76 @@ linkElement graph edge =
           , cursor CursorDefault
           ]
           label
+      -- for debugging the paths.
+      -- , circle
+      --     [ cx <| positioning.control_point.x
+      --     , cy <| positioning.control_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.red
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.source_connection_point.x
+      --     , cy <| positioning.source_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.black
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.target_connection_point.x
+      --     , cy <| positioning.target_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.yellow
+      --     ]
+      --     []
       ]
 
 
-nodeElement : NodeId -> Bool -> { a | id : NodeId, label : { b | x : Float, y : Float, value : { isTerminal : Bool, isFinal : Bool } } } -> Svg Msg
-nodeElement start selected node =
+nodeElement : Model -> Graph.Node Entity -> Svg Msg
+nodeElement { start, graph, selectedSource } { label, id } =
   let
-    radius =
-      if node.id == start || node.label.value.isTerminal then
-        9
-      else
-        7
+    isSelected = selectedSource == Just id
+    graphNode =
+      Graph.get id graph
+    isTerminal =
+      Maybe.map isTerminalNode graphNode
+      |> Maybe.withDefault False
+    radius = 7
+      -- if id == start || isTerminal then
+      --   9
+      -- else
+      --   7
   in
     g
-      [ onMouseDown node.id
-      , class ("state-node" :: if selected then [ "selected" ] else [])
+      [ Mouse.onWithOptions
+          "mousedown"
+          { stopPropagation = True, preventDefault = True }
+          (\e ->
+            if e.button == SecondButton then
+              e.clientPos |> DragStart id
+            else
+              case selectedSource of
+                Just alreadySelected ->
+                  if alreadySelected == id then
+                    DeselectNode
+                  else
+                    CreateOrUpdateLinkTo id
+                Nothing ->
+                  SelectNode id
+          )
+      , class ("state-node" :: if isSelected then [ "selected" ] else [])
       ]
       [ circle
           [ r radius
           , strokeWidth 2
-          , cx node.label.x
-          , cy node.label.y
+          , cx label.x
+          , cy label.y
           ]
           []
-       ,  if node.label.value.isTerminal then
+       ,  if isTerminal then
             text_
-              [ x <| node.label.x
-              , y <| (node.label.y + 1)
+              [ x <| label.x
+              , y <| (label.y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 14
               , fontWeight FontWeightNormal
@@ -646,10 +799,10 @@ nodeElement start selected node =
               , cursor CursorDefault
               ]
               [ text "🎯" ]
-          else if node.id == start then
+          else if id == start then
             text_
-              [ x <| node.label.x
-              , y <| (node.label.y + 1)
+              [ x <| label.x
+              , y <| (label.y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 14
               , fontWeight FontWeightNormal
@@ -671,17 +824,114 @@ nodeElement start selected node =
           ]
       ]
 
+{-| A "phantom move" that the user MIGHT make, or might not -}
+showPhantom : Model -> NodeContext Entity Connection -> Svg Msg
+showPhantom model sourceNode =
+  let
+    radius = 9    
+    cardinality = Unidirectional
+    ( xPan, yPan ) = model.pan
+    ( mouse_x, mouse_y) = model.mouseCoords
+    target =
+      { x = mouse_x + xPan
+      , y = mouse_y + yPan
+      }
+    positioning =
+      path_between sourceNode.node.label target cardinality 7 9
+  in
+    g
+      [ Mouse.onWithOptions
+          "mousedown"
+          { stopPropagation = True, preventDefault = True }
+          (\_ -> CreateNewNodeAt model.mouseCoords)
+      ]
+      [ circle
+          [ r radius
+          , cx target.x
+          , cy target.y
+          , noFill
+          , strokeWidth 2
+          , strokeDasharray "1 5.2"
+          , strokeLinecap StrokeLinecapRound
+          , class ["phantom-state-node"]
+          ]
+          []
+      -- now draw the path to it
+      , path
+          [ strokeWidth 5
+          , stroke <| Paint <| paletteColors.background
+          , d positioning.pathString
+          , noFill
+          , class [ "link" ]
+          ]
+          []
+      , path
+          [ strokeWidth 3
+          , d positioning.pathString
+          , if positioning.length > 10 then markerEnd "url(#phantom-arrowhead)" else markerStart "invalid_ref"
+          , noFill
+          , strokeDasharray "1 5"
+          , strokeLinecap StrokeLinecapRound
+          , class [ "phantom-link" ]
+          ]
+          []
+      -- for debugging the paths.
+      -- , circle
+      --     [ cx <| positioning.control_point.x
+      --     , cy <| positioning.control_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.red
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.source_connection_point.x
+      --     , cy <| positioning.source_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.black
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.target_connection_point.x
+      --     , cy <| positioning.target_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.yellow
+      --     ]
+      --     []
+      ]
+
+
 arrowheadMarker : Svg msg
 arrowheadMarker =
   marker
     [ id "arrowhead"
     , viewBox 0 0 10 10
-    , refX "15"
+    , refX "0"
     , refY "5"
     , orient "auto-start-reverse"
     , markerWidth 5
     , markerHeight 5
     , fill <| Paint <| paletteColors.edge
+    ]
+    [ path
+        [ d "M 0 0 L 10 5 L 0 10 z" ]
+        []
+    ]
+
+phantomArrowheadMarker : Svg msg
+phantomArrowheadMarker =
+  marker
+    [ id "phantom-arrowhead"
+    , viewBox 0 0 10 10
+    , refX "0"
+    , refY "5"
+    , orient "auto-start-reverse"
+    , markerWidth 5
+    , markerHeight 5
+    , strokeWidth 1.5
+    , strokeDasharray "1.5 2"
+    , strokeLinecap StrokeLinecapRound
+    , stroke <| Paint <| Color.rgb255 102 102 102
+    , noFill
     ]
     [ path
         [ d "M 0 0 L 10 5 L 0 10 z" ]
@@ -734,17 +984,27 @@ view model =
           ( 0, 1 ) -> CursorWResize
           ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
           ( 2, 1 ) -> CursorEResize
-          _ -> CursorDefault
+          _ ->
+            case model.selectedSource of
+              Just _ -> Cursor "none"
+              _ -> CursorDefault
     ]
     [ g
       [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ] ]
-      [ defs [] [ arrowheadMarker ]
+      [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.graph
-        |> List.map (linkElement model.graph)
+        |> List.map (linkElement model)
         |> g [ class [ "links" ] ]
       , Graph.nodes model.graph
-        |> List.map (\n -> nodeElement model.start (Just n.id == model.selectedNode) n)
+        |> List.map (nodeElement model)
         |> g [ class [ "nodes" ] ]
+      , case model.selectedSource of
+          Just id ->
+            Graph.get id model.graph
+            |> Maybe.map (showPhantom model)
+            |> Maybe.withDefault (g [] [])
+          Nothing ->
+            g [] []
       ]
       , g
           [ cursor CursorPointer
@@ -797,6 +1057,21 @@ view model =
                   )
                 )
               ]
+          , if Maybe.Extra.isJust model.selectedSource then
+              text_
+                [ Px.x 15
+                , Px.y (Tuple.second model.dimensions - 15)
+                , fill <| Paint <| Color.black
+                , fontFamily ["sans-serif"]
+                , fontSize 14
+                , textAnchor AnchorStart
+                , alignmentBaseline AlignmentCentral
+                , dominantBaseline DominantBaselineCentral
+                , pointerEvents "none"
+                ]
+                [ text "Press «Esc» to cancel link creation" ]
+            else
+              g [] []
           ]
     ]
 
