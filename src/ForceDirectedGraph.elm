@@ -31,6 +31,7 @@ import Time
 import Svg.Attributes exposing (pointerEvents)
 import Maybe.Extra
 import Tuple.Extra
+import Tuple.Extra exposing (from)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -561,6 +562,85 @@ identifyCardinality model { to, from } =
   else
     Unidirectional
 
+path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> { pathString : String, transition_coordinates : { x : Float, y : Float }, length : Float }
+path_between sourceXY destXY cardinality shorten_from shorten_to =
+  {- we're doing a curved line, using a quadratic path.
+      So, let's make a triangle. The two points at the "base" are the
+      start and end of the connection ("source" and "target").  Now,
+      take two lines at an angle Θ from both sides, and where they
+      meet is our control point.  We can then adjust the angle "up" and
+      "down" until we are satisfied with the look.
+      
+      Of course, because the angles are equal, the length of the lines is
+      also equal.  So another equivalent way of going about it is by getting
+      the midpoint and then pushing a line "up", orthogonal to that midpoint,
+      and saying that this is the control point.  As the length of the line
+      increases, the angle increases too.
+  --}
+  let
+    d_y = sourceXY.y - destXY.y
+    d_x = sourceXY.x - destXY.x
+    orig_line_len = sqrt (d_x * d_x + d_y * d_y)
+    parametric_direction_vector =
+      -- normalised
+      { y = (destXY.y - sourceXY.y) / orig_line_len
+      , x = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    shorten_target =
+      { x = destXY.x - parametric_direction_vector.x * shorten_to
+      , y = destXY.y - parametric_direction_vector.y * shorten_to
+      }
+    shorten_source =
+      { x = sourceXY.x + parametric_direction_vector.x * shorten_from
+      , y = sourceXY.y + parametric_direction_vector.y * shorten_from
+      }
+    line_len =
+      let
+        dx = shorten_target.x - shorten_source.x
+        dy = shorten_target.y - shorten_source.y
+      in
+        sqrt (dx * dx + dy * dy)
+    midPoint =
+      { x = shorten_target.x - (line_len / 2) * parametric_direction_vector.x
+      , y = shorten_target.y - (line_len / 2) * parametric_direction_vector.y
+      }
+    orthogonal_parametric_direction_vector =
+      -- normalised
+      { x = -(shorten_target.y - shorten_source.y) / line_len
+      , y = -(shorten_target.x - shorten_source.x) / line_len
+      }
+    desired_length = 0.4 * line_len
+      -- case cardinality of
+      --   Bidirectional ->
+      --     0.4 * line_len -- increase/decrease for a larger/smaller angle
+      --   Unidirectional ->
+      --     0
+    control_vector =
+      { y = desired_length * orthogonal_parametric_direction_vector.y
+      , x = -desired_length * orthogonal_parametric_direction_vector.x
+      }
+    control_point =
+      { x = midPoint.x + control_vector.x
+      , y = midPoint.y + control_vector.y
+      }
+    linePath =
+      "M " ++ String.fromFloat (shorten_source.x)
+      ++ " " ++ String.fromFloat (shorten_source.y)
+      ++ " Q " ++ String.fromFloat control_point.x
+      ++ " " ++ String.fromFloat control_point.y
+      ++ " " ++ String.fromFloat (shorten_target.x)
+      ++ " " ++ String.fromFloat (shorten_target.y)
+    transition_coordinates =
+      { x = midPoint.x + control_vector.x / 2
+      , y = midPoint.y + control_vector.y / 2
+      }
+  in
+    { pathString = linePath
+    , transition_coordinates = transition_coordinates
+    , length = line_len
+    }
+
+
 linkElement : Model -> Edge Connection -> Svg msg
 linkElement ({ graph } as model) edge =
   let
@@ -569,122 +649,41 @@ linkElement ({ graph } as model) edge =
 
     target =
       Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
-    cardinality = identifyCardinality model edge
+    cardinality = Unidirectional -- identifyCardinality model edge
+    positioning =
+      path_between source target cardinality 7 22
     label = connectionToSvgText edge.label
     em_to_px em_value = font_size * em_value
     padding =
       let
         padding_em = 0.3
-
-        -- width_em = padding_em + (toFloat <| Set.size edge.label)
-        -- height_em = 1 + padding_em -- in em
       in
-        ( padding_em |> em_to_px
-        -- , width_em |> em_to_px
-        -- , height_em |> em_to_px
-        )
+        ( padding_em |> em_to_px )
     font_size = 16.0 -- this is the default, if not otherwise set
-    d_y = source.y - target.y
-    d_x = source.x - target.x
-    line_len = sqrt (d_x * d_x + d_y * d_y)
-    m = d_y / d_x
-    c = source.y - (m * source.x)
-    y_value y = m * y + c
-    midPoint =
-      { x = (source.x + target.x) / 2
-      , y = y_value <| (source.x + target.x) / 2
-      }
-    {- we're doing a curved line, using a quadratic path.
-       So, let's make a triangle. The two points at the "base" are the
-       start and end of the connection ("source" and "target").  Now,
-       take two lines at an angle Θ from both sides, and where they
-       meet is our control point.  We can then adjust the angle "up" and
-       "down" until we are satisfied with the look.
-       
-       Of course, because the angles are equal, the length of the lines is
-       also equal.  So another equivalent way of going about it is by getting
-       the midpoint and then pushing a line "up", orthogonal to that midpoint,
-       and saying that this is the control point.  As the length of the line
-       increases, the angle increases too.
-    --}
-    parametric_direction_vector =
-      -- normalised
-      { x = -(target.y - source.y) / line_len
-      , y = -(target.x - source.x) / line_len
-      }
-    desired_length =
-      case cardinality of
-        Bidirectional ->
-          0.4 * line_len -- increase/decrease for a larger/smaller angle
-        Unidirectional ->
-          0
-    control_vector =
-      { y = desired_length * parametric_direction_vector.y
-      , x = -desired_length * parametric_direction_vector.x
-      }
-    control_point =
-      { x = midPoint.x + control_vector.x
-      , y = midPoint.y + control_vector.y
-      }
-    transition_coordinates =
-      { x = midPoint.x + control_vector.x / 2
-      , y = midPoint.y + control_vector.y / 2
-      }
   in
     g
       []
       [
-        -- line
-        --   [ strokeWidth 3
-        --   , stroke <| Paint <| paletteColors.edge
-        --   , x1 source.x
-        --   , y1 source.y
-        --   , x2 target.x
-        --   , y2 target.y
-        --   , markerEnd "url(#arrowhead)"
-        --   ]
-        --   [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
         path
           [ strokeWidth 5
           , stroke <| Paint <| paletteColors.background
-          , d <| "M " ++ String.fromFloat source.x ++ " " ++ String.fromFloat source.y ++
-              " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
-              " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
+          , d positioning.pathString
           , noFill
           , class [ "link" ]
           ]
-          [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
+          [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , path
           [ strokeWidth 3
           , stroke <| Paint <| paletteColors.edge
-          , d <| "M " ++ String.fromFloat source.x ++ " " ++ String.fromFloat source.y ++
-              " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
-              " " ++ String.fromFloat target.x ++ " " ++ String.fromFloat target.y
+          , d positioning.pathString
           , markerEnd "url(#arrowhead)"
           , noFill
           , class [ "link" ]
           ]
-          [ title [] [ text <| Automata.Data.connectionToString edge.label ] ]
-      -- , circle -- show where the control point is
-      --     [ r 4
-      --     , fill <| Paint <| paletteColors.edge
-      --     , cx control_point.x
-      --     , cy control_point.y
-      --     ]
-      --     []
-      -- , rect
-      --     [ x <| midPoint.x - (width / 2)
-      --     , y <| midPoint.y - (height / 2)
-      --     , Px.width width
-      --     , Px.height height
-      --     , fill <| Paint <| Color.rgba 0.0 0.5 1.0 0.5
-      --     -- , stroke <| Paint <| Color.black
-      --     , rx 5
-      --     ]
-      --     []
+          [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , text_
-          [ x <| transition_coordinates.x
-          , y <| transition_coordinates.y + (padding / 2)
+          [ x <| positioning.transition_coordinates.x
+          , y <| positioning.transition_coordinates.y + (padding / 2)
           , fontFamily ["sans-serif"]
           , fontSize font_size
           , fontWeight FontWeightNormal
@@ -706,11 +705,11 @@ nodeElement { start, graph, selectedSource } { label, id } =
     isTerminal =
       Maybe.map isTerminalNode graphNode
       |> Maybe.withDefault False
-    radius =
-      if id == start || isTerminal then
-        9
-      else
-        7
+    radius = 7
+      -- if id == start || isTerminal then
+      --   9
+      -- else
+      --   7
   in
     g
       [ Mouse.onWithOptions
@@ -781,58 +780,16 @@ nodeElement { start, graph, selectedSource } { label, id } =
 showPhantom : Model -> NodeContext Entity Connection -> Svg Msg
 showPhantom model sourceNode =
   let
-    radius = 9
+    radius = 9    
+    cardinality = Unidirectional
     ( xPan, yPan ) = model.pan
-    ( target_x, target_y ) = Tuple.mapBoth ((+) xPan) ((+) yPan) model.mouseCoords
-
-    source = sourceNode.node.label
-    cardinality = Unidirectional --identifyCardinality model edge
-    d_y = source.y - target_y
-    d_x = source.x - target_x
-    line_len = sqrt (d_x * d_x + d_y * d_y)
-    m = d_y / d_x
-    c = source.y - (m * source.x)
-    y_value y_ = m * y_ + c
-    midPoint =
-      { x = (source.x + target_x) / 2
-      , y = y_value <| (source.x + target_x) / 2
+    ( mouse_x, mouse_y) = model.mouseCoords
+    target =
+      { x = mouse_x + xPan
+      , y = mouse_y + yPan
       }
-    parametric_direction_vector =
-      -- normalised
-      { y = (target_y - source.y) / line_len
-      , x = (target_x - source.x) / line_len
-      }
-    shorter_target =
-      { x = target_x - parametric_direction_vector.x * 2 * (radius + 2.5)
-      , y = target_y - parametric_direction_vector.y * 2 * (radius + 2.5)
-      }
-    shorter_source =
-      { x = source.x + parametric_direction_vector.x * radius
-      , y = source.y + parametric_direction_vector.y * radius
-      }
-    orthogonal_parametric_direction_vector =
-      -- normalised
-      { x = -(target_y - source.y) / line_len
-      , y = -(target_x - source.x) / line_len
-      }
-    desired_length =
-      case cardinality of
-        Bidirectional ->
-          0.4 * line_len -- increase/decrease for a larger/smaller angle
-        Unidirectional ->
-          0
-    control_vector =
-      { y = desired_length * orthogonal_parametric_direction_vector.y
-      , x = -desired_length * orthogonal_parametric_direction_vector.x
-      }
-    control_point =
-      { x = midPoint.x + control_vector.x
-      , y = midPoint.y + control_vector.y
-      }
-    linePath =
-      "M " ++ String.fromFloat shorter_source.x ++ " " ++ String.fromFloat shorter_source.y ++
-      " Q " ++ String.fromFloat control_point.x ++ " " ++ String.fromFloat control_point.y ++
-      " " ++ String.fromFloat shorter_target.x ++ " " ++ String.fromFloat shorter_target.y
+    positioning =
+      path_between sourceNode.node.label target cardinality 9 18
   in
     g
       [ Mouse.onWithOptions
@@ -842,8 +799,8 @@ showPhantom model sourceNode =
       ]
       [ circle
           [ r radius
-          , cx (target_x)
-          , cy (target_y)
+          , cx target.x
+          , cy target.y
           , noFill
           , strokeWidth 2
           , strokeDasharray "1 5.2"
@@ -855,15 +812,15 @@ showPhantom model sourceNode =
       , path
           [ strokeWidth 5
           , stroke <| Paint <| paletteColors.background
-          , d linePath
+          , d positioning.pathString
           , noFill
           , class [ "link" ]
           ]
           []
       , path
           [ strokeWidth 2
-          , d linePath
-          , if line_len > 10 then markerEnd "url(#phantom-arrowhead)" else markerStart "url(#phantom-arrowhead)"
+          , d positioning.pathString
+          , if positioning.length > 10 then markerEnd "url(#phantom-arrowhead)" else markerStart "invalid_ref"
           , noFill
           , strokeDasharray "1 5"
           , strokeLinecap StrokeLinecapRound
@@ -878,7 +835,7 @@ arrowheadMarker =
   marker
     [ id "arrowhead"
     , viewBox 0 0 10 10
-    , refX "15"
+    , refX "0"
     , refY "5"
     , orient "auto-start-reverse"
     , markerWidth 5
