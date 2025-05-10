@@ -12,7 +12,7 @@ import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
   , transform, noFill, width, rx, ry, strokeDasharray, strokeLinecap
-  , markerStart)
+  , markerStart, pointerEvents)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
@@ -28,10 +28,7 @@ import Html.Attributes
 import Set
 import IntDict
 import Time
-import Svg.Attributes exposing (pointerEvents)
 import Maybe.Extra
-import Tuple.Extra
-import Tuple.Extra exposing (from)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -109,6 +106,10 @@ type alias Drag =
   , current : ( Float, Float )
   , index : NodeId
   }
+
+sign : Float -> Float
+sign x =
+  if x < 0 then -1 else 1
 
 getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Char }
 getProspective model id =
@@ -562,8 +563,17 @@ identifyCardinality model { to, from } =
   else
     Unidirectional
 
-path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> { pathString : String, transition_coordinates : { x : Float, y : Float }, length : Float }
-path_between sourceXY destXY cardinality shorten_from shorten_to =
+type alias PathBetweenReturn =
+  { pathString : String
+  , transition_coordinates : { x : Float, y : Float }
+  , length : Float
+  , control_point : { x : Float, y : Float }
+  , source_connection_point : { x : Float, y : Float }
+  , target_connection_point : { x : Float, y : Float }
+  }
+
+path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
+path_between sourceXY destXY cardinality radius_from radius_to =
   {- we're doing a curved line, using a quadratic path.
       So, let's make a triangle. The two points at the "base" are the
       start and end of the connection ("source" and "target").  Now,
@@ -581,18 +591,56 @@ path_between sourceXY destXY cardinality shorten_from shorten_to =
     d_y = sourceXY.y - destXY.y
     d_x = sourceXY.x - destXY.x
     orig_line_len = sqrt (d_x * d_x + d_y * d_y)
+    curvature =
+      case cardinality of
+        Bidirectional ->
+          0.4 -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
+        Unidirectional ->
+          0
+    orthogonal_len =
+      curvature * orig_line_len
+    orthogonal_vector =
+      -- normalised
+      { x = (destXY.y - sourceXY.y) / orig_line_len
+      , y = (destXY.x - sourceXY.x) / orig_line_len
+      }
     parametric_direction_vector =
       -- normalised
       { y = (destXY.y - sourceXY.y) / orig_line_len
       , x = (destXY.x - sourceXY.x) / orig_line_len
       }
-    shorten_target =
-      { x = destXY.x - parametric_direction_vector.x * shorten_to
-      , y = destXY.y - parametric_direction_vector.y * shorten_to
+    half_len = orig_line_len / 2
+    midPoint =
+      -- I can do this early because the midpoint should remain the midpoint,
+      -- no matter how I place the actual targets
+      { x = destXY.x - half_len * parametric_direction_vector.x
+      , y = destXY.y - half_len * parametric_direction_vector.y
+      }
+    -- with the midpoint, I can work out the control points.
+    control_point =
+      { x = midPoint.x + orthogonal_len * orthogonal_vector.x
+      , y = midPoint.y - orthogonal_len * orthogonal_vector.y
+      }
+    hypotenuse_len =
+      sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
+    -- now, with the control point, I can make the source & target hypotenuse vectors
+    source_hypotenuse_vector =
+      -- normalised
+      { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
+      , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
+      }
+    dest_hypotenuse_vector =
+      { x = -( control_point.x - destXY.x ) / hypotenuse_len
+      , y = -( control_point.y - destXY.y ) / hypotenuse_len
       }
     shorten_source =
-      { x = sourceXY.x + parametric_direction_vector.x * shorten_from
-      , y = sourceXY.y + parametric_direction_vector.y * shorten_from
+      { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
+      , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
+      }
+    shorten_target =
+      -- the extra addition is for the stroke-width (which is 3px)
+      { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
+      , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
       }
     line_len =
       let
@@ -600,29 +648,10 @@ path_between sourceXY destXY cardinality shorten_from shorten_to =
         dy = shorten_target.y - shorten_source.y
       in
         sqrt (dx * dx + dy * dy)
-    midPoint =
-      { x = shorten_target.x - (line_len / 2) * parametric_direction_vector.x
-      , y = shorten_target.y - (line_len / 2) * parametric_direction_vector.y
-      }
-    orthogonal_parametric_direction_vector =
-      -- normalised
-      { x = -(shorten_target.y - shorten_source.y) / line_len
-      , y = -(shorten_target.x - shorten_source.x) / line_len
-      }
-    desired_length = 0.4 * line_len
-      -- case cardinality of
-      --   Bidirectional ->
-      --     0.4 * line_len -- increase/decrease for a larger/smaller angle
-      --   Unidirectional ->
-      --     0
-    control_vector =
-      { y = desired_length * orthogonal_parametric_direction_vector.y
-      , x = -desired_length * orthogonal_parametric_direction_vector.x
-      }
-    control_point =
-      { x = midPoint.x + control_vector.x
-      , y = midPoint.y + control_vector.y
-      }
+    -- control_point =
+    --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
+    --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
+    --   }
     linePath =
       "M " ++ String.fromFloat (shorten_source.x)
       ++ " " ++ String.fromFloat (shorten_source.y)
@@ -631,13 +660,16 @@ path_between sourceXY destXY cardinality shorten_from shorten_to =
       ++ " " ++ String.fromFloat (shorten_target.x)
       ++ " " ++ String.fromFloat (shorten_target.y)
     transition_coordinates =
-      { x = midPoint.x + control_vector.x / 2
-      , y = midPoint.y + control_vector.y / 2
+      { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
+      , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
       }
   in
     { pathString = linePath
     , transition_coordinates = transition_coordinates
     , length = line_len
+    , control_point = control_point
+    , source_connection_point = shorten_source
+    , target_connection_point = shorten_target
     }
 
 
@@ -651,14 +683,8 @@ linkElement ({ graph } as model) edge =
       Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
     cardinality = Unidirectional -- identifyCardinality model edge
     positioning =
-      path_between source target cardinality 7 22
+      path_between source target cardinality 7 7
     label = connectionToSvgText edge.label
-    em_to_px em_value = font_size * em_value
-    padding =
-      let
-        padding_em = 0.3
-      in
-        ( padding_em |> em_to_px )
     font_size = 16.0 -- this is the default, if not otherwise set
   in
     g
@@ -683,7 +709,7 @@ linkElement ({ graph } as model) edge =
           [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , text_
           [ x <| positioning.transition_coordinates.x
-          , y <| positioning.transition_coordinates.y + (padding / 2)
+          , y <| positioning.transition_coordinates.y
           , fontFamily ["sans-serif"]
           , fontSize font_size
           , fontWeight FontWeightNormal
@@ -693,6 +719,28 @@ linkElement ({ graph } as model) edge =
           , cursor CursorDefault
           ]
           label
+      -- for debugging the paths.
+      -- , circle
+      --     [ cx <| positioning.control_point.x
+      --     , cy <| positioning.control_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.red
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.source_connection_point.x
+      --     , cy <| positioning.source_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.black
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.target_connection_point.x
+      --     , cy <| positioning.target_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.yellow
+      --     ]
+      --     []
       ]
 
 
@@ -789,7 +837,7 @@ showPhantom model sourceNode =
       , y = mouse_y + yPan
       }
     positioning =
-      path_between sourceNode.node.label target cardinality 9 18
+      path_between sourceNode.node.label target cardinality 7 9
   in
     g
       [ Mouse.onWithOptions
@@ -818,7 +866,7 @@ showPhantom model sourceNode =
           ]
           []
       , path
-          [ strokeWidth 2
+          [ strokeWidth 3
           , d positioning.pathString
           , if positioning.length > 10 then markerEnd "url(#phantom-arrowhead)" else markerStart "invalid_ref"
           , noFill
@@ -827,6 +875,28 @@ showPhantom model sourceNode =
           , class [ "phantom-link" ]
           ]
           []
+      -- for debugging the paths.
+      -- , circle
+      --     [ cx <| positioning.control_point.x
+      --     , cy <| positioning.control_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.red
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.source_connection_point.x
+      --     , cy <| positioning.source_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.black
+      --     ]
+      --     []
+      -- , circle
+      --     [ cx <| positioning.target_connection_point.x
+      --     , cy <| positioning.target_connection_point.y
+      --     , r 3
+      --     , fill <| Paint <| Color.yellow
+      --     ]
+      --     []
       ]
 
 
