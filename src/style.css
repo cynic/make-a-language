@@ -55,6 +55,21 @@ path.link {
   pointer-events: none;
 }
 .transition-chooser-key {
-  transition: all 0.33s ease;
+  transition: all 0.3s ease;
   fill: rgb(170, 170, 170);
+}
+.transition-chooser-key:hover, .transition-chooser-key.selected:hover, .transition-chooser-key.selected.terminal:hover {
+  fill:rgb(157, 255, 0)
+}
+.transition-chooser-key.terminal.selected {
+  fill: orange;
+  stroke: black;
+}
+.transition-chooser-key.terminal + text {
+  font-weight: bold;
+}
+
+.transition-chooser-key.selected {
+  fill:rgb(238, 255, 0);
+  stroke: darkgray;
 }

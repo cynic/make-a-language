@@ -28,7 +28,7 @@ import Html.Attributes
 import Set
 import IntDict
 import Time
-import Maybe.Extra
+import List.Extra as List
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -42,10 +42,13 @@ type Msg
   | ResetView
   | SelectNode NodeId
   | DeselectNode
+  | ToggleSelectedTransition Char
   | SetMouseOver
   | SetMouseOut
   | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
   | CreateNewNodeAt ( Float, Float )
+  | Escape -- the universal "No! Go Back!" key & command
+  | Confirm -- the universal "Yeah! Let's Go!" key & command
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -68,36 +71,32 @@ type alias Model =
   , mouseCoords : ( Float, Float )
   , selectedSource : Maybe NodeId
   , selectedDest : LinkDestination
+  , selectedTransitions : Connection
   , mouseIsHere : Bool
   , userRequestedChanges : List RequestedGraphChanges
   , unusedId : NodeId
   }
 
 type RequestedGraphChanges
-  = FinalToNonFinal
+  -- transition-related changes: convert non-final to final, convert final to non-final, remove a transition, add a transition
+  -- all of which can & should be handled via ModifyTransition tbh
+  = ModifyTransition
       { from : NodeId
       , to : NodeId
-      , label : Char
+      , oldState : Connection
+      , newState : Connection
       }
-  | NonFinalToFinal
+  | NewLinkToNode
       { from : NodeId
       , to : NodeId
-      , label : Char
-      }
-  | AddTransition
-      { from : NodeId
-      , to : NodeId
-      , label : Char
-      }
-  | RemoveTransition
-      { from : NodeId
-      , to : NodeId
-      , label : Char
+      , conn : Connection
       }
   | AddNewNode
       { from : NodeId
       , newNodeId : NodeId
-      , label : Char
+      , x : Float
+      , y : Float
+      , conn : Connection
       }
   | RemoveNode NodeId
 
@@ -111,16 +110,16 @@ sign : Float -> Float
 sign x =
   if x < 0 then -1 else 1
 
-getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Char }
+getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Connection }
 getProspective model id =
   let
-    getProspective_ : List RequestedGraphChanges -> List { from : NodeId, to : NodeId, label : Char } -> List { from : NodeId, to : NodeId, label : Char }
+    getProspective_ : List RequestedGraphChanges -> List { from : NodeId, to : NodeId, label : Connection } -> List { from : NodeId, to : NodeId, label : Connection }
     getProspective_ changes acc =
       case changes of
         [] -> []
         AddNewNode v :: rest ->
           if v.newNodeId == id then
-            getProspective_ rest ({ from = v.from, to = v.newNodeId, label = v.label } :: acc)
+            getProspective_ rest ({ from = v.from, to = v.newNodeId, label = v.conn } :: acc)
           else
             getProspective_ rest acc
         _::rest ->
@@ -188,23 +187,27 @@ viewportForces (w, h) _ =
   --       )
   --       (Graph.nodes graph)
   ]
+
+makeLinkForce : NodeId -> NodeId -> Connection -> Force.Force NodeId
+makeLinkForce from to label =
+  Force.customLinks 3 <|
+    [{ source = from
+    , target = to
+    , distance = 10.0 + 25.0 * toFloat (Set.size label) --35-40 seems like a good distance
+    , strength = Just 0.7 -- * (toFloat <| Set.size e.label)
+    }]
+
+makeNodeForce : NodeId -> Force.Force NodeId
+makeNodeForce id =
+  Force.manyBodyStrength -3000.0 [id]
+
 basicForces : NodeId -> Graph Entity Connection -> (Int, Int) -> List (Force.Force NodeId)
 basicForces start graph (width, height) =
-  [
-    Force.customLinks 3 <|
-      List.map
-        (\e ->
-          { source = e.from
-          , target = e.to
-          , distance = 10.0 + 25.0 * toFloat (Set.size e.label) --35-40 seems like a good distance
-          , strength = Just 0.7 -- * (toFloat <| Set.size e.label)
-          }
-        )
-      (Graph.edges graph)
-    -- Force.links <| List.map link <| Graph.edges graph
-  , Force.manyBodyStrength -3000.0 <| List.map .id <| Graph.nodes graph
-  -- , Force.manyBody <| List.map .id <| Graph.nodes graph
-  , Force.towardsX <|
+  (List.map (\e -> makeLinkForce e.from e.to e.label) (Graph.edges graph))
+  ++
+  (List.map (.id >> makeNodeForce) (Graph.nodes graph))
+  ++
+  [ Force.towardsX <|
       List.filterMap
         (\n ->
           if n.id == start then
@@ -252,6 +255,7 @@ receiveDAWG dawg (w, h) =
     , mouseCoords = ( w/2, h/2 )
     , selectedSource = Nothing
     , selectedDest = NoDestination
+    , selectedTransitions = Set.empty
     , pan = ( 0, 0)
     , mouseIsHere = False
     , userRequestedChanges = []
@@ -306,6 +310,69 @@ yPanAt model y =
     -1
   else
     0
+
+userchange_modifyTransition : Model -> NodeId -> NodeId -> List RequestedGraphChanges
+userchange_modifyTransition model source dest =
+  -- this is called when there is already a link between source and dest,
+  -- and that link must be modified.
+  {-So, there are a few things to look at here.
+      1. Is there a corresponding `NewLinkToNode` or `AddNewNode`? If so, then
+         I can (and should) just modify the `conn` there: there is no "baseline".
+      2. Is there a corresponding `ModifyTransition`? If so, then I should just modify that.
+      3. Otherwise, I should add in a `ModifyTransition`.
+  -}
+  let
+    baselineIndex =
+      List.findIndex
+        (\item ->
+          case item of
+            NewLinkToNode { from, to } ->
+              from == source && to == dest
+            AddNewNode { from, newNodeId } ->
+              from == source && newNodeId == dest
+            ModifyTransition { from, to } ->
+              from == source && to == dest
+            _ -> False
+        )
+        model.userRequestedChanges
+  in
+    case baselineIndex of
+      Nothing ->
+        -- this is not found in the baseline; therefore, it must be from the graph.
+        ModifyTransition
+          { from = source
+          , to = dest
+          , newState = model.selectedTransitions
+          , oldState =
+              Graph.get dest model.graph
+              |> Maybe.andThen (.incoming >> IntDict.get source)
+              |> Maybe.withDefault Set.empty
+          }
+        :: model.userRequestedChanges
+      Just idx ->
+        List.updateAt idx
+          (\orig ->
+            case orig of
+              NewLinkToNode v ->
+                NewLinkToNode { v | conn = model.selectedTransitions }
+              AddNewNode v ->
+                AddNewNode { v | conn = model.selectedTransitions }
+              ModifyTransition v ->
+                ModifyTransition { v | newState = model.selectedTransitions }
+              _ ->
+                orig -- impossible.
+          )
+          model.userRequestedChanges
+
+userchange_newLinkToNode : Model -> NodeId -> NodeId -> List RequestedGraphChanges
+userchange_newLinkToNode model source dest =
+  -- this is called when there is no existing link between source and dest,
+  -- but both nodes already exist in the graph.
+  NewLinkToNode
+    { from = source
+    , to = dest
+    , conn = model.selectedTransitions
+    } :: model.userRequestedChanges
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -402,7 +469,12 @@ update offset_amount msg model =
       in
       { model
       | mouseCoords = (x, y)
-      , pan = ( xPan + xPanAt model x, yPan + yPanAt model y )
+      , pan =
+          case model.selectedDest of
+            NoDestination ->
+              ( xPan + xPanAt model x, yPan + yPanAt model y )
+            _ ->
+              model.pan
       }
 
     SelectNode index ->
@@ -421,10 +493,122 @@ update offset_amount msg model =
       { model | mouseIsHere = False }
 
     CreateOrUpdateLinkTo dest ->
-      { model | selectedDest = ExistingNode dest }
+      { model
+      | selectedDest = ExistingNode dest
+      , selectedTransitions =
+          Graph.get dest model.graph
+          |> Maybe.map (\node ->
+            case model.selectedSource of
+              Just source ->
+                case IntDict.get source node.incoming of
+                  Just conn ->
+                    conn
+                  Nothing -> -- no link to this node, at present.
+                    Set.empty
+              Nothing ->
+                -- NO SOURCE?!!!
+                Set.empty
+          )
+          |> Maybe.withDefault Set.empty
+      }
 
     CreateNewNodeAt ( x, y ) ->
       { model | selectedDest = NewNode ( x, y ) }
+
+    Escape ->
+      let
+        escape_from_initial_node_selection =
+          case model.selectedSource of
+            Nothing ->
+              -- ??? I guess I'm escaping from nothing.
+              model
+            Just _ ->
+              { model | selectedSource = Nothing }
+        escape_from_node_link =
+          case model.selectedDest of
+            NoDestination ->
+              -- hmm. I must be escaping from something earlier!
+              escape_from_initial_node_selection
+            _ ->
+              { model | selectedDest = NoDestination }
+        escape_from_anything = escape_from_node_link
+      in
+      -- ooh!  What are we "escaping" from, though?
+      escape_from_anything
+
+    Confirm ->
+      -- What am I confirming?
+      if not <| Set.isEmpty model.selectedTransitions then
+        case ( model.selectedSource, model.selectedDest ) of
+          ( Just src, NewNode ( x, y ) ) ->
+            -- create a totally new node, never before seen!
+            { model
+            | selectedTransitions = Set.empty
+            , selectedDest = NoDestination
+            , selectedSource = Nothing
+            , userRequestedChanges =
+                AddNewNode
+                  { from = src
+                  , newNodeId = model.unusedId
+                  , x = x
+                  , y = y
+                  , conn = model.selectedTransitions
+                  } :: model.userRequestedChanges
+            , graph =
+                Graph.insert
+                  { node =
+                    { label =
+                        let
+                          initial =
+                            Force.entity model.unusedId { isProspective = False }
+                        in
+                          { initial | x = x, y = y }
+                    , id = model.unusedId
+                    }
+                  , incoming = IntDict.singleton src model.selectedTransitions
+                  , outgoing = IntDict.empty
+                  }
+                  model.graph
+            , basicForces =
+                makeLinkForce src model.unusedId model.selectedTransitions
+                :: makeNodeForce model.unusedId
+                :: model.basicForces
+            , unusedId = model.unusedId + 1
+            }
+          ( Just src, ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
+            { model
+            | selectedTransitions = Set.empty
+            , selectedDest = NoDestination
+            , selectedSource = Nothing
+            , userRequestedChanges =
+                if linkExistsInGraph model src dest then
+                  -- if these two are connected already [in the correct direction], then we must just adjust the transition.
+                  userchange_modifyTransition model src dest
+                else
+                  -- however, if there is no connection between existing nodes, then we must create a new link.
+                  userchange_newLinkToNode model src dest
+            }
+          ( Just _, NoDestination ) ->
+            -- ??? Nothing for me to do!
+            model
+          ( Nothing, _ ) ->
+            -- ??? Nothing for me to do!
+            model
+      else
+        model
+
+    ToggleSelectedTransition ch ->
+      let
+        newSelectedTransitions =
+          if Set.member (ch, 0) model.selectedTransitions then
+            Set.remove (ch, 0) model.selectedTransitions
+            |> Set.insert (ch, 1)
+          else if Set.member (ch, 1) model.selectedTransitions then
+            Set.remove (ch, 1) model.selectedTransitions
+          else
+            Set.insert (ch, 0) model.selectedTransitions
+      in
+        { model | selectedTransitions = newSelectedTransitions }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -453,6 +637,10 @@ subscriptions offset_amount model =
                   ( "1", True ) ->
                     Debug.log "yup" v |> \_ ->
                     Decode.succeed ResetView
+                  ( "Enter", False ) ->
+                    Decode.succeed Confirm
+                  ( "Escape", False ) ->
+                    Decode.succeed Escape
                   _ ->
                     Debug.log "hmm" v |> \_ ->
                     Decode.fail "Not a recognized key combination"
@@ -539,26 +727,16 @@ type LinkType
   | New Cardinality -- user has clicked, but entirety isn't approved yet.
                     -- When it is approved, we'll see it under Confirmed.
 
-linkExists : Model -> NodeId -> NodeId -> Bool
-linkExists model from to =
+linkExistsInGraph : Model -> NodeId -> NodeId -> Bool
+linkExistsInGraph model from to =
   -- does a link exist from `from` to `to`?
   Graph.get from model.graph
   |> Maybe.map (.outgoing >> IntDict.member to)
-  |> Maybe.Extra.withDefaultLazy (\() ->
-    -- if I'm here, then the `from` isn't in the Graph.
-    -- Is it in the prospective nodes?
-    case getProspective model from of
-      [] ->
-        -- Nope! Nothing here!
-        False
-      xs ->
-        -- now look at the "to" and see if it's there.
-        List.any (\x -> x.to == to) xs
-  )
+  |> Maybe.withDefault False
 
 identifyCardinality : Model -> Edge Connection -> Cardinality
 identifyCardinality model { to, from } =
-  if linkExists model to from then
+  if linkExistsInGraph model to from then
     Bidirectional
   else
     Unidirectional
@@ -745,7 +923,7 @@ linkElement ({ graph } as model) edge =
 
 
 nodeElement : Model -> Graph.Node Entity -> Svg Msg
-nodeElement { start, graph, selectedSource } { label, id } =
+nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
   let
     isSelected = selectedSource == Just id
     graphNode =
@@ -754,30 +932,37 @@ nodeElement { start, graph, selectedSource } { label, id } =
       Maybe.map isTerminalNode graphNode
       |> Maybe.withDefault False
     radius = 7
-      -- if id == start || isTerminal then
-      --   9
-      -- else
-      --   7
+    permit_node_reselection =
+      Mouse.onWithOptions
+        "mousedown"
+        { stopPropagation = True, preventDefault = True }
+        (\e ->
+          if e.button == SecondButton then
+            e.clientPos |> DragStart id
+          else
+            case selectedSource of
+              Just alreadySelected ->
+                if alreadySelected == id then
+                  DeselectNode
+                else
+                  CreateOrUpdateLinkTo id
+              Nothing ->
+                SelectNode id
+        )
+
+    interactivity =
+      case selectedDest of
+        NoDestination ->
+          [ permit_node_reselection ]
+        ExistingNode _ ->
+          []
+        NewNode _ ->
+          []
   in
     g
-      [ Mouse.onWithOptions
-          "mousedown"
-          { stopPropagation = True, preventDefault = True }
-          (\e ->
-            if e.button == SecondButton then
-              e.clientPos |> DragStart id
-            else
-              case selectedSource of
-                Just alreadySelected ->
-                  if alreadySelected == id then
-                    DeselectNode
-                  else
-                    CreateOrUpdateLinkTo id
-                Nothing ->
-                  SelectNode id
-          )
-      , class ("state-node" :: if isSelected then [ "selected" ] else [])
-      ]
+      ( class ("state-node" :: if isSelected then [ "selected" ] else [])
+      ::interactivity
+      )
       [ circle
           [ r radius
           , strokeWidth 2
@@ -840,11 +1025,7 @@ showPhantom model sourceNode =
       path_between sourceNode.node.label target cardinality 7 9
   in
     g
-      [ Mouse.onWithOptions
-          "mousedown"
-          { stopPropagation = True, preventDefault = True }
-          (\_ -> CreateNewNodeAt model.mouseCoords)
-      ]
+      []
       [ circle
           [ r radius
           , cx target.x
@@ -938,6 +1119,121 @@ phantomArrowheadMarker =
         []
     ]
 
+transition_buttonSize : Float
+transition_buttonSize = 55
+
+transition_spacing : Float
+transition_spacing = 15
+
+-- https://ishadeed.com/article/target-size/
+viewSingleKey : Model -> Char -> (Int, Int) -> Svg Msg
+viewSingleKey model ch (gridX, gridY) =
+  let
+    buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
+    buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
+    isTerminal = Set.member (ch, 1) model.selectedTransitions
+    keyClass =
+      if Set.member (ch, 0) model.selectedTransitions then
+        [ "transition-chooser-key", "selected" ]
+      else if isTerminal then
+        [ "transition-chooser-key", "selected", "terminal" ]
+      else
+        [ "transition-chooser-key" ]
+  in
+  g
+    []
+    [ rect
+        [ x buttonX
+        , y buttonY
+        , Px.width transition_buttonSize
+        , Px.height transition_buttonSize
+        , Px.rx 5
+        , Px.ry 5
+        , strokeWidth 2
+        , stroke <| Paint <| Color.white
+        , class keyClass
+        , onClick <| ToggleSelectedTransition ch
+        ]
+        ( if isTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
+    , text_
+        [ x <| buttonX + transition_buttonSize / 2
+        , y <| buttonY + transition_buttonSize / 2
+        , fontSize 20
+        , strokeWidth 0
+        , textAnchor AnchorMiddle
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        ]
+        [ text <| String.fromChar ch ]
+    ]
+
+
+viewSvgTransitionChooser : Model -> Svg Msg
+viewSvgTransitionChooser model =
+  let
+    ( w, h ) = model.dimensions
+    items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
+    alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ "
+    numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
+    gridItemsAndCoordinates =
+      List.foldl
+        (\item (acc, ( col, row )) ->
+          if col + 1 >= items_per_row then
+            ((item, col, row) :: acc, (0, row + 1))
+          else
+            ((item, col, row) :: acc, (col + 1, row))
+        )
+        ([], (0, 0))
+        alphabet
+      |> Tuple.first
+  in
+  g
+    []
+    ( g
+        []
+        [ text_
+            [ x <| w / 2
+            , y <| transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing
+            , fill <| Paint <| Color.black
+            , textAnchor AnchorMiddle
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineMiddle
+            , pointerEvents "none"
+            , fontSize 24
+            , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+            , stroke <| Paint <| paletteColors.background
+            , strokeWidth 5
+            ]
+            ( tspan [] [ text "Selected transitions: " ] ::
+              ( if Set.isEmpty model.selectedTransitions then
+                  [ tspan [] [ text "None" ] ]
+                else
+                  connectionToSvgText model.selectedTransitions
+              )
+            )
+        , text_
+            [ x <| w / 2
+            , y <| transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing + 30
+            , fill <| Paint <| Color.darkCharcoal
+            , textAnchor AnchorMiddle
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineMiddle
+            , pointerEvents "none"
+            , fontSize 16
+            , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+            , stroke <| Paint <| paletteColors.background
+            , strokeWidth 4
+            ]
+            ( if Set.isEmpty model.selectedTransitions then
+                [ tspan [] [ text "Select at least one transition to make this connection" ] ]
+              else
+                [ tspan [] [ text "Press «Enter» to confirm these transitions" ] ]
+            )
+        ]
+    :: List.map (\(item, col, row) -> viewSingleKey model item (col, row)) gridItemsAndCoordinates
+    )
+
 matrixFromZoom : (Float, Float) -> (Float, Float) -> ( Float, ( Float, Float ) ) -> ( Float, Float ) -> Transform
 matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
 {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
@@ -963,34 +1259,53 @@ matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
 
 view : Model -> Svg Msg
 view model =
+  let
+    permit_zoom = onMouseScroll Zoom
+    permit_pan =
+      [ onMouseMove MouseMove
+      , cursor <|
+          -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
+          case ( 1 + round (xPanAt model (Tuple.first model.mouseCoords)), 1 + round (yPanAt model (Tuple.second model.mouseCoords)) ) of
+            ( 2, 2 ) -> CursorSEResize
+            ( 0, 2 ) -> CursorSWResize
+            ( 2, 0 ) -> CursorNEResize
+            ( 0, 0 ) -> CursorNWResize
+            ( 1, 2 ) -> CursorNResize
+            ( 0, 1 ) -> CursorWResize
+            ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
+            ( 2, 1 ) -> CursorEResize
+            _ ->
+              case model.selectedSource of
+                Just _ -> Cursor "none"
+                _ -> CursorDefault
+      ]
+    interactivity =
+      case model.selectedDest of
+        NoDestination ->
+          permit_zoom :: permit_pan
+        ExistingNode _ ->
+          []
+        NewNode _ ->
+          []
+  in
   svg
-    [ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
-    , onMouseScroll Zoom
-    , onMouseMove MouseMove
+    ([ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
     , Mouse.onOver (\_ -> SetMouseOver)
     , Mouse.onOut (\_ -> SetMouseOut)
     , Mouse.onWithOptions
         "mousedown"
         { stopPropagation = True, preventDefault = True }
-        (\_ -> DeselectNode)
-    , cursor <|
-        -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
-        case ( 1 + round (xPanAt model (Tuple.first model.mouseCoords)), 1 + round (yPanAt model (Tuple.second model.mouseCoords)) ) of
-          ( 2, 2 ) -> CursorSEResize
-          ( 0, 2 ) -> CursorSWResize
-          ( 2, 0 ) -> CursorNEResize
-          ( 0, 0 ) -> CursorNWResize
-          ( 1, 2 ) -> CursorNResize
-          ( 0, 1 ) -> CursorWResize
-          ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
-          ( 2, 1 ) -> CursorEResize
-          _ ->
-            case model.selectedSource of
-              Just _ -> Cursor "none"
-              _ -> CursorDefault
-    ]
+        (\_ ->
+          case model.selectedSource of
+            Just _ ->
+              CreateNewNodeAt model.mouseCoords
+            Nothing ->
+              Escape
+        )
+    ] ++ interactivity)
     [ g
-      [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ] ]
+      [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ]
+      ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.graph
         |> List.map (linkElement model)
@@ -1006,58 +1321,63 @@ view model =
           Nothing ->
             g [] []
       ]
-      , g
-          [ cursor CursorPointer
-          , id "reset-view"
-          , onClick ResetView
-          ]
-          [ --rect
-              -- [ x (Tuple.first model.dimensions - 121)
-              -- , y (Tuple.second model.dimensions - 30)
-              -- , Px.width 120
-              -- , Px.height 30
-              -- , stroke <| Paint <| Color.black
-              -- , strokeWidth 1
-              -- , Px.rx 5
-              -- , Px.ry 5
-              -- ]
-              -- []
-            text_
-              [ x (Tuple.first model.dimensions - 15)
-              , y (Tuple.second model.dimensions - 15)
-              , fill <| Paint <| Color.black
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , textAnchor AnchorEnd
-              , alignmentBaseline AlignmentCentral
-              , dominantBaseline DominantBaselineCentral
-              , pointerEvents "none"
-              ]
-              [ text (" 🔍 " ++ String.fromInt (round <| Tuple.first model.zoom * 100) ++ "%") ]
-          , text_
-              [ x (Tuple.first model.dimensions - 90)
-              , y (Tuple.second model.dimensions - 15)
-              , fill <| Paint <| Color.black
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , textAnchor AnchorEnd
-              , alignmentBaseline AlignmentCentral
-              , dominantBaseline DominantBaselineCentral
-              , pointerEvents "none"
-              ]
-              [ text (" 🧭 " ++
-                  (case Tuple.mapBoth round round model.pan of
-                    ( 0, 0 ) -> "centered"
-                    ( x, y) ->
-                      let
-                        xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
-                        yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
-                      in
-                      ("(" ++ xString ++ ", " ++ yString ++ ")")
-                  )
+    , case model.selectedDest of
+        NoDestination ->
+          g [] []
+        ExistingNode id ->
+          g [] []
+        NewNode id ->
+          viewSvgTransitionChooser model
+    , g
+        [ ]
+        [ --rect
+            -- [ x (Tuple.first model.dimensions - 121)
+            -- , y (Tuple.second model.dimensions - 30)
+            -- , Px.width 120
+            -- , Px.height 30
+            -- , stroke <| Paint <| Color.black
+            -- , strokeWidth 1
+            -- , Px.rx 5
+            -- , Px.ry 5
+            -- ]
+            -- []
+          text_
+            [ x (Tuple.first model.dimensions - 15)
+            , y (Tuple.second model.dimensions - 15)
+            , fill <| Paint <| Color.black
+            , fontFamily ["sans-serif"]
+            , fontSize 14
+            , textAnchor AnchorEnd
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineCentral
+            , pointerEvents "none"
+            ]
+            [ text (" 🔍 " ++ String.fromInt (round <| Tuple.first model.zoom * 100) ++ "%") ]
+        , text_
+            [ x (Tuple.first model.dimensions - 90)
+            , y (Tuple.second model.dimensions - 15)
+            , fill <| Paint <| Color.black
+            , fontFamily ["sans-serif"]
+            , fontSize 14
+            , textAnchor AnchorEnd
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineCentral
+            , pointerEvents "none"
+            ]
+            [ text (" 🧭 " ++
+                (case Tuple.mapBoth round round model.pan of
+                  ( 0, 0 ) -> "centered"
+                  ( x, y) ->
+                    let
+                      xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
+                      yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
+                    in
+                    ("(" ++ xString ++ ", " ++ yString ++ ")")
                 )
-              ]
-          , if Maybe.Extra.isJust model.selectedSource then
+              )
+            ]
+        , case (model.selectedSource, model.selectedDest) of
+            (Just _, NoDestination) ->
               text_
                 [ Px.x 15
                 , Px.y (Tuple.second model.dimensions - 15)
@@ -1070,9 +1390,38 @@ view model =
                 , pointerEvents "none"
                 ]
                 [ text "Press «Esc» to cancel link creation" ]
-            else
+            _ ->
               g [] []
-          ]
+        , case model.selectedDest of
+            NoDestination ->
+              g [] []
+            ExistingNode _ ->
+              text_
+                [ Px.x 15
+                , Px.y (Tuple.second model.dimensions - 15)
+                , fill <| Paint <| Color.black
+                , fontFamily ["sans-serif"]
+                , fontSize 14
+                , textAnchor AnchorStart
+                , alignmentBaseline AlignmentCentral
+                , dominantBaseline DominantBaselineCentral
+                , pointerEvents "none"
+                ]
+                [ text "Choose transitions to connect these nodes. Press «Esc» to cancel." ]
+            NewNode _ ->
+              text_
+                [ Px.x 15
+                , Px.y (Tuple.second model.dimensions - 15)
+                , fill <| Paint <| Color.black
+                , fontFamily ["sans-serif"]
+                , fontSize 14
+                , textAnchor AnchorStart
+                , alignmentBaseline AlignmentCentral
+                , dominantBaseline DominantBaselineCentral
+                , pointerEvents "none"
+                ]
+                [ text "Choose transitions for this link. Press «Esc» to cancel." ]
+        ]
     ]
 
 onMouseScroll : (Float -> (Float, Float) -> msg) -> Html.Attribute msg
