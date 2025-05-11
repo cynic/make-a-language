@@ -54,3 +54,7 @@ textarea:focus {
 path.link {
   pointer-events: none;
 }
+.transition-chooser-key {
+  transition: all 0.33s ease;
+  fill: rgb(170, 170, 170);
+}
