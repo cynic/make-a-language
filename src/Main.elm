@@ -26,7 +26,6 @@ import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
 import Automata.MADFA
-import Html.Events as HE
 
 -- MAIN
 
@@ -74,6 +73,7 @@ type alias Model =
   , layoutConfiguration : LayoutConfiguration
   , useAlgebraic : Bool
   , metrics : DAWGMetrics
+  , mouseIsOver : Bool
   }
 
 type DragState
@@ -153,6 +153,7 @@ defaultModel =
       , numEdges = 0
       , combinable = []
       }
+  , mouseIsOver = False
   }
 
 init : E.Value -> (Model, Cmd Msg)
@@ -200,6 +201,7 @@ type Msg
   | ForceDirectedMsg ForceDirectedGraph.Msg
   | ViewportResizeTrigger
   | OnResize (Float, Float)
+  | SetMouseOver Bool
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -269,6 +271,11 @@ update msg model =
       , Cmd.none
       )
 
+    SetMouseOver isOver ->
+      ( { model | mouseIsOver = isOver }
+      , Cmd.none
+      )
+
 -- VIEW
 
 view : Model -> Html Msg
@@ -322,6 +329,9 @@ view model =
                   ]
               , HA.placeholder "Enter words here, one per line"
               , onInput TextInput
+              , onMouseOver (SetMouseOver True)
+              , onMouseOut (SetMouseOver False)
+              , HA.disabled <| Basics.not model.mouseIsOver
               ]
               [ Html.Styled.text model.text ]
           -- , textarea
