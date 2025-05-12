@@ -782,7 +782,7 @@ path_between sourceXY destXY cardinality radius_from radius_to =
     curvature =
       case cardinality of
         Bidirectional ->
-          0.4 -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
+          1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
         Unidirectional ->
           0
     orthogonal_len =
@@ -869,7 +869,7 @@ linkElement ({ graph } as model) edge =
 
     target =
       Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
-    cardinality = Unidirectional -- identifyCardinality model edge
+    cardinality = identifyCardinality model edge
     positioning =
       path_between source target cardinality 7 7
     label = connectionToSvgText edge.label
