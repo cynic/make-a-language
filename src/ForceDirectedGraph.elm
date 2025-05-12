@@ -29,6 +29,7 @@ import Set
 import IntDict
 import Time
 import List.Extra as List
+import TypedSvg.Attributes exposing (dy)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -587,6 +588,15 @@ update offset_amount msg model =
                 else
                   -- however, if there is no connection between existing nodes, then we must create a new link.
                   userchange_newLinkToNode model src dest
+            , graph =
+                Graph.update dest
+                  (Maybe.map (\node ->
+                    { node | incoming = IntDict.insert src model.selectedTransitions node.incoming }
+                  ))
+                  model.graph
+            , basicForces =
+                makeLinkForce src dest model.selectedTransitions
+                :: model.basicForces
             }
           ( Just _, NoDestination ) ->
             -- ??? Nothing for me to do!
@@ -1009,6 +1019,23 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
           ]
       ]
 
+nearby_node : Model -> Maybe (Graph.Node Entity)
+nearby_node { graph, pan, mouseCoords } =
+  let
+    ( xPan, yPan ) = pan
+    ( mouse_x, mouse_y ) = mouseCoords
+  in
+  Graph.nodes graph
+  |> List.find
+    (\node ->
+      let
+        dx = (node.label.x - xPan) - mouse_x
+        dy = (node.label.y - yPan) - mouse_y
+      in
+        -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
+        dx * dx + dy * dy <= 16*16 -- 7 + 9 = 16
+    )
+
 {-| A "phantom move" that the user MIGHT make, or might not -}
 showPhantom : Model -> NodeContext Entity Connection -> Svg Msg
 showPhantom model sourceNode =
@@ -1016,10 +1043,15 @@ showPhantom model sourceNode =
     radius = 9    
     cardinality = Unidirectional
     ( xPan, yPan ) = model.pan
-    ( mouse_x, mouse_y) = model.mouseCoords
+    ( center_x, center_y) =
+      -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
+      -- But if the mouse is anywhere else, just use the mouse coordinates.
+      nearby_node model
+      |> Maybe.map (\node -> (node.label.x - xPan, node.label.y - yPan))
+      |> Maybe.withDefault model.mouseCoords
     target =
-      { x = mouse_x + xPan
-      , y = mouse_y + yPan
+      { x = center_x + xPan
+      , y = center_y + yPan
       }
     positioning =
       path_between sourceNode.node.label target cardinality 7 9
@@ -1279,29 +1311,32 @@ view model =
                 Just _ -> Cursor "none"
                 _ -> CursorDefault
       ]
+    permit_node_selection =
+      Mouse.onWithOptions
+        "mousedown"
+        { stopPropagation = True, preventDefault = True }
+        (\_ ->
+          case model.selectedSource of
+            Just _ ->
+              case nearby_node model of
+                Just node -> -- in this case, the UI would show it being "locked-on"
+                  CreateOrUpdateLinkTo node.id
+                Nothing ->
+                  CreateNewNodeAt model.mouseCoords
+            Nothing ->
+              Escape
+        )
     interactivity =
       case model.selectedDest of
         NoDestination ->
-          permit_zoom :: permit_pan
-        ExistingNode _ ->
-          []
-        NewNode _ ->
+          permit_node_selection :: permit_zoom :: permit_pan
+        _ ->
           []
   in
   svg
     ([ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
     , Mouse.onOver (\_ -> SetMouseOver)
     , Mouse.onOut (\_ -> SetMouseOut)
-    , Mouse.onWithOptions
-        "mousedown"
-        { stopPropagation = True, preventDefault = True }
-        (\_ ->
-          case model.selectedSource of
-            Just _ ->
-              CreateNewNodeAt model.mouseCoords
-            Nothing ->
-              Escape
-        )
     ] ++ interactivity)
     [ g
       [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ]
@@ -1324,9 +1359,7 @@ view model =
     , case model.selectedDest of
         NoDestination ->
           g [] []
-        ExistingNode id ->
-          g [] []
-        NewNode id ->
+        _ ->
           viewSvgTransitionChooser model
     , g
         [ ]
