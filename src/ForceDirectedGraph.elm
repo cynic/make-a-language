@@ -12,7 +12,7 @@ import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
   , transform, noFill, width, rx, ry, strokeDasharray, strokeLinecap
-  , markerStart, pointerEvents)
+  , markerStart, pointerEvents, dy)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
@@ -29,7 +29,6 @@ import Set
 import IntDict
 import Time
 import List.Extra as List
-import TypedSvg.Attributes exposing (dy)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -50,12 +49,14 @@ type Msg
   | CreateNewNodeAt ( Float, Float )
   | Escape -- the universal "No! Go Back!" key & command
   | Confirm -- the universal "Yeah! Let's Go!" key & command
+  | EditTransition NodeId NodeId Connection
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
 type LinkDestination
   = NoDestination
   | ExistingNode NodeId
+  | EditingTransitionTo NodeId
   | NewNode ( Float, Float ) -- with X and Y coordinates
 
 type alias Model =
@@ -530,6 +531,13 @@ update offset_amount msg model =
             NoDestination ->
               -- hmm. I must be escaping from something earlier!
               escape_from_initial_node_selection
+            EditingTransitionTo _ ->
+              -- back off ALL the way.
+              { model
+              | selectedDest = NoDestination
+              , selectedTransitions = Set.empty
+              , selectedSource = Nothing
+              }
             _ ->
               { model | selectedDest = NoDestination }
         escape_from_anything = escape_from_node_link
@@ -540,9 +548,8 @@ update offset_amount msg model =
     Confirm ->
       -- What am I confirming?
       if not <| Set.isEmpty model.selectedTransitions then
-        case ( model.selectedSource, model.selectedDest ) of
-          ( Just src, NewNode ( x, y ) ) ->
-            -- create a totally new node, never before seen!
+        let
+          createNewNode src x y =
             { model
             | selectedTransitions = Set.empty
             , selectedDest = NoDestination
@@ -576,7 +583,8 @@ update offset_amount msg model =
                 :: model.basicForces
             , unusedId = model.unusedId + 1
             }
-          ( Just src, ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
+
+          updateExistingNode src dest =
             { model
             | selectedTransitions = Set.empty
             , selectedDest = NoDestination
@@ -598,12 +606,22 @@ update offset_amount msg model =
                 makeLinkForce src dest model.selectedTransitions
                 :: model.basicForces
             }
-          ( Just _, NoDestination ) ->
-            -- ??? Nothing for me to do!
-            model
-          ( Nothing, _ ) ->
-            -- ??? Nothing for me to do!
-            model
+
+        in
+          case ( model.selectedSource, model.selectedDest ) of
+            ( Just src, NewNode ( x, y ) ) ->
+              -- create a totally new node, never before seen!
+              createNewNode src x y
+            ( Just src, ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
+              updateExistingNode src dest
+            ( Just src, EditingTransitionTo dest ) ->
+              updateExistingNode src dest
+            ( Just _, NoDestination ) ->
+              -- ??? Nothing for me to do!
+              model
+            ( Nothing, _ ) ->
+              -- ??? Nothing for me to do!
+              model
       else
         model
 
@@ -619,6 +637,19 @@ update offset_amount msg model =
             Set.insert (ch, 0) model.selectedTransitions
       in
         { model | selectedTransitions = newSelectedTransitions }
+
+    EditTransition src dest conn ->
+      -- … and this will take us to much same place that
+      -- UpdateOrCreateLinkTo took us.  But the difference
+      -- is that we indicate an edit via EditingTransitionTo,
+      -- rather than ExistingNode.  This indicates that if we
+      -- escape out of it, we clear source & dest & transitions
+      -- all at once.
+      { model
+      | selectedSource = Just src
+      , selectedDest = EditingTransitionTo dest
+      , selectedTransitions = conn
+      }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -645,14 +676,24 @@ subscriptions offset_amount model =
               (\v ->
                 case v of
                   ( "1", True ) ->
-                    Debug.log "yup" v |> \_ ->
+                    -- Debug.log "yup" v |> \_ ->
                     Decode.succeed ResetView
                   ( "Enter", False ) ->
                     Decode.succeed Confirm
                   ( "Escape", False ) ->
                     Decode.succeed Escape
+                  ( ch, False ) ->
+                    case model.selectedDest of
+                      NoDestination ->
+                        Decode.fail "Not a recognized key combination"
+                      _ ->
+                        case String.toList ch of
+                          [char] ->
+                            Decode.succeed (ToggleSelectedTransition char)
+                          _ ->
+                            Decode.fail "Not a character key"
                   _ ->
-                    Debug.log "hmm" v |> \_ ->
+                    -- Debug.log "hmm" v |> \_ ->
                     Decode.fail "Not a recognized key combination"
               )
           )
@@ -690,18 +731,13 @@ transitionToTextSpan transition =
   case transition of
     (ch, 0) ->
       tspan
-        [ fill <| Paint <| paletteColors.transition.nonFinal
-        , strokeWidth 4
-        , stroke <| Paint <| paletteColors.background
+        [ class [ "nonfinal" ]
         ]
         [ text <| textChar ch
         ]
     (ch, _) ->
       tspan
-        [ fontWeight FontWeightBolder
-        , fill <| Paint <| paletteColors.transition.final
-        , strokeWidth 4
-        , stroke <| Paint <| paletteColors.background
+        [ class [ "final" ]
         ]
         [ text <| textChar ch
         ]
@@ -861,7 +897,7 @@ path_between sourceXY destXY cardinality radius_from radius_to =
     }
 
 
-linkElement : Model -> Edge Connection -> Svg msg
+linkElement : Model -> Edge Connection -> Svg Msg
 linkElement ({ graph } as model) edge =
   let
     source =
@@ -872,18 +908,15 @@ linkElement ({ graph } as model) edge =
     cardinality = identifyCardinality model edge
     positioning =
       path_between source target cardinality 7 7
-    label = connectionToSvgText edge.label
     font_size = 16.0 -- this is the default, if not otherwise set
   in
     g
       []
       [
         path
-          [ strokeWidth 5
-          , stroke <| Paint <| paletteColors.background
-          , d positioning.pathString
+          [ d positioning.pathString
           , noFill
-          , class [ "link" ]
+          , class [ "link", "background" ]
           ]
           [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , path
@@ -904,9 +937,10 @@ linkElement ({ graph } as model) edge =
           , textAnchor AnchorMiddle
           , alignmentBaseline AlignmentCentral
           , Html.Attributes.attribute "paint-order" "stroke fill markers"
-          , cursor CursorDefault
+          , class [ "link" ]
+          , onClick (EditTransition edge.from edge.to edge.label)
           ]
-          label
+          ( title [] [ text "Click to modify" ] :: connectionToSvgText edge.label )
       -- for debugging the paths.
       -- , circle
       --     [ cx <| positioning.control_point.x
@@ -964,9 +998,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
       case selectedDest of
         NoDestination ->
           [ permit_node_reselection ]
-        ExistingNode _ ->
-          []
-        NewNode _ ->
+        _ ->
           []
   in
     g
@@ -980,7 +1012,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
           , cy label.y
           ]
           []
-       ,  if isTerminal then
+       ,  if isTerminal && id == start then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -991,9 +1023,24 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , alignmentBaseline AlignmentBaseline
               , dominantBaseline DominantBaselineMiddle
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              , cursor CursorDefault
               ]
-              [ text "🎯" ]
+              [ text "💥"
+              , title [] [ text "Start AND end of computation\nClick to add/link node" ] ]
+          else if isTerminal then
+            text_
+              [ x <| label.x
+              , y <| (label.y + 1)
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentBaseline
+              , dominantBaseline DominantBaselineMiddle
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
+              ]
+              [ text "🎯"
+              , title [] [ text "End of computation" ]
+              ]
           else if id == start then
             text_
               [ x <| label.x
@@ -1005,10 +1052,11 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , alignmentBaseline AlignmentBaseline
               , dominantBaseline DominantBaselineMiddle
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              , cursor CursorDefault
               , fill <| Paint <| Color.grey
               ]
-              [ text "⭐" ]
+              [ text "⭐"
+              , title [] [ text "Start of computation" ]
+              ]
           else
             g [] []
       , title
@@ -1236,6 +1284,7 @@ viewSvgTransitionChooser model =
             , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
             , stroke <| Paint <| paletteColors.background
             , strokeWidth 5
+            , class [ "link" ]
             ]
             ( tspan [] [ text "Selected transitions: " ] ::
               ( if Set.isEmpty model.selectedTransitions then
@@ -1348,12 +1397,14 @@ view model =
       , Graph.nodes model.graph
         |> List.map (nodeElement model)
         |> g [ class [ "nodes" ] ]
-      , case model.selectedSource of
-          Just id ->
+      , case ( model.selectedSource, model.selectedDest ) of
+          ( _, EditingTransitionTo _ ) ->
+            g [] []
+          ( Just id, _ ) ->
             Graph.get id model.graph
             |> Maybe.map (showPhantom model)
             |> Maybe.withDefault (g [] [])
-          Nothing ->
+          ( Nothing, _ ) ->
             g [] []
       ]
     , case model.selectedDest of
@@ -1361,7 +1412,23 @@ view model =
           g [] []
         _ ->
           viewSvgTransitionChooser model
-    , g
+    ,
+      let
+        bottomMsg message =
+          text_
+            [ Px.x 15
+            , Px.y (Tuple.second model.dimensions - 15)
+            , fill <| Paint <| Color.black
+            , fontFamily ["sans-serif"]
+            , fontSize 14
+            , textAnchor AnchorStart
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineCentral
+            , pointerEvents "none"
+            ]
+            [ text message ]
+      in
+      g
         [ ]
         [ --rect
             -- [ x (Tuple.first model.dimensions - 121)
@@ -1411,49 +1478,18 @@ view model =
             ]
         , case (model.selectedSource, model.selectedDest) of
             (Just _, NoDestination) ->
-              text_
-                [ Px.x 15
-                , Px.y (Tuple.second model.dimensions - 15)
-                , fill <| Paint <| Color.black
-                , fontFamily ["sans-serif"]
-                , fontSize 14
-                , textAnchor AnchorStart
-                , alignmentBaseline AlignmentCentral
-                , dominantBaseline DominantBaselineCentral
-                , pointerEvents "none"
-                ]
-                [ text "Press «Esc» to cancel link creation" ]
+              bottomMsg "Press «Esc» to cancel link creation"
             _ ->
               g [] []
         , case model.selectedDest of
             NoDestination ->
               g [] []
             ExistingNode _ ->
-              text_
-                [ Px.x 15
-                , Px.y (Tuple.second model.dimensions - 15)
-                , fill <| Paint <| Color.black
-                , fontFamily ["sans-serif"]
-                , fontSize 14
-                , textAnchor AnchorStart
-                , alignmentBaseline AlignmentCentral
-                , dominantBaseline DominantBaselineCentral
-                , pointerEvents "none"
-                ]
-                [ text "Choose transitions to connect these nodes. Press «Esc» to cancel." ]
+              bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
             NewNode _ ->
-              text_
-                [ Px.x 15
-                , Px.y (Tuple.second model.dimensions - 15)
-                , fill <| Paint <| Color.black
-                , fontFamily ["sans-serif"]
-                , fontSize 14
-                , textAnchor AnchorStart
-                , alignmentBaseline AlignmentCentral
-                , dominantBaseline DominantBaselineCentral
-                , pointerEvents "none"
-                ]
-                [ text "Choose transitions for this link. Press «Esc» to cancel." ]
+              bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+            EditingTransitionTo _ ->
+              bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
         ]
     ]
 
