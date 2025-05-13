@@ -68,8 +68,30 @@ path.link {
 .transition-chooser-key.terminal + text {
   font-weight: bold;
 }
-
 .transition-chooser-key.selected {
   fill:rgb(238, 255, 0);
   stroke: darkgray;
+}
+
+path.link.background {
+  stroke-width: 5;
+  stroke: rgb(211, 215, 207); /* the "background" color */
+
+}
+text.link tspan.final {
+  font-weight:  bold;
+  fill: darkorange; /* the "final" color */
+  stroke-width: 4;
+  stroke: rgb(211, 215, 207); /* the "background" color */
+}
+text.link tspan.nonfinal {
+  fill: rgb(64, 64, 64); /* the "nonfinal" color */
+  stroke-width: 4;
+  stroke: rgb(211, 215, 207); /* the "background" color */
+}
+path.link + text:hover tspan {
+  stroke-width: 4;
+  stroke: rgb(131, 216, 46); /* the "background" color */
+  background-color: red;
+  cursor: pointer;
 }
