@@ -50,6 +50,7 @@ type Msg
   | Escape -- the universal "No! Go Back!" key & command
   | Confirm -- the universal "Yeah! Let's Go!" key & command
   | EditTransition NodeId NodeId Connection
+  | Reheat
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -651,6 +652,17 @@ update offset_amount msg model =
       , selectedTransitions = conn
       }
 
+    Reheat ->
+      -- If I'm not doing anything else, permit auto-layout
+      case model.selectedSource of
+        Nothing ->
+          { model
+          | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
+          , specificForces = IntDict.empty -- cancel moves that were made before
+          }
+        _ ->
+          model
+
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
   (x - offset_x, y - offset_y)
@@ -682,6 +694,8 @@ subscriptions offset_amount model =
                     Decode.succeed Confirm
                   ( "Escape", False ) ->
                     Decode.succeed Escape
+                  ( "Tab", False) ->
+                    Decode.succeed Reheat
                   ( ch, False ) ->
                     case model.selectedDest of
                       NoDestination ->
