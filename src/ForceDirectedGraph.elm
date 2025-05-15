@@ -1268,7 +1268,7 @@ viewSvgTransitionChooser model =
   let
     ( w, h ) = model.dimensions
     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
-    alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ "
+    alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
     numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
     gridItemsAndCoordinates =
       List.foldl

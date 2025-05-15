@@ -25,7 +25,7 @@ import Platform.Cmd as Cmd
 import Css exposing (..)
 import Html.Styled.Attributes as HA exposing (css)
 import List.Extra
-import Automata.MADFA
+import Automata.DFA
 
 -- MAIN
 
@@ -228,7 +228,7 @@ update msg model =
         dawg =
           String.split "\n" text
           --|> DAWG.fromWords
-          |> Automata.MADFA.fromWords
+          |> Automata.DFA.fromWords
       in
       ( { model
           | text = text
