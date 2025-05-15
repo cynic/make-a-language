@@ -1,4 +1,4 @@
-module MADFA_tests exposing (..)
+module DFA_tests exposing (..)
 
 import Expect
 import Fuzz
@@ -6,11 +6,11 @@ import Test exposing (..)
 import Automata.Data as D
 import Automata.Verification as D
 import List.Extra as List
-import Automata.MADFA
+import Automata.DFA
 
-nodesAndWords : D.AutomatonGraph -> (Int, List String)
-nodesAndWords d =
-  (D.numNodes d, D.verifiedRecognizedWords d)
+-- nodesAndWords : D.AutomatonGraph -> (Int, List String)
+-- nodesAndWords d =
+--   (D.numNodes d, D.verifiedRecognizedWords d)
 
 czech : List (List String) -> List String -> Expect.Expectation
 czech l expectedRecognized =
@@ -21,7 +21,7 @@ czech l expectedRecognized =
       let
         dawg =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
-          Automata.MADFA.fromWords x
+          Automata.DFA.fromWords x
         minimality = D.minimality dawg
         recognized = D.verifiedRecognizedWords dawg
       in

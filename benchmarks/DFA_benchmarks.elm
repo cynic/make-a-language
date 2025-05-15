@@ -1,8 +1,8 @@
-module DAWG_benchmarks exposing (..)
+module DFA_benchmarks exposing (..)
 import Array
 import Benchmark exposing (..)
 import Benchmark.Runner exposing (BenchmarkProgram, program)
-import Automata.MADFA exposing (..)
+import Automata.DFA exposing (..)
 import Set
 import Graph
 import Dict
