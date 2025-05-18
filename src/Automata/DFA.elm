@@ -6,8 +6,6 @@ import Dict exposing (Dict)
 import Automata.Data exposing (..)
 import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import Automata.Debugging
-import Maybe.Extra
-import Automata.MADFA exposing (redirect)
 import Dict.Extra
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
@@ -136,12 +134,12 @@ create nodes edges start finals =
                           Just (Dict.insert transition to dict)
                         Just _ ->
                           -- this would be deterministic.  Instead, overwrite.
-                          Debug.log ("[create] Overwriting transition " ++ String.fromChar transition ++ " from " ++ String.fromInt from ++ " to " ++ String.fromInt to ++ ".") () |> \_ ->
+                          --Debug.log ("[create] Overwriting transition " ++ String.fromChar transition ++ " from " ++ String.fromInt from ++ " to " ++ String.fromInt to ++ ".") () |> \_ ->
                           Just (Dict.insert transition to dict)
                 )
                 state
             else
-              Debug.log ("[create] Skipping edge " ++ String.fromInt from ++ " → " ++ String.fromInt to ++ ", because of non-existence.")
+              --Debug.log ("[create] Skipping edge " ++ String.fromInt from ++ " → " ++ String.fromInt to ++ ", because of non-existence.")
                 (IntDict.member from states, IntDict.member to states) |> \_ ->
               state
         )
@@ -201,7 +199,7 @@ w_forward_transitions extDFA =
   in
     helper extDFA.clone_start Set.empty []
     |> List.reverse
-    |> Debug.log "w_forward_transitions"
+    --|> Debug.log "w_forward_transitions"
 
 delta : NodeId -> Char -> DFARecord a -> Maybe NodeId
 delta q x dfa =
@@ -256,15 +254,15 @@ phase_1 extDFA_orig =
           case ( delta q_m h extDFA, delta q_w h extDFA ) of
             (_, Nothing) ->
               -- I should NEVER BE HERE!  How can I be, when this is part of already-in `w` transitions??
-              Debug.log "🚨🚨🚨🚨🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
+              --Debug.log "🚨🚨🚨🚨🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
               extDFA
             (Nothing, Just _) ->
               -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
-              Debug.log ("Transition (" ++ String.fromChar h ++ ") doesn't lead to anything in M. Appending last, then stopping: the rest are queued.") () |> \_ ->
+              --Debug.log ("Transition (" ++ String.fromChar h ++ ") doesn't lead to anything in M. Appending last, then stopping: the rest are queued.") () |> \_ ->
               updated ()
             (Just m_node, Just w_node) ->
               -- right, get the respective transitions of each of these, then.
-              Debug.log ("Appending transitions from " ++ String.fromInt q_m ++ ", excluding (" ++ String.fromChar h ++ ").") () |> \_ ->
+              --Debug.log ("Appending transitions from " ++ String.fromInt q_m ++ ", excluding (" ++ String.fromChar h ++ ").") () |> \_ ->
               append_transitions
                 m_node
                 w_node
@@ -339,10 +337,10 @@ replace_or_register extDFA =
         let
           p_outgoing =
             IntDict.get p extDFA.transition_function
-            |> Debug.log ("Checking outgoing for " ++ String.fromInt p)
+            --|> Debug.log ("Checking outgoing for " ++ String.fromInt p)
           q_outgoing =
             IntDict.get q extDFA.transition_function
-            |> Debug.log ("Checking outgoing for " ++ String.fromInt q)
+            --|> Debug.log ("Checking outgoing for " ++ String.fromInt q)
         in
           case ( p_outgoing, q_outgoing ) of
             ( Just _, Nothing ) -> False
@@ -368,7 +366,7 @@ replace_or_register extDFA =
     h::t ->
       case Set.toList extDFA.register |> List.find (equiv h) of
         Just found_equivalent ->
-          Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
+          --Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
           replace_or_register
             { extDFA
               | states = IntDict.remove h extDFA.states
@@ -379,7 +377,7 @@ replace_or_register extDFA =
               , queue_or_clone = t
             }            
         Nothing ->
-          Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
+          --Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
           replace_or_register
             { extDFA
               | register = Set.insert h extDFA.register
@@ -391,13 +389,13 @@ replace_or_register extDFA =
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
-    |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
+    --|> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
     |> phase_1
-    |> debugExtDFA_ "End of Phase 1"
+    --|> debugExtDFA_ "End of Phase 1"
     |> remove_unreachable
-    |> debugExtDFA_ "End of Phase 2"
+    --|> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
-    |> debugDFA_ "End of Phase 3"
+    --|> debugDFA_ "End of Phase 3"
     |> retract
 
 addString : String -> Maybe (DFARecord {}) -> Maybe (DFARecord {})
@@ -411,7 +409,7 @@ addString string maybe_dfa =
       ( _, Nothing ) ->
         maybe_dfa
       ( Just dfa, Just s ) ->
-        Just <| debugDFA_ ("after adding '" ++ string ++ "'") <| union s dfa
+        Just (union s dfa {- |> debugDFA_ ("after adding '" ++ string ++ "'") -})
 
 wordsToDFA : List String -> DFARecord {}
 wordsToDFA strings =
