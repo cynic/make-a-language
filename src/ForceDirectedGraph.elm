@@ -29,6 +29,7 @@ import Set
 import IntDict
 import Time
 import List.Extra as List
+import List exposing (all)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -269,13 +270,13 @@ init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
 init dawg (w, h) =
   ( receiveDAWG dawg (w, h), Cmd.none )
 
-updateNode : ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
-updateNode ( x, y ) nodeCtx =
+updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
+updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
   let
     nodeValue =
       nodeCtx.node.label
   in
-    updateContextWithValue nodeCtx { nodeValue | x = x, y = y }
+    updateContextWithValue nodeCtx { nodeValue | x = x + offsetX, y = y + offsetY }
 
 
 updateContextWithValue : NodeContext Entity Connection -> Entity -> NodeContext Entity Connection
@@ -396,7 +397,7 @@ update offset_amount msg model =
             { model
               | graph =
                   Graph.update index
-                  (Maybe.map (updateNode current))
+                  (Maybe.map (updateNode current model.pan))
                   (updateGraphWithList model.graph list)
               , simulation = newState
             }
@@ -425,7 +426,7 @@ update offset_amount msg model =
         Just { start, index } ->
           { model
             | drag = Just <| Drag start xy index
-            , graph = Graph.update index (Maybe.map (updateNode xy)) model.graph
+            , graph = Graph.update index (Maybe.map (updateNode xy model.pan)) model.graph
             -- , simulation = Force.reheat model.simulation
           }
 
@@ -436,16 +437,17 @@ update offset_amount msg model =
       case model.drag of
         Just { index } ->
           let
+            ( offsetX, offsetY ) = model.pan
             sf =
               IntDict.insert index
-                [ Force.towardsX [{ node = index, strength = 2.5, target = x }]
-                , Force.towardsY [{ node = index, strength = 2.5, target = y }]
+                [ Force.towardsX [{ node = index, strength = 2.5, target = x + offsetX }]
+                , Force.towardsY [{ node = index, strength = 2.5, target = y + offsetY }]
                 ]
                 model.specificForces
           in
             { model
               | drag = Nothing
-              , graph = Graph.update index (Maybe.map (updateNode (x,y))) model.graph
+              , graph = Graph.update index (Maybe.map (updateNode (x,y) model.pan)) model.graph
               , specificForces = sf
               , simulation = Force.simulation (List.concat (IntDict.values sf))
             }
@@ -778,12 +780,56 @@ confirmChanges model =
     (\change ->
         case change of
           AddNewNode { newNodeId } ->
-            wordsEndingAt newNodeId Set.empty "" model |> Debug.log "Found words"
-          NewLinkToNode { from, to, conn } ->
-            []
+            wordsEndingAt newNodeId Set.empty "" model |> Debug.log "[AddNewNode] Found words"
+          NewLinkToNode { from, to } ->
+            -- here, there will be a much larger set of words generated.
+            -- What we want to do is find all the words generated, and then
+            -- remove the words that already existed WITHOUT the link.
+            -- Thanks to the Miracle of Functional Programming, that's not
+            -- as difficult as it might otherwise be…
+            let
+              allWords =
+                wordsEndingAt to Set.empty "" model
+                |> Debug.log "[NewLinkToNode] All words"
+              withoutLink =
+                Graph.update to
+                  (Maybe.map (\node -> { node | incoming = IntDict.remove from node.incoming }))
+                  model.graph
+              pre_existingWords =
+                wordsEndingAt to Set.empty "" { model | graph = withoutLink }
+                |> Debug.log "[NewLinkToNode] Pre-existing words"
+              newWords =
+                Set.diff (Set.fromList allWords) (Set.fromList pre_existingWords) |> Set.toList
+            in
+              newWords |> Debug.log "[NewLinkToNode] Found words"
+
           ModifyTransition { from, to, oldState, newState } ->
-            []
+            -- we're going to have to do a temporary thing here so that we obtain the
+            -- difference between "old" and "new".  We want to ADD the "new", and REMOVE
+            -- the "old".
+            let
+              new = Set.diff newState oldState
+              old = Set.diff oldState newState
+              withNewOnly =
+                Graph.update to
+                  (Maybe.map (\node -> { node | incoming = IntDict.insert from new node.incoming }))
+                  model.graph
+              withOldOnly =
+                Graph.update to
+                  (Maybe.map (\node -> { node | incoming = IntDict.insert from old node.incoming }))
+                  withNewOnly
+              newWords =
+                wordsEndingAt to Set.empty "" { model | graph = withNewOnly }
+                |> Debug.log "[ModifyTransition] NEW words (to add)"
+              oldWords =
+                wordsEndingAt to Set.empty "" { model | graph = withOldOnly }
+                |> Debug.log "[ModifyTransition] OLD words (to remove)"
+            in
+              []
           RemoveNode nodeId ->
+            -- This one is a fairly low-level and brutal operation.  Since the node IDs are the same
+            -- in the Automaton graph and in the DFA, we can just remove the node from the DFA
+            -- and then recalculate the graph from that.
             []
     )
     model.userRequestedChanges
@@ -1101,7 +1147,12 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
               ]
               [ text "💥"
-              , title [] [ text "Start AND end of computation\nClick to add/link node" ] ]
+              , title
+                  []
+                  [ text <| "Start AND end of computation"
+                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+                  ]
+              ]
           else if isTerminal then
             text_
               [ x <| label.x
@@ -1115,7 +1166,11 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
               ]
               [ text "🎯"
-              , title [] [ text "End of computation" ]
+              , title
+                  []
+                  [ text <| "End of computation"
+                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+                  ]
               ]
           else if id == start then
             text_
@@ -1131,7 +1186,11 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , fill <| Paint <| Color.grey
               ]
               [ text "⭐"
-              , title [] [ text "Start of computation" ]
+              , title
+                  []
+                  [ text <| "Start of computation"
+                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+                  ]
               ]
           else
             g [] []
@@ -1139,7 +1198,8 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
           []
           [ text <|
               -- String.fromInt node.id
-              "Shift-drag reposition\nClick to create or link a new transition"
+              "Shift-drag to reposition\nClick to create or link a new transition"
+              ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
           ]
       ]
 
