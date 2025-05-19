@@ -356,8 +356,8 @@ seedMADFARecord =
   in
     MADFARecord (Graph.insert initialNode Graph.empty) 0 0 Set.empty Set.empty Dict.empty
 
-toMADFA : List String -> Maybe MADFARecord
-toMADFA words =
+fromStrings : List String -> Maybe MADFARecord
+fromStrings words =
   case words of
     [] ->
       Nothing
@@ -367,7 +367,7 @@ toMADFA words =
 
 
 
-redirect : List NodeId -> Graph () Connection -> Graph () Connection
+redirect : List NodeId -> Graph a Connection -> Graph a Connection
 redirect all_nodes graph =
   -- all of the incoming transitions of the `new` node need to be
   -- redirected into the `original` node, and then the `new` node
@@ -403,7 +403,7 @@ redirect all_nodes graph =
       in
         without_collapsed
 
-check_identical_outgoing : List NodeId -> Maybe (List Connection) -> Graph () Connection -> Bool
+check_identical_outgoing : List NodeId -> Maybe (List Connection) -> Graph a Connection -> Bool
 check_identical_outgoing states baseline graph =
   case states of
     [] ->
@@ -420,7 +420,7 @@ check_identical_outgoing states baseline graph =
           Just baselineOutgoing ->
             thisOutgoing == baselineOutgoing && check_identical_outgoing t (Just thisOutgoing) graph
 
-collapse : NodeId -> Graph () Connection -> ( IntDict (), Graph () Connection )
+collapse : NodeId -> Graph a Connection -> ( IntDict (), Graph a Connection )
 collapse node_id graph =
   let
     incoming_states =
@@ -478,8 +478,8 @@ collapse_from to_process processed graph =
       graph
       --|> DAWG.Debugging.debugGraph "Post-collapse"
 
-toDAWG : MADFARecord -> AutomatonGraph
-toDAWG madfa =
+toAutomatonGraph : MADFARecord -> AutomatonGraph ()
+toAutomatonGraph madfa =
   {- The difference between a FAGraph and a DAWGGraph is that the finality is kept
      in the transition (D) rather than in the state (F).
 
@@ -517,11 +517,10 @@ toDAWG madfa =
   in
     AutomatonGraph collapsed max root
 
-fromWords : List String -> AutomatonGraph
+fromWords : List String -> Maybe (AutomatonGraph ())
 fromWords words =
-  toMADFA words
-  |> Maybe.map toDAWG
-  |> Maybe.withDefault empty
+  fromStrings words
+  |> Maybe.map toAutomatonGraph
 
 transitionToString : MTransition -> String
 transitionToString =

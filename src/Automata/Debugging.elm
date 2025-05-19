@@ -7,12 +7,12 @@ debug_log s x =
   Debug.log s x
   -- x
 
-debugGraph : String -> Graph () Connection -> Graph () Connection
+debugGraph : String -> Graph a Connection -> Graph a Connection
 debugGraph txt graph =
   debug_log txt (graphToString graph)
   |> \_ -> graph
 
-debugDAWG : String -> AutomatonGraph -> AutomatonGraph
+debugDAWG : String -> AutomatonGraph a -> AutomatonGraph a
 debugDAWG txt dawg =
   debug_log txt
     (graphToString dawg.graph)

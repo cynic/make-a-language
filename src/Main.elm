@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (..)
 
 {- You know how the editor on the Elm website has two side-by-side panels that
 can be resized? This is a rough implementation of that sort of thing.
@@ -67,11 +67,9 @@ type alias DAWGMetrics =
 type alias Model =
   { dragState : DragState
   , text : String
-  , dawg : AutomatonGraph
-  , forceDirectedGraph : ForceDirectedGraph.Model
+  , forceDirectedGraph : Maybe (ForceDirectedGraph.Model)
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
-  , useAlgebraic : Bool
   , metrics : DAWGMetrics
   , mouseIsOver : Bool
   }
@@ -121,11 +119,13 @@ updateLayout fraction model =
     newConfig = { config | leftRightSplitPercentage = fraction }
     newDimensions = viewportDimensionsToLayoutDimensions model.dimensions.viewport newConfig
     newForcesGraph =
-      ForceDirectedGraph.update
-        (newDimensions.leftPanel.width + 10, 10)
-        (ForceDirectedGraph.ViewportUpdated
-          ( newDimensions.rightPanel.width - 10
-          , newDimensions.rightPanel.height - 10
+      Maybe.map
+        (ForceDirectedGraph.update
+          (newDimensions.leftPanel.width + 10, 10)
+          (ForceDirectedGraph.ViewportUpdated
+            ( newDimensions.rightPanel.width - 10
+            , newDimensions.rightPanel.height - 10
+            )
           )
         )
         model.forceDirectedGraph
@@ -136,23 +136,22 @@ updateLayout fraction model =
       , forceDirectedGraph = newForcesGraph
     }
 
+defaultMetrics : { recognized : List a, numNodes : number, numEdges : number, combinable : List b }
+defaultMetrics =
+  { recognized = []
+  , numNodes = 0
+  , numEdges = 0
+  , combinable = []
+  }
+
 defaultModel : Model
 defaultModel =
   { dragState = Static
   , text = ""
-  , dawg = Automata.Data.empty
-  , forceDirectedGraph =
-      ForceDirectedGraph.init Automata.Data.empty (0, 0)
-      |> Tuple.first
+  , forceDirectedGraph = Nothing
   , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
   , layoutConfiguration = initialLayoutConfig
-  , useAlgebraic = False
-  , metrics =
-      { recognized = []
-      , numNodes = 0
-      , numEdges = 0
-      , combinable = []
-      }
+  , metrics = defaultMetrics
   , mouseIsOver = False
   }
 
@@ -164,13 +163,7 @@ init flags =
     >>
     \layout ->
       ( { defaultModel
-          | forceDirectedGraph =
-            ForceDirectedGraph.init
-              Automata.Data.empty
-              ( layout.rightPanel.width - 10
-              , layout.rightPanel.height - 10
-              )
-            |> Tuple.first
+          | forceDirectedGraph = Nothing
         , dimensions = layout
         }
       , Cmd.none
@@ -181,15 +174,15 @@ init flags =
 
 -- UPDATE
 
-calcMetrics : AutomatonGraph -> DAWGMetrics
-calcMetrics dawg =
+calcMetrics : AutomatonGraph a -> DAWGMetrics
+calcMetrics g =
   let
-    words = Automata.Verification.verifiedRecognizedWords dawg
+    words = Automata.Verification.verifiedRecognizedWords g
   in
     { recognized = words
-    , numNodes = Automata.Verification.numNodes dawg
-    , numEdges = Automata.Verification.numEdges dawg
-    , combinable = Automata.Verification.minimality dawg
+    , numNodes = Automata.Verification.numNodes g
+    , numEdges = Automata.Verification.numEdges g
+    , combinable = Automata.Verification.minimality g
     }
 
 
@@ -225,20 +218,22 @@ update msg model =
 
     TextInput text ->
       let
-        dawg =
-          String.split "\n" text
-          --|> DAWG.fromWords
-          |> Automata.DFA.fromWords
+        words = String.split "\n" text |> List.filter ((/=) "")
       in
       ( { model
           | text = text
-          , dawg = dawg
           , forceDirectedGraph =
-              ForceDirectedGraph.update
-                (model.dimensions.leftPanel.width + 10, 10)
-                (ForceDirectedGraph.GraphUpdated dawg)
-                model.forceDirectedGraph
-          , metrics = calcMetrics dawg
+              case words of
+                [] -> Nothing
+                _ ->
+                  Just
+                    ( ForceDirectedGraph.init words (model.dimensions.rightPanel.width, model.dimensions.rightPanel.height - 10)
+                      |> Tuple.first
+                    )
+          , metrics =
+              case words of
+                [] -> defaultMetrics
+                _ -> calcMetrics (Automata.DFA.fromWords words)
         }
       , Cmd.none
       )
@@ -263,9 +258,8 @@ update msg model =
     ForceDirectedMsg msg_ ->
       ( { model
           | forceDirectedGraph =
-              ForceDirectedGraph.update
-                (model.dimensions.leftPanel.width + 10, 10)
-                msg_
+              Maybe.map
+                (ForceDirectedGraph.update (model.dimensions.leftPanel.width + 10, 10) msg_)
                 model.forceDirectedGraph
         }
       , Cmd.none
@@ -408,9 +402,12 @@ view model =
                   , margin2 (px 5) (px 0)
                   ]
               ]
-              [ ForceDirectedGraph.view model.forceDirectedGraph
-                |> fromUnstyled
-                |> Html.Styled.map ForceDirectedMsg
+              [ case model.forceDirectedGraph of
+                  Nothing -> Html.Styled.text "No graph"
+                  Just fdg ->
+                    ForceDirectedGraph.view fdg
+                    |> fromUnstyled
+                    |> Html.Styled.map ForceDirectedMsg
               ]
         -- recognized words zone
         , let
@@ -490,13 +487,16 @@ mainSubscriptions model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  Sub.batch
-    [ mainSubscriptions model
-    , ForceDirectedGraph.subscriptions
-        (model.dimensions.leftPanel.width + 10, 10)
-        model.forceDirectedGraph
-      |> Sub.map ForceDirectedMsg
-    ]
+  case model.forceDirectedGraph of
+    Nothing -> mainSubscriptions model
+    Just fdg ->
+      Sub.batch
+        [ mainSubscriptions model
+        , ForceDirectedGraph.subscriptions
+            (model.dimensions.leftPanel.width + 10, 10)
+            fdg
+          |> Sub.map ForceDirectedMsg
+        ]
 
 {- The goal here is to get (mouse x / window width) on each mouse event. So if
 the mouse is at 500px and the screen is 1000px wide, we should get 0.5 from this.

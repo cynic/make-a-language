@@ -145,11 +145,11 @@ suite =
         --   ]
         describe "(Carrasco & Forcada) fromWords, algorithm only" <|
         [ benchmark "10 words" <|
-            \_ -> toMADFA ten_words
+            \_ -> fromStrings ten_words
         -- , benchmark "50 words" <|
-        --     \_ -> toMADFA fifty_words
+        --     \_ -> fromStrings fifty_words
         -- , benchmark "100 words" <|
-        --     \_ -> toMADFA hundred_words
+        --     \_ -> fromStrings hundred_words
         -- , benchmark "500 words" <|
         --     \_ -> fromWords4 five_hundred_words
         -- ]

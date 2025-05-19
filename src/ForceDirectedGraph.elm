@@ -29,13 +29,18 @@ import Set
 import IntDict
 import Time
 import List.Extra as List
+import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromAutomatonGraph)
+import Automata.Data exposing (isTerminal)
+import Automata.DFA exposing (toGraph)
+import Automata.DFA exposing (union)
+import Automata.Debugging exposing (debugGraph)
 
 type Msg
   = DragStart NodeId ( Float, Float )
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
-  | GraphUpdated AutomatonGraph
+  | WordsUpdated (List String)
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
   | Zoom Float (Float, Float)
@@ -109,57 +114,18 @@ type alias Drag =
   , index : NodeId
   }
 
-sign : Float -> Float
-sign x =
-  if x < 0 then -1 else 1
-
-getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Connection }
-getProspective model id =
-  let
-    getProspective_ : List RequestedGraphChanges -> List { from : NodeId, to : NodeId, label : Connection } -> List { from : NodeId, to : NodeId, label : Connection }
-    getProspective_ changes acc =
-      case changes of
-        [] -> []
-        AddNewNode v :: rest ->
-          if v.newNodeId == id then
-            getProspective_ rest ({ from = v.from, to = v.newNodeId, label = v.conn } :: acc)
-          else
-            getProspective_ rest acc
-        _::rest ->
-          getProspective_ rest acc
-  in
-    getProspective_ model.userRequestedChanges []
-
 type alias Entity =
-    Force.Entity NodeId { value : { isProspective : Bool } }
+  Force.Entity NodeId { value : { } }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
 panBuffer = 40
 
-{-| True if at least one transition terminates at this node -}
-isTerminalNode : NodeContext a Connection -> Bool
-isTerminalNode node =
-  -- IntDict.isEmpty node.outgoing &&
-  ( IntDict.foldl
-    (\_ conn state ->
-      state ||
-        Set.foldl
-          (\(_, isFinal) state_ -> state_ || isFinal == 1)
-          False
-          conn
-    )
-    False
-    (node.incoming)
-  )
-
-initializeNode : Node -> NodeContext Entity Connection
+initializeNode : Node a -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
-        Force.entity ctx.node.id
-          { isProspective = False
-          }
+        Force.entity ctx.node.id { }
     , id = ctx.node.id
     }
   , incoming = ctx.incoming
@@ -204,8 +170,8 @@ makeNodeForce : NodeId -> Force.Force NodeId
 makeNodeForce id =
   Force.manyBodyStrength -3000.0 [id]
 
-basicForces : NodeId -> Graph Entity Connection -> (Int, Int) -> List (Force.Force NodeId)
-basicForces start graph (width, height) =
+basicForces : NodeId -> Graph Entity Connection -> Int -> List (Force.Force NodeId)
+basicForces start graph height =
   (List.map (\e -> makeLinkForce e.from e.to e.label) (Graph.edges graph))
   ++
   (List.map (.id >> makeNodeForce) (Graph.nodes graph))
@@ -233,17 +199,18 @@ basicForces start graph (width, height) =
 makeSimulation : NodeId -> (Float, Float) -> Graph Entity Connection -> Force.State NodeId
 makeSimulation start (w, h) graph =
   Force.simulation
-    (basicForces start graph (round w, round h) ++ viewportForces (w, h) graph)
+    (basicForces start graph (round h) ++ viewportForces (w, h) graph)
 
-toForceGraph : AutomatonGraph -> Graph Entity Connection
+toForceGraph : AutomatonGraph a -> Graph Entity Connection
 toForceGraph g =
   Graph.mapContexts initializeNode g.graph
 
-receiveDAWG : AutomatonGraph -> (Float, Float) -> Model
-receiveDAWG dawg (w, h) =
+receiveWords : List String -> (Float, Float) -> Model
+receiveWords words (w, h) =
   let
-    forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} )
-    basic = basicForces dawg.root forceGraph (round w, round h)
+    graph = Automata.DFA.fromWords words
+    forceGraph = toForceGraph (graph {- |> Debug.log "Received by ForceDirectedGraph" -} )
+    basic = basicForces graph.root forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph
   in
     { drag = Nothing
@@ -253,7 +220,7 @@ receiveDAWG dawg (w, h) =
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
-    , start = dawg.root
+    , start = graph.root
     , zoom = ( 1.0, ( w/2, h/2 ) )
     , mouseCoords = ( w/2, h/2 )
     , selectedSource = Nothing
@@ -262,20 +229,20 @@ receiveDAWG dawg (w, h) =
     , pan = ( 0, 0)
     , mouseIsHere = False
     , userRequestedChanges = []
-    , unusedId = dawg.maxId + 1
+    , unusedId = graph.maxId + 1
     }
 
-init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
-init dawg (w, h) =
-  ( receiveDAWG dawg (w, h), Cmd.none )
+init : List String -> (Float, Float) -> (Model, Cmd Msg)
+init words (w, h) =
+  ( receiveWords words (w, h), Cmd.none )
 
-updateNode : ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
-updateNode ( x, y ) nodeCtx =
+updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
+updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
   let
     nodeValue =
       nodeCtx.node.label
   in
-    updateContextWithValue nodeCtx { nodeValue | x = x, y = y }
+    updateContextWithValue nodeCtx { nodeValue | x = x + offsetX, y = y + offsetY }
 
 
 updateContextWithValue : NodeContext Entity Connection -> Entity -> NodeContext Entity Connection
@@ -396,13 +363,13 @@ update offset_amount msg model =
             { model
               | graph =
                   Graph.update index
-                  (Maybe.map (updateNode current))
+                  (Maybe.map (updateNode current model.pan))
                   (updateGraphWithList model.graph list)
               , simulation = newState
             }
 
-    GraphUpdated dawg ->
-      receiveDAWG dawg model.dimensions
+    WordsUpdated words ->      
+      receiveWords words model.dimensions
 
     ViewportUpdated dim ->
       let
@@ -425,7 +392,7 @@ update offset_amount msg model =
         Just { start, index } ->
           { model
             | drag = Just <| Drag start xy index
-            , graph = Graph.update index (Maybe.map (updateNode xy)) model.graph
+            , graph = Graph.update index (Maybe.map (updateNode xy model.pan)) model.graph
             -- , simulation = Force.reheat model.simulation
           }
 
@@ -436,16 +403,17 @@ update offset_amount msg model =
       case model.drag of
         Just { index } ->
           let
+            ( offsetX, offsetY ) = model.pan
             sf =
               IntDict.insert index
-                [ Force.towardsX [{ node = index, strength = 2.5, target = x }]
-                , Force.towardsY [{ node = index, strength = 2.5, target = y }]
+                [ Force.towardsX [{ node = index, strength = 2.5, target = x + offsetX }]
+                , Force.towardsY [{ node = index, strength = 2.5, target = y + offsetY }]
                 ]
                 model.specificForces
           in
             { model
               | drag = Nothing
-              , graph = Graph.update index (Maybe.map (updateNode (x,y))) model.graph
+              , graph = Graph.update index (Maybe.map (updateNode (x,y) model.pan)) model.graph
               , specificForces = sf
               , simulation = Force.simulation (List.concat (IntDict.values sf))
             }
@@ -569,7 +537,7 @@ update offset_amount msg model =
                     { label =
                         let
                           initial =
-                            Force.entity model.unusedId { isProspective = False }
+                            Force.entity model.unusedId { }
                         in
                           { initial | x = x, y = y }
                     , id = model.unusedId
@@ -672,7 +640,6 @@ offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
   (x - offset_x, y - offset_y)
 
-
 subscriptions : (Float, Float) -> Model -> Sub Msg
 subscriptions offset_amount model =
   let
@@ -738,58 +705,92 @@ subscriptions offset_amount model =
         , keyboardSubscription
         ]
 
-wordsEndingAt : NodeId -> Set.Set NodeId -> String -> Model -> List String
-wordsEndingAt nodeId seen acc model =
-  if nodeId == model.start then
-    -- we are done!
-    [acc]
-  else if Set.member nodeId seen then
-    -- I have visited this node before. The only way that can happen is
-    -- if this node is "later" in the sequence.  If I take it, we will
-    -- enter a loop!  So, we don't take it.
-    [acc]
-  else
-    -- now, *I* must contribute to the `acc` myself.
-    Graph.get nodeId model.graph
-    |> Maybe.map
-      (\node -> -- the `incoming` is an IntDict Connection
-          -- my `acc` will ALSO have the things from MY `Connection`'s respective `outgoing`s.
-          -- When I get called, that will already be in `acc`.
-          node.incoming
-          |> IntDict.toList
-          |> List.concatMap
-            (\(nodeid, transitions) ->
-              -- each of the transitions effectively forms a new path back to `nodeid`
-              Set.toList transitions
-              |> List.map (\(t, _) -> ( nodeid, t ) ) -- link the nodeid to each transition
-            ) -- at the end of this, I should have a List (NodeId, Char) to process.
-          |> List.filter (\(nodeid, _) -> Set.member nodeid seen == False && nodeid /= nodeId)
-          -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
-          |> List.concatMap
-            (\(nodeid, char) ->
-              wordsEndingAt nodeid (Set.insert nodeId seen) (String.fromChar char ++ acc) model
-            )
-      )
-    |> Maybe.withDefault [] -- SHOULD NEVER BE HERE!!!
-
 confirmChanges : Model -> Model
-confirmChanges model =
-  List.map
-    (\change ->
+confirmChanges model_ =
+  let
+    ag : AutomatonGraph Entity
+    ag =
+      { root = model_.start
+      , graph = model_.graph
+      , maxId = model_.unusedId - 1
+      }
+    applyChange_addOrLinkNode : NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
+    applyChange_addOrLinkNode nodeId graph =
+      let
+        newDFA =
+          { start = graph.root
+          , transition_function = IntDict.empty
+          , states =
+              Graph.get graph.root graph.graph
+              |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
+              |> Maybe.withDefault IntDict.empty -- SHOULD NEVER BE HERE!
+          , finals =
+              if Automata.Data.isTerminal graph.root graph.graph then
+                Set.singleton graph.root
+              else
+                Set.empty
+          } |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] 'Template' DFA"
+        wtf : NodeContext Entity Automata.Data.Connection -> AutomatonGraph Entity
+        wtf node =
+          wordsEndingAt (node.node.id, node.node.label) (debugGraph "Initial graph" graph.graph) Set.empty newDFA
+          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] DFA ending at target"
+          |> \dfa -> union dfa (Automata.DFA.fromGraph graph.root graph.graph)
+          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] After union"
+          |> toGraph
+      in
+        Graph.get nodeId model_.graph
+        |> Maybe.map wtf
+        |> Maybe.withDefault graph
+    applyChange_modifyTransition : NodeId -> NodeId -> Connection -> AutomatonGraph a -> AutomatonGraph a
+    applyChange_modifyTransition from to newState g =
+      let
+        newGraph = modifyConnection from to newState g.graph
+      in
+        { graph = newGraph
+        , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
+        , root = g.root
+        }
+    mkSim g =
+      let
+        (w, h)  = model_.dimensions
+        forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
+        basic = basicForces g.root forceGraph (round h)
+        viewport = viewportForces (w, h) forceGraph
+      in
+        Force.simulation (basic ++ viewport)
+  in
+  List.foldl
+    (\change g ->
         case change of
           AddNewNode { newNodeId } ->
-            wordsEndingAt newNodeId Set.empty "" model |> Debug.log "Found words"
-          NewLinkToNode { from, to, conn } ->
-            []
-          ModifyTransition { from, to, oldState, newState } ->
-            []
+            applyChange_addOrLinkNode newNodeId g
+          NewLinkToNode { to } ->
+            applyChange_addOrLinkNode to g
+          ModifyTransition { from, to, newState } ->
+            applyChange_modifyTransition from to newState g
           RemoveNode nodeId ->
-            []
+            -- This one is a fairly low-level and brutal operation.  Since the node IDs are the same
+            -- in the Automaton graph and in the DFA, we can just remove the node from the DFA
+            -- and then recalculate the graph from that.
+            Graph.get nodeId ag.graph
+            |> Maybe.map
+              (\node ->
+                IntDict.toList node.incoming
+                |> List.map (\(from, conn) -> (from, node.node.id, conn))
+              )
+            |> Maybe.withDefault []
+            |> List.foldl
+              (\(from, to, conn) -> applyChange_modifyTransition from to conn)
+              g
     )
-    model.userRequestedChanges
-  |> \_ ->
-    { model
+    ag
+    (List.reverse model_.userRequestedChanges)
+  |> \g ->
+    { model_
     | userRequestedChanges = []
+    , graph = g.graph
+    , simulation = mkSim g
+    , start = g.root
     }
 
 textChar : Char -> String
@@ -975,10 +976,10 @@ linkElement : Model -> Edge Connection -> Svg Msg
 linkElement ({ graph } as model) edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
 
     target =
-      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
     cardinality = identifyCardinality model edge
     positioning =
       path_between source target cardinality 7 7
@@ -1046,8 +1047,8 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
     isSelected = selectedSource == Just id
     graphNode =
       Graph.get id graph
-    isTerminal =
-      Maybe.map isTerminalNode graphNode
+    thisNodeIsTerminal =
+      Maybe.map Automata.Data.isTerminalNode graphNode
       |> Maybe.withDefault False
     radius = 7
     permit_node_reselection =
@@ -1088,7 +1089,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               ( if id == start then [ "start" ] else [] )
           ]
           []
-       ,  if isTerminal && id == start then
+       ,  if thisNodeIsTerminal && id == start then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -1101,8 +1102,13 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
               ]
               [ text "💥"
-              , title [] [ text "Start AND end of computation\nClick to add/link node" ] ]
-          else if isTerminal then
+              , title
+                  []
+                  [ text <| "Start AND end of computation"
+                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+                  ]
+              ]
+          else if thisNodeIsTerminal then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -1115,7 +1121,11 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
               ]
               [ text "🎯"
-              , title [] [ text "End of computation" ]
+              , title
+                  []
+                  [ text <| "End of computation"
+                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+                  ]
               ]
           else if id == start then
             text_
@@ -1131,7 +1141,11 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               , fill <| Paint <| Color.grey
               ]
               [ text "⭐"
-              , title [] [ text "Start of computation" ]
+              , title
+                  []
+                  [ text <| "Start of computation"
+                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+                  ]
               ]
           else
             g [] []
@@ -1139,7 +1153,8 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
           []
           [ text <|
               -- String.fromInt node.id
-              "Shift-drag reposition\nClick to create or link a new transition"
+              "Shift-drag to reposition\nClick to create or link a new transition"
+              ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
           ]
       ]
 
@@ -1287,11 +1302,11 @@ viewSingleKey model ch (gridX, gridY) =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
-    isTerminal = Set.member (ch, 1) model.selectedTransitions
+    isThisNodeTerminal = Set.member (ch, 1) model.selectedTransitions
     keyClass =
       if Set.member (ch, 0) model.selectedTransitions then
         [ "transition-chooser-key", "selected" ]
-      else if isTerminal then
+      else if isThisNodeTerminal then
         [ "transition-chooser-key", "selected", "terminal" ]
       else
         [ "transition-chooser-key" ]
@@ -1310,7 +1325,7 @@ viewSingleKey model ch (gridX, gridY) =
         , class keyClass
         , onClick <| ToggleSelectedTransition ch
         ]
-        ( if isTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
+        ( if isThisNodeTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
     , text_
         [ x <| buttonX + transition_buttonSize / 2
         , y <| buttonY + transition_buttonSize / 2

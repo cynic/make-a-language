@@ -11,27 +11,42 @@ import Graph exposing (Graph, NodeContext, NodeId)
 -- vertex.
 type alias Transition = (Char, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
 type alias Connection = Set Transition -- a Connection is a link between two nodes.
-type alias Node = NodeContext () Connection -- a Node itself does not carry any data, hence the ()
-type alias AutomatonGraph =
-  { graph : Graph () Connection -- finally, the complete graph.
+type alias Node a = NodeContext a Connection -- a Node itself does not carry any data, hence the ()
+type alias AutomatonGraph a =
+  { graph : Graph a Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
   , maxId : NodeId
   , root : NodeId
   }
 
-empty : AutomatonGraph
+empty : AutomatonGraph a
 empty =
-  let
-    initial =
-      { node = Graph.Node 0 ()
-      , incoming = IntDict.empty
-      , outgoing = IntDict.empty
-      }
-  in
-    { graph = Graph.insert initial Graph.empty
+    { graph = Graph.empty
     , maxId = 0
     , root = 0
     }
+
+{-| True if at least one transition terminates at this node -}
+isTerminalNode : NodeContext a Connection -> Bool
+isTerminalNode node =
+  -- IntDict.isEmpty node.outgoing &&
+  ( IntDict.foldl
+    (\_ conn state ->
+      state ||
+        Set.foldl
+          (\(_, isFinal) state_ -> state_ || isFinal == 1)
+          False
+          conn
+    )
+    False
+    (node.incoming)
+  )
+
+isTerminal : NodeId -> Graph x Connection -> Bool
+isTerminal id graph =
+  Graph.get id graph
+  |> Maybe.map isTerminalNode
+  |> Maybe.withDefault False
 
 graphEdgeToString : Graph.Edge Connection -> String
 graphEdgeToString {from, to, label} =
@@ -55,7 +70,7 @@ connectionToString =
   >> Set.toList
   >> String.join "\u{FEFF}" -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
 
-graphToString : Graph () Connection -> String
+graphToString : Graph a Connection -> String
 graphToString graph =
   Graph.toString
     (\_ -> Nothing)
