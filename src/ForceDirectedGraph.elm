@@ -7,17 +7,17 @@ import Html.Events as HE
 import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
 import Json.Decode as Decode
 import TypedSvg exposing
-  (circle, g, svg, title, line, text_, marker, path, defs, tspan, rect)
+  (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , transform, noFill, width, rx, ry, strokeDasharray, strokeLinecap
+  , transform, noFill, strokeDasharray, strokeLinecap
   , markerStart, pointerEvents, dy)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
-  ( cx, cy, r, strokeWidth, x1, x2, y1, y2, x, y, height, fontSize
+  ( cx, cy, r, strokeWidth, x, y, height, fontSize
   , markerWidth, markerHeight)
-import TypedSvg.Core exposing (Attribute, Svg, text)
+import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
@@ -140,7 +140,7 @@ panBuffer = 40
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : NodeContext a Connection -> Bool
 isTerminalNode node =
-  IntDict.isEmpty node.outgoing ||
+  -- IntDict.isEmpty node.outgoing &&
   ( IntDict.foldl
     (\_ conn state ->
       state ||
@@ -995,7 +995,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
         "mousedown"
         { stopPropagation = True, preventDefault = True }
         (\e ->
-          if e.button == SecondButton then
+          if e.keys.shift then
             e.clientPos |> DragStart id
           else
             case selectedSource of
@@ -1024,6 +1024,8 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
           , strokeWidth 2
           , cx label.x
           , cy label.y
+          , class
+              ( if id == start then [ "start" ] else [] )
           ]
           []
        ,  if isTerminal && id == start then
@@ -1060,7 +1062,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               [ x <| label.x
               , y <| (label.y + 1)
               , fontFamily ["sans-serif"]
-              , fontSize 14
+              , fontSize 12
               , fontWeight FontWeightNormal
               , textAnchor AnchorMiddle
               , alignmentBaseline AlignmentBaseline
@@ -1077,7 +1079,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
           []
           [ text <|
               -- String.fromInt node.id
-              "Drag with right button to reposition\nClick to create or link a new transition"
+              "Shift-drag reposition\nClick to create or link a new transition"
           ]
       ]
 
@@ -1266,7 +1268,7 @@ viewSingleKey model ch (gridX, gridY) =
 viewSvgTransitionChooser : Model -> Svg Msg
 viewSvgTransitionChooser model =
   let
-    ( w, h ) = model.dimensions
+    ( w, _ ) = model.dimensions
     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
     alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
     numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
@@ -1493,17 +1495,18 @@ view model =
         , case (model.selectedSource, model.selectedDest) of
             (Just _, NoDestination) ->
               bottomMsg "Press «Esc» to cancel link creation"
-            _ ->
-              g [] []
-        , case model.selectedDest of
-            NoDestination ->
-              g [] []
-            ExistingNode _ ->
+            (_, ExistingNode _) ->
               bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
-            NewNode _ ->
+            (_, NewNode _) ->
               bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            EditingTransitionTo _ ->
+            (_, EditingTransitionTo _) ->
               bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+            _ ->
+              case model.userRequestedChanges of
+                [] ->
+                  g [] []
+                _ ->
+                  bottomMsg "Press «Enter» to apply these changes."
         ]
     ]
 
@@ -1530,15 +1533,3 @@ onMouseMove msg =
             Decode.fail "Ignoring non-SVG target"
         )
     )
-
--- main : Program DAWGGraph Model Msg
--- main =
---     Browser.element
---         { init = init
---         , view = view
---         , update = \msg model -> ( update msg model, Cmd.none )
---         , subscriptions = subscriptions
---         }
-
-
-{- {"delay": 5} -}
