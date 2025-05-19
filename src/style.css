@@ -95,3 +95,9 @@ path.link + text:hover tspan {
   background-color: red;
   cursor: pointer;
 }
+
+.start {
+  fill: black;
+  stroke-width: 2px;
+  stroke: blue;
+}
