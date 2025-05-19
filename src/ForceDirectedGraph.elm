@@ -548,7 +548,7 @@ update offset_amount msg model =
 
     Confirm ->
       -- What am I confirming?
-      if not <| Set.isEmpty model.selectedTransitions then
+      if not <| Set.isEmpty model.selectedTransitions then -- are there "active", confirmable transitions that the user has selected?
         let
           createNewNode src x y =
             { model
@@ -621,10 +621,15 @@ update offset_amount msg model =
               -- ??? Nothing for me to do!
               model
             ( Nothing, _ ) ->
-              -- ??? Nothing for me to do!
               model
       else
-        model
+        -- in this branch, there are no "active", confirmable transitions to confirm.
+        -- however…
+        case model.userRequestedChanges of
+          [] ->
+            model -- nothing for me to do!
+          _ ->
+            confirmChanges model
 
     ToggleSelectedTransition ch ->
       let
@@ -732,6 +737,61 @@ subscriptions offset_amount model =
         , panSubscription
         , keyboardSubscription
         ]
+
+wordsEndingAt : NodeId -> Set.Set NodeId -> String -> Model -> List String
+wordsEndingAt nodeId seen acc model =
+  if nodeId == model.start then
+    -- we are done!
+    [acc]
+  else if Set.member nodeId seen then
+    -- I have visited this node before. The only way that can happen is
+    -- if this node is "later" in the sequence.  If I take it, we will
+    -- enter a loop!  So, we don't take it.
+    [acc]
+  else
+    -- now, *I* must contribute to the `acc` myself.
+    Graph.get nodeId model.graph
+    |> Maybe.map
+      (\node -> -- the `incoming` is an IntDict Connection
+          -- my `acc` will ALSO have the things from MY `Connection`'s respective `outgoing`s.
+          -- When I get called, that will already be in `acc`.
+          node.incoming
+          |> IntDict.toList
+          |> List.concatMap
+            (\(nodeid, transitions) ->
+              -- each of the transitions effectively forms a new path back to `nodeid`
+              Set.toList transitions
+              |> List.map (\(t, _) -> ( nodeid, t ) ) -- link the nodeid to each transition
+            ) -- at the end of this, I should have a List (NodeId, Char) to process.
+          |> List.filter (\(nodeid, _) -> Set.member nodeid seen == False && nodeid /= nodeId)
+          -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
+          |> List.concatMap
+            (\(nodeid, char) ->
+              wordsEndingAt nodeid (Set.insert nodeId seen) (String.fromChar char ++ acc) model
+            )
+      )
+    |> Maybe.withDefault [] -- SHOULD NEVER BE HERE!!!
+
+confirmChanges : Model -> Model
+confirmChanges model =
+  List.map
+    (\change ->
+        case change of
+          AddNewNode { newNodeId } ->
+            wordsEndingAt newNodeId Set.empty "" model |> Debug.log "Found words"
+          NewLinkToNode { from, to, conn } ->
+            []
+          ModifyTransition { from, to, oldState, newState } ->
+            []
+          RemoveNode nodeId ->
+            []
+    )
+    model.userRequestedChanges
+  |> \_ ->
+    { model
+    | userRequestedChanges = []
+    }
+
 textChar : Char -> String
 textChar ch =
   case ch of

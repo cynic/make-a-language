@@ -149,8 +149,8 @@ create nodes edges start finals =
   }
 
 {-| Create a DFA that accepts exactly one string. -}
-string_to_dfa : String -> Maybe (DFARecord {})
-string_to_dfa string =
+add_string_to_dfa : String -> Maybe (DFARecord {})
+add_string_to_dfa string =
   if String.isEmpty string then
     Nothing
   else
@@ -173,7 +173,34 @@ string_to_dfa string =
                     xs
                   |> Tuple.first
             )
-      } 
+      }
+
+{-| Create a DFA that accepts exactly one string. -}
+remove_string_from_dfa : String -> Maybe (DFARecord {})
+remove_string_from_dfa string =
+  if String.isEmpty string then
+    Nothing
+  else
+    Just -- <| debugDFA_ ("Creating single-string DFA for '" ++ string ++ "'") <|
+      -- If this is a n-character string, then we will want n+1 states
+      { states = IntDict.fromList (List.range 0 (String.length string) |> List.map (\i -> (i, ())))
+      , start = 0
+      , finals = Set.empty -- this is quite literally the only difference between add/remove!
+      , transition_function =
+          IntDict.fromList
+            ( case String.toList string of
+                [] ->
+                  []
+                [ch] ->
+                  [(0, Dict.singleton ch 1)]
+                xs ->
+                  List.foldl
+                    (\ch (acc, nodeId) -> ( (nodeId, Dict.singleton ch (nodeId + 1)) :: acc, nodeId + 1 ))
+                    ( [], 0 )
+                    xs
+                  |> Tuple.first
+            )
+      }
 
 w_forward_transitions : ExtDFA -> List Char
 w_forward_transitions extDFA =
@@ -400,7 +427,7 @@ union w_dfa_orig m_dfa =
 addString : String -> Maybe (DFARecord {}) -> Maybe (DFARecord {})
 addString string maybe_dfa =
   let
-    string_dfa = string_to_dfa string
+    string_dfa = add_string_to_dfa string
   in
     case ( maybe_dfa, string_dfa ) of
       ( Nothing, _ ) ->
@@ -409,6 +436,19 @@ addString string maybe_dfa =
         maybe_dfa
       ( Just dfa, Just s ) ->
         Just (union s dfa {- |> debugDFA_ ("after adding '" ++ string ++ "'") -})
+
+removeString : String -> Maybe (DFARecord {}) -> Maybe (DFARecord {})
+removeString string maybe_dfa =
+  let
+    string_dfa = remove_string_from_dfa string
+  in
+    case ( maybe_dfa, string_dfa ) of
+      ( Nothing, _ ) ->
+        string_dfa
+      ( _, Nothing ) ->
+        maybe_dfa
+      ( Just dfa, Just s ) ->
+        Just (union s dfa {- |> debugDFA_ ("after removing '" ++ string ++ "'") -})
 
 wordsToDFA : List String -> DFARecord {}
 wordsToDFA strings =
