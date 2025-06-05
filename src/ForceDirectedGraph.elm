@@ -29,7 +29,8 @@ import Set
 import IntDict
 import Time
 import List.Extra as List
-import List exposing (all)
+import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromGraph)
+import Automata.Data exposing (isTerminal)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -110,49 +111,12 @@ type alias Drag =
   , index : NodeId
   }
 
-sign : Float -> Float
-sign x =
-  if x < 0 then -1 else 1
-
-getProspective : Model -> NodeId -> List { from : NodeId, to : NodeId, label : Connection }
-getProspective model id =
-  let
-    getProspective_ : List RequestedGraphChanges -> List { from : NodeId, to : NodeId, label : Connection } -> List { from : NodeId, to : NodeId, label : Connection }
-    getProspective_ changes acc =
-      case changes of
-        [] -> []
-        AddNewNode v :: rest ->
-          if v.newNodeId == id then
-            getProspective_ rest ({ from = v.from, to = v.newNodeId, label = v.conn } :: acc)
-          else
-            getProspective_ rest acc
-        _::rest ->
-          getProspective_ rest acc
-  in
-    getProspective_ model.userRequestedChanges []
-
 type alias Entity =
     Force.Entity NodeId { value : { isProspective : Bool } }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
 panBuffer = 40
-
-{-| True if at least one transition terminates at this node -}
-isTerminalNode : NodeContext a Connection -> Bool
-isTerminalNode node =
-  -- IntDict.isEmpty node.outgoing &&
-  ( IntDict.foldl
-    (\_ conn state ->
-      state ||
-        Set.foldl
-          (\(_, isFinal) state_ -> state_ || isFinal == 1)
-          False
-          conn
-    )
-    False
-    (node.incoming)
-  )
 
 initializeNode : Node -> NodeContext Entity Connection
 initializeNode ctx =
@@ -674,7 +638,6 @@ offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
   (x - offset_x, y - offset_y)
 
-
 subscriptions : (Float, Float) -> Model -> Sub Msg
 subscriptions offset_amount model =
   let
@@ -740,69 +703,32 @@ subscriptions offset_amount model =
         , keyboardSubscription
         ]
 
-wordsEndingAt : NodeId -> Set.Set NodeId -> String -> Model -> List String
-wordsEndingAt nodeId seen acc model =
-  if nodeId == model.start then
-    -- we are done!
-    [acc]
-  else if Set.member nodeId seen then
-    -- I have visited this node before. The only way that can happen is
-    -- if this node is "later" in the sequence.  If I take it, we will
-    -- enter a loop!  So, we don't take it.
-    [acc]
-  else
-    -- now, *I* must contribute to the `acc` myself.
-    Graph.get nodeId model.graph
-    |> Maybe.map
-      (\node -> -- the `incoming` is an IntDict Connection
-          -- my `acc` will ALSO have the things from MY `Connection`'s respective `outgoing`s.
-          -- When I get called, that will already be in `acc`.
-          node.incoming
-          |> IntDict.toList
-          |> List.concatMap
-            (\(nodeid, transitions) ->
-              -- each of the transitions effectively forms a new path back to `nodeid`
-              Set.toList transitions
-              |> List.map (\(t, _) -> ( nodeid, t ) ) -- link the nodeid to each transition
-            ) -- at the end of this, I should have a List (NodeId, Char) to process.
-          |> List.filter (\(nodeid, _) -> Set.member nodeid seen == False && nodeid /= nodeId)
-          -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
-          |> List.concatMap
-            (\(nodeid, char) ->
-              wordsEndingAt nodeid (Set.insert nodeId seen) (String.fromChar char ++ acc) model
-            )
-      )
-    |> Maybe.withDefault [] -- SHOULD NEVER BE HERE!!!
-
 confirmChanges : Model -> Model
 confirmChanges model =
   List.map
     (\change ->
+        let
+          newDFA =
+            { start = model.start
+            , transition_function = IntDict.empty
+            , states = IntDict.singleton model.start ()
+            , finals =
+                if Automata.Data.isTerminal model.start model.graph then
+                  Set.singleton model.start
+                else
+                  Set.empty
+            }
+        in
         case change of
           AddNewNode { newNodeId } ->
-            wordsEndingAt newNodeId Set.empty "" model |> Debug.log "[AddNewNode] Found words"
-          NewLinkToNode { from, to } ->
+            wordsEndingAt newNodeId model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[AddNewNode] Found words"
+          NewLinkToNode { to } ->
             -- here, there will be a much larger set of words generated.
             -- What we want to do is find all the words generated, and then
             -- remove the words that already existed WITHOUT the link.
             -- Thanks to the Miracle of Functional Programming, that's not
             -- as difficult as it might otherwise be…
-            let
-              allWords =
-                wordsEndingAt to Set.empty "" model
-                |> Debug.log "[NewLinkToNode] All words"
-              withoutLink =
-                Graph.update to
-                  (Maybe.map (\node -> { node | incoming = IntDict.remove from node.incoming }))
-                  model.graph
-              pre_existingWords =
-                wordsEndingAt to Set.empty "" { model | graph = withoutLink }
-                |> Debug.log "[NewLinkToNode] Pre-existing words"
-              newWords =
-                Set.diff (Set.fromList allWords) (Set.fromList pre_existingWords) |> Set.toList
-            in
-              newWords |> Debug.log "[NewLinkToNode] Found words"
-
+            wordsEndingAt to model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[NewLinkToNode] Found words"
           ModifyTransition { from, to, oldState, newState } ->
             -- we're going to have to do a temporary thing here so that we obtain the
             -- difference between "old" and "new".  We want to ADD the "new", and REMOVE
@@ -819,18 +745,18 @@ confirmChanges model =
                   (Maybe.map (\node -> { node | incoming = IntDict.insert from old node.incoming }))
                   withNewOnly
               newWords =
-                wordsEndingAt to Set.empty "" { model | graph = withNewOnly }
-                |> Debug.log "[ModifyTransition] NEW words (to add)"
+                wordsEndingAt to withNewOnly Set.empty newDFA
+                |> Automata.DFA.debugDFA_ "[ModifyTransition] NEW words (to add)"
               oldWords =
-                wordsEndingAt to Set.empty "" { model | graph = withOldOnly }
-                |> Debug.log "[ModifyTransition] OLD words (to remove)"
+                wordsEndingAt to withOldOnly Set.empty newDFA
+                |> Automata.DFA.debugDFA_ "[ModifyTransition] OLD words (to remove)"
             in
-              []
+              modifyConnection from to newState model.graph |> fromGraph
           RemoveNode nodeId ->
             -- This one is a fairly low-level and brutal operation.  Since the node IDs are the same
             -- in the Automaton graph and in the DFA, we can just remove the node from the DFA
             -- and then recalculate the graph from that.
-            []
+            newDFA
     )
     model.userRequestedChanges
   |> \_ ->
@@ -1092,8 +1018,8 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
     isSelected = selectedSource == Just id
     graphNode =
       Graph.get id graph
-    isTerminal =
-      Maybe.map isTerminalNode graphNode
+    thisNodeIsTerminal =
+      Maybe.map Automata.Data.isTerminalNode graphNode
       |> Maybe.withDefault False
     radius = 7
     permit_node_reselection =
@@ -1134,7 +1060,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
               ( if id == start then [ "start" ] else [] )
           ]
           []
-       ,  if isTerminal && id == start then
+       ,  if thisNodeIsTerminal && id == start then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -1153,7 +1079,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
                     ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
                   ]
               ]
-          else if isTerminal then
+          else if thisNodeIsTerminal then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -1347,11 +1273,11 @@ viewSingleKey model ch (gridX, gridY) =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
-    isTerminal = Set.member (ch, 1) model.selectedTransitions
+    isThisNodeTerminal = Set.member (ch, 1) model.selectedTransitions
     keyClass =
       if Set.member (ch, 0) model.selectedTransitions then
         [ "transition-chooser-key", "selected" ]
-      else if isTerminal then
+      else if isThisNodeTerminal then
         [ "transition-chooser-key", "selected", "terminal" ]
       else
         [ "transition-chooser-key" ]
@@ -1370,7 +1296,7 @@ viewSingleKey model ch (gridX, gridY) =
         , class keyClass
         , onClick <| ToggleSelectedTransition ch
         ]
-        ( if isTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
+        ( if isThisNodeTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
     , text_
         [ x <| buttonX + transition_buttonSize / 2
         , y <| buttonY + transition_buttonSize / 2

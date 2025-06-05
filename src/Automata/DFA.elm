@@ -6,6 +6,10 @@ import Dict exposing (Dict)
 import Automata.Data exposing (..)
 import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import Dict.Extra
+import Dict exposing (update)
+import Automata.MADFA exposing (toAutomatonGraph, collapse)
+import Automata.MADFA exposing (MADFARecord)
+import List.Extra exposing (remove)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -346,7 +350,6 @@ remove_unreachable extDFA_orig =
       -- |> Debug.log ("Is " ++ String.fromInt q ++ " unreachable?")
   in
     mogrify extDFA_orig.start (w_forward_transitions extDFA_orig) extDFA_orig
-    |> (\dfa -> { dfa | start = dfa.clone_start })
 
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA =
@@ -419,10 +422,91 @@ union w_dfa_orig m_dfa =
     |> phase_1
     --|> debugExtDFA_ "End of Phase 1"
     |> remove_unreachable
+    |> (\dfa -> { dfa | start = dfa.clone_start })
     --|> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
     --|> debugDFA_ "End of Phase 3"
     |> retract
+
+complement : DFARecord a -> DFARecord a
+complement dfa =
+  -- the non-final states become the final states, and vice-versa.
+  { dfa
+    | finals = Set.diff (IntDict.keys dfa.states |> Set.fromList) dfa.finals
+  }
+
+modifyConnection : NodeId -> NodeId -> Connection -> Graph a Connection -> Graph a Connection
+modifyConnection source target newConn g =
+  -- find the correct source.  From there, I can change the connection.
+  -- Changing the connection cannot possibly affect anything that is
+  -- later in the graph—all of that is set—but it can affect things that
+  -- are "prior" to the destination.
+  -- If `newConn` is an empty set, then a link is destroyed: this may
+  -- result in a disconnected portion of the graph (if it was the only
+  -- link to the start).  Therefore, I need to use `remove_unreachable`
+  -- on the `target`, to get rid of disconnected portions.
+  -- Whether disconnected or not, there may now be new similarities in
+  -- the graph.  So, we can find the nodes to examine using `wordsEndingAt`
+  -- (going either from source [if the link is destroyed] or from target
+  -- [otherwise]), and then use `replace_or_register` to re-check for
+  -- similarities.
+  -- 
+  -- I will also need to put in tests for these cases…
+  let
+    rewriteLink : Graph a Connection -> Graph a Connection
+    rewriteLink =
+      Graph.update source
+        (Maybe.map (\sourceContext ->
+          { sourceContext
+            | outgoing =
+                IntDict.update target
+                  (\_ ->
+                    if Set.isEmpty newConn then
+                      Nothing
+                    else
+                      Just newConn
+                  )
+                  sourceContext.outgoing
+          }
+        ))
+    removeUnreachable : List NodeId -> Graph a Connection -> Graph a Connection
+    removeUnreachable remaining graph =
+      case remaining of
+        [] -> graph
+        h::t ->
+          let
+            updatedGraph =
+              Graph.update h
+                (Maybe.andThen (\node ->
+                  if IntDict.isEmpty node.incoming then
+                    Nothing
+                  else
+                    Just node
+                ))
+                graph
+          in
+            removeUnreachable
+              ( ( Graph.get h graph -- this works 'cos of Magic Immutability :-)
+                  |> Maybe.andThen (\node ->
+                      if node.incoming == IntDict.empty then
+                        Just (IntDict.toList node.outgoing |> List.map Tuple.first)
+                      else
+                        Nothing
+                    )
+                  |> Maybe.withDefault []
+                )
+              ++ t)
+              updatedGraph
+    newGraph =
+      rewriteLink g
+      |> removeUnreachable [ target ]
+  in
+    if Set.isEmpty newConn then
+      -- I must check for unreachable stuff from the target on.
+      newGraph |> collapse source |> Tuple.second
+      -- { graph | graph = updatedGraph }
+    else
+      newGraph |> collapse target |> Tuple.second
 
 addString : String -> Maybe (DFARecord {}) -> Maybe (DFARecord {})
 addString string maybe_dfa =
@@ -466,6 +550,7 @@ fromWords =
   >> Maybe.map toGraph
   >> Maybe.withDefault Automata.Data.empty
 
+
 toGraph : DFARecord a -> AutomatonGraph
 toGraph dfa =
   let
@@ -504,6 +589,38 @@ toGraph dfa =
         , root = dfa.start
         }
 
+fromGraph : AutomatonGraph -> DFARecord {}
+fromGraph g =
+  { states =
+      Graph.nodes g.graph
+      |> List.map (\node -> ( node.id, ()) )
+      |> IntDict.fromList
+  , start = g.root
+  , finals =
+      Graph.fold
+        (\ctx finals ->
+          if isTerminalNode ctx then 
+            Set.insert ctx.node.id finals
+          else
+            finals
+        )
+        Set.empty
+        g.graph
+  , transition_function =
+      Graph.fold
+        (\ctx transitions ->
+          IntDict.foldl
+            (\dest conn dict ->
+              Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
+            )
+            Dict.empty
+            ctx.outgoing
+          |> \dict -> IntDict.insert ctx.node.id dict transitions
+        )
+        IntDict.empty
+        g.graph
+  }
+
 transitionToString : MTransition -> String
 transitionToString =
   String.fromChar
@@ -513,6 +630,69 @@ connectionToString =
   Set.map transitionToString
   >> Set.toList
   >> String.concat
+
+-- modifyTransitions : NodeId -> NodeId -> Graph.Graph x Connection -> DFARecord a -> DFARecord a
+-- modifyTransitions from to graph dfa =
+
+
+wordsEndingAt : NodeId -> Graph.Graph x Connection -> Set NodeId -> DFARecord a -> DFARecord a
+wordsEndingAt nodeId graph visited_orig dfa =
+  let
+    visited = Set.insert nodeId visited_orig
+  in
+  if nodeId == dfa.start then
+    -- we are done!
+    { dfa | states = IntDict.insert nodeId () dfa.states }
+  else if Set.member nodeId visited_orig then
+    -- I have visited this node before. The only way that can happen is
+    -- if this node is "later" in the sequence.  If I follow it, we will
+    -- enter a loop!  So, we don't take it.
+    -- However, we must record this transition, and that is done during the
+    -- call to the wordsEndingAt function.
+    { dfa | states = IntDict.insert nodeId () dfa.states }
+  else
+    -- now, *I* must contribute to the `acc` myself.
+    Graph.get nodeId graph
+    |> Maybe.map
+      (\node -> -- the `incoming` is an IntDict Connection
+          -- my `acc` will ALSO have the things from MY `Connection`'s respective `outgoing`s.
+          -- When I get called, that will already be in `acc`.
+          node.incoming
+          |> IntDict.toList
+          |> List.foldl
+            (\(nodeid, transitions) state ->
+              -- each of the transitions effectively forms a new path back to `nodeid`
+              Set.toList transitions
+              |> List.foldl
+                  (\(t, isFinal) dfa_ ->
+                    wordsEndingAt
+                      nodeid
+                      graph
+                      visited
+                      { dfa_
+                        | states = IntDict.insert nodeid () dfa_.states
+                        , transition_function =
+                            IntDict.update nodeid
+                              (\maybe_dict ->
+                                  case maybe_dict of
+                                    Nothing -> Just (Dict.singleton t nodeId)
+                                    Just dict -> Just (Dict.insert t nodeId dict)
+                              )
+                              dfa_.transition_function
+                        , finals =
+                            if isFinal == 1 then
+                              Set.insert nodeId dfa_.finals
+                            else
+                              dfa_.finals
+                      }
+                  ) state -- link the nodeid to each transition
+            )
+            { dfa | states = IntDict.insert nodeId () dfa.states }
+            -- at the end of this, I should have a List (NodeId, Char) to process.
+          -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
+      )
+    |> Maybe.withDefault dfa -- SHOULD NEVER BE HERE!!!
+
 
 -----------------
 -- DEBUGGING

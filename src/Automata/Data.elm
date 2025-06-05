@@ -33,6 +33,28 @@ empty =
     , root = 0
     }
 
+{-| True if at least one transition terminates at this node -}
+isTerminalNode : NodeContext a Connection -> Bool
+isTerminalNode node =
+  -- IntDict.isEmpty node.outgoing &&
+  ( IntDict.foldl
+    (\_ conn state ->
+      state ||
+        Set.foldl
+          (\(_, isFinal) state_ -> state_ || isFinal == 1)
+          False
+          conn
+    )
+    False
+    (node.incoming)
+  )
+
+isTerminal : NodeId -> Graph x Connection -> Bool
+isTerminal id graph =
+  Graph.get id graph
+  |> Maybe.map isTerminalNode
+  |> Maybe.withDefault False
+
 graphEdgeToString : Graph.Edge Connection -> String
 graphEdgeToString {from, to, label} =
   "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
@@ -55,7 +77,7 @@ connectionToString =
   >> Set.toList
   >> String.join "\u{FEFF}" -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
 
-graphToString : Graph () Connection -> String
+graphToString : Graph a Connection -> String
 graphToString graph =
   Graph.toString
     (\_ -> Nothing)
