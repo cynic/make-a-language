@@ -31,6 +31,7 @@ import Time
 import List.Extra as List
 import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromGraph)
 import Automata.Data exposing (isTerminal)
+import Automata.DFA exposing (toGraph)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -703,75 +704,88 @@ subscriptions offset_amount model =
         ]
 
 confirmChanges : Model -> Model
-confirmChanges model =
-  List.map
-    (\change ->
-        let
-          newDFA =
-            { start = model.start
-            , transition_function = IntDict.empty
-            , states =
-                Graph.get model.start model.graph
-                |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
-                |> Maybe.withDefault IntDict.empty -- SHOULD NEVER BE HERE!
-            , finals =
-                if Automata.Data.isTerminal model.start model.graph then
-                  Set.singleton model.start
-                else
-                  Set.empty
-            }
-        in
+confirmChanges model_ =
+  let
+    ag : AutomatonGraph Entity
+    ag =
+      { root = model_.start
+      , graph = model_.graph
+      , maxId = model_.unusedId - 1
+      }
+    applyChange_addOrLinkNode : NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
+    applyChange_addOrLinkNode nodeId graph =
+      let
+        newDFA =
+          { start = graph.root
+          , transition_function = IntDict.empty
+          , states =
+              Graph.get graph.root graph.graph
+              |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
+              |> Maybe.withDefault IntDict.empty -- SHOULD NEVER BE HERE!
+          , finals =
+              if Automata.Data.isTerminal graph.root graph.graph then
+                Set.singleton graph.root
+              else
+                Set.empty
+          }
+        wtf : NodeContext Entity Automata.Data.Connection -> AutomatonGraph Entity
+        wtf node =
+          wordsEndingAt (node.node.id, node.node.label) graph.graph Set.empty newDFA
+          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] Found words"
+          |> toGraph
+      in
+        Graph.get nodeId model_.graph
+        |> Maybe.map wtf
+        |> Maybe.withDefault graph
+    applyChange_modifyTransition : NodeId -> NodeId -> Connection -> AutomatonGraph a -> AutomatonGraph a
+    applyChange_modifyTransition from to newState g =
+      let
+        newGraph = modifyConnection from to newState g.graph
+      in
+        { graph = newGraph
+        , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
+        , root = g.root
+        }
+    mkSim g =
+      let
+        (w, h)  = model_.dimensions
+        forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
+        basic = basicForces g.root forceGraph (round h)
+        viewport = viewportForces (w, h) forceGraph
+      in
+        Force.simulation (basic ++ viewport)
+  in
+  List.foldl
+    (\change g ->
         case change of
           AddNewNode { newNodeId } ->
-            wordsEndingAt (newNodeId, Force.entity newNodeId { }) model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[AddNewNode] Found words"
+            applyChange_addOrLinkNode newNodeId g
           NewLinkToNode { to } ->
-            -- here, there will be a much larger set of words generated.
-            -- What we want to do is find all the words generated, and then
-            -- remove the words that already existed WITHOUT the link.
-            -- Thanks to the Miracle of Functional Programming, that's not
-            -- as difficult as it might otherwise be…
-            wordsEndingAt (to, Force.entity to { }) model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[NewLinkToNode] Found words"
-          ModifyTransition { from, to, oldState, newState } ->
-            -- we're going to have to do a temporary thing here so that we obtain the
-            -- difference between "old" and "new".  We want to ADD the "new", and REMOVE
-            -- the "old".
-            let
-            --   new = Set.diff newState oldState
-            --   old = Set.diff oldState newState
-            --   withNewOnly =
-            --     Graph.update to
-            --       (Maybe.map (\node -> { node | incoming = IntDict.insert from new node.incoming }))
-            --       model.graph
-            --   withOldOnly =
-            --     Graph.update to
-            --       (Maybe.map (\node -> { node | incoming = IntDict.insert from old node.incoming }))
-            --       withNewOnly
-            --   newWords =
-            --     wordsEndingAt to withNewOnly Set.empty newDFA
-            --     |> Automata.DFA.debugDFA_ "[ModifyTransition] NEW words (to add)"
-            --   oldWords =
-            --     wordsEndingAt to withOldOnly Set.empty newDFA
-            --     |> Automata.DFA.debugDFA_ "[ModifyTransition] OLD words (to remove)"
-              newGraph = modifyConnection from to newState model.graph
-              g = model.graph
-              newAutomatonGraph =
-                { graph = newGraph
-                , maxId = List.maximum (Graph.nodes model.graph |> List.map .id) |> Maybe.withDefault 0
-                , root = model.start
-                }
-                |> fromGraph
-            in
-              newDFA
+            applyChange_addOrLinkNode to g
+          ModifyTransition { from, to, newState } ->
+            applyChange_modifyTransition from to newState g
           RemoveNode nodeId ->
             -- This one is a fairly low-level and brutal operation.  Since the node IDs are the same
             -- in the Automaton graph and in the DFA, we can just remove the node from the DFA
             -- and then recalculate the graph from that.
-            newDFA
+            Graph.get nodeId ag.graph
+            |> Maybe.map
+              (\node ->
+                IntDict.toList node.incoming
+                |> List.map (\(from, conn) -> (from, node.node.id, conn))
+              )
+            |> Maybe.withDefault []
+            |> List.foldl
+              (\(from, to, conn) -> applyChange_modifyTransition from to conn)
+              g
     )
-    model.userRequestedChanges
-  |> \_ ->
-    { model
+    ag
+    (List.reverse model_.userRequestedChanges)
+  |> \g ->
+    { model_
     | userRequestedChanges = []
+    , graph = g.graph
+    , simulation = mkSim g
     }
 
 textChar : Char -> String
