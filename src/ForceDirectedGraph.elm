@@ -37,7 +37,7 @@ type Msg
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
-  | GraphUpdated AutomatonGraph
+  | WordsUpdated (List String)
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
   | Zoom Float (Float, Float)
@@ -112,19 +112,17 @@ type alias Drag =
   }
 
 type alias Entity =
-    Force.Entity NodeId { value : { isProspective : Bool } }
+  Force.Entity NodeId { value : { } }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
 panBuffer = 40
 
-initializeNode : Node -> NodeContext Entity Connection
+initializeNode : Node a -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
-        Force.entity ctx.node.id
-          { isProspective = False
-          }
+        Force.entity ctx.node.id { }
     , id = ctx.node.id
     }
   , incoming = ctx.incoming
@@ -169,8 +167,8 @@ makeNodeForce : NodeId -> Force.Force NodeId
 makeNodeForce id =
   Force.manyBodyStrength -3000.0 [id]
 
-basicForces : NodeId -> Graph Entity Connection -> (Int, Int) -> List (Force.Force NodeId)
-basicForces start graph (width, height) =
+basicForces : NodeId -> Graph Entity Connection -> Int -> List (Force.Force NodeId)
+basicForces start graph height =
   (List.map (\e -> makeLinkForce e.from e.to e.label) (Graph.edges graph))
   ++
   (List.map (.id >> makeNodeForce) (Graph.nodes graph))
@@ -198,17 +196,18 @@ basicForces start graph (width, height) =
 makeSimulation : NodeId -> (Float, Float) -> Graph Entity Connection -> Force.State NodeId
 makeSimulation start (w, h) graph =
   Force.simulation
-    (basicForces start graph (round w, round h) ++ viewportForces (w, h) graph)
+    (basicForces start graph (round h) ++ viewportForces (w, h) graph)
 
-toForceGraph : AutomatonGraph -> Graph Entity Connection
+toForceGraph : AutomatonGraph a -> Graph Entity Connection
 toForceGraph g =
   Graph.mapContexts initializeNode g.graph
 
-receiveDAWG : AutomatonGraph -> (Float, Float) -> Model
-receiveDAWG dawg (w, h) =
+receiveWords : List String -> (Float, Float) -> Model
+receiveWords words (w, h) =
   let
-    forceGraph = toForceGraph (dawg {- |> Debug.log "Received by ForceDirectedGraph" -} )
-    basic = basicForces dawg.root forceGraph (round w, round h)
+    graph = Automata.DFA.fromWords words
+    forceGraph = toForceGraph (graph {- |> Debug.log "Received by ForceDirectedGraph" -} )
+    basic = basicForces graph.root forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph
   in
     { drag = Nothing
@@ -218,7 +217,7 @@ receiveDAWG dawg (w, h) =
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
-    , start = dawg.root
+    , start = graph.root
     , zoom = ( 1.0, ( w/2, h/2 ) )
     , mouseCoords = ( w/2, h/2 )
     , selectedSource = Nothing
@@ -227,12 +226,12 @@ receiveDAWG dawg (w, h) =
     , pan = ( 0, 0)
     , mouseIsHere = False
     , userRequestedChanges = []
-    , unusedId = dawg.maxId + 1
+    , unusedId = graph.maxId + 1
     }
 
-init : AutomatonGraph -> (Float, Float) -> (Model, Cmd Msg)
-init dawg (w, h) =
-  ( receiveDAWG dawg (w, h), Cmd.none )
+init : List String -> (Float, Float) -> (Model, Cmd Msg)
+init words (w, h) =
+  ( receiveWords words (w, h), Cmd.none )
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
@@ -366,8 +365,8 @@ update offset_amount msg model =
               , simulation = newState
             }
 
-    GraphUpdated dawg ->
-      receiveDAWG dawg model.dimensions
+    WordsUpdated words ->      
+      receiveWords words model.dimensions
 
     ViewportUpdated dim ->
       let
@@ -535,7 +534,7 @@ update offset_amount msg model =
                     { label =
                         let
                           initial =
-                            Force.entity model.unusedId { isProspective = False }
+                            Force.entity model.unusedId { }
                         in
                           { initial | x = x, y = y }
                     , id = model.unusedId
@@ -711,7 +710,10 @@ confirmChanges model =
           newDFA =
             { start = model.start
             , transition_function = IntDict.empty
-            , states = IntDict.singleton model.start ()
+            , states =
+                Graph.get model.start model.graph
+                |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
+                |> Maybe.withDefault IntDict.empty -- SHOULD NEVER BE HERE!
             , finals =
                 if Automata.Data.isTerminal model.start model.graph then
                   Set.singleton model.start
@@ -721,37 +723,45 @@ confirmChanges model =
         in
         case change of
           AddNewNode { newNodeId } ->
-            wordsEndingAt newNodeId model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[AddNewNode] Found words"
+            wordsEndingAt (newNodeId, Force.entity newNodeId { }) model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[AddNewNode] Found words"
           NewLinkToNode { to } ->
             -- here, there will be a much larger set of words generated.
             -- What we want to do is find all the words generated, and then
             -- remove the words that already existed WITHOUT the link.
             -- Thanks to the Miracle of Functional Programming, that's not
             -- as difficult as it might otherwise be…
-            wordsEndingAt to model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[NewLinkToNode] Found words"
+            wordsEndingAt (to, Force.entity to { }) model.graph Set.empty newDFA |> Automata.DFA.debugDFA_ "[NewLinkToNode] Found words"
           ModifyTransition { from, to, oldState, newState } ->
             -- we're going to have to do a temporary thing here so that we obtain the
             -- difference between "old" and "new".  We want to ADD the "new", and REMOVE
             -- the "old".
             let
-              new = Set.diff newState oldState
-              old = Set.diff oldState newState
-              withNewOnly =
-                Graph.update to
-                  (Maybe.map (\node -> { node | incoming = IntDict.insert from new node.incoming }))
-                  model.graph
-              withOldOnly =
-                Graph.update to
-                  (Maybe.map (\node -> { node | incoming = IntDict.insert from old node.incoming }))
-                  withNewOnly
-              newWords =
-                wordsEndingAt to withNewOnly Set.empty newDFA
-                |> Automata.DFA.debugDFA_ "[ModifyTransition] NEW words (to add)"
-              oldWords =
-                wordsEndingAt to withOldOnly Set.empty newDFA
-                |> Automata.DFA.debugDFA_ "[ModifyTransition] OLD words (to remove)"
+            --   new = Set.diff newState oldState
+            --   old = Set.diff oldState newState
+            --   withNewOnly =
+            --     Graph.update to
+            --       (Maybe.map (\node -> { node | incoming = IntDict.insert from new node.incoming }))
+            --       model.graph
+            --   withOldOnly =
+            --     Graph.update to
+            --       (Maybe.map (\node -> { node | incoming = IntDict.insert from old node.incoming }))
+            --       withNewOnly
+            --   newWords =
+            --     wordsEndingAt to withNewOnly Set.empty newDFA
+            --     |> Automata.DFA.debugDFA_ "[ModifyTransition] NEW words (to add)"
+            --   oldWords =
+            --     wordsEndingAt to withOldOnly Set.empty newDFA
+            --     |> Automata.DFA.debugDFA_ "[ModifyTransition] OLD words (to remove)"
+              newGraph = modifyConnection from to newState model.graph
+              g = model.graph
+              newAutomatonGraph =
+                { graph = newGraph
+                , maxId = List.maximum (Graph.nodes model.graph |> List.map .id) |> Maybe.withDefault 0
+                , root = model.start
+                }
+                |> fromGraph
             in
-              modifyConnection from to newState model.graph |> fromGraph
+              newDFA
           RemoveNode nodeId ->
             -- This one is a fairly low-level and brutal operation.  Since the node IDs are the same
             -- in the Automaton graph and in the DFA, we can just remove the node from the DFA
@@ -947,10 +957,10 @@ linkElement : Model -> Edge Connection -> Svg Msg
 linkElement ({ graph } as model) edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
 
     target =
-      Maybe.withDefault (Force.entity 0 { isProspective = False }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
     cardinality = identifyCardinality model edge
     positioning =
       path_between source target cardinality 7 7

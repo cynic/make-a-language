@@ -11,24 +11,17 @@ import Graph exposing (Graph, NodeContext, NodeId)
 -- vertex.
 type alias Transition = (Char, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
 type alias Connection = Set Transition -- a Connection is a link between two nodes.
-type alias Node = NodeContext () Connection -- a Node itself does not carry any data, hence the ()
-type alias AutomatonGraph =
-  { graph : Graph () Connection -- finally, the complete graph.
+type alias Node a = NodeContext a Connection -- a Node itself does not carry any data, hence the ()
+type alias AutomatonGraph a =
+  { graph : Graph a Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
   , maxId : NodeId
   , root : NodeId
   }
 
-empty : AutomatonGraph
+empty : AutomatonGraph a
 empty =
-  let
-    initial =
-      { node = Graph.Node 0 ()
-      , incoming = IntDict.empty
-      , outgoing = IntDict.empty
-      }
-  in
-    { graph = Graph.insert initial Graph.empty
+    { graph = Graph.empty
     , maxId = 0
     , root = 0
     }

@@ -36,16 +36,16 @@ And everything is connected.  And outgoing nodes have deterministic transitions.
 type alias NodeId = Int
 type alias ATransition = ( (NodeId, Char), NodeId )
 
-type alias DFARecord a =
-  { a |
-    states : IntDict () -- the () is the label.
+type alias DFARecord extending label =
+  { extending |
+    states : IntDict label -- the () is the label.
   , transition_function: IntDict (Dict Char NodeId) -- NodeId × Char → NodeId
   , start : NodeId
   , finals : Set NodeId
   }
 
-type alias ExtDFA =
-  { states : IntDict ()
+type alias ExtDFA label =
+  { states : IntDict label
   , transition_function: IntDict (Dict Char NodeId)
   , start : NodeId
   , finals : Set NodeId
@@ -55,15 +55,15 @@ type alias ExtDFA =
   , unusedId : NodeId
   }
 
-type alias CloneResult =
-  { extDFA : ExtDFA
+type alias CloneResult a =
+  { extDFA : ExtDFA a
   , q_w : Maybe NodeId -- Nothing, if we've reached the end.
   , q_m : Maybe NodeId -- Nothing, if we reached a break in the transitions.
   , seen_qw : Set NodeId -- the states of q_w we've seen thus far.
   }
 
 
-extend : DFARecord a -> DFARecord a -> ExtDFA
+extend : DFARecord a b -> DFARecord a b -> ExtDFA b
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
   let
     max_dfa =
@@ -106,7 +106,7 @@ extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
   in
     extDFA
 
-retract : ExtDFA -> DFARecord {}
+retract : ExtDFA a -> DFARecord {} a
 retract extDFA =
   { states = extDFA.states
   , transition_function = extDFA.transition_function
@@ -114,46 +114,8 @@ retract extDFA =
   , finals = extDFA.finals
   }
 
-create : List (NodeId, ()) -> List (NodeId, Char, NodeId) -> NodeId -> Set NodeId -> DFARecord {}
-create nodes edges start finals =
-  let
-    states = IntDict.fromList nodes
-  in
-  { states = states
-  , transition_function =
-      List.foldl
-        (\(from, transition, to) state ->
-            if IntDict.member from states && IntDict.member to states then
-              IntDict.update from
-                (\possibly ->
-                  case possibly of
-                    Nothing ->
-                      -- first entry, that's fun.
-                      Just (Dict.singleton transition to)
-                    Just dict ->
-                      case Dict.get transition dict of
-                        Nothing ->
-                          -- first transition leading from here, okay.
-                          Just (Dict.insert transition to dict)
-                        Just _ ->
-                          -- this would be deterministic.  Instead, overwrite.
-                          --Debug.log ("[create] Overwriting transition " ++ String.fromChar transition ++ " from " ++ String.fromInt from ++ " to " ++ String.fromInt to ++ ".") () |> \_ ->
-                          Just (Dict.insert transition to dict)
-                )
-                state
-            else
-              --Debug.log ("[create] Skipping edge " ++ String.fromInt from ++ " → " ++ String.fromInt to ++ ", because of non-existence.")
-                (IntDict.member from states, IntDict.member to states) |> \_ ->
-              state
-        )
-        IntDict.empty
-        edges
-  , start = start
-  , finals = finals
-  }
-
 {-| Create a DFA that accepts exactly one string. -}
-add_string_to_dfa : String -> Maybe (DFARecord {})
+add_string_to_dfa : String -> Maybe (DFARecord {} ())
 add_string_to_dfa string =
   if String.isEmpty string then
     Nothing
@@ -180,7 +142,7 @@ add_string_to_dfa string =
       }
 
 {-| Create a DFA that accepts exactly one string. -}
-remove_string_from_dfa : String -> Maybe (DFARecord {})
+remove_string_from_dfa : String -> Maybe (DFARecord {} ())
 remove_string_from_dfa string =
   if String.isEmpty string then
     Nothing
@@ -206,7 +168,7 @@ remove_string_from_dfa string =
             )
       }
 
-w_forward_transitions : ExtDFA -> List Char
+w_forward_transitions : ExtDFA a -> List Char
 w_forward_transitions extDFA =
   let
     helper : NodeId -> Set NodeId -> List Char -> List Char
@@ -231,7 +193,7 @@ w_forward_transitions extDFA =
     |> List.reverse
     --|> Debug.log "w_forward_transitions"
 
-delta : NodeId -> Char -> DFARecord a -> Maybe NodeId
+delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
 delta q x dfa =
   IntDict.get q dfa.transition_function
   |> Maybe.andThen (Dict.get x)
@@ -240,18 +202,18 @@ delta q x dfa =
 -- delta_star q xs dfa =
 --   List.foldl (\x -> Maybe.andThen (\q_ -> delta q_ x dfa)) (Just q) xs
 
-transitions_of : NodeId -> DFARecord a -> Dict Char NodeId
+transitions_of : NodeId -> DFARecord a b -> Dict Char NodeId
 transitions_of q dfa =
   IntDict.get q dfa.transition_function
   |> Maybe.withDefault Dict.empty
 
-phase_1 : ExtDFA -> ExtDFA
+phase_1 : ExtDFA a -> ExtDFA a
 phase_1 extDFA_orig =
   -- here, we just need to clone all the corresponding "clone" transitions.
   let
     -- well, now that we have them… let's follow along and attach the "excess" transitions
     -- to the "cloned" states.
-    append_transitions : NodeId -> NodeId -> List Char -> ExtDFA -> ExtDFA
+    append_transitions : NodeId -> NodeId -> List Char -> ExtDFA a -> ExtDFA a
     append_transitions q_m q_w transitions extDFA =
       let
         updated () =
@@ -305,11 +267,11 @@ phase_1 extDFA_orig =
       (w_forward_transitions extDFA_orig)
       extDFA_orig
 
-remove_unreachable : ExtDFA -> ExtDFA
+remove_unreachable : ExtDFA a -> ExtDFA a
 remove_unreachable extDFA_orig =
   -- check: are there any incoming transitions?
   let
-    purge : NodeId -> ExtDFA -> ExtDFA
+    purge : NodeId -> ExtDFA a -> ExtDFA a
     purge q extDFA =
       { extDFA
         | states = IntDict.remove q extDFA.states
@@ -317,7 +279,7 @@ remove_unreachable extDFA_orig =
         , register = Set.remove q extDFA.register
         , finals = Set.remove q extDFA.finals
       }
-    mogrify : NodeId -> List Char -> ExtDFA -> ExtDFA
+    mogrify : NodeId -> List Char -> ExtDFA a -> ExtDFA a
     mogrify q transitions extDFA =
       case transitions of
         [] ->
@@ -341,7 +303,7 @@ remove_unreachable extDFA_orig =
                   purge next extDFA
                 else
                   extDFA
-    unreachable : NodeId -> ExtDFA -> Bool
+    unreachable : NodeId -> ExtDFA a -> Bool
     unreachable q extDFA =
       extDFA.transition_function
       |> IntDict.toList
@@ -351,7 +313,7 @@ remove_unreachable extDFA_orig =
   in
     mogrify extDFA_orig.start (w_forward_transitions extDFA_orig) extDFA_orig
 
-replace_or_register : ExtDFA -> ExtDFA
+replace_or_register : ExtDFA a -> ExtDFA a
 replace_or_register extDFA =
   let
     equiv : NodeId -> NodeId -> Bool
@@ -415,7 +377,7 @@ replace_or_register extDFA =
     [] ->
       extDFA
 
-union : DFARecord a -> DFARecord a -> DFARecord {}
+union : DFARecord a b -> DFARecord a b -> DFARecord {} b
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
     --|> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
@@ -428,7 +390,7 @@ union w_dfa_orig m_dfa =
     --|> debugDFA_ "End of Phase 3"
     |> retract
 
-complement : DFARecord a -> DFARecord a
+complement : DFARecord a b -> DFARecord a b
 complement dfa =
   -- the non-final states become the final states, and vice-versa.
   { dfa
@@ -508,7 +470,7 @@ modifyConnection source target newConn g =
     else
       newGraph |> collapse target |> Tuple.second
 
-addString : String -> Maybe (DFARecord {}) -> Maybe (DFARecord {})
+addString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
 addString string maybe_dfa =
   let
     string_dfa = add_string_to_dfa string
@@ -521,7 +483,7 @@ addString string maybe_dfa =
       ( Just dfa, Just s ) ->
         Just (union s dfa {- |> debugDFA_ ("after adding '" ++ string ++ "'") -})
 
-removeString : String -> Maybe (DFARecord {}) -> Maybe (DFARecord {})
+removeString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
 removeString string maybe_dfa =
   let
     string_dfa = remove_string_from_dfa string
@@ -534,7 +496,7 @@ removeString string maybe_dfa =
       ( Just dfa, Just s ) ->
         Just (union s dfa {- |> debugDFA_ ("after removing '" ++ string ++ "'") -})
 
-wordsToDFA : List String -> DFARecord {}
+wordsToDFA : List String -> DFARecord {} ()
 wordsToDFA strings =
   List.foldl addString Nothing strings
   |> Maybe.withDefault
@@ -544,14 +506,13 @@ wordsToDFA strings =
     , finals = Set.empty
     }
 
-fromWords : List String -> AutomatonGraph
+fromWords : List String -> AutomatonGraph ()
 fromWords =
   List.foldl addString Nothing
   >> Maybe.map toGraph
   >> Maybe.withDefault Automata.Data.empty
 
-
-toGraph : DFARecord a -> AutomatonGraph
+toGraph : DFARecord a b -> AutomatonGraph b
 toGraph dfa =
   let
     stateList = IntDict.toList dfa.states |> List.reverse
@@ -589,11 +550,11 @@ toGraph dfa =
         , root = dfa.start
         }
 
-fromGraph : AutomatonGraph -> DFARecord {}
+fromGraph : AutomatonGraph a -> DFARecord {} a
 fromGraph g =
   { states =
       Graph.nodes g.graph
-      |> List.map (\node -> ( node.id, ()) )
+      |> List.map (\node -> ( node.id, node.label) )
       |> IntDict.fromList
   , start = g.root
   , finals =
@@ -635,21 +596,21 @@ connectionToString =
 -- modifyTransitions from to graph dfa =
 
 
-wordsEndingAt : NodeId -> Graph.Graph x Connection -> Set NodeId -> DFARecord a -> DFARecord a
-wordsEndingAt nodeId graph visited_orig dfa =
+wordsEndingAt : (NodeId, b) -> Graph.Graph b Connection -> Set NodeId -> DFARecord a b -> DFARecord a b
+wordsEndingAt (nodeId, label) graph visited_orig dfa =
   let
     visited = Set.insert nodeId visited_orig
   in
   if nodeId == dfa.start then
     -- we are done!
-    { dfa | states = IntDict.insert nodeId () dfa.states }
+    { dfa | states = IntDict.insert nodeId label dfa.states }
   else if Set.member nodeId visited_orig then
     -- I have visited this node before. The only way that can happen is
     -- if this node is "later" in the sequence.  If I follow it, we will
     -- enter a loop!  So, we don't take it.
     -- However, we must record this transition, and that is done during the
     -- call to the wordsEndingAt function.
-    { dfa | states = IntDict.insert nodeId () dfa.states }
+    { dfa | states = IntDict.insert nodeId label dfa.states }
   else
     -- now, *I* must contribute to the `acc` myself.
     Graph.get nodeId graph
@@ -662,32 +623,38 @@ wordsEndingAt nodeId graph visited_orig dfa =
           |> List.foldl
             (\(nodeid, transitions) state ->
               -- each of the transitions effectively forms a new path back to `nodeid`
-              Set.toList transitions
-              |> List.foldl
-                  (\(t, isFinal) dfa_ ->
-                    wordsEndingAt
-                      nodeid
-                      graph
-                      visited
-                      { dfa_
-                        | states = IntDict.insert nodeid () dfa_.states
-                        , transition_function =
-                            IntDict.update nodeid
-                              (\maybe_dict ->
-                                  case maybe_dict of
-                                    Nothing -> Just (Dict.singleton t nodeId)
-                                    Just dict -> Just (Dict.insert t nodeId dict)
-                              )
-                              dfa_.transition_function
-                        , finals =
-                            if isFinal == 1 then
-                              Set.insert nodeId dfa_.finals
-                            else
-                              dfa_.finals
-                      }
-                  ) state -- link the nodeid to each transition
+              Graph.get nodeid graph
+              |> Maybe.map
+                (\outNode ->
+                  (Set.toList transitions
+                  |> List.foldl
+                      (\(t, isFinal) dfa_ ->
+                        wordsEndingAt
+                          (outNode.node.id, outNode.node.label)
+                          graph
+                          visited
+                          { dfa_
+                            | states = IntDict.insert nodeid outNode.node.label dfa_.states
+                            , transition_function =
+                                IntDict.update nodeid
+                                  (\maybe_dict ->
+                                      case maybe_dict of
+                                        Nothing -> Just (Dict.singleton t nodeId)
+                                        Just dict -> Just (Dict.insert t nodeId dict)
+                                  )
+                                  dfa_.transition_function
+                            , finals =
+                                if isFinal == 1 then
+                                  Set.insert nodeId dfa_.finals
+                                else
+                                  dfa_.finals
+                          }
+                      ) state -- link the nodeid to each transition
+                  )
+                )
+              |> Maybe.withDefault dfa -- should NEVER be here!!
             )
-            { dfa | states = IntDict.insert nodeId () dfa.states }
+            { dfa | states = IntDict.insert nodeId node.node.label dfa.states }
             -- at the end of this, I should have a List (NodeId, Char) to process.
           -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
       )
@@ -710,7 +677,7 @@ printTransitions transitions =
     transitions
   |> String.join ", ")
 
-printDFA : DFARecord a -> String
+printDFA : DFARecord a b -> String
 printDFA dfa =
   "  ▶ States: " ++
     ( List.map (Tuple.first >> String.fromInt) (IntDict.toList dfa.states)
@@ -720,7 +687,7 @@ printDFA dfa =
   ++ "\n  ▶ Finals: " ++ Debug.toString (Set.toList dfa.finals)
   ++ "\n  ▶ Start: " ++ String.fromInt dfa.start
 
-printExtDFA : ExtDFA -> String
+printExtDFA : ExtDFA a -> String
 printExtDFA extDFA =
   printDFA extDFA
   ++ "\n  ▶ Register: " ++ Debug.toString (Set.toList extDFA.register)
@@ -728,19 +695,19 @@ printExtDFA extDFA =
   ++ "\n  ▶ clone_start: " ++ String.fromInt extDFA.clone_start
   ++ "\n  ▶ unusedId: " ++ String.fromInt extDFA.unusedId
 
-debugDFA_ : String -> DFARecord a -> DFARecord a
+debugDFA_ : String -> DFARecord a b -> DFARecord a b
 debugDFA_ s dfa =
   Debug.log (s ++ ":\n" ++ printDFA dfa) () |> \_ -> dfa
 
-debugExtDFA_ : String -> ExtDFA -> ExtDFA
+debugExtDFA_ : String -> ExtDFA a -> ExtDFA a
 debugExtDFA_ s extDFA =
   Debug.log (s ++ ":\n" ++ printExtDFA extDFA) () |> \_ -> extDFA
 
-debugDFA : DFARecord a -> DFARecord a
+debugDFA : DFARecord a b -> DFARecord a b
 debugDFA dfa =
   Debug.log (printDFA dfa) () |> \_ -> dfa
 
-debugExtDFA : ExtDFA -> ExtDFA
+debugExtDFA : ExtDFA a -> ExtDFA a
 debugExtDFA extDFA =
   Debug.log (printExtDFA extDFA) () |> \_ -> extDFA
 

@@ -478,7 +478,7 @@ collapse_from to_process processed graph =
       graph
       --|> DAWG.Debugging.debugGraph "Post-collapse"
 
-toAutomatonGraph : MADFARecord -> AutomatonGraph
+toAutomatonGraph : MADFARecord -> AutomatonGraph ()
 toAutomatonGraph madfa =
   {- The difference between a FAGraph and a DAWGGraph is that the finality is kept
      in the transition (D) rather than in the state (F).
@@ -517,11 +517,10 @@ toAutomatonGraph madfa =
   in
     AutomatonGraph collapsed max root
 
-fromWords : List String -> AutomatonGraph
+fromWords : List String -> Maybe (AutomatonGraph ())
 fromWords words =
   fromStrings words
   |> Maybe.map toAutomatonGraph
-  |> Maybe.withDefault empty
 
 transitionToString : MTransition -> String
 transitionToString =
