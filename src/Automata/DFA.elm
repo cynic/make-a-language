@@ -550,8 +550,16 @@ toGraph dfa =
         , root = dfa.start
         }
 
-fromGraph : AutomatonGraph a -> DFARecord {} a
-fromGraph g =
+fromGraph : NodeId -> Graph n Connection -> DFARecord {} n
+fromGraph start graph =
+  { graph = graph
+  , root = start
+  , maxId = List.maximum (Graph.nodes graph |> List.map .id) |> Maybe.withDefault 0
+  }
+  |> fromAutomatonGraph
+
+fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
+fromAutomatonGraph g =
   { states =
       Graph.nodes g.graph
       |> List.map (\node -> ( node.id, node.label) )
@@ -592,10 +600,9 @@ connectionToString =
   >> Set.toList
   >> String.concat
 
--- modifyTransitions : NodeId -> NodeId -> Graph.Graph x Connection -> DFARecord a -> DFARecord a
--- modifyTransitions from to graph dfa =
+{-
 
-
+-}
 wordsEndingAt : (NodeId, b) -> Graph.Graph b Connection -> Set NodeId -> DFARecord a b -> DFARecord a b
 wordsEndingAt (nodeId, label) graph visited_orig dfa =
   let

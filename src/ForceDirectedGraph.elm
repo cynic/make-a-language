@@ -29,9 +29,10 @@ import Set
 import IntDict
 import Time
 import List.Extra as List
-import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromGraph)
+import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromAutomatonGraph)
 import Automata.Data exposing (isTerminal)
 import Automata.DFA exposing (toGraph)
+import Automata.DFA exposing (union)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -727,11 +728,12 @@ confirmChanges model_ =
                 Set.singleton graph.root
               else
                 Set.empty
-          }
+          } |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] New initial DFA"
         wtf : NodeContext Entity Automata.Data.Connection -> AutomatonGraph Entity
         wtf node =
           wordsEndingAt (node.node.id, node.node.label) graph.graph Set.empty newDFA
           |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] Found words"
+          |> union (Automata.DFA.fromGraph graph.root graph.graph)
           |> toGraph
       in
         Graph.get nodeId model_.graph
