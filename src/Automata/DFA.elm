@@ -169,35 +169,56 @@ remove_string_from_dfa string =
             )
       }
 
-w_forward_transitions : ExtDFA a -> List Char
+{-
+This function is to get the "forward" transitions of a word that is
+being added.  It is used, initially, to add the correct cloned/queued
+states to a DFA in Phase 1 of union/intersection.  Then, in Phase 3,
+it is used to guide the remove-unreachable algorithm to the correct
+states that might need to be removed.
+
+However, the word "forward" is misleading.  In fact, the point is that
+we shouldn't have _BACKWARD_ transitions (or recursive ones), because
+then our algorithms might get trapped in a loop.
+
+Consider
+
+t ----------> e -> s
+ \            ↑
+  `-> k -> p -'
+
+t -> k -> p -> e is a fair path forward.  So is t -> e.  I actually
+should be looking at both of them, in terms of forward routes.  And
+this is why I cannot return a `List Char` from this function, because
+I must consider multiple routes.  Instead, I need to return and use
+a tree structure.
+-}
+-- Tree structure for all possible forward transition paths
+
+type ForwardTree = PathEnd | ForwardNode (Dict Char ForwardTree)
+
+w_forward_transitions : ExtDFA a -> ForwardTree
 w_forward_transitions extDFA =
   let
-    helper : NodeId -> Set NodeId -> List Char -> List Char
-    helper current seen acc =
-      IntDict.get current extDFA.transition_function
-      |> Maybe.map
-        (\dict ->
-          Dict.filter
-            -- when can't we go forward to the next state?
-            -- 1. When we've seen it already; we'd be going "back" in that case.
-            -- 2. When the destination state is ourselves; otherwise, we'll just be in an infinite loop.
-            -- 3. When the next state is NOT a clone/queue state (i.e. it's not part of /w/)
-            (\_ state -> not (Set.member state seen) && current /= state && List.member state extDFA.queue_or_clone {- state >= extDFA.clone_start -})
-            dict
-          |> Dict.toList
-          |> Debug.log ("found " ++ String.fromInt current ++ ", now available transitions are")
-          |> (\l ->
-                case l of
-                  [] -> acc
-                  [(transition, state)] -> helper state (Set.insert state seen) (transition :: acc)
-                  _ -> Debug.log "OOPS" l |> \_ -> [] -- I SHOULD NEVER GET HERE!!!
-            )
-        )
-      -- our work is done when there is no forward transition that will take us past the end of the cloned nodes
-      |> Maybe.Extra.withDefaultLazy (\() -> acc |> Debug.log ("[w_forward_transitions] couldn't find " ++ String.fromInt current ++ ", so ending with acc"))
+    helper : NodeId -> Set NodeId -> ForwardTree
+    helper current seen =
+      case IntDict.get current extDFA.transition_function of
+        Nothing -> PathEnd
+        Just dict ->
+          let
+            filtered =
+              Dict.filter
+                (\_ state ->
+                  not (Set.member state seen)
+                  && current /= state
+                  && List.member state extDFA.queue_or_clone
+                )
+                dict
+            children =
+              Dict.map (\_ state -> helper state (Set.insert state seen)) filtered
+          in
+            if Dict.isEmpty children then PathEnd else ForwardNode children
   in
-    helper extDFA.clone_start Set.empty []
-    |> List.reverse
+    helper extDFA.clone_start Set.empty
     |> Debug.log "w_forward_transitions"
 
 delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
@@ -216,57 +237,49 @@ transitions_of q dfa =
 
 phase_1 : ExtDFA a -> ExtDFA a
 phase_1 extDFA_orig =
-  -- here, we just need to clone all the corresponding "clone" transitions.
+  -- Traverse the ForwardTree and apply append_transitions for every path
   let
-    -- well, now that we have them… let's follow along and attach the "excess" transitions
-    -- to the "cloned" states.
-    append_transitions : NodeId -> NodeId -> List Char -> ExtDFA a -> ExtDFA a
-    append_transitions q_m q_w transitions extDFA =
-      let
-        updated () =
-          { extDFA
-            | transition_function =
-                case ( IntDict.get q_w extDFA.transition_function, IntDict.get q_m extDFA.transition_function ) of
-                  ( Just a, Nothing ) ->
-                    IntDict.insert q_w a extDFA.transition_function
-                  ( Nothing, Just b ) ->
-                    IntDict.insert q_w b extDFA.transition_function
-                  ( Nothing, Nothing) ->
-                    extDFA.transition_function
-                  ( Just a, Just b ) ->
-                    IntDict.insert q_w (Dict.union a b) extDFA.transition_function  
-            , finals =
-                if Set.member q_m extDFA.finals then
-                  Set.insert q_w extDFA.finals
-                else
-                  extDFA.finals
-          }
-
-      in
-      case transitions of
-        [] ->
+    append_transitions : NodeId -> NodeId -> ForwardTree -> ExtDFA a -> ExtDFA a
+    append_transitions q_m q_w tree extDFA =
+      case tree of
+        PathEnd ->
           -- we're at the end of the transitions.
-          -- transition_function
-          updated ()
-        h::t ->
-          -- get all of them from q_m, and append them to q_w, EXCLUDING `h`.
-          case ( delta q_m h extDFA, delta q_w h extDFA ) of
-            (_, Nothing) ->
-              -- I should NEVER BE HERE!  How can I be, when this is part of already-in `w` transitions??
-              Debug.log "🚨🚨🚨🚨🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
-              extDFA
-            (Nothing, Just _) ->
-              -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
-              --Debug.log ("Transition (" ++ String.fromChar h ++ ") doesn't lead to anything in M. Appending last, then stopping: the rest are queued.") () |> \_ ->
-              updated ()
-            (Just m_node, Just w_node) ->
-              -- right, get the respective transitions of each of these, then.
-              --Debug.log ("Appending transitions from " ++ String.fromInt q_m ++ ", excluding (" ++ String.fromChar h ++ ").") () |> \_ ->
-              append_transitions
-                m_node
-                w_node
-                t
-                (updated ())
+          let
+            updated =
+              { extDFA
+                | transition_function =
+                    case ( IntDict.get q_w extDFA.transition_function, IntDict.get q_m extDFA.transition_function ) of
+                      ( Just a, Nothing ) ->
+                        IntDict.insert q_w a extDFA.transition_function
+                      ( Nothing, Just b ) ->
+                        IntDict.insert q_w b extDFA.transition_function
+                      ( Nothing, Nothing) ->
+                        extDFA.transition_function
+                      ( Just a, Just b ) ->
+                        IntDict.insert q_w (Dict.union a b) extDFA.transition_function  
+                , finals =
+                    if Set.member q_m extDFA.finals then
+                      Set.insert q_w extDFA.finals
+                    else
+                      extDFA.finals
+              }
+          in
+            updated
+        ForwardNode dict ->
+          Dict.foldl
+            (\ch subtree acc ->
+              case (delta q_m ch acc, delta q_w ch acc) of
+                (_, Nothing) ->
+                  Debug.log "🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
+                  acc
+                (Nothing, Just _) ->
+                  -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
+                  append_transitions q_m q_w PathEnd acc
+                (Just m_node, Just w_node) ->
+                  append_transitions m_node w_node subtree (append_transitions q_m q_w PathEnd acc)
+            )
+            extDFA
+            dict
   in
     append_transitions
       extDFA_orig.start
@@ -286,30 +299,34 @@ remove_unreachable extDFA_orig =
         , register = Set.remove q extDFA.register
         , finals = Set.remove q extDFA.finals
       }
-    mogrify : NodeId -> List Char -> ExtDFA a -> ExtDFA a
-    mogrify q transitions extDFA =
-      case transitions of
-        [] ->
+    mogrify : NodeId -> ForwardTree -> ExtDFA a -> ExtDFA a
+    mogrify q tree extDFA =
+      case tree of
+        PathEnd ->
           if unreachable q extDFA then
             purge q extDFA
           else
             extDFA
-        h::t ->
-          case delta q h extDFA of
-            Nothing ->
-              if unreachable q extDFA then
-                purge q extDFA
-              else
-                extDFA
-            Just next ->
-              if unreachable q extDFA then
-                mogrify next t (purge q extDFA)
-              else
-                -- the killer's last hurrah…
-                if unreachable next extDFA then
-                  purge next extDFA
-                else
-                  extDFA
+        ForwardNode dict ->
+          Dict.foldl
+            (\ch subtree acc ->
+              case delta q ch acc of
+                Nothing ->
+                  if unreachable q acc then
+                    purge q acc
+                  else
+                    acc
+                Just next ->
+                  if unreachable q acc then
+                    mogrify next subtree (purge q acc)
+                  else
+                    if unreachable next acc then
+                      purge next acc
+                    else
+                      acc
+            )
+            extDFA
+            dict
     unreachable : NodeId -> ExtDFA a -> Bool
     unreachable q extDFA =
       extDFA.transition_function
