@@ -33,6 +33,7 @@ import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromAutomatonGrap
 import Automata.Data exposing (isTerminal)
 import Automata.DFA exposing (toGraph)
 import Automata.DFA exposing (union)
+import Automata.Debugging exposing (debugGraph)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -728,12 +729,13 @@ confirmChanges model_ =
                 Set.singleton graph.root
               else
                 Set.empty
-          } |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] New initial DFA"
+          } |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] 'Template' DFA"
         wtf : NodeContext Entity Automata.Data.Connection -> AutomatonGraph Entity
         wtf node =
-          wordsEndingAt (node.node.id, node.node.label) graph.graph Set.empty newDFA
-          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] Found words"
-          |> union (Automata.DFA.fromGraph graph.root graph.graph)
+          wordsEndingAt (node.node.id, node.node.label) (debugGraph "Initial graph" graph.graph) Set.empty newDFA
+          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] DFA ending at target"
+          |> \dfa -> union dfa (Automata.DFA.fromGraph graph.root graph.graph)
+          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] After union"
           |> toGraph
       in
         Graph.get nodeId model_.graph
@@ -788,6 +790,7 @@ confirmChanges model_ =
     | userRequestedChanges = []
     , graph = g.graph
     , simulation = mkSim g
+    , start = g.root
     }
 
 textChar : Char -> String

@@ -10,6 +10,7 @@ import Dict exposing (update)
 import Automata.MADFA exposing (toAutomatonGraph, collapse)
 import Automata.MADFA exposing (MADFARecord)
 import List.Extra exposing (remove)
+import Maybe.Extra
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -177,21 +178,27 @@ w_forward_transitions extDFA =
       |> Maybe.map
         (\dict ->
           Dict.filter
-            (\_ state -> not (Set.member state seen) && current /= state && state >= extDFA.clone_start)
+            -- when can't we go forward to the next state?
+            -- 1. When we've seen it already; we'd be going "back" in that case.
+            -- 2. When the destination state is ourselves; otherwise, we'll just be in an infinite loop.
+            -- 3. When the next state is NOT a clone/queue state (i.e. it's not part of /w/)
+            (\_ state -> not (Set.member state seen) && current /= state && List.member state extDFA.queue_or_clone {- state >= extDFA.clone_start -})
             dict
           |> Dict.toList
+          |> Debug.log ("found " ++ String.fromInt current ++ ", now available transitions are")
           |> (\l ->
                 case l of
                   [] -> acc
                   [(transition, state)] -> helper state (Set.insert state seen) (transition :: acc)
-                  _ -> [] -- I SHOULD NEVER GET HERE!!!
+                  _ -> Debug.log "OOPS" l |> \_ -> [] -- I SHOULD NEVER GET HERE!!!
             )
         )
-      |> Maybe.withDefault acc
+      -- our work is done when there is no forward transition that will take us past the end of the cloned nodes
+      |> Maybe.Extra.withDefaultLazy (\() -> acc |> Debug.log ("[w_forward_transitions] couldn't find " ++ String.fromInt current ++ ", so ending with acc"))
   in
     helper extDFA.clone_start Set.empty []
     |> List.reverse
-    --|> Debug.log "w_forward_transitions"
+    |> Debug.log "w_forward_transitions"
 
 delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
 delta q x dfa =
@@ -246,7 +253,7 @@ phase_1 extDFA_orig =
           case ( delta q_m h extDFA, delta q_w h extDFA ) of
             (_, Nothing) ->
               -- I should NEVER BE HERE!  How can I be, when this is part of already-in `w` transitions??
-              --Debug.log "🚨🚨🚨🚨🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
+              Debug.log "🚨🚨🚨🚨🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
               extDFA
             (Nothing, Just _) ->
               -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
@@ -309,7 +316,7 @@ remove_unreachable extDFA_orig =
       |> IntDict.toList
       |> List.any (\(_, dict) -> Dict.Extra.any (\_ -> (==) q) ({- Debug.log "Checking in" -} dict))
       |> not
-      -- |> Debug.log ("Is " ++ String.fromInt q ++ " unreachable?")
+      |> Debug.log ("Is " ++ String.fromInt q ++ " unreachable?")
   in
     mogrify extDFA_orig.start (w_forward_transitions extDFA_orig) extDFA_orig
 
@@ -380,14 +387,14 @@ replace_or_register extDFA =
 union : DFARecord a b -> DFARecord a b -> DFARecord {} b
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
-    --|> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
+    |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
     |> phase_1
-    --|> debugExtDFA_ "End of Phase 1"
+    |> debugExtDFA_ "End of Phase 1"
     |> remove_unreachable
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    --|> debugExtDFA_ "End of Phase 2"
+    |> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
-    --|> debugDFA_ "End of Phase 3"
+    |> debugDFA_ "End of Phase 3"
     |> retract
 
 complement : DFARecord a b -> DFARecord a b
@@ -546,8 +553,8 @@ toGraph dfa =
         Automata.Data.empty
       h::_ ->
         { graph = graph
-        , maxId = Tuple.first h
-        , root = dfa.start
+        , maxId = Tuple.first h |> Debug.log "[toGraph] maxId"
+        , root = dfa.start |> Debug.log "[toGraph] root"
         }
 
 fromGraph : NodeId -> Graph n Connection -> DFARecord {} n
@@ -659,13 +666,14 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
                       ) state -- link the nodeid to each transition
                   )
                 )
-              |> Maybe.withDefault dfa -- should NEVER be here!!
+              |> Maybe.Extra.withDefaultLazy (\() -> (dfa |> debugDFA_ ("[wordsEndingAt] OOPS!  Couldn't find ID " ++ String.fromInt nodeid))) -- should NEVER be here!!
             )
             { dfa | states = IntDict.insert nodeId node.node.label dfa.states }
             -- at the end of this, I should have a List (NodeId, Char) to process.
           -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
       )
     |> Maybe.withDefault dfa -- SHOULD NEVER BE HERE!!!
+    -- well, at this point, I have the DFA.  Now I need to union it.
 
 
 -----------------
