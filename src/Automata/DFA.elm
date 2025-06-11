@@ -256,7 +256,7 @@ phase_1 extDFA_orig =
                       ( Nothing, Nothing) ->
                         extDFA.transition_function
                       ( Just a, Just b ) ->
-                        IntDict.insert q_w (Dict.union a b) extDFA.transition_function  
+                        IntDict.insert q_w (Dict.union a b) extDFA.transition_function
                 , finals =
                     if Set.member q_m extDFA.finals then
                       Set.insert q_w extDFA.finals
@@ -291,6 +291,13 @@ remove_unreachable : ExtDFA a -> ExtDFA a
 remove_unreachable extDFA_orig =
   -- check: are there any incoming transitions?
   let
+    unreachable : NodeId -> ExtDFA a -> Bool
+    unreachable q extDFA =
+      extDFA.transition_function
+      |> IntDict.toList
+      |> List.any (\(_, dict) -> Dict.Extra.any (\_ -> (==) q) ({- Debug.log "Checking in" -} dict))
+      |> not
+      |> Debug.log ("Is " ++ String.fromInt q ++ " unreachable?")
     purge : NodeId -> ExtDFA a -> ExtDFA a
     purge q extDFA =
       { extDFA
@@ -327,13 +334,6 @@ remove_unreachable extDFA_orig =
             )
             extDFA
             dict
-    unreachable : NodeId -> ExtDFA a -> Bool
-    unreachable q extDFA =
-      extDFA.transition_function
-      |> IntDict.toList
-      |> List.any (\(_, dict) -> Dict.Extra.any (\_ -> (==) q) ({- Debug.log "Checking in" -} dict))
-      |> not
-      |> Debug.log ("Is " ++ String.fromInt q ++ " unreachable?")
   in
     mogrify extDFA_orig.start (w_forward_transitions extDFA_orig) extDFA_orig
 
@@ -352,10 +352,10 @@ replace_or_register extDFA =
         let
           p_outgoing =
             IntDict.get p extDFA.transition_function
-            --|> Debug.log ("Checking outgoing for " ++ String.fromInt p)
+            |> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
           q_outgoing =
             IntDict.get q extDFA.transition_function
-            --|> Debug.log ("Checking outgoing for " ++ String.fromInt q)
+            |> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
         in
           case ( p_outgoing, q_outgoing ) of
             ( Just _, Nothing ) -> False
@@ -381,7 +381,7 @@ replace_or_register extDFA =
     h::t ->
       case Set.toList extDFA.register |> List.find (equiv h) of
         Just found_equivalent ->
-          --Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
+          Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
           replace_or_register
             { extDFA
               | states = IntDict.remove h extDFA.states
@@ -392,7 +392,7 @@ replace_or_register extDFA =
               , queue_or_clone = t
             }            
         Nothing ->
-          --Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
+          Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
           replace_or_register
             { extDFA
               | register = Set.insert h extDFA.register
@@ -411,7 +411,7 @@ union w_dfa_orig m_dfa =
     |> (\dfa -> { dfa | start = dfa.clone_start })
     |> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
-    |> debugDFA_ "End of Phase 3"
+    |> debugExtDFA_ "End of Phase 3"
     |> retract
 
 complement : DFARecord a b -> DFARecord a b
