@@ -11,6 +11,8 @@ import Automata.MADFA exposing (toAutomatonGraph, collapse)
 import Automata.MADFA exposing (MADFARecord)
 import List.Extra exposing (remove)
 import Maybe.Extra
+import Html exposing (tr)
+import Tuple.Extra
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -196,6 +198,39 @@ a tree structure.
 
 type ForwardTree = PathEnd | ForwardNode (Dict Char ForwardTree)
 
+{-| Return the nodes of the forwardtree, in-order.
+-}
+forwardtree_nodes : NodeId -> ExtDFA a -> ForwardTree -> List NodeId
+forwardtree_nodes start extDFA_orig tree_ =
+  let
+    nodes_of_forwardtree : ForwardTree -> List NodeId -> List NodeId
+    nodes_of_forwardtree tree acc =
+      case (acc, tree) of
+        ( [], _ ) ->
+          -- this is an impossible state to get into, because of how
+          -- the initial call is made.
+          acc
+        ( _, PathEnd ) ->
+          acc
+        ( h::_, ForwardNode dict ) ->
+          -- follow all the possible forward-paths from this node.
+          Dict.foldl
+            (\ch nextTree state ->
+              IntDict.get h extDFA_orig.transition_function
+              |> Maybe.andThen
+                (\destinations ->
+                  Dict.get ch destinations
+                  |> Maybe.map (\q -> nodes_of_forwardtree nextTree (q::state))
+                )
+              -- if there are no outgoing transitions, there is no path to follow; we are done.
+              |> Maybe.withDefault acc
+            )
+            acc
+            dict
+  in
+    nodes_of_forwardtree tree_ [start]
+    |> List.reverse
+
 w_forward_transitions : ExtDFA a -> ForwardTree
 w_forward_transitions extDFA =
   let
@@ -230,10 +265,37 @@ delta q x dfa =
 -- delta_star q xs dfa =
 --   List.foldl (\x -> Maybe.andThen (\q_ -> delta q_ x dfa)) (Just q) xs
 
-transitions_of : NodeId -> DFARecord a b -> Dict Char NodeId
-transitions_of q dfa =
+transitions_from_source : NodeId -> DFARecord a b -> List (NodeId, Char)
+transitions_from_source q dfa =
   IntDict.get q dfa.transition_function
-  |> Maybe.withDefault Dict.empty
+  |> Maybe.map (Dict.toList >> List.map Tuple.Extra.flip)
+  |> Maybe.withDefault []
+
+{-| Returns a list of (NodeId, Char) pairs representing all transitions in the given DFA that lead to the specified node.
+
+    transitions_to targetNode dfa
+
+- `targetNode`: The NodeId to which transitions are sought.
+- `dfa`: The DFARecord to search within.
+
+Each pair consists of the source NodeId and the character label of the transition.
+-}
+transitions_to_dest : NodeId -> DFARecord a b -> List (NodeId, Char)
+transitions_to_dest q dfa =
+  IntDict.foldl
+    (\source dict acc ->
+      Dict.foldl
+        (\ch target acc_ ->
+          if target == q then
+            (source, ch) :: acc_
+          else
+            acc_
+        )
+        acc
+        dict
+    )
+    []
+    dfa.transition_function
 
 phase_1 : ExtDFA a -> ExtDFA a
 phase_1 extDFA_orig =
@@ -289,15 +351,89 @@ phase_1 extDFA_orig =
 
 remove_unreachable : ExtDFA a -> ExtDFA a
 remove_unreachable extDFA_orig =
-  -- check: are there any incoming transitions?
+  -- check: are there any incoming transitions from EXTERNAL nodes?
+  -- "external" nodes are those nodes which are not along the w-path,
+  -- as expressed by via the `w_forward_transitions` function.
+  -- This should work because
+  -- 1. We clone all nodes to a new start.  We therefore have an
+  --    old-start and a new-start that are distinct.  We should always
+  --    be able to remove the old-start (it has 0 incoming edges).
+  -- 2. We redirected all outgoing edges of the existing nodes along the
+  --    w-path, with the EXCEPTION of the w-path edges themselves.  So,
+  --    if there are any incoming edges that come to the old w-path nodes,
+  --    then they must be coming from:
+  --    (a) the old w-path nodes.
+  --    (b) non-w-path nodes.
+  -- 3. After a node is removed, we can remove the next node (if it has 0
+  --    incoming edges), and so on.  We stop whenever we have at least 1
+  --    incoming edge.  This is according to Carrasco & Forcada's algorithm.
+  --    However, if w-path nodes are recursive, then this fails, because each
+  --    will have incoming edges from the other, and we can't clean them up.
+  -- 4. So, instead, we will go for a slightly different algorithm.
+  --    Step 1: collect all the nodes along the old w-path.  Place them in a
+  --            set. 
+  --    Step 2: partition the nodes into those which have an external incoming
+  --            edge ("R"), and those which do not ("S").
+  --    Step 3: moving in w-path order, examine the nodes of S.  If a node has
+  --            an incoming node in R, add it to R and remove it from S.
+  --            In other words, this is a partition refinement.
+  --    Step 4: remove all the nodes in the S set.
+  --    This should work because we are no longer relying on each node to be
+  --    0-incoming BECAUSE of node-removal.  Instead, we are relying on each
+  --    node to be 0-incoming after checking for external references directly.
   let
-    unreachable : NodeId -> ExtDFA a -> Bool
-    unreachable q extDFA =
-      extDFA.transition_function
-      |> IntDict.toList
-      |> List.any (\(_, dict) -> Dict.Extra.any (\_ -> (==) q) ({- Debug.log "Checking in" -} dict))
-      |> not
-      |> Debug.log ("Is " ++ String.fromInt q ++ " unreachable?")
+    -- Step 1
+    old_w_path =
+      w_forward_transitions extDFA_orig
+    old_w_path_nodes =
+      forwardtree_nodes extDFA_orig.start extDFA_orig old_w_path
+    old_w_path_set = Set.fromList old_w_path_nodes
+    -- Step 2
+    initial_partition : (List NodeId, List NodeId)
+    initial_partition = -- ( with_external_edges, without_external_edges )
+      old_w_path_set
+      |> Set.foldl
+        (\node (external, internal_only) ->
+          let
+            has_external_edges = -- are there any external incoming edges?
+              transitions_to_dest node extDFA_orig -- incoming edges
+              |> List.map Tuple.first
+              |> List.any (\edge -> not (Set.member edge old_w_path_set)) -- externality
+          in
+            if has_external_edges then
+              (node :: external, internal_only)
+            else
+              (external, node :: internal_only)
+        )
+        ([], [])
+    -- Step 3
+    -- make the final partition
+    (with_external_edges, without_external_edges) =
+      -- TODO: …this can probably be made less expensive by going the other way
+      -- and looking at the destinations of with_external_edges. Oh well!
+      let
+        partition : List NodeId -> (Set NodeId, Set NodeId) -> (Set NodeId, Set NodeId)
+        partition remaining (nodes_with_external_edges, nodes_without_external_edges) =
+          case remaining of
+            [] -> (nodes_with_external_edges, nodes_without_external_edges)
+            node::t ->
+              let
+                incoming_nodes =
+                  transitions_to_dest node extDFA_orig
+                  |> List.map Tuple.first
+                  |> Set.fromList
+              in
+                if Set.isEmpty (Set.intersect incoming_nodes nodes_with_external_edges) then
+                  partition t (nodes_with_external_edges, nodes_without_external_edges)
+                else
+                  -- there is overlap, so this is in the first partition.
+                  partition t (Set.insert node nodes_with_external_edges, Set.remove node nodes_without_external_edges)
+      in
+        partition
+          (old_w_path_nodes {- |> Debug.log "checking in order" -}) -- must check in-order
+          (Tuple.mapBoth Set.fromList Set.fromList initial_partition)
+        --|> Debug.log "(to_keep, to_remove)"
+    -- Step 4
     purge : NodeId -> ExtDFA a -> ExtDFA a
     purge q extDFA =
       { extDFA
@@ -306,36 +442,8 @@ remove_unreachable extDFA_orig =
         , register = Set.remove q extDFA.register
         , finals = Set.remove q extDFA.finals
       }
-    mogrify : NodeId -> ForwardTree -> ExtDFA a -> ExtDFA a
-    mogrify q tree extDFA =
-      case tree of
-        PathEnd ->
-          if unreachable q extDFA then
-            purge q extDFA
-          else
-            extDFA
-        ForwardNode dict ->
-          Dict.foldl
-            (\ch subtree acc ->
-              case delta q ch acc of
-                Nothing ->
-                  if unreachable q acc then
-                    purge q acc
-                  else
-                    acc
-                Just next ->
-                  if unreachable q acc then
-                    mogrify next subtree (purge q acc)
-                  else
-                    if unreachable next acc then
-                      purge next acc
-                    else
-                      acc
-            )
-            extDFA
-            dict
   in
-    mogrify extDFA_orig.start (w_forward_transitions extDFA_orig) extDFA_orig
+    Set.foldl purge extDFA_orig without_external_edges
 
 replace_or_register : ExtDFA a -> ExtDFA a
 replace_or_register extDFA =
@@ -352,10 +460,10 @@ replace_or_register extDFA =
         let
           p_outgoing =
             IntDict.get p extDFA.transition_function
-            |> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
+            --|> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
           q_outgoing =
             IntDict.get q extDFA.transition_function
-            |> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
+            --|> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
         in
           case ( p_outgoing, q_outgoing ) of
             ( Just _, Nothing ) -> False
@@ -381,7 +489,7 @@ replace_or_register extDFA =
     h::t ->
       case Set.toList extDFA.register |> List.find (equiv h) of
         Just found_equivalent ->
-          Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
+          --Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
           replace_or_register
             { extDFA
               | states = IntDict.remove h extDFA.states
@@ -392,7 +500,7 @@ replace_or_register extDFA =
               , queue_or_clone = t
             }            
         Nothing ->
-          Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
+          --Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
           replace_or_register
             { extDFA
               | register = Set.insert h extDFA.register
@@ -404,14 +512,14 @@ replace_or_register extDFA =
 union : DFARecord a b -> DFARecord a b -> DFARecord {} b
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
-    |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
+    --|> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
     |> phase_1
-    |> debugExtDFA_ "End of Phase 1"
+    --|> debugExtDFA_ "End of Phase 1"
     |> remove_unreachable
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    |> debugExtDFA_ "End of Phase 2"
+    --|> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
-    |> debugExtDFA_ "End of Phase 3"
+    --|> debugExtDFA_ "End of Phase 3"
     |> retract
 
 complement : DFARecord a b -> DFARecord a b

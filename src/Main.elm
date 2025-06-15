@@ -1,4 +1,4 @@
-module Main exposing (main)
+module Main exposing (..)
 
 {- You know how the editor on the Elm website has two side-by-side panels that
 can be resized? This is a rough implementation of that sort of thing.

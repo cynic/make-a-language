@@ -115,20 +115,20 @@ findNonDeterministic stack graph =
 
 {-| Same as recognizedWords, but also verifies that the graph is deterministic. -}
 verifiedRecognizedWords : AutomatonGraph a -> List String
-verifiedRecognizedWords dawg =
+verifiedRecognizedWords dfa =
   let
     nonDeterministic =
-      case Graph.checkAcyclic dawg.graph of
+      case Graph.checkAcyclic dfa.graph of
         Err _ ->
           Just "The DAWG is not acyclic."
         Ok _ ->
-          Graph.get dawg.root dawg.graph
+          Graph.get dfa.root dfa.graph
           |> Maybe.andThen
-            (\root -> findNonDeterministic [root] dawg.graph)
+            (\root -> findNonDeterministic [root] dfa.graph)
   in
     case nonDeterministic of
       Nothing ->
-        recognizedWords dawg
+        recognizedWords dfa
       Just e ->
         [e]
 
