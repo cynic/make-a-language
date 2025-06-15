@@ -156,26 +156,26 @@ basicForces start graph height =
   (List.map (\e -> makeLinkForce e.from e.to e.label) (Graph.edges graph))
   ++
   (List.map (.id >> makeNodeForce) (Graph.nodes graph))
-  ++
-  [ Force.towardsX <|
-      List.filterMap
-        (\n ->
-          if n.id == start then
-            Just { node = start, strength = 0.1, target = 0 }
-          else
-            Nothing
-        )
-        (Graph.nodes graph)
-  , Force.towardsY <|
-      List.filterMap
-        (\n ->
-          if n.id == start then
-            Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
-          else
-            Nothing
-        )
-        (Graph.nodes graph)
-  ]
+  -- ++
+  -- [ Force.towardsX <|
+  --     List.filterMap
+  --       (\n ->
+  --         if n.id == start then
+  --           Just { node = start, strength = 0.1, target = 0 }
+  --         else
+  --           Nothing
+  --       )
+  --       (Graph.nodes graph)
+  -- , Force.towardsY <|
+  --     List.filterMap
+  --       (\n ->
+  --         if n.id == start then
+  --           Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
+  --         else
+  --           Nothing
+  --       )
+  --       (Graph.nodes graph)
+  -- ]
 
 makeSimulation : NodeId -> (Float, Float) -> Graph Entity Connection -> Force.State NodeId
 makeSimulation start (w, h) graph =
@@ -578,10 +578,8 @@ update offset_amount msg model =
           -- however…
           case model.userRequestedChanges of
             [] ->
-              Debug.log "FOO" () |> \_ ->
               model -- nothing for me to do!
             _ ->
-              Debug.log "GOO" () |> \_ ->
               confirmChanges model
         )
 
