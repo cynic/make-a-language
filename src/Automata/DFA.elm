@@ -106,6 +106,7 @@ extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
       , queue_or_clone = IntDict.keys w_dfa.states |> List.reverse
       , unusedId = unusedId
       }
+      |> clone_or_queue dfa.start w_dfa.start
   in
     extDFA
 
@@ -297,57 +298,56 @@ transitions_to_dest q dfa =
     []
     dfa.transition_function
 
+clone_or_queue : NodeId -> NodeId -> ExtDFA a -> ExtDFA a
+clone_or_queue q_m q_w extDFA =
+  { extDFA
+    | transition_function =
+        case ( IntDict.get q_w extDFA.transition_function, IntDict.get q_m extDFA.transition_function ) of
+          ( Just a, Nothing ) ->
+            IntDict.insert q_w a extDFA.transition_function
+          ( Nothing, Just b ) ->
+            IntDict.insert q_w b extDFA.transition_function
+          ( Nothing, Nothing) ->
+            extDFA.transition_function
+          ( Just a, Just b ) ->
+            IntDict.insert q_w (Dict.union a b) extDFA.transition_function
+    , finals =
+        if Set.member q_m extDFA.finals then
+          Set.insert q_w extDFA.finals
+        else
+          extDFA.finals
+  }
+
+clone_or_queue_many : NodeId -> NodeId -> ForwardTree -> ExtDFA a -> ExtDFA a
+clone_or_queue_many q_m q_w tree extDFA =
+  case tree of
+    PathEnd ->
+      -- we're at the end of the transitions.
+      clone_or_queue q_m q_w extDFA
+    ForwardNode dict ->
+      Dict.foldl
+        (\ch subtree acc ->
+          case (delta q_m ch acc, delta q_w ch acc) of
+            (_, Nothing) ->
+              Debug.log "🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
+              acc
+            (Nothing, Just _) ->
+              -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
+              clone_or_queue q_m q_w acc
+            (Just m_node, Just w_node) ->
+              clone_or_queue_many m_node w_node subtree (clone_or_queue q_m q_w acc)
+        )
+        extDFA
+        dict
+
 phase_1 : ExtDFA a -> ExtDFA a
 phase_1 extDFA_orig =
   -- Traverse the ForwardTree and apply append_transitions for every path
-  let
-    append_transitions : NodeId -> NodeId -> ForwardTree -> ExtDFA a -> ExtDFA a
-    append_transitions q_m q_w tree extDFA =
-      case tree of
-        PathEnd ->
-          -- we're at the end of the transitions.
-          let
-            updated =
-              { extDFA
-                | transition_function =
-                    case ( IntDict.get q_w extDFA.transition_function, IntDict.get q_m extDFA.transition_function ) of
-                      ( Just a, Nothing ) ->
-                        IntDict.insert q_w a extDFA.transition_function
-                      ( Nothing, Just b ) ->
-                        IntDict.insert q_w b extDFA.transition_function
-                      ( Nothing, Nothing) ->
-                        extDFA.transition_function
-                      ( Just a, Just b ) ->
-                        IntDict.insert q_w (Dict.union a b) extDFA.transition_function
-                , finals =
-                    if Set.member q_m extDFA.finals then
-                      Set.insert q_w extDFA.finals
-                    else
-                      extDFA.finals
-              }
-          in
-            updated
-        ForwardNode dict ->
-          Dict.foldl
-            (\ch subtree acc ->
-              case (delta q_m ch acc, delta q_w ch acc) of
-                (_, Nothing) ->
-                  Debug.log "🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
-                  acc
-                (Nothing, Just _) ->
-                  -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
-                  append_transitions q_m q_w PathEnd acc
-                (Just m_node, Just w_node) ->
-                  append_transitions m_node w_node subtree (append_transitions q_m q_w PathEnd acc)
-            )
-            extDFA
-            dict
-  in
-    append_transitions
-      extDFA_orig.start
-      extDFA_orig.clone_start
-      (w_forward_transitions extDFA_orig)
-      extDFA_orig
+  clone_or_queue_many
+    extDFA_orig.start
+    extDFA_orig.clone_start
+    (w_forward_transitions extDFA_orig)
+    extDFA_orig
 
 remove_unreachable : ExtDFA a -> ExtDFA a
 remove_unreachable extDFA_orig =
