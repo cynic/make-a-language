@@ -77,7 +77,7 @@ create nodes edges start finals =
   , finals = finals
   }
 
-toGraph : NFARecord -> AutomatonGraph
+toGraph : NFARecord -> AutomatonGraph a
 toGraph nfa =
   let
     stateList = IntDict.toList nfa.states |> List.reverse

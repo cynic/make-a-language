@@ -34,6 +34,7 @@ import Automata.Data exposing (isTerminal)
 import Automata.DFA exposing (toGraph)
 import Automata.DFA exposing (union)
 import Automata.Debugging exposing (debugGraph)
+import Maybe.Extra as Maybe exposing (withDefaultLazy)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -135,26 +136,6 @@ initializeNode ctx =
 viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
 viewportForces (w, h) _ =
   [ Force.center (w / 2) (h / 2)
-  --   Force.towardsX <|
-  --     List.filterMap
-  --       (\n ->
-  --         if n.id == 0 then
-  --           Just { node = 0, strength = 0.15, target = 0 }
-  --         else if n.id == finalNode then
-  --           Just { node = n.id, strength = 0.05, target = w }
-  --         else
-  --           Nothing
-  --       )
-  --       (Graph.nodes graph)
-  -- , Force.towardsY <|
-  --     List.filterMap
-  --       (\n ->
-  --         if n.id /= 0 && n.id /= finalNode then
-  --           Just { node = n.id, strength = 0.05, target = 0 }
-  --         else
-  --           Just { node = n.id, strength = 0.05, target = h }
-  --       )
-  --       (Graph.nodes graph)
   ]
 
 makeLinkForce : NodeId -> NodeId -> Connection -> Force.Force NodeId
@@ -516,88 +497,93 @@ update offset_amount msg model =
 
     Confirm ->
       -- What am I confirming?
-      if not <| Set.isEmpty model.selectedTransitions then -- are there "active", confirmable transitions that the user has selected?
-        let
-          createNewNode src x y =
-            { model
-            | selectedTransitions = Set.empty
-            , selectedDest = NoDestination
-            , selectedSource = Nothing
-            , userRequestedChanges =
-                AddNewNode
-                  { from = src
-                  , newNodeId = model.unusedId
-                  , x = x
-                  , y = y
-                  , conn = model.selectedTransitions
-                  } :: model.userRequestedChanges
-            , graph =
-                Graph.insert
-                  { node =
-                    { label =
-                        let
-                          initial =
-                            Force.entity model.unusedId { }
-                        in
-                          { initial | x = x, y = y }
-                    , id = model.unusedId
-                    }
-                  , incoming = IntDict.singleton src model.selectedTransitions
-                  , outgoing = IntDict.empty
+      let
+        createNewNode src x y =
+          { model
+          | selectedTransitions = Set.empty
+          , selectedDest = NoDestination
+          , selectedSource = Nothing
+          , userRequestedChanges =
+              AddNewNode
+                { from = src
+                , newNodeId = model.unusedId
+                , x = x
+                , y = y
+                , conn = model.selectedTransitions
+                } :: model.userRequestedChanges
+          , graph =
+              Graph.insert
+                { node =
+                  { label =
+                      let
+                        initial =
+                          Force.entity model.unusedId { }
+                      in
+                        { initial | x = x, y = y }
+                  , id = model.unusedId
                   }
-                  model.graph
-            , basicForces =
-                makeLinkForce src model.unusedId model.selectedTransitions
-                :: makeNodeForce model.unusedId
-                :: model.basicForces
-            , unusedId = model.unusedId + 1
-            }
+                , incoming = IntDict.singleton src model.selectedTransitions
+                , outgoing = IntDict.empty
+                }
+                model.graph
+          , basicForces =
+              makeLinkForce src model.unusedId model.selectedTransitions
+              :: makeNodeForce model.unusedId
+              :: model.basicForces
+          , unusedId = model.unusedId + 1
+          }
 
-          updateExistingNode src dest =
-            { model
-            | selectedTransitions = Set.empty
-            , selectedDest = NoDestination
-            , selectedSource = Nothing
-            , userRequestedChanges =
-                if linkExistsInGraph model src dest then
-                  -- if these two are connected already [in the correct direction], then we must just adjust the transition.
-                  userchange_modifyTransition model src dest
-                else
-                  -- however, if there is no connection between existing nodes, then we must create a new link.
-                  userchange_newLinkToNode model src dest
-            , graph =
-                Graph.update dest
-                  (Maybe.map (\node ->
-                    { node | incoming = IntDict.insert src model.selectedTransitions node.incoming }
-                  ))
-                  model.graph
-            , basicForces =
-                makeLinkForce src dest model.selectedTransitions
-                :: model.basicForces
-            }
+        updateExistingNode src dest =
+          { model
+          | selectedTransitions = Set.empty
+          , selectedDest = NoDestination
+          , selectedSource = Nothing
+          , userRequestedChanges =
+              if linkExistsInGraph model src dest then
+                -- if these two are connected already [in the correct direction], then we must just adjust the transition.
+                Debug.log "MOO" () |> \_ ->
+                userchange_modifyTransition model src dest
+              else
+                -- however, if there is no connection between existing nodes, then we must create a new link.
+                Debug.log "NOO" () |> \_ ->
+                userchange_newLinkToNode model src dest
+          , graph =
+              Graph.update dest
+                (Maybe.map (\node ->
+                  { node | incoming = IntDict.insert src model.selectedTransitions node.incoming }
+                ))
+                model.graph
+          , basicForces =
+              makeLinkForce src dest model.selectedTransitions
+              :: model.basicForces
+          }
 
-        in
-          case ( model.selectedSource, model.selectedDest ) of
-            ( Just src, NewNode ( x, y ) ) ->
+      in
+        model.selectedSource
+        |> Maybe.map (\src -> -- if we have a source, there may be "active", confirmable transitions that the user has selected
+          case model.selectedDest of
+            ( NewNode ( x, y ) ) ->
               -- create a totally new node, never before seen!
               createNewNode src x y
-            ( Just src, ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
+            ( ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
               updateExistingNode src dest
-            ( Just src, EditingTransitionTo dest ) ->
+            ( EditingTransitionTo dest ) ->
               updateExistingNode src dest
-            ( Just _, NoDestination ) ->
-              -- ??? Nothing for me to do!
+            ( NoDestination ) ->
+              -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
               model
-            ( Nothing, _ ) ->
-              model
-      else
-        -- in this branch, there are no "active", confirmable transitions to confirm.
-        -- however…
-        case model.userRequestedChanges of
-          [] ->
-            model -- nothing for me to do!
-          _ ->
-            confirmChanges model
+        )
+        |> Maybe.withDefaultLazy (\() ->
+          -- in this branch, there are no "active", confirmable transitions to confirm.
+          -- however…
+          case model.userRequestedChanges of
+            [] ->
+              Debug.log "FOO" () |> \_ ->
+              model -- nothing for me to do!
+            _ ->
+              Debug.log "GOO" () |> \_ ->
+              confirmChanges model
+        )
 
     ToggleSelectedTransition ch ->
       let
@@ -1398,7 +1384,7 @@ viewSvgTransitionChooser model =
             , strokeWidth 4
             ]
             ( if Set.isEmpty model.selectedTransitions then
-                [ tspan [] [ text "Select at least one transition to make this connection" ] ]
+                [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
               else
                 [ tspan [] [ text "Press «Enter» to confirm these transitions" ] ]
             )
