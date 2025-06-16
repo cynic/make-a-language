@@ -1,21 +1,25 @@
 {
-  description = "A basic flake with a shell";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-  inputs.systems.url = "github:nix-systems/default";
-  inputs.flake-utils = {
-    url = "github:numtide/flake-utils";
-    inputs.systems.follows = "systems";
+  description = "Dev environment with Node.js 24 (nixos-unstable)";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable"; # Unstable channel
+    flake-utils.url = "github:numtide/flake-utils";       # Simplifies outputs
   };
 
-  outputs =
-    { nixpkgs, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
+  outputs = { self, nixpkgs, flake-utils, ... }:
+    flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in
-      {
-        devShells.default = pkgs.mkShell { packages = with pkgs; [ nodejs_23 elmPackages.elm elmPackages.elm-test ]; };
+        pkgs = import nixpkgs { inherit system; };
+      in {
+        devShells.default = pkgs.mkShell {
+          packages = with pkgs; [
+            nodejs_24   # Node.js 24 from nixos-unstable
+          ];
+
+          shellHook = ''
+            echo "Node.js $(node --version) ready!"
+          '';
+        };
       }
     );
 }
