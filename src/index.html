@@ -16,7 +16,15 @@
 
 <body>
   <div id="elm"></div>
-  <script type="module" src="index.js"></script>
+  <!-- <script type="module" src="index.js"></script> -->
+   <script type="text/javascript" src="hot.js"></script>
+   <script>
+    const flags =
+        { width : document.getElementsByTagName('html')[0].clientWidth
+        , height : document.getElementsByTagName('html')[0].clientHeight
+        };
+    const app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
+   </script>
 </body>
 
 </html>
