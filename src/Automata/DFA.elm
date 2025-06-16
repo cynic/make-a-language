@@ -647,7 +647,7 @@ fromWords =
 toGraph : DFARecord a b -> AutomatonGraph b
 toGraph dfa =
   let
-    stateList = IntDict.toList dfa.states |> List.reverse
+    stateList = IntDict.toList dfa.states |> List.reverse --|> Debug.log "[toGraph] State-list"
     graph =
       Graph.fromNodesAndEdges
         (stateList |> List.map (\(id, label) -> Node id label))

@@ -138,44 +138,52 @@ viewportForces (w, h) _ =
   [ Force.center (w / 2) (h / 2)
   ]
 
-makeLinkForce : NodeId -> NodeId -> Connection -> Force.Force NodeId
-makeLinkForce from to label =
-  Force.customLinks 3 <|
-    [{ source = from
-    , target = to
-    , distance = 10.0 + 25.0 * toFloat (Set.size label) --35-40 seems like a good distance
-    , strength = Just 0.7 -- * (toFloat <| Set.size e.label)
-    }]
-
-makeNodeForce : NodeId -> Force.Force NodeId
-makeNodeForce id =
-  Force.manyBodyStrength -3000.0 [id]
+makeLinkForces : Graph Entity Connection -> Force.Force NodeId
+makeLinkForces graph =
+  Graph.fold
+    (\ctx acc ->
+      -- for all outgoing links that AREN'T recursive, create a Force.
+      let
+        outs = ctx.outgoing |> IntDict.filter (\k _ -> k /= ctx.node.id)
+      in
+        IntDict.toList outs
+        |> List.foldl
+          (\(k, v) forces ->
+            { source = ctx.node.id
+            , target = k
+            , distance = 10 + 25.0 * toFloat (Set.size v) -- 35-40 seems like a good distance
+            , strength = Just 0.7 -- * (toFloat <| Set.size v)
+            } :: forces
+          )
+          acc
+    )
+    []
+    graph
+  |> Force.customLinks 3
 
 basicForces : NodeId -> Graph Entity Connection -> Int -> List (Force.Force NodeId)
 basicForces start graph height =
-  (List.map (\e -> makeLinkForce e.from e.to e.label) (Graph.edges graph))
-  ++
-  (List.map (.id >> makeNodeForce) (Graph.nodes graph))
-  -- ++
-  -- [ Force.towardsX <|
-  --     List.filterMap
-  --       (\n ->
-  --         if n.id == start then
-  --           Just { node = start, strength = 0.1, target = 0 }
-  --         else
-  --           Nothing
-  --       )
-  --       (Graph.nodes graph)
-  -- , Force.towardsY <|
-  --     List.filterMap
-  --       (\n ->
-  --         if n.id == start then
-  --           Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
-  --         else
-  --           Nothing
-  --       )
-  --       (Graph.nodes graph)
-  -- ]
+  [ makeLinkForces graph -- the springs
+  , Force.manyBodyStrength -1000.0 (List.map .id <| Graph.nodes graph) -- the repulsion
+  , Force.towardsX <|
+      List.filterMap
+        (\n ->
+          if n.id == start then
+            Just { node = start, strength = 0.1, target = 0 }
+          else
+            Nothing
+        )
+        (Graph.nodes graph)
+  , Force.towardsY <|
+      List.filterMap
+        (\n ->
+          if n.id == start then
+            Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
+          else
+            Nothing
+        )
+        (Graph.nodes graph)
+  ]  
 
 makeSimulation : NodeId -> (Float, Float) -> Graph Entity Connection -> Force.State NodeId
 makeSimulation start (w, h) graph =
@@ -499,19 +507,8 @@ update offset_amount msg model =
       -- What am I confirming?
       let
         createNewNode src x y =
-          { model
-          | selectedTransitions = Set.empty
-          , selectedDest = NoDestination
-          , selectedSource = Nothing
-          , userRequestedChanges =
-              AddNewNode
-                { from = src
-                , newNodeId = model.unusedId
-                , x = x
-                , y = y
-                , conn = model.selectedTransitions
-                } :: model.userRequestedChanges
-          , graph =
+          let
+            newGraph =
               Graph.insert
                 { node =
                   { label =
@@ -526,14 +523,34 @@ update offset_amount msg model =
                 , outgoing = IntDict.empty
                 }
                 model.graph
+          in
+          { model
+          | selectedTransitions = Set.empty
+          , selectedDest = NoDestination
+          , selectedSource = Nothing
+          , userRequestedChanges =
+              AddNewNode
+                { from = src
+                , newNodeId = model.unusedId
+                , x = x
+                , y = y
+                , conn = model.selectedTransitions
+                } :: model.userRequestedChanges
+          , graph = newGraph
           , basicForces =
-              makeLinkForce src model.unusedId model.selectedTransitions
-              :: makeNodeForce model.unusedId
-              :: model.basicForces
+              basicForces model.start newGraph (round <| Tuple.second model.dimensions)
           , unusedId = model.unusedId + 1
           }
 
         updateExistingNode src dest =
+          let
+            updatedGraph =
+              Graph.update dest
+                (Maybe.map (\node ->
+                  { node | incoming = IntDict.insert src model.selectedTransitions node.incoming }
+                ))
+                model.graph
+          in
           { model
           | selectedTransitions = Set.empty
           , selectedDest = NoDestination
@@ -547,15 +564,9 @@ update offset_amount msg model =
                 -- however, if there is no connection between existing nodes, then we must create a new link.
                 Debug.log "NOO" () |> \_ ->
                 userchange_newLinkToNode model src dest
-          , graph =
-              Graph.update dest
-                (Maybe.map (\node ->
-                  { node | incoming = IntDict.insert src model.selectedTransitions node.incoming }
-                ))
-                model.graph
+          , graph = updatedGraph
           , basicForces =
-              makeLinkForce src dest model.selectedTransitions
-              :: model.basicForces
+              basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
           }
 
       in
@@ -707,23 +718,23 @@ confirmChanges model_ =
           , states =
               Graph.get graph.root graph.graph
               |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
-              |> Maybe.withDefault IntDict.empty -- SHOULD NEVER BE HERE!
+              |> Maybe.withDefaultLazy (\() -> Debug.todo "MIGY>EFY") -- IntDict.empty -- SHOULD NEVER BE HERE!
           , finals =
               if Automata.Data.isTerminal graph.root graph.graph then
                 Set.singleton graph.root
               else
                 Set.empty
-          } |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] 'Template' DFA"
-        wtf : NodeContext Entity Automata.Data.Connection -> AutomatonGraph Entity
-        wtf node =
-          wordsEndingAt (node.node.id, node.node.label) (debugGraph "Initial graph" graph.graph) Set.empty newDFA
-          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] DFA ending at target"
-          |> \dfa -> union dfa (Automata.DFA.fromGraph graph.root graph.graph)
-          |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] After union"
-          |> toGraph
+          } -- |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] 'Template' DFA"
       in
         Graph.get nodeId model_.graph
-        |> Maybe.map wtf
+        |> Maybe.map
+          (\node ->
+            wordsEndingAt (node.node.id, node.node.label) ({- debugGraph "Initial graph" -} graph.graph) Set.empty newDFA
+            --|> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] DFA ending at target"
+            |> \dfa -> union dfa (Automata.DFA.fromGraph graph.root graph.graph)
+            |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] After union"
+            |> toGraph
+          )
         |> Maybe.withDefault graph
     applyChange_modifyTransition : NodeId -> NodeId -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_modifyTransition from to newState g =
@@ -734,14 +745,20 @@ confirmChanges model_ =
         , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
         , root = g.root
         }
-    mkSim g =
+    mkSim g model =
       let
         (w, h)  = model_.dimensions
         forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
         basic = basicForces g.root forceGraph (round h)
         viewport = viewportForces (w, h) forceGraph
       in
-        Force.simulation (basic ++ viewport)
+        { model
+          | simulation = Force.simulation (basic ++ viewport)
+          , basicForces = basic
+          , graph = forceGraph
+          , viewportForces = viewport
+          , specificForces = IntDict.empty
+        }
   in
   List.foldl
     (\change g ->
@@ -772,10 +789,9 @@ confirmChanges model_ =
   |> \g ->
     { model_
     | userRequestedChanges = []
-    , graph = g.graph
-    , simulation = mkSim g
     , start = g.root
-    }
+    , unusedId = g.maxId + 1
+    } |> mkSim g
 
 textChar : Char -> String
 textChar ch =
