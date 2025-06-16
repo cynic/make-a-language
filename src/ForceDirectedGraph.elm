@@ -164,7 +164,7 @@ makeLinkForces graph =
 basicForces : NodeId -> Graph Entity Connection -> Int -> List (Force.Force NodeId)
 basicForces start graph height =
   [ makeLinkForces graph -- the springs
-  , Force.manyBodyStrength -1000.0 (List.map .id <| Graph.nodes graph) -- the repulsion
+  , Force.manyBodyStrength -2000.0 (List.map .id <| Graph.nodes graph) -- the repulsion
   , Force.towardsX <|
       List.filterMap
         (\n ->
@@ -438,10 +438,7 @@ update offset_amount msg model =
       }
 
     SelectNode index ->
-      if model.selectedSource == Just index then
-        { model | selectedSource = Nothing }
-      else
-        { model | selectedSource = Just index }
+      { model | selectedSource = Just index }
 
     DeselectNode ->
       { model | selectedSource = Nothing }
@@ -547,7 +544,16 @@ update offset_amount msg model =
             updatedGraph =
               Graph.update dest
                 (Maybe.map (\node ->
-                  { node | incoming = IntDict.insert src model.selectedTransitions node.incoming }
+                  { node
+                    | incoming =
+                        IntDict.insert src model.selectedTransitions node.incoming
+                    , outgoing =
+                        -- if it's recursive, I must add it to both so that it reflects in the graph.
+                        if src == dest then
+                          IntDict.insert src model.selectedTransitions node.outgoing
+                        else
+                          node.outgoing
+                  }
                 ))
                 model.graph
           in
@@ -558,11 +564,11 @@ update offset_amount msg model =
           , userRequestedChanges =
               if linkExistsInGraph model src dest then
                 -- if these two are connected already [in the correct direction], then we must just adjust the transition.
-                Debug.log "MOO" () |> \_ ->
+                -- Debug.log "MOO" () |> \_ ->
                 userchange_modifyTransition model src dest
               else
                 -- however, if there is no connection between existing nodes, then we must create a new link.
-                Debug.log "NOO" () |> \_ ->
+                -- Debug.log "NOO" () |> \_ ->
                 userchange_newLinkToNode model src dest
           , graph = updatedGraph
           , basicForces =
@@ -841,6 +847,7 @@ paletteColors =
 type Cardinality
   = Bidirectional
   | Unidirectional
+  | Recursive
 
 type LinkType
   = Confirmed Cardinality -- in the confirmed graph.
@@ -857,7 +864,9 @@ linkExistsInGraph model from to =
 
 identifyCardinality : Model -> Edge Connection -> Cardinality
 identifyCardinality model { to, from } =
-  if linkExistsInGraph model to from then
+  if to == from then
+    Recursive
+  else if linkExistsInGraph model to from then
     Bidirectional
   else
     Unidirectional
@@ -872,7 +881,7 @@ type alias PathBetweenReturn =
   }
 
 path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
-path_between sourceXY destXY cardinality radius_from radius_to =
+path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
   {- we're doing a curved line, using a quadratic path.
       So, let's make a triangle. The two points at the "base" are the
       start and end of the connection ("source" and "target").  Now,
@@ -887,6 +896,22 @@ path_between sourceXY destXY cardinality radius_from radius_to =
       increases, the angle increases too.
   --}
   let
+    sourceXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x - nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = sourceXY_orig.x, y = sourceXY_orig.y }
+    destXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x + nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = destXY_orig.x, y = destXY_orig.y }
     d_y = sourceXY.y - destXY.y
     d_x = sourceXY.x - destXY.x
     orig_line_len = sqrt (d_x * d_x + d_y * d_y)
@@ -896,6 +921,8 @@ path_between sourceXY destXY cardinality radius_from radius_to =
           1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
         Unidirectional ->
           0
+        Recursive ->
+          e
     orthogonal_len =
       curvature * orig_line_len
     orthogonal_vector =
@@ -952,12 +979,18 @@ path_between sourceXY destXY cardinality radius_from radius_to =
     --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
     --   }
     linePath =
-      "M " ++ String.fromFloat (shorten_source.x)
-      ++ " " ++ String.fromFloat (shorten_source.y)
-      ++ " Q " ++ String.fromFloat control_point.x
-      ++ " " ++ String.fromFloat control_point.y
-      ++ " " ++ String.fromFloat (shorten_target.x)
-      ++ " " ++ String.fromFloat (shorten_target.y)
+      case cardinality of
+        Recursive ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " c -14,-14 28,-14 14,0"
+        _ ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " Q " ++ String.fromFloat control_point.x
+          ++ " " ++ String.fromFloat control_point.y
+          ++ " " ++ String.fromFloat (shorten_target.x)
+          ++ " " ++ String.fromFloat (shorten_target.y)
     transition_coordinates =
       { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
       , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
@@ -972,8 +1005,8 @@ path_between sourceXY destXY cardinality radius_from radius_to =
     }
 
 
-linkElement : Model -> Edge Connection -> Svg Msg
-linkElement ({ graph } as model) edge =
+viewLink : Model -> Edge Connection -> Svg Msg
+viewLink ({ graph } as model) edge =
   let
     source =
       Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
@@ -1040,9 +1073,11 @@ linkElement ({ graph } as model) edge =
       --     []
       ]
 
+nodeRadius : Float
+nodeRadius = 7
 
-nodeElement : Model -> Graph.Node Entity -> Svg Msg
-nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
+viewNode : Model -> Graph.Node Entity -> Svg Msg
+viewNode { start, graph, selectedSource, selectedDest } { label, id } =
   let
     isSelected = selectedSource == Just id
     graphNode =
@@ -1050,7 +1085,6 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
     thisNodeIsTerminal =
       Maybe.map Automata.Data.isTerminalNode graphNode
       |> Maybe.withDefault False
-    radius = 7
     permit_node_reselection =
       Mouse.onWithOptions
         "mousedown"
@@ -1060,11 +1094,9 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
             e.clientPos |> DragStart id
           else
             case selectedSource of
-              Just alreadySelected ->
-                if alreadySelected == id then
-                  DeselectNode
-                else
-                  CreateOrUpdateLinkTo id
+              Just _ ->
+                -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
+                CreateOrUpdateLinkTo id
               Nothing ->
                 SelectNode id
         )
@@ -1081,7 +1113,7 @@ nodeElement { start, graph, selectedSource, selectedDest } { label, id } =
       ::interactivity
       )
       [ circle
-          [ r radius
+          [ r nodeRadius
           , strokeWidth 2
           , cx label.x
           , cy label.y
@@ -1176,22 +1208,35 @@ nearby_node { graph, pan, mouseCoords } =
     )
 
 {-| A "phantom move" that the user MIGHT make, or might not -}
-showPhantom : Model -> NodeContext Entity Connection -> Svg Msg
-showPhantom model sourceNode =
+viewPhantom : Model -> NodeContext Entity Connection -> Svg Msg
+viewPhantom model sourceNode =
   let
     radius = 9    
-    cardinality = Unidirectional
     ( xPan, yPan ) = model.pan
+    nearby = nearby_node model
     ( center_x, center_y) =
       -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
       -- But if the mouse is anywhere else, just use the mouse coordinates.
-      nearby_node model
+      nearby
       |> Maybe.map (\node -> (node.label.x - xPan, node.label.y - yPan))
       |> Maybe.withDefault model.mouseCoords
     target =
       { x = center_x + xPan
       , y = center_y + yPan
       }
+    cardinality =
+      case nearby of
+        Nothing ->
+          Unidirectional
+        Just some_node ->
+          if some_node.id == sourceNode.node.id then
+            Recursive
+          else
+            case IntDict.get some_node.id sourceNode.incoming of
+              Just _ ->
+                Bidirectional
+              Nothing ->
+                Unidirectional
     positioning =
       path_between sourceNode.node.label target cardinality 7 9
   in
@@ -1483,17 +1528,17 @@ view model =
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.graph
-        |> List.map (linkElement model)
+        |> List.map (viewLink model)
         |> g [ class [ "links" ] ]
       , Graph.nodes model.graph
-        |> List.map (nodeElement model)
+        |> List.map (viewNode model)
         |> g [ class [ "nodes" ] ]
       , case ( model.selectedSource, model.selectedDest ) of
           ( _, EditingTransitionTo _ ) ->
             g [] []
           ( Just id, _ ) ->
             Graph.get id model.graph
-            |> Maybe.map (showPhantom model)
+            |> Maybe.map (viewPhantom model)
             |> Maybe.withDefault (g [] [])
           ( Nothing, _ ) ->
             g [] []
