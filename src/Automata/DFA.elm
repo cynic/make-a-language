@@ -232,6 +232,30 @@ forwardtree_nodes start extDFA_orig tree_ =
     nodes_of_forwardtree tree_ [start]
     |> List.reverse
 
+all_forward_transitions : NodeId -> ExtDFA a -> ForwardTree
+all_forward_transitions start extDFA =
+  let
+    helper : NodeId -> Set NodeId -> ForwardTree
+    helper current seen =
+      case IntDict.get current extDFA.transition_function of
+        Nothing -> PathEnd
+        Just dict ->
+          let
+            filtered =
+              Dict.filter
+                (\_ state ->
+                  not (Set.member state seen)
+                  && current /= state
+                )
+                dict
+            children =
+              Dict.map (\_ state -> helper state (Set.insert state seen)) filtered
+          in
+            if Dict.isEmpty children then PathEnd else ForwardNode children
+  in
+    helper start Set.empty
+    |> Debug.log "all_forward_transitions"
+
 w_forward_transitions : ExtDFA a -> ForwardTree
 w_forward_transitions extDFA =
   let
@@ -255,7 +279,7 @@ w_forward_transitions extDFA =
             if Dict.isEmpty children then PathEnd else ForwardNode children
   in
     helper extDFA.clone_start Set.empty
-    --|> Debug.log "w_forward_transitions"
+    |> Debug.log "w_forward_transitions"
 
 delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
 delta q x dfa =
@@ -349,8 +373,8 @@ phase_1 extDFA_orig =
     (w_forward_transitions extDFA_orig)
     extDFA_orig
 
-remove_unreachable : ExtDFA a -> ExtDFA a
-remove_unreachable extDFA_orig =
+remove_unreachable : ForwardTree -> ExtDFA a -> ExtDFA a
+remove_unreachable old_w_path extDFA_orig =
   -- check: are there any incoming transitions from EXTERNAL nodes?
   -- "external" nodes are those nodes which are not along the w-path,
   -- as expressed by via the `w_forward_transitions` function.
@@ -383,8 +407,6 @@ remove_unreachable extDFA_orig =
   --    node to be 0-incoming after checking for external references directly.
   let
     -- Step 1
-    old_w_path =
-      w_forward_transitions extDFA_orig
     old_w_path_nodes =
       forwardtree_nodes extDFA_orig.start extDFA_orig old_w_path
     old_w_path_set = Set.fromList old_w_path_nodes
@@ -441,6 +463,7 @@ remove_unreachable extDFA_orig =
         , transition_function = IntDict.remove q extDFA.transition_function
         , register = Set.remove q extDFA.register
         , finals = Set.remove q extDFA.finals
+        , queue_or_clone = List.filter ((/=) q) extDFA.queue_or_clone
       }
   in
     Set.foldl purge extDFA_orig without_external_edges
@@ -515,7 +538,7 @@ union w_dfa_orig m_dfa =
     --|> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
     |> phase_1
     --|> debugExtDFA_ "End of Phase 1"
-    |> remove_unreachable
+    |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
     |> (\dfa -> { dfa | start = dfa.clone_start })
     --|> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
@@ -529,7 +552,7 @@ complement dfa =
     | finals = Set.diff (IntDict.keys dfa.states |> Set.fromList) dfa.finals
   }
 
-modifyConnection : NodeId -> NodeId -> Connection -> Graph a Connection -> Graph a Connection
+modifyConnection : NodeId -> NodeId -> Connection -> AutomatonGraph a -> Graph a Connection
 modifyConnection source target newConn g =
   -- find the correct source.  From there, I can change the connection.
   -- Changing the connection cannot possibly affect anything that is
@@ -547,6 +570,35 @@ modifyConnection source target newConn g =
   -- 
   -- I will also need to put in tests for these cases…
   let
+    craaazy_extend : DFARecord {} b -> ExtDFA b
+    craaazy_extend dfa =
+      { states = dfa.states
+      , transition_function = dfa.transition_function
+      , start =
+          -- remember, .start functions as the OLD start, and is the value used in
+          -- `remove_unreachable`.  After that phase is done, we set it to be the same
+          -- value as .clone_start, which then functions as the NEW start.
+          -- We don't actually HAVE a good value for this!
+          -- If the set is empty, then .start can be the `target`.  `remove_unreachable`
+          -- should get rid of it for us.
+          -- But if the set is not empty, then I should not run `remove_unreachable`
+          -- at all; for example, if the `source` is the starting node, then we will
+          -- end up removing a lot of nodes in the end, incorrectly.
+          -- So in preparation for a possible call to `remove_unreachable`, let me
+          -- set this to the only sane possible value: `target`
+          target
+      , finals = dfa.finals
+      , register =
+          IntDict.keys dfa.states
+          |> Set.fromList
+          |> Set.remove source
+          |> Set.remove target
+      , clone_start =
+          -- see the comment for .start.
+          dfa.start
+      , queue_or_clone = [ source, target ]
+      , unusedId = IntDict.keys dfa.states |> List.maximum |> Maybe.withDefault 0 |> (+) 1
+      }
     rewriteLink : Graph a Connection -> Graph a Connection
     rewriteLink =
       Graph.update source
@@ -563,44 +615,24 @@ modifyConnection source target newConn g =
                   sourceContext.outgoing
           }
         ))
-    removeUnreachable : List NodeId -> Graph a Connection -> Graph a Connection
-    removeUnreachable remaining graph =
-      case remaining of
-        [] -> graph
-        h::t ->
-          let
-            updatedGraph =
-              Graph.update h
-                (Maybe.andThen (\node ->
-                  if IntDict.isEmpty node.incoming then
-                    Nothing
-                  else
-                    Just node
-                ))
-                graph
-          in
-            removeUnreachable
-              ( ( Graph.get h graph -- this works 'cos of Magic Immutability :-)
-                  |> Maybe.andThen (\node ->
-                      if node.incoming == IntDict.empty then
-                        Just (IntDict.toList node.outgoing |> List.map Tuple.first)
-                      else
-                        Nothing
-                    )
-                  |> Maybe.withDefault []
-                )
-              ++ t)
-              updatedGraph
-    newGraph =
-      rewriteLink g
-      |> removeUnreachable [ target ]
   in
-    if Set.isEmpty newConn then
-      -- I must check for unreachable stuff from the target on.
-      newGraph |> collapse source |> Tuple.second
-      -- { graph | graph = updatedGraph }
-    else
-      newGraph |> collapse target |> Tuple.second
+    rewriteLink g.graph
+    |> fromGraph g.root
+    |> craaazy_extend
+    |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
+    |>( \dfa ->
+          if Set.isEmpty newConn then
+            remove_unreachable (all_forward_transitions target dfa) dfa
+          else
+            dfa -- skip step; nothing is disconnected by this.
+      )
+    |> (\dfa -> { dfa | start = dfa.clone_start })
+    |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
+    |> replace_or_register
+    |> debugExtDFA_ "[modifyConnection] After replace_or_register"
+    |> retract
+    |> toGraph
+    |> .graph
 
 addString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
 addString string maybe_dfa =
