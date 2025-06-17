@@ -512,7 +512,7 @@ replace_or_register extDFA =
     h::t ->
       case Set.toList extDFA.register |> List.find (equiv h) of
         Just found_equivalent ->
-          --Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
+          -- Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
           replace_or_register
             { extDFA
               | states = IntDict.remove h extDFA.states
@@ -521,9 +521,14 @@ replace_or_register extDFA =
                   redirectInto found_equivalent h
                   |> IntDict.remove h
               , queue_or_clone = t
+              , start =
+                  if h == extDFA.start then
+                    found_equivalent -- replace with equivalent.
+                  else
+                    extDFA.start
             }            
         Nothing ->
-          --Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
+          -- Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
           replace_or_register
             { extDFA
               | register = Set.insert h extDFA.register
@@ -535,14 +540,14 @@ replace_or_register extDFA =
 union : DFARecord a b -> DFARecord a b -> DFARecord {} b
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
-    --|> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
+    -- |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
     |> phase_1
-    --|> debugExtDFA_ "End of Phase 1"
+    -- |> debugExtDFA_ "End of Phase 1"
     |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    --|> debugExtDFA_ "End of Phase 2"
+    -- |> debugExtDFA_ "End of Phase 2"
     |> replace_or_register
-    --|> debugExtDFA_ "End of Phase 3"
+    -- |> debugExtDFA_ "End of Phase 3"
     |> retract
 
 complement : DFARecord a b -> DFARecord a b
@@ -619,7 +624,7 @@ modifyConnection source target newConn g =
     rewriteLink g.graph
     |> fromGraph g.root
     |> craaazy_extend
-    |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
+    -- |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
     |>( \dfa ->
           if Set.isEmpty newConn then
             remove_unreachable (all_forward_transitions target dfa) dfa
@@ -627,9 +632,9 @@ modifyConnection source target newConn g =
             dfa -- skip step; nothing is disconnected by this.
       )
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
+    -- |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
     |> replace_or_register
-    |> debugExtDFA_ "[modifyConnection] After replace_or_register"
+    -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
     |> retract
     |> toGraph
     |> .graph
