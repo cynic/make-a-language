@@ -1578,6 +1578,7 @@ view model =
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.graph
+        |> List.filter (\edge -> not (Set.isEmpty edge.label))
         |> List.map (viewLink model)
         |> g [ class [ "links" ] ]
       , Graph.nodes model.graph
