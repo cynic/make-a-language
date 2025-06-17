@@ -393,10 +393,26 @@ update offset_amount msg model =
         Just { index } ->
           let
             ( offsetX, offsetY ) = model.pan
+            nearby =
+              nearby_nodes nearby_node_repulsionDistance model
+              |> Debug.log "Nearby nodes at end of drag"
             sf =
               IntDict.insert index
-                [ Force.towardsX [{ node = index, strength = 2.5, target = x + offsetX }]
-                , Force.towardsY [{ node = index, strength = 2.5, target = y + offsetY }]
+                [ Force.towardsX [{ node = index, strength = 2, target = x + offsetX }]
+                , Force.towardsY [{ node = index, strength = 2, target = y + offsetY }]
+                , Force.customLinks 2
+                    ( List.map
+                        (\node ->
+                            { source = index
+                            , target = node.id
+                            -- in other words, 8 radii will separate the centers.
+                            -- This should be sufficient for directional arrows to show up correctly.
+                            , distance = nodeRadius * 10
+                            , strength = Just 1
+                            }
+                        )
+                        nearby
+                    )
                 ]
                 model.specificForces
           in
@@ -1196,22 +1212,49 @@ viewNode { start, graph, selectedSource, selectedDest } { label, id } =
           ]
       ]
 
-nearby_node : Model -> Maybe (Graph.Node Entity)
-nearby_node { graph, pan, mouseCoords } =
+nearby_node_lockOnDistance : Float
+nearby_node_lockOnDistance = nodeRadius + 9
+
+nearby_node_repulsionDistance : Float
+nearby_node_repulsionDistance =
+  nodeRadius * 12
+
+{-| Used by nearby_node and nearby_nodes. Not for other use. -}
+nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Model -> b
+nearby_node_func f distance { graph, pan, mouseCoords, drag } =
+  -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
   let
     ( xPan, yPan ) = pan
-    ( mouse_x, mouse_y ) = mouseCoords
+    ( mouse_x, mouse_y ) =
+      case drag of
+        Just { current } ->
+          -- we are dragging! Use this for preference.
+          current -- |> Debug.log "Dragcoords"
+        Nothing ->
+          -- not dragging; rely on less accurate mouse-coords.
+          mouseCoords -- |> Debug.log "Mousecoords"
+    adjustment_x = xPan + mouse_x
+    adjustment_y = yPan + mouse_y
+    square_dist = distance * distance
   in
-  Graph.nodes graph
-  |> List.find
-    (\node ->
-      let
-        dx = (node.label.x - xPan) - mouse_x
-        dy = (node.label.y - yPan) - mouse_y
-      in
-        -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
-        dx * dx + dy * dy <= 16*16 -- 7 + 9 = 16
-    )
+    f
+      (\node ->
+        let
+          dx = node.label.x - adjustment_x
+          dy = node.label.y - adjustment_y
+        in
+          -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
+          dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
+      )
+      (Graph.nodes graph)
+
+nearby_node : Float -> Model -> Maybe (Graph.Node Entity)
+nearby_node =
+  nearby_node_func List.find
+
+nearby_nodes : Float -> Model -> List (Graph.Node Entity)
+nearby_nodes =
+  nearby_node_func List.filter
 
 {-| A "phantom move" that the user MIGHT make, or might not -}
 viewPhantom : Model -> NodeContext Entity Connection -> Svg Msg
@@ -1219,7 +1262,7 @@ viewPhantom model sourceNode =
   let
     radius = 9    
     ( xPan, yPan ) = model.pan
-    nearby = nearby_node model
+    nearby = nearby_node nearby_node_lockOnDistance model
     ( center_x, center_y) =
       -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
       -- But if the mouse is anywhere else, just use the mouse coordinates.
@@ -1509,7 +1552,7 @@ view model =
         (\_ ->
           case model.selectedSource of
             Just _ ->
-              case nearby_node model of
+              case nearby_node nearby_node_lockOnDistance model of
                 Just node -> -- in this case, the UI would show it being "locked-on"
                   CreateOrUpdateLinkTo node.id
                 Nothing ->
