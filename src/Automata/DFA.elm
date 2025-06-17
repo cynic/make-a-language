@@ -255,7 +255,7 @@ w_forward_transitions extDFA =
             if Dict.isEmpty children then PathEnd else ForwardNode children
   in
     helper extDFA.clone_start Set.empty
-    |> Debug.log "w_forward_transitions"
+    --|> Debug.log "w_forward_transitions"
 
 delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
 delta q x dfa =
@@ -678,8 +678,8 @@ toGraph dfa =
         Automata.Data.empty
       h::_ ->
         { graph = graph
-        , maxId = Tuple.first h |> Debug.log "[toGraph] maxId"
-        , root = dfa.start |> Debug.log "[toGraph] root"
+        , maxId = Tuple.first h -- |> Debug.log "[toGraph] maxId"
+        , root = dfa.start -- |> Debug.log "[toGraph] root"
         }
 
 fromGraph : NodeId -> Graph n Connection -> DFARecord {} n
