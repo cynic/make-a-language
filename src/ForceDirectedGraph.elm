@@ -35,6 +35,7 @@ import Automata.DFA exposing (toGraph)
 import Automata.DFA exposing (union)
 import Automata.Debugging exposing (debugGraph)
 import Maybe.Extra as Maybe exposing (withDefaultLazy)
+import Automata.DFA exposing (debugDFA_)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -753,7 +754,7 @@ confirmChanges model_ =
           (\node ->
             wordsEndingAt (node.node.id, node.node.label) ({- debugGraph "Initial graph" -} graph.graph) Set.empty newDFA
             --|> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] DFA ending at target"
-            |> \dfa -> union dfa (Automata.DFA.fromGraph graph.root graph.graph)
+            |> \dfa -> union (debugDFA_ "w_dfa" dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
             |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] After union"
             |> toGraph
           )
@@ -761,7 +762,7 @@ confirmChanges model_ =
     applyChange_modifyTransition : NodeId -> NodeId -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_modifyTransition from to newState g =
       let
-        newGraph = modifyConnection from to newState g.graph
+        newGraph = modifyConnection from to newState g
       in
         { graph = newGraph
         , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
