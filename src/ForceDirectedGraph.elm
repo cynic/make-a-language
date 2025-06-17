@@ -983,7 +983,13 @@ path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
         Recursive ->
           "M " ++ String.fromFloat (shorten_source.x)
           ++ " " ++ String.fromFloat (shorten_source.y)
-          ++ " c -14,-14 28,-14 14,0"
+          ++ " c -14,-14 28,-14 " ++ String.fromFloat (nodeRadius * 2) ++ ",0"
+          --      ^    ^  ^   ^
+          --      a    b  c   d
+          -- to "raise" it, increase the numerical values of b and d (e.g. to -25 and -25).
+          -- to "widen" it, increase the numerical values of a and c (e.g. to -21 and 35).
+          -- increase/decrease numbers by the same amount to maintain symmetry.
+          -- the last two numbers give the offset for the destination.
         _ ->
           "M " ++ String.fromFloat (shorten_source.x)
           ++ " " ++ String.fromFloat (shorten_source.y)
