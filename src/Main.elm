@@ -219,6 +219,8 @@ update msg model =
     TextInput text ->
       let
         words = String.split "\n" text |> List.filter ((/=) "")
+        dfa = Automata.DFA.fromWords words
+        dfa_graph = Automata.DFA.toGraph dfa
       in
       ( { model
           | text = text
@@ -233,7 +235,7 @@ update msg model =
           , metrics =
               case words of
                 [] -> defaultMetrics
-                _ -> calcMetrics (Automata.DFA.fromWords words)
+                _ -> calcMetrics dfa_graph
         }
       , Cmd.none
       )

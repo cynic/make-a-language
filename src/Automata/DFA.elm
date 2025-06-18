@@ -483,10 +483,10 @@ replace_or_register extDFA =
         let
           p_outgoing =
             IntDict.get p extDFA.transition_function
-            --|> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
+            -- |> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
           q_outgoing =
             IntDict.get q extDFA.transition_function
-            --|> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
+            -- |> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
         in
           case ( p_outgoing, q_outgoing ) of
             ( Just _, Nothing ) -> False
@@ -526,7 +526,7 @@ replace_or_register extDFA =
                     found_equivalent -- replace with equivalent.
                   else
                     extDFA.start
-            }            
+            }
         Nothing ->
           -- Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
           replace_or_register
@@ -540,14 +540,14 @@ replace_or_register extDFA =
 union : DFARecord a b -> DFARecord a b -> DFARecord {} b
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
-    -- |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
+    |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
     |> phase_1
-    -- |> debugExtDFA_ "End of Phase 1"
+    |> debugExtDFA_ "End of Phase 1 (clone-and-queue)"
     |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    -- |> debugExtDFA_ "End of Phase 2"
+    |> debugExtDFA_ "End of Phase 2 (remove-unreachable + switch-start)"
     |> replace_or_register
-    -- |> debugExtDFA_ "End of Phase 3"
+    |> debugExtDFA_ "End of Phase 3 (replace-or-register)"
     |> retract
 
 complement : DFARecord a b -> DFARecord a b
@@ -639,6 +639,10 @@ modifyConnection source target newConn g =
     |> toGraph
     |> .graph
 
+removeConnection : NodeId -> NodeId -> AutomatonGraph a -> Graph a Connection
+removeConnection a b g =
+  modifyConnection a b Set.empty g
+
 addString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
 addString string maybe_dfa =
   let
@@ -675,11 +679,20 @@ wordsToDFA strings =
     , finals = Set.empty
     }
 
-fromWords : List String -> AutomatonGraph ()
+empty : a -> DFARecord {} a
+empty defaultValue =
+  { states = IntDict.singleton 0 defaultValue
+  , transition_function = IntDict.empty
+  , start = 0
+  , finals = Set.empty
+  }
+
+fromWords : List String -> DFARecord {} ()
 fromWords =
   List.foldl addString Nothing
-  >> Maybe.map toGraph
-  >> Maybe.withDefault Automata.Data.empty
+  >> Maybe.withDefault (empty ())
+  -- >> Maybe.map toGraph
+  -- >> Maybe.withDefault Automata.Data.empty
 
 toGraph : DFARecord a b -> AutomatonGraph b
 toGraph dfa =
@@ -747,13 +760,18 @@ fromAutomatonGraph g =
   , transition_function =
       Graph.fold
         (\ctx transitions ->
-          IntDict.foldl
-            (\dest conn dict ->
-              Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
-            )
-            Dict.empty
-            ctx.outgoing
-          |> \dict -> IntDict.insert ctx.node.id dict transitions
+          if IntDict.isEmpty ctx.outgoing then
+            -- otherwise, I will be adding a spurious Dict.empty,
+            -- which will affect comparisons in register_or_replace later on.
+            transitions
+          else
+            IntDict.foldl
+              (\dest conn dict ->
+                Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
+              )
+              Dict.empty
+              ctx.outgoing
+            |> \dict -> IntDict.insert ctx.node.id dict transitions
         )
         IntDict.empty
         g.graph
@@ -777,7 +795,7 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
   let
     visited = Set.insert nodeId visited_orig
   in
-  if nodeId == dfa.start then
+  if nodeId == dfa.start && Set.member nodeId visited_orig then
     -- we are done!
     { dfa | states = IntDict.insert nodeId label dfa.states }
   else if Set.member nodeId visited_orig then
@@ -835,6 +853,7 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
           -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
       )
     |> Maybe.withDefault dfa -- SHOULD NEVER BE HERE!!!
+    |> debugDFA_ ("[wordsEndingAt] Returning result")
     -- well, at this point, I have the DFA.  Now I need to union it.
 
 
