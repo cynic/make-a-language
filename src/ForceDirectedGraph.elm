@@ -25,7 +25,7 @@ import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import TypedSvg.Attributes.InPx as Px
 import Html
 import Html.Attributes
-import Set
+import Set exposing (Set)
 import IntDict
 import Time
 import List.Extra as List
@@ -36,6 +36,9 @@ import Automata.DFA exposing (union)
 import Automata.Debugging exposing (debugGraph)
 import Maybe.Extra as Maybe exposing (withDefaultLazy)
 import Automata.DFA exposing (debugDFA_)
+import Automata.DFA exposing (DFARecord)
+import TypedSvg exposing (use)
+import Tuple.Extra exposing (apply)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -69,6 +72,14 @@ type LinkDestination
 
 type alias Model =
   { drag : Maybe Drag
+    -- When we get a graph from somewhere, we store a copy here.
+    -- This copy has one feature: it does not have ANY user-directed
+    -- modifications.  Whenever we want to commit user edits, we can
+    -- use this graph as a base for the fold; and the resulting graph
+    -- can then again be our `pristineGraph`.
+  , pristineGraph : Graph Entity Connection
+    -- This is originally the `pristineGraph`, but it is modified and
+    -- messed about by the user at runtime.
   , graph : Graph Entity Connection
   , start : NodeId
   , simulation : Force.State NodeId
@@ -87,28 +98,31 @@ type alias Model =
   , unusedId : NodeId
   }
 
+type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
+
 type RequestedGraphChanges
   -- transition-related changes: convert non-final to final, convert final to non-final, remove a transition, add a transition
   -- all of which can & should be handled via ModifyTransition tbh
-  = ModifyTransition
-      { from : NodeId
-      , to : NodeId
-      , oldState : Connection
-      , newState : Connection
+  = RemoveLink
+      { source : RequestedChangePath
+      , destination : RequestedChangePath
       }
-  | NewLinkToNode
-      { from : NodeId
-      , to : NodeId
-      , conn : Connection
-      }
-  | AddNewNode
-      { from : NodeId
-      , newNodeId : NodeId
-      , x : Float
-      , y : Float
-      , conn : Connection
-      }
-  | RemoveNode NodeId
+  -- When I have all the information after the operation is completed by the
+  -- user (but before it is confirmed), I add all of it in to the graph.
+  -- Therefore, I don't actually need to keep it around at all.
+  -- I use `wordsEndingAt` to get the w_dfa based only on the target, and
+  -- with `union` and knowledge of the dfa _just before_ the operation, I
+  -- can complete the operation; and whether it is
+  --    i.  the adding of a new node or
+  --   ii.  the linking of two existing nodes or
+  --  iii.  the changing of a transition
+  -- does not matter.  All three of these can be covered by the same operation.
+  | ModificationEndingAt RequestedChangePath
+  -- We don't actually need node-removal.  Why?  Because we can always just remove
+  -- a link, and then the nodes after it will go away (if they should have done so).
+  -- Of course, we will not be able to remove the "start" node… and actually, that's
+  -- fine, and probably quite preferred.
+--  | RemoveNode NodeId
 
 type alias Drag =
   { start : ( Float, Float )
@@ -204,6 +218,7 @@ receiveWords words (w, h) =
     viewport = viewportForces (w, h) forceGraph
   in
     { drag = Nothing
+    , pristineGraph = forceGraph
     , graph = forceGraph
     , simulation = Force.simulation (basic ++ viewport)
     , dimensions = (w, h)
@@ -271,68 +286,91 @@ yPanAt model y =
   else
     0
 
-userchange_modifyTransition : Model -> NodeId -> NodeId -> List RequestedGraphChanges
-userchange_modifyTransition model source dest =
-  -- this is called when there is already a link between source and dest,
-  -- and that link must be modified.
-  {-So, there are a few things to look at here.
-      1. Is there a corresponding `NewLinkToNode` or `AddNewNode`? If so, then
-         I can (and should) just modify the `conn` there: there is no "baseline".
-      2. Is there a corresponding `ModifyTransition`? If so, then I should just modify that.
-      3. Otherwise, I should add in a `ModifyTransition`.
-  -}
-  let
-    baselineIndex =
-      List.findIndex
-        (\item ->
-          case item of
-            NewLinkToNode { from, to } ->
-              from == source && to == dest
-            AddNewNode { from, newNodeId } ->
-              from == source && newNodeId == dest
-            ModifyTransition { from, to } ->
-              from == source && to == dest
-            _ -> False
-        )
-        model.userRequestedChanges
-  in
-    case baselineIndex of
-      Nothing ->
-        -- this is not found in the baseline; therefore, it must be from the graph.
-        ModifyTransition
-          { from = source
-          , to = dest
-          , newState = model.selectedTransitions
-          , oldState =
-              Graph.get dest model.graph
-              |> Maybe.andThen (.incoming >> IntDict.get source)
-              |> Maybe.withDefault Set.empty
-          }
-        :: model.userRequestedChanges
-      Just idx ->
-        List.updateAt idx
-          (\orig ->
-            case orig of
-              NewLinkToNode v ->
-                NewLinkToNode { v | conn = model.selectedTransitions }
-              AddNewNode v ->
-                AddNewNode { v | conn = model.selectedTransitions }
-              ModifyTransition v ->
-                ModifyTransition { v | newState = model.selectedTransitions }
-              _ ->
-                orig -- impossible.
-          )
-          model.userRequestedChanges
+{-| Obtain the shortest path to a specified NodeId.
 
-userchange_newLinkToNode : Model -> NodeId -> NodeId -> List RequestedGraphChanges
-userchange_newLinkToNode model source dest =
-  -- this is called when there is no existing link between source and dest,
-  -- but both nodes already exist in the graph.
-  NewLinkToNode
-    { from = source
-    , to = dest
-    , conn = model.selectedTransitions
-    } :: model.userRequestedChanges
+If no such path exists, then return Nothing.
+-}
+createPathTo : NodeId -> Model -> Maybe RequestedChangePath
+createPathTo target model =
+  let
+    -- avoid backtracking; so, we have a "seen" set.
+    findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
+    findPath seen current acc =
+      Graph.get current model.graph
+      |> Maybe.andThen
+        (\node ->
+          if node.node.id == model.start then
+            Just acc
+          else
+            node.incoming
+            |> IntDict.toList
+            |> List.filterMap
+              (\(k, v) ->
+                Set.toList v
+                |> List.head
+                |> Maybe.andThen
+                  (\t -> findPath (Set.insert current seen) k (t::acc))
+              )
+            |> List.minimumBy List.length
+        )
+  in
+    findPath Set.empty target []
+    |> Debug.log ("[createPathTo] Asked to find path to #" ++ String.fromInt target ++ ", found")
+
+{-| Obtain the NodeId at the end of the specified path.
+
+If the path is invalid for the graph context, then return Nothing.
+-}
+followPathTo : RequestedChangePath -> AutomatonGraph a -> Maybe NodeId
+followPathTo path g =
+  let
+    followPath : NodeId -> RequestedChangePath -> Maybe NodeId
+    followPath current remaining =
+      case remaining of
+        [] ->
+          Just current
+        h::t ->
+          Graph.get current g.graph
+          |> Maybe.andThen
+            (\node ->
+              IntDict.toList node.outgoing
+              |> List.filter (\(_, conn) -> Set.member h conn)
+              -- here, I am treating the graph as if it is an NFA.
+              -- And that is because indeed, a user may well just treat it as an NFA
+              -- and randomly create two or more paths!!  So, we need to explore each
+              -- path and see which ones might be valid.
+              |> List.filterMap (\(k, _) -> followPath k t)
+              |> List.head
+              -- |> Maybe.andThen (\(k, _) -> followPath k t)
+            )
+  in
+    followPath g.root path
+    |> Debug.log ("[followPathTo] Followed " ++ Debug.toString path ++ " to arrive at")
+
+userchange_removeLink : Model -> NodeId -> NodeId -> Maybe RequestedGraphChanges
+userchange_removeLink model source destination =
+  -- this is called when there is a link between the source and destination,
+  -- and it must be removed.  As a result, other nodes might be disconnected.
+  Maybe.andThen2
+    (\sourcePath dest ->
+      -- get the link between source & dest
+      IntDict.get source dest.incoming
+      |> Maybe.andThen
+        (\conn ->
+          case Set.toList conn of
+            [] -> Nothing -- make sure that there is, in fact, a connection to modify!
+            t::_ ->
+              Just <| ModificationEndingAt (t::sourcePath)
+        )
+    )
+    (createPathTo source model)
+    (Graph.get destination model.graph)
+
+-- this covers adding a new node; linking two existing nodes;
+-- and changing a transition between nodes.
+userchange_generalModification : Model -> NodeId -> Maybe RequestedGraphChanges
+userchange_generalModification model destination =
+  Maybe.map ModificationEndingAt (createPathTo destination model)
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -527,8 +565,7 @@ update offset_amount msg model =
                 { node =
                   { label =
                       let
-                        initial =
-                          Force.entity model.unusedId { }
+                        initial = Force.entity model.unusedId { }
                       in
                         { initial | x = x, y = y }
                   , id = model.unusedId
@@ -537,24 +574,21 @@ update offset_amount msg model =
                 , outgoing = IntDict.empty
                 }
                 model.graph
+            newModel =
+              { model
+              | selectedTransitions = Set.empty
+              , selectedDest = NoDestination
+              , selectedSource = Nothing
+              , graph = newGraph
+              , basicForces =
+                  basicForces model.start newGraph (round <| Tuple.second model.dimensions)
+              , unusedId = model.unusedId + 1
+              }
           in
-          { model
-          | selectedTransitions = Set.empty
-          , selectedDest = NoDestination
-          , selectedSource = Nothing
-          , userRequestedChanges =
-              AddNewNode
-                { from = src
-                , newNodeId = model.unusedId
-                , x = x
-                , y = y
-                , conn = model.selectedTransitions
-                } :: model.userRequestedChanges
-          , graph = newGraph
-          , basicForces =
-              basicForces model.start newGraph (round <| Tuple.second model.dimensions)
-          , unusedId = model.unusedId + 1
-          }
+            userchange_generalModification newModel model.unusedId
+            |> Maybe.map
+              (\v -> { newModel | userRequestedChanges = v :: model.userRequestedChanges })
+            |> Maybe.withDefault model
 
         updateExistingNode src dest =
           let
@@ -573,38 +607,43 @@ update offset_amount msg model =
                   }
                 ))
                 model.graph
-          in
-          { model
-          | selectedTransitions = Set.empty
-          , selectedDest = NoDestination
-          , selectedSource = Nothing
-          , userRequestedChanges =
-              if linkExistsInGraph model src dest then
-                -- if these two are connected already [in the correct direction], then we must just adjust the transition.
-                -- Debug.log "MOO" () |> \_ ->
-                userchange_modifyTransition model src dest
+            newModel =
+              { model
+              | selectedTransitions = Set.empty
+              , selectedDest = NoDestination
+              , selectedSource = Nothing
+              , graph = updatedGraph
+              , basicForces =
+                  basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
+              }
+            change =
+              if Set.isEmpty model.selectedTransitions then
+                userchange_removeLink newModel src dest
               else
-                -- however, if there is no connection between existing nodes, then we must create a new link.
-                -- Debug.log "NOO" () |> \_ ->
-                userchange_newLinkToNode model src dest
-          , graph = updatedGraph
-          , basicForces =
-              basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
-          }
+                userchange_generalModification newModel dest
+          in
+            change |> Maybe.map
+              (\v -> { newModel | userRequestedChanges = v :: model.userRequestedChanges })
+            |> Maybe.withDefault model
 
       in
+        Debug.log "006" |> \_ ->
         model.selectedSource
         |> Maybe.map (\src -> -- if we have a source, there may be "active", confirmable transitions that the user has selected
           case model.selectedDest of
             ( NewNode ( x, y ) ) ->
               -- create a totally new node, never before seen!
+              Debug.log "000" |> \_ ->
               createNewNode src x y
             ( ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
+              Debug.log "001" |> \_ ->
               updateExistingNode src dest
             ( EditingTransitionTo dest ) ->
+              Debug.log "002" |> \_ ->
               updateExistingNode src dest
             ( NoDestination ) ->
               -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
+              Debug.log "003" |> \_ ->
               model
         )
         |> Maybe.withDefaultLazy (\() ->
@@ -612,8 +651,10 @@ update offset_amount msg model =
           -- however…
           case model.userRequestedChanges of
             [] ->
+              Debug.log "004" |> \_ ->
               model -- nothing for me to do!
             _ ->
+              Debug.log "005" |> \_ ->
               confirmChanges model
         )
 
@@ -729,40 +770,59 @@ confirmChanges model_ =
     ag : AutomatonGraph Entity
     ag =
       { root = model_.start
-      , graph = model_.graph
-      , maxId = model_.unusedId - 1
+      , graph = model_.pristineGraph
+      , maxId =
+          Graph.nodeIds model_.pristineGraph
+          |> List.maximum
+          |> Maybe.withDefault 0
       }
-    applyChange_addOrLinkNode : NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
-    applyChange_addOrLinkNode nodeId graph =
+    modelGraph : AutomatonGraph Entity
+    modelGraph =
+      { root = model_.start
+      , graph = model_.graph
+      , maxId = model_.unusedId
+      }
+    applyChange_generalModification : RequestedChangePath -> AutomatonGraph Entity -> AutomatonGraph Entity
+    applyChange_generalModification path graph =
       let
-        newDFA =
-          { start = graph.root
+        wDFA_template =
+          { start = model_.start
           , transition_function = IntDict.empty
           , states =
-              Graph.get graph.root graph.graph
+              Graph.get model_.start model_.graph
               |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
               |> Maybe.withDefaultLazy (\() -> Debug.todo "MIGY>EFY") -- IntDict.empty -- SHOULD NEVER BE HERE!
           , finals =
-              if Automata.Data.isTerminal graph.root graph.graph then
-                Set.singleton graph.root
+              if Automata.Data.isTerminal model_.start model_.graph then
+                Set.singleton model_.start
               else
                 Set.empty
           } -- |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] 'Template' DFA"
       in
-        Graph.get nodeId model_.graph
+        -- follow the path in the graph shown on-screen
+        followPathTo path modelGraph
+        -- and find the node of the graph shown on-screen
+        |> Maybe.andThen (\id -> Graph.get id modelGraph.graph)
         |> Maybe.map
           (\node ->
-            wordsEndingAt (node.node.id, node.node.label) ({- debugGraph "Initial graph" -} graph.graph) Set.empty newDFA
+            -- with that node, construct the w_dfa
+            wordsEndingAt (node.node.id, node.node.label) ({- debugGraph "Initial graph" -} model_.graph) Set.empty wDFA_template
             --|> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] DFA ending at target"
-            |> \dfa -> union (debugDFA_ "w_dfa" dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
-            |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] After union"
+            -- now, use that w_dfa, and union it with the graph that we're folding over
+            |> \w_dfa -> union (debugDFA_ "w_dfa" w_dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
+            |> Automata.DFA.debugDFA_ "[GeneralModification] After union"
             |> toGraph
           )
         |> Maybe.withDefault graph
-    applyChange_modifyTransition : NodeId -> NodeId -> Connection -> AutomatonGraph a -> AutomatonGraph a
-    applyChange_modifyTransition from to newState g =
+    applyChange_removeLink : RequestedChangePath -> RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
+    applyChange_removeLink a b g =
       let
-        newGraph = modifyConnection from to newState g
+        newGraph =
+          Maybe.map2
+            (\from to -> modifyConnection from to Set.empty g)
+            (followPathTo a g)
+            (followPathTo b g)
+          |> Maybe.withDefault g.graph
       in
         { graph = newGraph
         , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
@@ -779,6 +839,7 @@ confirmChanges model_ =
           | simulation = Force.simulation (basic ++ viewport)
           , basicForces = basic
           , graph = forceGraph
+          , pristineGraph = forceGraph
           , viewportForces = viewport
           , specificForces = IntDict.empty
         }
@@ -786,26 +847,10 @@ confirmChanges model_ =
   List.foldl
     (\change g ->
         case change of
-          AddNewNode { newNodeId } ->
-            applyChange_addOrLinkNode newNodeId g
-          NewLinkToNode { to } ->
-            applyChange_addOrLinkNode to g
-          ModifyTransition { from, to, newState } ->
-            applyChange_modifyTransition from to newState g
-          RemoveNode nodeId ->
-            -- This one is a fairly low-level and brutal operation.  Since the node IDs are the same
-            -- in the Automaton graph and in the DFA, we can just remove the node from the DFA
-            -- and then recalculate the graph from that.
-            Graph.get nodeId ag.graph
-            |> Maybe.map
-              (\node ->
-                IntDict.toList node.incoming
-                |> List.map (\(from, conn) -> (from, node.node.id, conn))
-              )
-            |> Maybe.withDefault []
-            |> List.foldl
-              (\(from, to, conn) -> applyChange_modifyTransition from to conn)
-              g
+          RemoveLink { source, destination } ->
+            applyChange_removeLink source destination g
+          ModificationEndingAt path ->
+            applyChange_generalModification path g
     )
     ag
     (List.reverse model_.userRequestedChanges)
