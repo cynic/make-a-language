@@ -300,13 +300,14 @@ createPathTo target waypoints accept { graph, start } =
         Graph.get current graph
         |> Maybe.andThen
           (\node ->
-            if node.node.id == start then
-              if List.all (\id -> Set.member id seen |> Debug.log ("Is #" ++ String.fromInt id ++ " in " ++ Debug.toString seen)) (target::waypoints) && accept acc then
+            if node.node.id == start &&
+              List.all (\id -> id == current || Set.member id seen |> Debug.log ("Is #" ++ String.fromInt id ++ " in " ++ Debug.toString seen)) (target::waypoints) &&
+              accept acc then
                 Just acc
-              else
-                -- if I don't encounter `target` and all specified waypoints
-                -- on the way, then this path is useless to me.
-                Nothing |> Debug.log "Path failed checks"
+              -- else
+              --   -- if I don't encounter `target` and all specified waypoints
+              --   -- on the way, then this path is useless to me.
+              --   Nothing |> Debug.log "Path failed checks"
             else
               node.incoming
               |> IntDict.toList
@@ -632,7 +633,7 @@ update offset_amount msg model =
               , basicForces =
                   basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
               }
-            changeData = userchange_data newModel src dest
+            changeData = userchange_data model src dest
             change =
               if Set.isEmpty model.selectedTransitions then
                 RemoveLink
@@ -831,10 +832,13 @@ confirmChanges model_ =
           case path of
             [] -> -- special case: recursive on the start node.
               Just ( g.root, g.root )
-            _::t ->
+            _ ->
               Maybe.map2
                 (\a b -> (a, b))
-                (followPathTo t g)
+                ( List.reverse path
+                  |> List.tail
+                  |> Maybe.andThen (\t -> followPathTo (List.reverse t) g)
+                )
                 (followPathTo path g)
         newGraph =
           Maybe.map
