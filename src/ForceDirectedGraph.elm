@@ -295,9 +295,9 @@ createPathTo target waypoints accept { graph, start } =
     findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
     findPath seen current acc =
       if Set.member current seen && current /= target then
-        Nothing
+        Nothing |> Debug.log "Already seen this; must be on a recursive path; backtracking"
       else
-        Graph.get current graph
+        Graph.get (Debug.log "current" current) graph
         |> Maybe.andThen
           (\node ->
             if node.node.id == start &&
@@ -311,6 +311,7 @@ createPathTo target waypoints accept { graph, start } =
             else
               node.incoming
               |> IntDict.toList
+              |> Debug.log ("Incoming nodes for #" ++ String.fromInt current ++ " are")
               |> List.filterMap
                 (\(k, v) ->
                   if current /= k then
@@ -633,12 +634,18 @@ update offset_amount msg model =
               , basicForces =
                   basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
               }
-            changeData = userchange_data model src dest
-            change =
+            ( changeData, change ) =
+              -- If I am removing a link, then we can get the correct path of the
+              -- link by studying the OLD model, where the transition is still in place.
               if Set.isEmpty model.selectedTransitions then
-                RemoveLink
-              else
-                ModificationEndingAt
+                -- I am removing a link.  So, to figure out which link to remove,
+                -- I must use a graph where the link already exists.
+                ( userchange_data model src dest, RemoveLink )
+              else if linkExistsInGraph newModel src dest then
+                -- I am modifying a transition
+                ( userchange_data newModel src dest, ModificationEndingAt )
+              else 
+                ( userchange_data newModel src dest, ModificationEndingAt )
           in
             changeData |> Maybe.map
               (\v -> { newModel | userRequestedChanges = change v :: model.userRequestedChanges })
