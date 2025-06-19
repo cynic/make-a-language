@@ -29,7 +29,7 @@ import Set exposing (Set)
 import IntDict
 import Time
 import List.Extra as List
-import Automata.DFA exposing (wordsEndingAt, modifyConnection, fromAutomatonGraph)
+import Automata.DFA exposing (wordsEndingAt, removeConnection, fromAutomatonGraph)
 import Automata.Data exposing (isTerminal)
 import Automata.DFA exposing (toGraph)
 import Automata.DFA exposing (union)
@@ -103,10 +103,7 @@ type alias RequestedChangePath = List Automata.Data.Transition -- transitions go
 type RequestedGraphChanges
   -- transition-related changes: convert non-final to final, convert final to non-final, remove a transition, add a transition
   -- all of which can & should be handled via ModifyTransition tbh
-  = RemoveLink
-      { source : RequestedChangePath
-      , destination : RequestedChangePath
-      }
+  = RemoveLink RequestedChangePath
   -- When I have all the information after the operation is completed by the
   -- user (but before it is confirmed), I add all of it in to the graph.
   -- Therefore, I don't actually need to keep it around at all.
@@ -288,31 +285,40 @@ yPanAt model y =
 
 {-| Obtain the shortest path to a specified NodeId.
 
-If no such path exists, then return Nothing.
+If no such path exists, then return Nothing.  Can specify an
+`accept` function for additional checks, if desired.
 -}
-createPathTo : NodeId -> Model -> Maybe RequestedChangePath
-createPathTo target model =
+createPathTo : NodeId -> List NodeId -> (RequestedChangePath -> Bool) -> Model -> Maybe RequestedChangePath
+createPathTo target waypoints accept { graph, start } =
   let
     -- avoid backtracking; so, we have a "seen" set.
     findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
     findPath seen current acc =
-      if Set.member current seen then
+      if Set.member current seen && current /= target then
         Nothing
       else
-        Graph.get current model.graph
+        Graph.get current graph
         |> Maybe.andThen
           (\node ->
-            if node.node.id == model.start then
-              Just acc
+            if node.node.id == start then
+              if List.all (\id -> Set.member id seen |> Debug.log ("Is #" ++ String.fromInt id ++ " in " ++ Debug.toString seen)) (target::waypoints) && accept acc then
+                Just acc
+              else
+                -- if I don't encounter `target` and all specified waypoints
+                -- on the way, then this path is useless to me.
+                Nothing |> Debug.log "Path failed checks"
             else
               node.incoming
               |> IntDict.toList
               |> List.filterMap
                 (\(k, v) ->
-                  Set.toList v
-                  |> List.head
-                  |> Maybe.andThen
-                    (\t -> findPath (Set.insert current seen) k (t::acc))
+                  if current /= k then
+                    Set.toList v
+                    |> List.head
+                    |> Maybe.andThen
+                      (\t -> findPath (Set.insert current seen) (Debug.log "going to look at" k) (Debug.log "current path" (t::acc)))
+                  else
+                    Nothing -- ignore purely recursive links; they won't get us anywhere.
                 )
               |> List.minimumBy List.length
           )
@@ -350,30 +356,37 @@ followPathTo path g =
     followPath g.root path
     |> Debug.log ("[followPathTo] Followed " ++ Debug.toString path ++ " to arrive at")
 
-userchange_removeLink : Model -> NodeId -> NodeId -> Maybe RequestedGraphChanges
-userchange_removeLink model source destination =
+userchange_data : Model -> NodeId -> NodeId -> Maybe RequestedChangePath
+userchange_data model source destination =
   -- this is called when there is a link between the source and destination,
   -- and it must be removed.  As a result, other nodes might be disconnected.
-  Maybe.andThen2
-    (\sourcePath dest ->
-      -- get the link between source & dest
-      IntDict.get source dest.incoming
-      |> Maybe.andThen
-        (\conn ->
-          case Set.toList conn of
-            [] -> Nothing -- make sure that there is, in fact, a connection to modify!
-            t::_ ->
-              Just <| ModificationEndingAt (t::sourcePath)
-        )
+  Maybe.andThen
+    (\dest ->
+      let
+        acceptFunction =
+          -- check that there is a link between source & dest, and that
+          -- the destination can be obtained via the last transition in 1 hop
+          -- (unless we are dealing with recursion).
+          -- Check the recursive case first.
+          if source == destination then
+            \_ -> True -- the checks in createPathTo should already cover this.
+          else
+            \path ->
+              -- we reverse because we want to check the LAST link in the chain for 1-hop
+              case List.reverse path of
+                [] ->  -- you're not recursive, so there must be AT LEAST one link!
+                  False
+                  |> Debug.log "Failed accept: no links in path, but not recursive"
+                h::_ ->
+                  IntDict.get source dest.incoming
+                  |> Debug.log "Is there a 1-hop link?"
+                  |> Maybe.map (\conn -> Set.member (Debug.log "Checking for transition" h) (Debug.log "Connection is" conn))
+                  |> Maybe.withDefault False
+                  |> Debug.log ("Is there a 1-link hop from #" ++ String.fromInt destination ++ " to #" ++ String.fromInt source)
+      in
+        createPathTo destination [source] acceptFunction model
     )
-    (createPathTo source model)
-    (Graph.get destination model.graph)
-
--- this covers adding a new node; linking two existing nodes;
--- and changing a transition between nodes.
-userchange_generalModification : Model -> NodeId -> Maybe RequestedGraphChanges
-userchange_generalModification model destination =
-  Maybe.map ModificationEndingAt (createPathTo destination model)
+    (Graph.get destination (model.graph |> debugGraph "getting userchange-data from"))
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -588,9 +601,9 @@ update offset_amount msg model =
               , unusedId = model.unusedId + 1
               }
           in
-            userchange_generalModification newModel model.unusedId
+            userchange_data newModel src model.unusedId
             |> Maybe.map
-              (\v -> { newModel | userRequestedChanges = v :: model.userRequestedChanges })
+              (\v -> { newModel | userRequestedChanges = ModificationEndingAt v :: model.userRequestedChanges })
             |> Maybe.withDefault model
 
         updateExistingNode src dest =
@@ -619,14 +632,15 @@ update offset_amount msg model =
               , basicForces =
                   basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
               }
+            changeData = userchange_data newModel src dest
             change =
               if Set.isEmpty model.selectedTransitions then
-                userchange_removeLink newModel src dest
+                RemoveLink
               else
-                userchange_generalModification newModel dest
+                ModificationEndingAt
           in
-            change |> Maybe.map
-              (\v -> { newModel | userRequestedChanges = v :: model.userRequestedChanges })
+            changeData |> Maybe.map
+              (\v -> { newModel | userRequestedChanges = change v :: model.userRequestedChanges })
             |> Maybe.withDefault model
 
       in
@@ -810,14 +824,22 @@ confirmChanges model_ =
             |> toGraph
           )
         |> Maybe.withDefault graph
-    applyChange_removeLink : RequestedChangePath -> RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
-    applyChange_removeLink a b g =
+    applyChange_removeLink : RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
+    applyChange_removeLink path g =
       let
+        fromAndTo =
+          case path of
+            [] -> -- special case: recursive on the start node.
+              Just ( g.root, g.root )
+            _::t ->
+              Maybe.map2
+                (\a b -> (a, b))
+                (followPathTo t g)
+                (followPathTo path g)
         newGraph =
-          Maybe.map2
-            (\from to -> modifyConnection from to Set.empty g)
-            (followPathTo a g)
-            (followPathTo b g)
+          Maybe.map
+            (\(from, to) -> removeConnection from to g)
+            fromAndTo
           |> Maybe.withDefault g.graph
       in
         { graph = newGraph
@@ -843,8 +865,8 @@ confirmChanges model_ =
   List.foldl
     (\change g ->
         case change of
-          RemoveLink { source, destination } ->
-            applyChange_removeLink source destination g
+          RemoveLink path ->
+            applyChange_removeLink path g
           ModificationEndingAt path ->
             applyChange_generalModification path g
     )

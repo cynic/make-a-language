@@ -639,6 +639,10 @@ modifyConnection source target newConn g =
     |> toGraph
     |> .graph
 
+removeConnection : NodeId -> NodeId -> AutomatonGraph a -> Graph a Connection
+removeConnection a b g =
+  modifyConnection a b Set.empty g
+
 addString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
 addString string maybe_dfa =
   let
