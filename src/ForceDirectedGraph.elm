@@ -296,23 +296,26 @@ createPathTo target model =
     -- avoid backtracking; so, we have a "seen" set.
     findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
     findPath seen current acc =
-      Graph.get current model.graph
-      |> Maybe.andThen
-        (\node ->
-          if node.node.id == model.start then
-            Just acc
-          else
-            node.incoming
-            |> IntDict.toList
-            |> List.filterMap
-              (\(k, v) ->
-                Set.toList v
-                |> List.head
-                |> Maybe.andThen
-                  (\t -> findPath (Set.insert current seen) k (t::acc))
-              )
-            |> List.minimumBy List.length
-        )
+      if Set.member current seen then
+        Nothing
+      else
+        Graph.get current model.graph
+        |> Maybe.andThen
+          (\node ->
+            if node.node.id == model.start then
+              Just acc
+            else
+              node.incoming
+              |> IntDict.toList
+              |> List.filterMap
+                (\(k, v) ->
+                  Set.toList v
+                  |> List.head
+                  |> Maybe.andThen
+                    (\t -> findPath (Set.insert current seen) k (t::acc))
+                )
+              |> List.minimumBy List.length
+          )
   in
     findPath Set.empty target []
     |> Debug.log ("[createPathTo] Asked to find path to #" ++ String.fromInt target ++ ", found")
@@ -434,7 +437,7 @@ update offset_amount msg model =
             ( offsetX, offsetY ) = model.pan
             nearby =
               nearby_nodes nearby_node_repulsionDistance model
-              |> Debug.log "Nearby nodes at end of drag"
+              -- |> Debug.log "Nearby nodes at end of drag"
             sf =
               IntDict.insert index
                 [ Force.towardsX [{ node = index, strength = 2, target = x + offsetX }]
@@ -627,23 +630,18 @@ update offset_amount msg model =
             |> Maybe.withDefault model
 
       in
-        Debug.log "006" |> \_ ->
         model.selectedSource
         |> Maybe.map (\src -> -- if we have a source, there may be "active", confirmable transitions that the user has selected
           case model.selectedDest of
             ( NewNode ( x, y ) ) ->
               -- create a totally new node, never before seen!
-              Debug.log "000" |> \_ ->
               createNewNode src x y
             ( ExistingNode dest ) -> -- TODO: Existing Nodes.  The full gamut, in sha Allah!
-              Debug.log "001" |> \_ ->
               updateExistingNode src dest
             ( EditingTransitionTo dest ) ->
-              Debug.log "002" |> \_ ->
               updateExistingNode src dest
             ( NoDestination ) ->
               -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
-              Debug.log "003" |> \_ ->
               model
         )
         |> Maybe.withDefaultLazy (\() ->
@@ -651,10 +649,8 @@ update offset_amount msg model =
           -- however…
           case model.userRequestedChanges of
             [] ->
-              Debug.log "004" |> \_ ->
               model -- nothing for me to do!
             _ ->
-              Debug.log "005" |> \_ ->
               confirmChanges model
         )
 
