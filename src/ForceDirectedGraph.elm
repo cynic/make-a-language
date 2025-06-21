@@ -29,7 +29,7 @@ import Set exposing (Set)
 import IntDict
 import Time
 import List.Extra as List
-import Automata.DFA exposing (wordsEndingAt, removeConnection, fromAutomatonGraph)
+import Automata.DFA exposing (wordsEndingAt, modifyConnection, removeConnection, fromAutomatonGraph)
 import Automata.Data exposing (isTerminal)
 import Automata.DFA exposing (toGraph)
 import Automata.DFA exposing (union)
@@ -112,6 +112,10 @@ type RequestedGraphChanges
   --  iii.  the changing of a transition
   -- does not matter.  All three of these can be covered by the same operation.
   | UnionWith (DFARecord {} Entity)
+  -- If we union to alter the transitions in a link, then we're only able to
+  -- add transitions, not remove them.  `RemoveLink` is specialization of the
+  -- link modification functionality.
+  | UpdateLink RequestedChangePath RequestedChangePath Connection
   -- We don't actually need node-removal.  Why?  Because we can always just remove
   -- a link, and then the nodes after it will go away (if they should have done so).
   -- Of course, we will not be able to remove the "start" node… and actually, that's
@@ -638,36 +642,44 @@ update offset_amount msg model =
 
         updateExistingNode src dest =
           let
+            pathA =
+              createPathTo src [] (\_ -> True) model.graph model.start
+            pathB =
+              createPathTo dest [] (\_ -> True) model.graph model.start
             updatedGraph =
               Graph.update dest
                 (Maybe.map (\node ->
                   { node
                     | incoming =
                         IntDict.insert src model.selectedTransitions node.incoming
-                    , outgoing =
-                        -- if it's recursive, I must add it to both so that it reflects in the graph.
-                        if src == dest then
-                          IntDict.insert src model.selectedTransitions node.outgoing
-                        else
-                          node.outgoing
                   }
                 ))
                 model.graph
+              -- if it's recursive, I must add it to both so that it reflects in the graph.
+              -- in other cases, this should do no harm.
+              |> Graph.update src
+                (Maybe.map (\node ->
+                  { node
+                    | outgoing =
+                        IntDict.insert dest model.selectedTransitions node.outgoing
+                  }
+                ))
               |> debugGraph "[update→Confirm→updateExistingNode] updated graph"
             newModel =
-              create_w_dfa dest model.start updatedGraph
-              |> Maybe.map
-                (\w_dfa ->
+              Maybe.map2
+                (\a b ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
                   , graph = updatedGraph
-                  , userRequestedChanges = UnionWith w_dfa :: model.userRequestedChanges
+                  , userRequestedChanges = UpdateLink a b model.selectedTransitions :: model.userRequestedChanges
                   , basicForces =
                       basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
                   }
                 )
+                pathA
+                pathB
               |> Maybe.withDefault model
           in
             newModel
@@ -856,6 +868,7 @@ confirmChanges model_ =
       union (debugDFA_ "w_dfa" w_dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
       |> Automata.DFA.debugDFA_ "[GeneralModification] After union"
       |> toGraph
+
     applyChange_removeLink : RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
     applyChange_removeLink path g =
       let
@@ -881,6 +894,22 @@ confirmChanges model_ =
         , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
         , root = g.root
         }
+
+    applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
+    applyChange_updateLink pathA pathB conn g =
+      let
+        newGraph =
+          Maybe.map2
+            (\from to -> modifyConnection from to conn g)
+            (followPathTo pathA g)
+            (followPathTo pathB g)
+          |> Maybe.withDefault g.graph
+      in
+        { graph = newGraph
+        , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
+        , root = g.root
+        }
+
     mkSim g model =
       let
         (w, h)  = model_.dimensions
@@ -904,6 +933,8 @@ confirmChanges model_ =
               applyChange_removeLink path g
             UnionWith dfa ->
               applyChange_union dfa g
+            UpdateLink pathA pathB conn ->
+              applyChange_updateLink pathA pathB conn g
       )
       ag
       (List.reverse model_.userRequestedChanges)
