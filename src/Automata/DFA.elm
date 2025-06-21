@@ -627,6 +627,7 @@ modifyConnection source target newConn g =
   in
     rewriteLink g.graph
     |> fromGraph g.root
+    |> debugDFA_ "[modifyConnection] After rewriteLink + conversion to DFA"
     |> craaazy_extend
     |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
     |>( \dfa ->
@@ -744,42 +745,70 @@ fromGraph start graph =
   }
   |> fromAutomatonGraph
 
+
+splitTerminalAndNonTerminal : AutomatonGraph a -> AutomatonGraph a
+splitTerminalAndNonTerminal g =
+  {-
+    In this function, I try to split terminal and non-terminal transitions.
+    When a node's incoming Connections contain only terminal nodes, or only
+    non-terminal nodes, then there is no problem when we convert to a DFA
+    because the DFA's "finals" field will correctly record the status of all
+    those transitions.  However, whenever the incoming field contains a mix
+    of terminal and non-terminal transitions, then we must split the node
+    into two nodes, one for each type of transition.
+
+    (reminder: a terminal transition is identified by the second element of
+     the transition tuple.  For terminal transitions, this will be 1; for
+     non-terminal transitions, this will be 0).
+
+    If the original node is `q`, let all terminal transitions terminate at
+    `q`.  Then create a new node `r` which shares all of the outgoing edges
+    of `q`, but accepts only non-terminal transitions.  The new node `r` can
+    be given a node-id based on the .maxId field of the AutomatonGraph, which
+    can be incremented to result in an unused node-id.
+  -}
+  g
+
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
-fromAutomatonGraph g =
-  { states =
-      Graph.nodes g.graph
-      |> List.map (\node -> ( node.id, node.label) )
-      |> IntDict.fromList
-  , start = g.root
-  , finals =
-      Graph.fold
-        (\ctx finals ->
-          if isTerminalNode ctx then 
-            Set.insert ctx.node.id finals
-          else
-            finals
-        )
-        Set.empty
-        g.graph
-  , transition_function =
-      Graph.fold
-        (\ctx transitions ->
-          if IntDict.isEmpty ctx.outgoing then
-            -- otherwise, I will be adding a spurious Dict.empty,
-            -- which will affect comparisons in register_or_replace later on.
-            transitions
-          else
-            IntDict.foldl
-              (\dest conn dict ->
-                Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
-              )
-              Dict.empty
-              ctx.outgoing
-            |> \dict -> IntDict.insert ctx.node.id dict transitions
-        )
-        IntDict.empty
-        g.graph
-  }
+fromAutomatonGraph =
+  let
+    craft g =
+      { states =
+          Graph.nodes g.graph
+          |> List.map (\node -> ( node.id, node.label) )
+          |> IntDict.fromList
+      , start = g.root
+      , finals =
+          Graph.fold
+            (\ctx finals ->
+              if isTerminalNode ctx then 
+                Set.insert ctx.node.id finals
+              else
+                finals
+            )
+            Set.empty
+            g.graph
+      , transition_function =
+          Graph.fold
+            (\ctx transitions ->
+              if IntDict.isEmpty ctx.outgoing then
+                -- otherwise, I will be adding a spurious Dict.empty,
+                -- which will affect comparisons in register_or_replace later on.
+                transitions
+              else
+                IntDict.foldl
+                  (\dest conn dict ->
+                    Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
+                  )
+                  Dict.empty
+                  ctx.outgoing
+                |> \dict -> IntDict.insert ctx.node.id dict transitions
+            )
+            IntDict.empty
+            g.graph
+      }
+  in
+    splitTerminalAndNonTerminal >> craft
 
 transitionToString : MTransition -> String
 transitionToString =
