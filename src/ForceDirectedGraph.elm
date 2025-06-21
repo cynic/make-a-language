@@ -399,7 +399,7 @@ path_for_removal graph start source destination =
                 [] -> -- special case, this is the root
                   ( p, p )
                 _::revPath ->
-                  ( p, List.reverse revPath )
+                  ( List.reverse revPath, p )
           )
           path
     )

@@ -615,20 +615,17 @@ modifyConnection source target newConn g =
         (Maybe.map (\sourceContext ->
           { sourceContext
             | outgoing =
-                IntDict.update target
-                  (\_ ->
-                    if Set.isEmpty newConn then
-                      Nothing
-                    else
-                      Just newConn
-                  )
-                  sourceContext.outgoing
+                if Set.isEmpty newConn then
+                  IntDict.remove target sourceContext.outgoing
+                else
+                  IntDict.insert target newConn sourceContext.outgoing
           }
         ))
   in
     rewriteLink g.graph
+    |> Automata.Debugging.debugGraph "[modifyConnection] After rewriteLink"
     |> fromGraph g.root
-    |> debugDFA_ "[modifyConnection] After rewriteLink + conversion to DFA"
+    |> debugDFA_ "[modifyConnection] After conversion to DFA"
     |> craaazy_extend
     |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
     |>( \dfa ->
