@@ -601,7 +601,11 @@ modifyConnection source target newConn g =
       , clone_start =
           -- see the comment for .start.
           dfa.start
-      , queue_or_clone = [ source, target ]
+      , queue_or_clone =
+          if source == target then
+            [ source ]
+          else
+            [ source, target ]
       , unusedId = IntDict.keys dfa.states |> List.maximum |> Maybe.withDefault 0 |> (+) 1
       }
     rewriteLink : Graph a Connection -> Graph a Connection
