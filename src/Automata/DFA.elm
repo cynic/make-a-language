@@ -679,11 +679,20 @@ wordsToDFA strings =
     , finals = Set.empty
     }
 
-fromWords : List String -> AutomatonGraph ()
+empty : a -> DFARecord {} a
+empty defaultValue =
+  { states = IntDict.singleton 0 defaultValue
+  , transition_function = IntDict.empty
+  , start = 0
+  , finals = Set.empty
+  }
+
+fromWords : List String -> DFARecord {} ()
 fromWords =
   List.foldl addString Nothing
-  >> Maybe.map toGraph
-  >> Maybe.withDefault Automata.Data.empty
+  >> Maybe.withDefault (empty ())
+  -- >> Maybe.map toGraph
+  -- >> Maybe.withDefault Automata.Data.empty
 
 toGraph : DFARecord a b -> AutomatonGraph b
 toGraph dfa =
@@ -786,7 +795,7 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
   let
     visited = Set.insert nodeId visited_orig
   in
-  if nodeId == dfa.start then
+  if nodeId == dfa.start && Set.member nodeId visited_orig then
     -- we are done!
     { dfa | states = IntDict.insert nodeId label dfa.states }
   else if Set.member nodeId visited_orig then
