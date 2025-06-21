@@ -103,7 +103,7 @@ type alias RequestedChangePath = List Automata.Data.Transition -- transitions go
 type RequestedGraphChanges
   -- transition-related changes: convert non-final to final, convert final to non-final, remove a transition, add a transition
   -- all of which can & should be handled via ModifyTransition tbh
-  = RemoveLink RequestedChangePath
+  = RemoveLink RequestedChangePath RequestedChangePath
   -- I use `wordsEndingAt` to get the w_dfa based only on the target, and
   -- with `union` and knowledge of the dfa _just before_ the operation, I
   -- can complete the operation; and whether it is
@@ -360,7 +360,7 @@ followPathTo path g =
     followPath g.root path
     |> Debug.log ("[followPathTo] Followed " ++ Debug.toString path ++ " to arrive at")
 
-path_for_removal : Graph Entity Connection -> NodeId -> NodeId -> NodeId -> Maybe RequestedChangePath
+path_for_removal : Graph Entity Connection -> NodeId -> NodeId -> NodeId -> Maybe (RequestedChangePath, RequestedChangePath)
 path_for_removal graph start source destination =
   -- this is called when there is a link between the source and destination,
   -- and it must be removed.  As a result, other nodes might be disconnected.
@@ -373,11 +373,11 @@ path_for_removal graph start source destination =
           -- (unless we are dealing with recursion).
           -- Check the recursive case first.
           if source == destination then
-            \_ -> True -- the checks in createPathTo should already cover this.
+            \_ -> True |> Debug.log "No accept-check, this is recursive" -- the checks in createPathTo should already cover this.
           else
-            \path ->
+            \p ->
               -- we reverse because we want to check the LAST link in the chain for 1-hop
-              case List.reverse path of
+              case List.reverse p of
                 [] ->  -- you're not recursive, so there must be AT LEAST one link!
                   False
                   |> Debug.log "Failed accept: no links in path, but not recursive"
@@ -387,8 +387,21 @@ path_for_removal graph start source destination =
                   |> Maybe.map (\conn -> Set.member (Debug.log "Checking for transition" h) (Debug.log "Connection is" conn))
                   |> Maybe.withDefault False
                   |> Debug.log ("Is there a 1-link hop from #" ++ String.fromInt destination ++ " to #" ++ String.fromInt source)
+        path =
+          createPathTo destination [source] acceptFunction graph start
       in
-        createPathTo destination [source] acceptFunction graph start
+        Maybe.map
+          (\p ->
+            if source == destination then
+              ( p, p )
+            else
+              case List.reverse p of
+                [] -> -- special case, this is the root
+                  ( p, p )
+                _::revPath ->
+                  ( p, List.reverse revPath )
+          )
+          path
     )
     (Graph.get destination (graph |> debugGraph "getting userchange-data from"))
 
@@ -699,13 +712,13 @@ update offset_amount msg model =
             newModel =
               path
               |> Maybe.map
-                (\v ->
+                (\(a, b) ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
                   , graph = updatedGraph
-                  , userRequestedChanges = RemoveLink v :: model.userRequestedChanges
+                  , userRequestedChanges = RemoveLink a b :: model.userRequestedChanges
                   , basicForces =
                       basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
                   }
@@ -866,34 +879,7 @@ confirmChanges model_ =
     applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
     applyChange_union w_dfa graph =
       union (debugDFA_ "w_dfa" w_dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
-      |> Automata.DFA.debugDFA_ "[GeneralModification] After union"
       |> toGraph
-
-    applyChange_removeLink : RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
-    applyChange_removeLink path g =
-      let
-        fromAndTo =
-          case path of
-            [] -> -- special case: recursive on the start node.
-              Just ( g.root, g.root )
-            _ ->
-              Maybe.map2
-                (\a b -> (a, b))
-                ( List.reverse path
-                  |> List.tail
-                  |> Maybe.andThen (\t -> followPathTo (List.reverse t) g)
-                )
-                (followPathTo path g)
-        newGraph =
-          Maybe.map
-            (\(from, to) -> removeConnection from to g)
-            fromAndTo
-          |> Maybe.withDefault g.graph
-      in
-        { graph = newGraph
-        , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
-        , root = g.root
-        }
 
     applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_updateLink pathA pathB conn g =
@@ -929,12 +915,15 @@ confirmChanges model_ =
     List.foldl
       (\change g ->
           case change of
-            RemoveLink path ->
-              applyChange_removeLink path g
+            RemoveLink pathA pathB ->
+              applyChange_updateLink pathA pathB Set.empty g
+              |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→RemoveLink]"
             UnionWith dfa ->
               applyChange_union dfa g
+              |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→UnionWith]"
             UpdateLink pathA pathB conn ->
               applyChange_updateLink pathA pathB conn g
+              |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→UpdateLink]"
       )
       ag
       (List.reverse model_.userRequestedChanges)

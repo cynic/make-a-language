@@ -628,7 +628,7 @@ modifyConnection source target newConn g =
     rewriteLink g.graph
     |> fromGraph g.root
     |> craaazy_extend
-    -- |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
+    |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
     |>( \dfa ->
           if Set.isEmpty newConn then
             remove_unreachable (all_forward_transitions target dfa) dfa
@@ -636,9 +636,9 @@ modifyConnection source target newConn g =
             dfa -- skip step; nothing is disconnected by this.
       )
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    -- |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
+    |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
     |> replace_or_register
-    -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
+    |> debugExtDFA_ "[modifyConnection] After replace_or_register"
     |> retract
     |> toGraph
     |> .graph
