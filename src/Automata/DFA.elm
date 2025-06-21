@@ -787,8 +787,7 @@ connectionToString =
   >> Set.toList
   >> String.concat
 
-{-
-
+{-| Create a DFA consisting of all paths ending at the specified transition.
 -}
 wordsEndingAt : (NodeId, b) -> Graph.Graph b Connection -> Set NodeId -> DFARecord a b -> DFARecord a b
 wordsEndingAt (nodeId, label) graph visited_orig dfa =
