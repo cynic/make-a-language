@@ -13,6 +13,7 @@ import List.Extra exposing (remove)
 import Maybe.Extra
 import Html exposing (tr)
 import Tuple.Extra
+import Automata.Debugging
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -627,6 +628,7 @@ modifyConnection source target newConn g =
   in
     rewriteLink g.graph
     |> fromGraph g.root
+    |> debugDFA_ "[modifyConnection] After rewriteLink + conversion to DFA"
     |> craaazy_extend
     |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
     |>( \dfa ->
@@ -744,42 +746,234 @@ fromGraph start graph =
   }
   |> fromAutomatonGraph
 
+
+splitTerminalAndNonTerminal : AutomatonGraph a -> AutomatonGraph a
+splitTerminalAndNonTerminal g =
+  {-
+    In this function, I try to split terminal and non-terminal transitions.
+    When a node's incoming Connections contain only terminal nodes, or only
+    non-terminal nodes, then there is no problem when we convert to a DFA
+    because the DFA's "finals" field will correctly record the status of all
+    those transitions.  However, whenever the incoming field contains a mix
+    of terminal and non-terminal transitions, then we must split the node
+    into two nodes, one for each type of transition.
+
+    (reminder: a terminal transition is identified by the second element of
+     the transition tuple.  For terminal transitions, this will be 1; for
+     non-terminal transitions, this will be 0).
+
+    If the original node is `q`, let all terminal transitions terminate at
+    `q`.  Then create a new node `r` which shares all of the outgoing edges
+    of `q`, but accepts only non-terminal transitions.  The new node `r` can
+    be given a node-id based on the .maxId field of the AutomatonGraph, which
+    can be incremented to result in an unused node-id.
+  -}
+  let
+        -- Helper to classify a transition as terminal or non-terminal
+    isTerminal : (MTransition, Int) -> Bool
+    isTerminal (_, isFinal) =
+      isFinal == 1
+
+    isNonTerminal : (MTransition, Int) -> Bool
+    isNonTerminal (_, isFinal) =
+      isFinal == 0
+
+    -- Find the next unused node id
+    nextId : Int
+    nextId =
+      g.maxId + 1
+
+    -- For each node, determine if it needs to be split
+    nodesToSplit =
+      Graph.nodeIds g.graph
+      |> List.filterMap (\id -> Graph.get id g.graph {- |> Debug.log ("Node for id" ++ String.fromInt id) -})
+      |> List.filter (\node ->
+        let
+          incomingTransitions =
+            node.incoming
+            |> IntDict.values
+            |> List.concatMap Set.toList
+          -- hmm.  For recursion, outgoing is authoritative, and incoming does not show the incoming recursive edge.
+          outgoingRecursive =
+            (node.outgoing |> IntDict.get node.node.id |> Maybe.map Set.toList |> Maybe.withDefault [])
+          allIncoming =
+            outgoingRecursive ++ incomingTransitions
+            -- |> Debug.log ("Incoming transitions to " ++ String.fromInt node.node.id)
+          hasTerminal = List.any isTerminal allIncoming
+          hasNonTerminal = List.any isNonTerminal allIncoming
+        in
+          hasTerminal && hasNonTerminal
+      )
+      |> Debug.log "nodes to split"
+
+    -- Build a mapping from node id to new split node id (for non-terminal transitions)
+    splitMap : Dict NodeId NodeId
+    splitMap =
+      List.indexedMap (\i node -> (node.node.id, nextId + i)) nodesToSplit
+      |> Dict.fromList
+
+    newMaxId = Dict.keys splitMap |> List.maximum |> Maybe.withDefault g.maxId
+
+    -- Helper to update incoming edges for all nodes
+    updateIncoming : List (NodeContext a Connection) -> List (NodeContext a Connection)
+    updateIncoming nodes =
+        nodes
+        |> List.concatMap
+          (\node ->
+            case Dict.get node.node.id splitMap of
+              Nothing ->
+                -- Not split, keep as is
+                [ node ]
+              Just newId ->
+                -- Split: create two nodes
+                let
+                  -- Partition incoming transitions
+                  (terminalIn, nonTerminalIn) =
+                    node.incoming
+                    |> IntDict.toList
+                    |> List.foldl
+                        (\(src, conns) (tAcc, ntAcc) ->
+                          let
+                            (tSet, ntSet) = Set.partition isTerminal conns
+                          in
+                            ( if Set.isEmpty tSet then tAcc else IntDict.insert src tSet tAcc
+                            , if Set.isEmpty ntSet then ntAcc else IntDict.insert src ntSet ntAcc
+                            )
+                        )
+                        (IntDict.empty, IntDict.empty)
+
+                  -- The outgoing edges are the same for both nodes
+                  outgoing = node.outgoing
+                  label = node.node.label
+                  -- Create the original node with only terminal incoming
+                  nodeTerm =
+                    { node
+                      | incoming = terminalIn
+                      , outgoing = outgoing
+                    }
+                  -- Create the new node with only non-terminal incoming
+                  nodeNonTerm =
+                    { node
+                      | node =
+                          { id = newId
+                          , label = label
+                          }
+                      , incoming = nonTerminalIn
+                      , outgoing = outgoing
+                    }
+                in
+                  [ nodeTerm, nodeNonTerm ]
+          )
+
+    -- Helper to update outgoing edges for all nodes
+    updateOutgoing : List (NodeContext a Connection) -> List (NodeContext a Connection)
+    updateOutgoing nodes =
+      nodes
+      |> List.map (\node ->
+          let
+            newOutgoing =
+              IntDict.foldl
+                (\dest conns acc ->
+                  case Dict.get dest splitMap of
+                    Nothing ->
+                      -- Destination not split, keep as is
+                      IntDict.insert dest conns acc
+                    Just newId ->
+                      -- Partition outgoing transitions
+                      let
+                        (tSet, ntSet) =
+                          Set.partition isTerminal conns
+                        acc1 =
+                          if not (Set.isEmpty tSet) then
+                            IntDict.insert dest tSet acc
+                          else
+                            acc
+                        acc2 =
+                          if not (Set.isEmpty ntSet) then
+                            IntDict.insert newId ntSet acc1
+                          else
+                            acc1
+                      in
+                        acc2
+                )
+                IntDict.empty
+                node.outgoing
+          in
+            { node | outgoing = newOutgoing }
+      )
+
+    -- Compose the new node list
+    newNodeContexts =
+      g.graph
+      |> Graph.nodeIds
+      |> List.filterMap (\id -> Graph.get id g.graph)
+      |> updateIncoming
+      |> updateOutgoing
+
+    newNodes =
+      List.map (\node -> node.node) newNodeContexts
+
+    newEdges =
+      List.concatMap
+        (\source ->
+          source.outgoing
+          |> IntDict.toList
+          |> List.map (\(dest, conn) -> Edge source.node.id dest conn )
+        )
+        newNodeContexts
+
+    -- Build the new graph
+    newGraph =
+      Graph.fromNodesAndEdges
+        newNodes
+        newEdges
+  in
+    { graph = newGraph
+    , maxId = newMaxId
+    , root = g.root
+    }
+    |> Automata.Debugging.debugAutomatonGraph " after split"
+
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
-fromAutomatonGraph g =
-  { states =
-      Graph.nodes g.graph
-      |> List.map (\node -> ( node.id, node.label) )
-      |> IntDict.fromList
-  , start = g.root
-  , finals =
-      Graph.fold
-        (\ctx finals ->
-          if isTerminalNode ctx then 
-            Set.insert ctx.node.id finals
-          else
-            finals
-        )
-        Set.empty
-        g.graph
-  , transition_function =
-      Graph.fold
-        (\ctx transitions ->
-          if IntDict.isEmpty ctx.outgoing then
-            -- otherwise, I will be adding a spurious Dict.empty,
-            -- which will affect comparisons in register_or_replace later on.
-            transitions
-          else
-            IntDict.foldl
-              (\dest conn dict ->
-                Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
-              )
-              Dict.empty
-              ctx.outgoing
-            |> \dict -> IntDict.insert ctx.node.id dict transitions
-        )
-        IntDict.empty
-        g.graph
-  }
+fromAutomatonGraph =
+  let
+    craft g =
+      { states =
+          Graph.nodes g.graph
+          |> List.map (\node -> ( node.id, node.label) )
+          |> IntDict.fromList
+      , start = g.root
+      , finals =
+          Graph.fold
+            (\ctx finals ->
+              if isTerminalNode ctx then 
+                Set.insert ctx.node.id finals
+              else
+                finals
+            )
+            Set.empty
+            g.graph
+      , transition_function =
+          Graph.fold
+            (\ctx transitions ->
+              if IntDict.isEmpty ctx.outgoing then
+                -- otherwise, I will be adding a spurious Dict.empty,
+                -- which will affect comparisons in register_or_replace later on.
+                transitions
+              else
+                IntDict.foldl
+                  (\dest conn dict ->
+                    Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
+                  )
+                  Dict.empty
+                  ctx.outgoing
+                |> \dict -> IntDict.insert ctx.node.id dict transitions
+            )
+            IntDict.empty
+            g.graph
+      }
+  in
+    Automata.Debugging.debugAutomatonGraph "before split" >> splitTerminalAndNonTerminal >> craft
 
 transitionToString : MTransition -> String
 transitionToString =
