@@ -31,7 +31,7 @@ import Time
 import List.Extra as List
 import Automata.DFA exposing (wordsEndingAt, modifyConnection, removeConnection, fromAutomatonGraph)
 import Automata.Data exposing (isTerminal)
-import Automata.DFA exposing (toGraph)
+import Automata.DFA exposing (toAutomatonGraph)
 import Automata.DFA exposing (union)
 import Automata.Debugging exposing (debugGraph)
 import Maybe.Extra as Maybe exposing (withDefaultLazy)
@@ -128,6 +128,11 @@ type alias Drag =
   , index : NodeId
   }
 
+type NodeAvailability
+  = Available -- the node is available for user modification
+  | Disconnected -- the node is disconnected: if you want to make changes, connect it first.
+  | NFANode -- the node is part of an NFA. A commit must be done before it can be available for changes.
+
 type alias Entity =
   Force.Entity NodeId { value : { } }
 
@@ -211,7 +216,7 @@ receiveWords : List String -> (Float, Float) -> Model
 receiveWords words (w, h) =
   let
     dfa = Automata.DFA.fromWords words
-    graph = Automata.DFA.toGraph dfa
+    graph = Automata.DFA.toAutomatonGraph dfa
     forceGraph = toForceGraph (graph {- |> Debug.log "Received by ForceDirectedGraph" -} )
     basic = basicForces graph.root forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph
@@ -893,7 +898,7 @@ confirmChanges model_ =
     applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
     applyChange_union w_dfa graph =
       union (debugDFA_ "w_dfa" w_dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
-      |> toGraph
+      |> toAutomatonGraph
 
     applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_updateLink pathA pathB conn g =

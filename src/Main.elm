@@ -220,7 +220,7 @@ update msg model =
       let
         words = String.split "\n" text |> List.filter ((/=) "")
         dfa = Automata.DFA.fromWords words
-        dfa_graph = Automata.DFA.toGraph dfa
+        dfa_graph = Automata.DFA.toAutomatonGraph dfa
       in
       ( { model
           | text = text
