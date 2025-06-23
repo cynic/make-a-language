@@ -7,13 +7,13 @@ import Automata.Data exposing (..)
 import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import Dict.Extra
 import Dict exposing (update)
-import Automata.MADFA exposing (toAutomatonGraph, collapse)
-import Automata.MADFA exposing (MADFARecord)
 import List.Extra exposing (remove)
 import Maybe.Extra
 import Html exposing (tr)
 import Tuple.Extra
 import Automata.Debugging
+import Css exposing (row)
+import Automata.Debugging exposing (debugGraph)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -66,6 +66,76 @@ type alias CloneResult a =
   , seen_qw : Set NodeId -- the states of q_w we've seen thus far.
   }
 
+-- for use from CLI
+mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
+mkDFA transitions finals =
+  { states = List.concatMap (\(a, _, b) -> [(a, ()), (b, ())]) transitions |> IntDict.fromList
+  , transition_function =
+      List.foldl
+        (\(a, ch, b) state ->
+          IntDict.update a
+            (\possible ->
+              case possible of
+                Nothing -> Just <| Dict.singleton ch b
+                Just existing ->
+                  -- overwrite if we have a collision.
+                  Just <| Dict.insert ch b existing
+            )
+            state
+        )
+        IntDict.empty
+        transitions
+  , start =
+      -- the start is taken as the very first state encountered
+      case transitions of
+        (s, _, _)::_ -> s
+        _ -> 0
+  , finals = Set.fromList finals
+  }
+
+mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph ()
+mkAutomatonGraph ts =
+  let
+    edges =
+      List.foldl
+        (\(src, s, dest) acc ->
+          Dict.update (src, dest)
+            (\item ->
+              let
+                transition =
+                  case String.toList s of
+                    ['!', ch] -> (ch, 1)
+                    [ch] -> (ch, 0)
+                    _ -> ('🛈', 0)
+              in
+                case item of
+                  Nothing ->
+                    Just <| Set.singleton transition
+                  Just conn ->
+                    Just <| Set.insert transition conn
+            )
+            acc
+        )
+        Dict.empty
+        ts
+      |> Dict.toList
+      |> List.map (\((src, dest), conn) -> Edge src dest conn)
+    nodes =
+      List.foldl
+        (\(src, _, dest) acc -> Set.insert src acc |> Set.insert dest)
+        Set.empty
+        ts
+      |> Set.toList
+      |> List.map (\x -> Node x ())
+  in
+    { graph =
+        Graph.fromNodesAndEdges nodes edges
+    , root =
+        case ts of
+          (src, _, _)::_ -> src
+          _ -> 0
+    , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
+    }
 
 extend : DFARecord a b -> DFARecord a b -> ExtDFA b
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
@@ -639,7 +709,7 @@ modifyConnection source target newConn g =
     |> replace_or_register
     |> debugExtDFA_ "[modifyConnection] After replace_or_register"
     |> retract
-    |> toGraph
+    |> toAutomatonGraph
     |> .graph
 
 removeConnection : NodeId -> NodeId -> AutomatonGraph a -> Graph a Connection
@@ -697,8 +767,8 @@ fromWords =
   -- >> Maybe.map toGraph
   -- >> Maybe.withDefault Automata.Data.empty
 
-toGraph : DFARecord a b -> AutomatonGraph b
-toGraph dfa =
+toAutomatonGraph : DFARecord a b -> AutomatonGraph b
+toAutomatonGraph dfa =
   let
     stateList = IntDict.toList dfa.states |> List.reverse --|> Debug.log "[toGraph] State-list"
     graph =
@@ -801,7 +871,7 @@ splitTerminalAndNonTerminal g =
         in
           hasTerminal && hasNonTerminal
       )
-      |> Debug.log "nodes to split"
+      |> debugLog_ "nodes to split" (Debug.toString << List.map (.node >> .id))
 
     -- Build a mapping from node id to new split node id (for non-terminal transitions)
     splitMap : Dict NodeId NodeId
@@ -931,9 +1001,335 @@ splitTerminalAndNonTerminal g =
     }
     |> Automata.Debugging.debugAutomatonGraph " after split"
 
+tableToString : Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> String
+tableToString table =
+  Dict.toList table
+  |> List.map
+    (\(sourceSet, columnDict) ->
+      Dict.foldl
+        (\transition (destSet, v) acc ->
+          acc
+          ++ (transitionToString transition) ++ "→"
+          ++ String.padRight 10 ' ' (Debug.toString destSet ++ ":" ++ Debug.toString v)
+        )
+        (String.padRight 10 ' ' (Debug.toString sourceSet))
+        columnDict
+    )
+  |> String.join "\n"
+
+debugTable_ : String -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+debugTable_ s t =
+  Debug.log (s ++ ":\n" ++ tableToString t) () |> \_ -> t
+
+nfaToDFA : AutomatonGraph a -> AutomatonGraph a
+nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
+  {-
+  Given a DFA
+
+    .←-k--.
+    0 -a→ 1 -b→ 2
+          ↺
+          k
+
+  … we should come up with a table like:
+
+          a   k    b
+      .-------------
+  0   |  1   -    -
+  1   |  -   0,1  2   <- state 1 goes via transition `k` to states 0 AND 1
+  2   |  -   -    -
+  0,1 |  1   0,1  2
+
+  …and then we can give the new "0,1" state a real name based on the actual
+  .maxId, so maybe something like "3".  But for now, it is useful to keep it
+  as an ordered list because it makes it easier to identify duplicate states;
+  renaming can happen much later.
+
+  So, how do we create this transition table?
+
+  First, we get the transitions from all the nodes and put them into
+  `table`.  The `table` is structured as
+
+  source-set → transition → (dest-set, node-label)
+
+  (
+    although we use the suffix "-set", they're actually lists; and they're all
+    sorted
+  )
+
+  The exact type is: Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+
+  We can then iterate through the source-set→transition intersection (which
+  gives us the unique cell that we're looking for).  When the dest-set has
+  one element only, then there's no problem with the transition; it's in
+  DFA form already.  However, when it has more than one element, then we need
+  to add a new "row" to the table (if such a row does not already exist) by
+  creating an appropriate source-set that takes its name from the dest-set.
+  We create the cell values by iterating through the respective table values
+  of all rows referenced by the source-set.
+
+  The process repeats until the table is complete: i.e., until there are no
+  combinations which are not in the table.
+
+  ----------
+
+  After the process is complete, we can proceed as follows:
+  1. Merge all states which have identical cell values, ensuring that we
+      update all references to those states.
+  2. Remove all states which cannot be reached via transitions from .root.
+  3. Rename the new rows (and all references to them) using the .maxId field.
+
+  Lastly, use the transition table to amend the graph using the Graph API,
+  thus turning an NFA into a DFA.
+  -}
+  let
+    -- Helper to normalize a list of NodeIds (sort and remove duplicates)
+    normalizeSet : List NodeId -> List NodeId
+    normalizeSet = List.sort >> List.Extra.unique
+
+    populateColumnData : IntDict Connection -> Dict Transition (List NodeId, a) -> Dict Transition (List NodeId, a)
+    populateColumnData outgoing columnDict =
+      IntDict.foldl
+        (\destId conn columnDict_ ->
+          Set.foldl
+            (\transition d ->
+              case Dict.get transition d of
+                Nothing ->
+                  Graph.get destId g.graph
+                  |> Maybe.map (\{node} -> Dict.insert transition ([destId], node.label) d)
+                  |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
+                Just (list, v) ->
+                  Dict.insert transition (normalizeSet (destId::list), v) d
+            )
+            columnDict_
+            conn
+        )
+        columnDict
+        outgoing
+
+    -- Get all transitions from the original NFA and organize them
+    -- Type: Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+    initialTable : Dict (List NodeId) (Dict Transition (List NodeId, a))
+    initialTable =
+      Graph.fold
+        (\node rowDict ->
+          populateColumnData node.outgoing Dict.empty
+          |> \d -> Dict.insert [node.node.id] d rowDict
+        )
+        Dict.empty
+        g.graph
+      |> debugTable_ "[nfaToDFA] Initial table"
+
+    -- Build the complete table by adding rows for multi-element dest-sets
+    buildCompleteTable : Dict (List NodeId) (Dict Transition (List NodeId, a)) -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+    buildCompleteTable table =
+      let
+        -- Find all dest-sets that have more than one element and aren't already in the table
+        newSourceSets =
+          table
+            |> Dict.values
+            |> List.concatMap Dict.values
+            |> List.map Tuple.first
+            |> List.filter (\destSet -> List.length destSet > 1)
+            -- |> List.map normalizeSet
+            |> List.Extra.unique
+            |> List.filter (\sourceSet -> not (Dict.member sourceSet table))
+
+        -- Create new rows for these source-sets
+        newTable =
+          List.foldl
+            (\sourceSet rowDict ->
+              sourceSet
+              |> List.filterMap (\id -> Graph.get id g.graph)
+              |> List.foldl (\{outgoing} -> populateColumnData outgoing) Dict.empty
+              |> \d -> Dict.insert sourceSet d rowDict
+            )
+            table
+            newSourceSets
+      in
+        case newSourceSets of
+          [] -> table
+          _ -> buildCompleteTable newTable
+
+    completeTable =
+      buildCompleteTable initialTable
+      |> debugTable_ "[nfaToDFA] Complete table"
+
+    -- Step 1: Merge states with identical cell values
+    rename : List NodeId -> Set (List NodeId) -> Dict (List NodeId) (Dict Transition (List NodeId, a)) -> Dict (List NodeId) (Dict Transition (List NodeId, a))
+    rename new_name old_names table =
+      let
+        with_renamed_columns =
+          Dict.map
+            (\_ columnDict ->
+              columnDict
+              |> Dict.map (\_ (destSet, v) ->
+                if Set.member destSet old_names then
+                  (new_name, v)
+                else
+                  (destSet, v)
+              )
+            )
+            table
+      in
+        case Dict.get new_name with_renamed_columns of
+          Just _ ->
+            -- if a new_name row already exists, then remove all other rows;
+            -- they will clutter up the namespace
+            Set.foldl Dict.remove with_renamed_columns old_names
+          Nothing ->
+            -- otherwise, rename the first of the old_names to new_name
+            -- and then remove the rest.
+            case Set.toList old_names |> List.findMap (\name -> Dict.get name with_renamed_columns) of
+              Nothing ->
+                -- … so, I didn't actually do ANY renaming.  Okay then!
+                table
+              Just v ->
+                Set.foldl
+                  Dict.remove
+                  (Dict.insert new_name v with_renamed_columns)
+                  old_names
+
+    mergeIdenticalState : ((List NodeId, b), List (List NodeId, b)) -> Dict (List NodeId) (Dict Transition (List NodeId, a)) -> Dict (List NodeId) (Dict Transition (List NodeId, a))
+    mergeIdenticalState ((mergeHead_sourceSet, _), to_merge) table =
+      let
+        sourceSets_to_merge = List.map Tuple.first to_merge |> Set.fromList
+        without_merged =
+          Set.foldl (\sourceSet table_ -> Dict.remove sourceSet table_) table sourceSets_to_merge
+      in
+        rename mergeHead_sourceSet sourceSets_to_merge without_merged
+
+    mergedTable =
+      let
+        -- Group source-sets by their transition dictionaries
+        groupedByTransitions =
+          completeTable
+          |> Dict.toList
+          |> List.Extra.gatherEqualsBy (\(_, transitions) -> transitions)
+          |> List.filter (\(_, group) -> List.length group > 1)
+          |> List.foldl mergeIdenticalState completeTable
+      in
+        groupedByTransitions
+        |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
+
+    -- Step 2: Remove unreachable states (keep only those reachable from root)
+    removeUnreachableStates : Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+    removeUnreachableStates table = -- not checked…
+      let
+        rootSet = [g.root]
+        
+        findReachable : List (List NodeId) -> Set (List NodeId) -> Set (List NodeId)
+        findReachable worklist visited =
+          case worklist of
+            [] -> visited
+            currentSet :: rest ->
+              if Set.member currentSet visited then
+                findReachable rest visited
+              else
+                let
+                  newVisited = Set.insert currentSet visited
+                  destinations = 
+                    Dict.get currentSet table
+                    |> Maybe.withDefault Dict.empty
+                    |> Dict.values
+                    |> List.map Tuple.first
+                    |> List.filter (\destSet -> not (Set.member destSet newVisited))
+                in
+                findReachable (rest ++ destinations) newVisited
+
+        reachableStates = findReachable [rootSet] Set.empty
+      in
+        table
+        |> Dict.filter (\sourceSet _ -> Set.member sourceSet reachableStates)
+
+    reachableTable =
+      removeUnreachableStates mergedTable
+      |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
+
+    -- Step 3: Rename rows using maxId
+    (finalTable, new_maxId) =
+      let
+        sourceSets = Dict.keys reachableTable |> List.filter (\sourceSet -> List.length sourceSet > 1)
+        baseId = g.maxId + 1
+        
+        renameMapping = 
+          sourceSets
+          |> List.indexedMap (\i sourceSet -> (sourceSet, [baseId + i]))
+
+        renamedTable =
+          List.foldl
+            (\(old_name, new_name) table ->
+              rename new_name (Set.singleton old_name) table
+            )
+            reachableTable
+            renameMapping
+      in
+        ( renamedTable |> debugTable_ "[nfaToDFA] Rows have been renamed", g.maxId + List.length renameMapping)
+
+    -- Build the new DFA graph using the Graph API
+    -- Create the new graph
+    newGraphNodes =
+      List.filterMap
+        (\idList ->
+          case idList of
+            [] -> Nothing
+            id::_ ->
+              case Graph.get id g.graph of
+                Just node -> -- in the original graph, just grab it from there
+                  Just (id, node.node.label)
+                Nothing -> -- was not in the original graph
+                  Dict.values finalTable
+                  |> List.findMap
+                    ( Dict.Extra.find (\_ (v, _) -> v == idList)
+                      >> Maybe.map (\(_, (_, label)) -> (id, label))
+                    )
+        )
+        (Dict.keys finalTable)
+      |> List.map (\(id, v) -> Node id v)
+
+    newGraphEdges =
+      Dict.foldl
+        (\sourceSet columnDict acc ->
+          case sourceSet of
+            [src] ->
+              Dict.foldl
+                (\transition (destSet, _) acc_ ->
+                  case destSet of
+                    [dest] ->
+                      Dict.update (src, dest)
+                        (\item ->
+                          case item of
+                            Nothing ->
+                              Just <| Set.singleton transition
+                            Just conn ->
+                              Just <| Set.insert transition conn
+                        ) acc_
+                    _ ->
+                      acc_
+                )
+                acc
+                columnDict
+            _ ->
+              acc
+        )
+        Dict.empty
+        finalTable
+      |> Dict.toList
+      |> List.map (\((src, dest), conn) -> Edge src dest conn)
+
+    newGraph =
+      Graph.fromNodesAndEdges newGraphNodes newGraphEdges
+      |> debugGraph "[nfaToDFA] Resulting graph"
+  in
+    { graph = newGraph
+    , root = g.root
+    , maxId = new_maxId
+    }
+
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraph =
   let
+    -- create the DFARecord.
     craft g =
       { states =
           Graph.nodes g.graph
@@ -970,15 +1366,14 @@ fromAutomatonGraph =
             g.graph
       }
   in
-    Automata.Debugging.debugAutomatonGraph "before split" >> splitTerminalAndNonTerminal >> craft
-
-transitionToString : MTransition -> String
-transitionToString =
-  String.fromChar
+    Automata.Debugging.debugAutomatonGraph "before split"
+    >> splitTerminalAndNonTerminal
+    >> nfaToDFA
+    >> craft
 
 connectionToString : MConnection -> String
 connectionToString =
-  Set.map transitionToString
+  Set.map String.fromChar
   >> Set.toList
   >> String.concat
 
@@ -1028,7 +1423,12 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
                                   (\maybe_dict ->
                                       case maybe_dict of
                                         Nothing -> Just (Dict.singleton t nodeId)
-                                        Just dict -> Just (Dict.insert t nodeId dict)
+                                        Just dict ->
+                                          case Dict.get t dict of
+                                            Just existing ->
+                                              Just dict |> Debug.log ("conflict with existing (" ++ String.fromInt existing ++ "); taking existing.")
+                                            Nothing ->
+                                              Just (Dict.insert t nodeId dict)
                                   )
                                   dfa_.transition_function
                             , finals =
@@ -1046,8 +1446,8 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
             -- at the end of this, I should have a List (NodeId, Char) to process.
           -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
       )
-    |> Maybe.withDefault dfa -- SHOULD NEVER BE HERE!!!
-    |> debugDFA_ ("[wordsEndingAt] Returning result")
+    |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo "GIUK%S") -- SHOULD NEVER BE HERE!!!
+    |> debugDFA_ ("[wordsEndingAt(" ++ String.fromInt nodeId ++ ")] Returning result")
     -- well, at this point, I have the DFA.  Now I need to union it.
 
 

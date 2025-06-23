@@ -31,7 +31,7 @@ import Time
 import List.Extra as List
 import Automata.DFA exposing (wordsEndingAt, modifyConnection, removeConnection, fromAutomatonGraph)
 import Automata.Data exposing (isTerminal)
-import Automata.DFA exposing (toGraph)
+import Automata.DFA exposing (toAutomatonGraph)
 import Automata.DFA exposing (union)
 import Automata.Debugging exposing (debugGraph)
 import Maybe.Extra as Maybe exposing (withDefaultLazy)
@@ -128,6 +128,11 @@ type alias Drag =
   , index : NodeId
   }
 
+type NodeAvailability
+  = Available -- the node is available for user modification
+  | Disconnected -- the node is disconnected: if you want to make changes, connect it first.
+  | NFANode -- the node is part of an NFA. A commit must be done before it can be available for changes.
+
 type alias Entity =
   Force.Entity NodeId { value : { } }
 
@@ -211,7 +216,7 @@ receiveWords : List String -> (Float, Float) -> Model
 receiveWords words (w, h) =
   let
     dfa = Automata.DFA.fromWords words
-    graph = Automata.DFA.toGraph dfa
+    graph = Automata.DFA.toAutomatonGraph dfa
     forceGraph = toForceGraph (graph {- |> Debug.log "Received by ForceDirectedGraph" -} )
     basic = basicForces graph.root forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph
@@ -297,34 +302,48 @@ createPathTo target waypoints accept graph start =
     findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
     findPath seen current acc =
       if Set.member current seen && current /= target then
-        Nothing |> Debug.log "Already seen this; must be on a recursive path; backtracking"
+        Nothing --|> Debug.log "Already seen this; must be on a recursive path; backtracking"
       else
-        Graph.get (Debug.log "current" current) graph
+        Graph.get ({-Debug.log "current"-} current) graph
         |> Maybe.andThen
           (\node ->
-            if node.node.id == start &&
-              List.all (\id -> id == current || Set.member id seen |> Debug.log ("Is #" ++ String.fromInt id ++ " in " ++ Debug.toString seen)) (target::waypoints) &&
-              accept acc then
-                Just acc
-              -- else
-              --   -- if I don't encounter `target` and all specified waypoints
-              --   -- on the way, then this path is useless to me.
-              --   Nothing |> Debug.log "Path failed checks"
-            else
-              node.incoming
-              |> IntDict.toList
-              |> Debug.log ("Incoming nodes for #" ++ String.fromInt current ++ " are")
-              |> List.filterMap
-                (\(k, v) ->
-                  if current /= k then
-                    Set.toList v
-                    |> List.head
-                    |> Maybe.andThen
-                      (\t -> findPath (Set.insert current seen) (Debug.log "going to look at" k) (Debug.log "current path" (t::acc)))
-                  else
-                    Nothing -- ignore purely recursive links; they won't get us anywhere.
-                )
-              |> List.minimumBy List.length
+            let
+              nodeIsStart = node.node.id == start
+              seenAllNecessaryNodes =
+                List.all
+                  (\id ->
+                    id == current ||
+                    Set.member id seen --|> Debug.log ("Is #" ++ String.fromInt id ++ " the current node or in " ++ Debug.toString seen)
+                  )
+                  (target::waypoints)
+              nodeIsAccepted = accept acc
+            in
+              if nodeIsStart && seenAllNecessaryNodes && nodeIsAccepted then
+                  Just acc
+                -- else
+                --   -- if I don't encounter `target` and all specified waypoints
+                --   -- on the way, then this path is useless to me.
+                --   Nothing |> Debug.log "Path failed checks"
+              else
+                node.incoming
+                |> IntDict.toList
+                -- |> Debug.log ("Incoming nodes for #" ++ String.fromInt current ++ " are")
+                |> List.filterMap
+                  (\(k, v) ->
+                    if current /= k then
+                      Set.toList v
+                      |> List.head
+                      |> Maybe.andThen
+                        (\t ->
+                          findPath
+                            (Set.insert current seen)
+                            ({- Debug.log "going to look at" -} k)
+                            ({- Debug.log "current path" -} (t::acc))
+                        )
+                    else
+                      Nothing -- ignore purely recursive links; they won't get us anywhere.
+                  )
+                |> List.minimumBy List.length
           )
   in
     findPath Set.empty target []
@@ -879,7 +898,7 @@ confirmChanges model_ =
     applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
     applyChange_union w_dfa graph =
       union (debugDFA_ "w_dfa" w_dfa) (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph graph.root graph.graph)
-      |> toGraph
+      |> toAutomatonGraph
 
     applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_updateLink pathA pathB conn g =
