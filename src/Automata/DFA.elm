@@ -66,6 +66,32 @@ type alias CloneResult a =
   , seen_qw : Set NodeId -- the states of q_w we've seen thus far.
   }
 
+-- for use from CLI
+mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
+mkDFA transitions finals =
+  { states = List.concatMap (\(a, _, b) -> [(a, ()), (b, ())]) transitions |> IntDict.fromList
+  , transition_function =
+      List.foldl
+        (\(a, ch, b) state ->
+          IntDict.update a
+            (\possible ->
+              case possible of
+                Nothing -> Just <| Dict.singleton ch b
+                Just existing ->
+                  -- overwrite if we have a collision.
+                  Just <| Dict.insert ch b existing
+            )
+            state
+        )
+        IntDict.empty
+        transitions
+  , start =
+      -- the start is taken as the very first state encountered
+      case transitions of
+        (s, _, _)::_ -> s
+        _ -> 0
+  , finals = Set.fromList finals
+  }
 
 extend : DFARecord a b -> DFARecord a b -> ExtDFA b
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
@@ -801,7 +827,7 @@ splitTerminalAndNonTerminal g =
         in
           hasTerminal && hasNonTerminal
       )
-      |> Debug.log "nodes to split"
+      |> debugLog_ "nodes to split" (Debug.toString << List.map (.node >> .id))
 
     -- Build a mapping from node id to new split node id (for non-terminal transitions)
     splitMap : Dict NodeId NodeId
@@ -1028,7 +1054,12 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
                                   (\maybe_dict ->
                                       case maybe_dict of
                                         Nothing -> Just (Dict.singleton t nodeId)
-                                        Just dict -> Just (Dict.insert t nodeId dict)
+                                        Just dict ->
+                                          case Dict.get t dict of
+                                            Just existing ->
+                                              Just dict |> Debug.log ("conflict with existing (" ++ String.fromInt existing ++ "); taking existing.")
+                                            Nothing ->
+                                              Just (Dict.insert t nodeId dict)
                                   )
                                   dfa_.transition_function
                             , finals =
@@ -1046,8 +1077,8 @@ wordsEndingAt (nodeId, label) graph visited_orig dfa =
             -- at the end of this, I should have a List (NodeId, Char) to process.
           -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
       )
-    |> Maybe.withDefault dfa -- SHOULD NEVER BE HERE!!!
-    |> debugDFA_ ("[wordsEndingAt] Returning result")
+    |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo "GIUK%S") -- SHOULD NEVER BE HERE!!!
+    |> debugDFA_ ("[wordsEndingAt(" ++ String.fromInt nodeId ++ ")] Returning result")
     -- well, at this point, I have the DFA.  Now I need to union it.
 
 

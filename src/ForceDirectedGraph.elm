@@ -297,34 +297,48 @@ createPathTo target waypoints accept graph start =
     findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
     findPath seen current acc =
       if Set.member current seen && current /= target then
-        Nothing |> Debug.log "Already seen this; must be on a recursive path; backtracking"
+        Nothing --|> Debug.log "Already seen this; must be on a recursive path; backtracking"
       else
-        Graph.get (Debug.log "current" current) graph
+        Graph.get ({-Debug.log "current"-} current) graph
         |> Maybe.andThen
           (\node ->
-            if node.node.id == start &&
-              List.all (\id -> id == current || Set.member id seen |> Debug.log ("Is #" ++ String.fromInt id ++ " in " ++ Debug.toString seen)) (target::waypoints) &&
-              accept acc then
-                Just acc
-              -- else
-              --   -- if I don't encounter `target` and all specified waypoints
-              --   -- on the way, then this path is useless to me.
-              --   Nothing |> Debug.log "Path failed checks"
-            else
-              node.incoming
-              |> IntDict.toList
-              |> Debug.log ("Incoming nodes for #" ++ String.fromInt current ++ " are")
-              |> List.filterMap
-                (\(k, v) ->
-                  if current /= k then
-                    Set.toList v
-                    |> List.head
-                    |> Maybe.andThen
-                      (\t -> findPath (Set.insert current seen) (Debug.log "going to look at" k) (Debug.log "current path" (t::acc)))
-                  else
-                    Nothing -- ignore purely recursive links; they won't get us anywhere.
-                )
-              |> List.minimumBy List.length
+            let
+              nodeIsStart = node.node.id == start
+              seenAllNecessaryNodes =
+                List.all
+                  (\id ->
+                    id == current ||
+                    Set.member id seen --|> Debug.log ("Is #" ++ String.fromInt id ++ " the current node or in " ++ Debug.toString seen)
+                  )
+                  (target::waypoints)
+              nodeIsAccepted = accept acc
+            in
+              if nodeIsStart && seenAllNecessaryNodes && nodeIsAccepted then
+                  Just acc
+                -- else
+                --   -- if I don't encounter `target` and all specified waypoints
+                --   -- on the way, then this path is useless to me.
+                --   Nothing |> Debug.log "Path failed checks"
+              else
+                node.incoming
+                |> IntDict.toList
+                -- |> Debug.log ("Incoming nodes for #" ++ String.fromInt current ++ " are")
+                |> List.filterMap
+                  (\(k, v) ->
+                    if current /= k then
+                      Set.toList v
+                      |> List.head
+                      |> Maybe.andThen
+                        (\t ->
+                          findPath
+                            (Set.insert current seen)
+                            ({- Debug.log "going to look at" -} k)
+                            ({- Debug.log "current path" -} (t::acc))
+                        )
+                    else
+                      Nothing -- ignore purely recursive links; they won't get us anywhere.
+                  )
+                |> List.minimumBy List.length
           )
   in
     findPath Set.empty target []
