@@ -67,9 +67,8 @@ type alias CloneResult a =
   }
 
 -- for use from CLI
--- might be an NFA, might be a DFA.  Can produce either.
-mkFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
-mkFA transitions finals =
+mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
+mkDFA transitions finals =
   { states = List.concatMap (\(a, _, b) -> [(a, ()), (b, ())]) transitions |> IntDict.fromList
   , transition_function =
       List.foldl
@@ -93,6 +92,50 @@ mkFA transitions finals =
         _ -> 0
   , finals = Set.fromList finals
   }
+
+mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph ()
+mkAutomatonGraph ts =
+  let
+    edges =
+      List.foldl
+        (\(src, s, dest) acc ->
+          Dict.update (src, dest)
+            (\item ->
+              let
+                transition =
+                  case String.toList s of
+                    ['!', ch] -> (ch, 1)
+                    [ch] -> (ch, 0)
+                    _ -> ('🛈', 0)
+              in
+                case item of
+                  Nothing ->
+                    Just <| Set.singleton transition
+                  Just conn ->
+                    Just <| Set.insert transition conn
+            )
+            acc
+        )
+        Dict.empty
+        ts
+      |> Dict.toList
+      |> List.map (\((src, dest), conn) -> Edge src dest conn)
+    nodes =
+      List.foldl
+        (\(src, _, dest) acc -> Set.insert src acc |> Set.insert dest)
+        Set.empty
+        ts
+      |> Set.toList
+      |> List.map (\x -> Node x ())
+  in
+    { graph =
+        Graph.fromNodesAndEdges nodes edges
+    , root =
+        case ts of
+          (src, _, _)::_ -> src
+          _ -> 0
+    , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
+    }
 
 extend : DFARecord a b -> DFARecord a b -> ExtDFA b
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
