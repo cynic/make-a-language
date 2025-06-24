@@ -7,6 +7,10 @@ import Automata.Data as D
 import Automata.Verification as D
 import List.Extra as List
 import Automata.DFA
+import Automata.DFA exposing (mkAutomatonGraph)
+import Automata.DFA exposing (fromAutomatonGraph)
+import Automata.DFA exposing (mkDFA)
+import Automata.DFA exposing (toAutomatonGraph)
 
 -- nodesAndWords : D.AutomatonGraph -> (Int, List String)
 -- nodesAndWords d =
@@ -19,11 +23,11 @@ czech l expectedRecognized =
       Expect.pass
     x::rest ->
       let
-        dawg =
+        dfa =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
           Automata.DFA.fromWords x
-        minimality = D.minimality dawg
-        recognized = D.verifiedRecognizedWords dawg
+        minimality = D.minimality (toAutomatonGraph dfa)
+        recognized = D.verifiedRecognizedWords (toAutomatonGraph dfa)
       in
         if recognized /= expectedRecognized then
           Debug.log "Failure on recognized words of permutation" x
@@ -226,4 +230,37 @@ suite =
     --     \_ ->
     --       standardTestForWords ["test","testable","tester","nest","nestable","nester","ne"]
     --   ]
+    ]
+
+suite2 : Test
+suite2 =
+  describe "An AutomatonGraph→DFA conversion"
+    [ describe "involves subset construction"
+      [ test "with one node" <|
+          \_ ->
+            let
+              g = mkAutomatonGraph [(0, "a", 1), (0, "a", 2), (1, "b", 2), (1, "k", 1), (1, "k", 0), (2, "!c", 3)]
+              dfa = fromAutomatonGraph g
+              expected = mkDFA [(0, 'a', 5), (2, 'c', 3), (4, 'a', 5), (4, 'b', 2), (4, 'k', 4), (5, 'b', 2), (5, 'c', 3), (5, 'k', 4)] [3]
+            in
+              Expect.equal expected dfa
+      ]
+    , describe "splits terminal and non-terminal nodes correctly"
+        [ test "basic recursive loop" <|
+            \_ ->
+              let
+                g = mkAutomatonGraph [(0, "!a", 1), (1, "b", 1)]
+                dfa = fromAutomatonGraph g
+                expected = mkDFA [(0, 'a', 1), (1, 'b', 2), (2, 'b', 2)] [1]
+              in
+                Expect.equal expected dfa
+        , test "basic connection with terminal & non-terminal" <|
+            \_ ->
+              let
+                g = mkAutomatonGraph [(0, "!a", 1), (0, "b", 1)]
+                dfa = fromAutomatonGraph g
+                expected = mkDFA [(0, 'a', 1), (0, 'b', 2)] [1]
+              in
+                Expect.equal expected dfa
+        ]
     ]
