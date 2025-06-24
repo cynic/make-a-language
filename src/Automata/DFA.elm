@@ -1010,7 +1010,7 @@ tableToString table =
         (\transition (destSet, v) acc ->
           acc
           ++ (transitionToString transition) ++ "→"
-          ++ String.padRight 10 ' ' (Debug.toString destSet ++ ":" ++ Debug.toString v)
+          ++ String.padRight 15 ' ' (Debug.toString destSet ++ ":" ++ Debug.toString v)
         )
         (String.padRight 10 ' ' (Debug.toString sourceSet))
         columnDict
