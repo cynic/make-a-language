@@ -767,6 +767,220 @@ fromWords =
   -- >> Maybe.map toGraph
   -- >> Maybe.withDefault Automata.Data.empty
 
+debugFan_ : String -> IntDict Connection -> IntDict Connection
+debugFan_ s fan =
+  IntDict.toList fan
+  |> List.map (\(id, conn) -> (id, Set.toList conn))
+  |> Debug.log s
+  |> \_ -> fan
+
+minimiseNodesByCombiningTransitions : Set NodeId -> Graph a Connection -> Graph a Connection
+minimiseNodesByCombiningTransitions finals_from_dfa g_ =
+  {-
+    The Graph representation encodes finality via transitions (e.g. (ch, 0) for
+    a non-final state and (ch, 1) for a final state). I convert that graph
+    representation into a "standard" DFA so that I can apply the minimisation
+    algorithm and, ideally, any other algorithms relating to standard DFAs from
+    the literature.  However, a standard DFA encodes finality via states.  This
+    means that I must do a transformation of the graph representation: see the
+    function `splitTerminalAndNonTerminal` for the details here.
+
+    So, I make the appropriate change(s) at the DFA level.  When converting
+    back to the graph representation for display, I may have new or, at least,
+    different nodes: minimisation can make changes, splitting terminal and
+    non-terminal can make changes, subset construction can make changes, and so
+    on.  So I cannot "track" nodes through this, unless I want to spend a LOT
+    of time and expense.  Instead, I identify nodes which can be combined by a
+    Graph representation (but not in a DFA representation) and I combine them
+    here.
+
+    So.  Let us say that we have nodes `p` and `q`.  If ALL
+    the outgoing transitions of `p` are equal to ALL the outgoing transitions
+    of `q`, in terms of the targeted node and the transition itself, but
+    EXCLUDING fully recursive links and links to each other, then I can
+    combine `p` and `q`.
+
+    At least… I think so.
+
+    So, let's try and see.
+
+    Algorithm:
+
+    1. Identify all the terminal nodes.  Place them into set T.
+    2. Partition the terminal nodes into those which have no outgoing edges (T1)
+       and those which do (T2).  For this check, recursive edges count as outgoing.
+    3. Start with T1. If there are any nodes anywhere else in the graph that have
+       no outgoing edges, INCLUDING recursive outgoing edges, then the incoming
+       connections can all be merged into one node. Do so.
+    4. Now examine T2.  For each node T2, we might have the following cases:
+       1. The node is extended by another node.
+       2. The node is the extension of another node.
+       3. The node can merge with another node.
+       4. The node is neither extended by, nor an extension of, any other node.
+
+       Cases 1-3, when identified, must be merged.  This means that all their
+       incoming connections and outcoming connections must be combined.
+       *** 🔴NOTE🔴 *** that post-merging, another of these cases may yet apply!
+       
+       So, how do I identify each case?
+
+       1. If a terminal node N is extended by another node, then it will have
+          these characteristics:
+          (i) The outgoing connections of N will be precisely the same, in terms
+              of transitions and targets, as the outgoing connections of M.
+              (this also takes into account the recursive connection expected to
+               be found on M, and any found on N).
+
+       2. If a terminal node M is an extension of another node, then it will have
+          these characteristics:
+          (i) There will be only one incoming connection, leading to a node N. The
+              outgoing connections of N will be precisely the same, in terms of
+              transitions and targets, as the outgoing connections of M.
+              (this also takes into account the recursive connection expected to
+               be found on M).
+
+       3. If the node N can merge with another node, then it will have these
+          characteristics:
+          (i) Any outgoing transition will lead to some node M.  M, in turn, will
+              have exactly the same incoming transition from a different node O.
+              Nodes O and N will have precisely the same outgoing connections in
+              terms of transitions and targets; this also takes recursive edges
+              into account.
+
+       4. Any node which does not fall into one of the above three cases is
+          considered to be in Case 4.  When all terminal nodes are part of
+          Case 4, the algorithm terminates.
+    -}
+  let
+    fanEquals a b =
+      IntDict.toList a == IntDict.toList b
+    redirectFan from to fan =
+      case IntDict.get from fan of
+        Just conn ->
+          case IntDict.get to fan of
+            Just conn2 ->
+              IntDict.insert to (Set.union conn conn2) fan
+              |> IntDict.remove from
+            Nothing ->
+              IntDict.insert to conn fan
+              |> IntDict.remove from
+        Nothing ->
+          fan
+    merge : NodeId -> NodeId -> Graph a Connection -> Graph a Connection
+    merge head other g =
+      Maybe.map2
+        (\headNode otherNode ->
+          let
+            updatedIncoming =
+              IntDict.uniteWith
+                (\_ -> Set.union)
+                (redirectFan other head headNode.incoming {- |> debugFan_ "[merge] headNode.incoming (redir)" -})
+                (redirectFan other head otherNode.incoming {- |> debugFan_ "[merge] otherNode.incoming (redir)"-})
+              -- |> debugFan_ "[merge] merged incoming"
+            updatedOutgoing =
+              IntDict.uniteWith
+                (\_ -> Set.union)
+                (redirectFan other head headNode.outgoing {- |> debugFan_ "[merge] headNode.outgoing (redir)" -})
+                (redirectFan other head otherNode.outgoing {- |> debugFan_ "[merge] otherNode.outgoing (redir)" -})
+              -- |> debugFan_ "[merge] merged outgoing"
+          in
+            Graph.insert { headNode | incoming = updatedIncoming , outgoing = updatedOutgoing } g
+            |> Graph.remove other
+        )
+        (Graph.get head g)
+        (Graph.get other g)
+      |> Maybe.withDefault g
+      |> debugGraph ("[minimiseNodes] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
+    classify : NodeId -> Graph a Connection -> Maybe (Graph a Connection)
+    classify terminal g =
+      -- classify the terminal node into one of the four classes
+      Graph.get terminal g
+      |> Maybe.andThen
+        (\node ->
+          if IntDict.isEmpty node.outgoing then
+            -- case T1
+            let
+              otherEmptyOutgoing =
+                Graph.fold
+                  (\nodeContext state ->
+                    if IntDict.isEmpty nodeContext.outgoing && nodeContext.node.id /= node.node.id then
+                      nodeContext.node.id :: state
+                    else
+                      state
+                  )
+                  []
+                  g
+                |> Debug.log ("[minimiseNodes] Nodes (besides #" ++ String.fromInt node.node.id ++ ") with no outgoing")
+              newGraph =
+                List.foldl
+                  (\nodeId state -> merge node.node.id nodeId state)
+                  g
+                  otherEmptyOutgoing
+                |> debugGraph "[minimiseNodes] After merging T1 nodes"
+            in
+              case otherEmptyOutgoing of
+                [] -> Nothing
+                _ -> Just newGraph
+          else
+            let
+              targets =
+                IntDict.keys node.outgoing
+                |> List.filterMap (\target -> Graph.get target g)
+              sources =
+                IntDict.keys node.incoming
+                |> List.filterMap (\source -> Graph.get source g)
+            in
+              case List.find (\target -> target.node.id /= node.node.id && fanEquals target.outgoing node.outgoing) targets of
+                Just equivalent ->
+                  -- Case T2, sub-case 1
+                  Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt node.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
+                  Just (merge node.node.id equivalent.node.id g)
+                Nothing ->
+                  case List.find (\source -> source.node.id /= node.node.id && fanEquals source.outgoing node.outgoing) sources of
+                    Just equivalent ->
+                      -- Case T2, sub-case 2
+                      Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt node.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
+                      Just (merge node.node.id equivalent.node.id g)
+                    Nothing ->
+                      case List.filter (\t -> t.node.id /= node.node.id) targets of
+                        m::_ ->
+                          IntDict.get node.node.id m.incoming
+                          |> Maybe.andThen
+                            (\chosenConnection ->
+                              IntDict.toList m.incoming
+                              |> List.filterMap
+                                (\(s, conn) ->
+                                  if s /= node.node.id && conn == chosenConnection then
+                                    Graph.get s g
+                                  else
+                                    Nothing
+                                )
+                              |> List.find
+                                (\n ->
+                                  fanEquals n.outgoing node.outgoing
+                                )
+                              |> Maybe.map
+                                (\equivalent ->
+                                    Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt node.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
+                                    merge node.node.id equivalent.node.id g
+                                )
+                            )
+                        [] ->
+                          Nothing
+        )
+    classify_all terminals g =
+      case terminals of
+        [] -> g
+        t::ts ->
+          case classify t g of
+            Nothing ->
+              classify_all ts g
+            Just newG ->
+              classify_all terminals newG
+  in
+    classify_all (Set.toList finals_from_dfa) (g_ |> debugGraph "[minimiseNodes] Initial graph")
+
+
 toAutomatonGraph : DFARecord a b -> AutomatonGraph b
 toAutomatonGraph dfa =
   let
@@ -795,6 +1009,7 @@ toAutomatonGraph dfa =
         |> Dict.toList
         |> List.map (\((from, to), set) -> Edge from to set)
         )
+      |> minimiseNodesByCombiningTransitions dfa.finals
   in
     case stateList of
       [] ->
@@ -1001,6 +1216,14 @@ splitTerminalAndNonTerminal g =
     }
     |> Automata.Debugging.debugAutomatonGraph " after split"
 
+
+ellipsis : Int -> String -> String
+ellipsis n s =
+  if String.length s > n then
+    String.slice 0 (n - 1) s ++ "…"
+  else
+    s
+
 tableToString : Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> String
 tableToString table =
   Dict.toList table
@@ -1010,7 +1233,7 @@ tableToString table =
         (\transition (destSet, v) acc ->
           acc
           ++ (transitionToString transition) ++ "→"
-          ++ String.padRight 15 ' ' (Debug.toString destSet ++ ":" ++ Debug.toString v)
+          ++ String.padRight 18 ' ' (Debug.toString destSet ++ ":" ++ ellipsis 11 (Debug.toString v))
         )
         (String.padRight 10 ' ' (Debug.toString sourceSet))
         columnDict
