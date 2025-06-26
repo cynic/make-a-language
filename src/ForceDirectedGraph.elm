@@ -902,18 +902,11 @@ confirmChanges model_ =
 
     applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_updateLink pathA pathB conn g =
-      let
-        newGraph =
-          Maybe.map2
-            (\from to -> modifyConnection from to conn g)
-            (followPathTo pathA g)
-            (followPathTo pathB g)
-          |> Maybe.withDefault g.graph
-      in
-        { graph = newGraph
-        , maxId = List.maximum (Graph.nodes newGraph |> List.map .id) |> Maybe.withDefault 0
-        , root = g.root
-        }
+      Maybe.map2
+        (\from to -> modifyConnection from to conn g)
+        (followPathTo pathA g)
+        (followPathTo pathB g)
+      |> Maybe.withDefault g
 
     mkSim g model =
       let
