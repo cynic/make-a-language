@@ -1,6 +1,7 @@
 module Automata.Debugging exposing (..)
 import Automata.Data exposing (..)
 import Graph exposing (Graph)
+import IntDict
 
 debug_log : String -> a -> a
 debug_log s x =
@@ -13,10 +14,10 @@ debugGraph txt graph =
   |> \_ -> graph
 
 debugAutomatonGraph : String -> AutomatonGraph a -> AutomatonGraph a
-debugAutomatonGraph txt dawg =
+debugAutomatonGraph txt g =
   debug_log txt
-    (graphToString dawg.graph)
-  |> \_ -> dawg
+    ("📍" ++ String.fromInt g.root ++ " " ++ graphToString g.graph)
+  |> \_ -> g
 
 println : String -> a -> a
 println txt x =
