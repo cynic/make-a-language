@@ -693,11 +693,11 @@ modifyConnection source target newConn g =
         ))
   in
     rewriteLink g.graph
-    |> Automata.Debugging.debugGraph "[modifyConnection] After rewriteLink"
+    -- |> Automata.Debugging.debugGraph "[modifyConnection] After rewriteLink"
     |> fromGraph g.root
-    |> debugDFA_ "[modifyConnection] After conversion to DFA"
+    -- |> debugDFA_ "[modifyConnection] After conversion to DFA"
     |> craaazy_extend
-    |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
+    -- |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
     |>( \dfa ->
           if Set.isEmpty newConn then
             remove_unreachable (all_forward_transitions target dfa) dfa
@@ -705,9 +705,9 @@ modifyConnection source target newConn g =
             dfa -- skip step; nothing is disconnected by this.
       )
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
+    -- |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
     |> replace_or_register
-    |> debugExtDFA_ "[modifyConnection] After replace_or_register"
+    -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
     |> retract
     |> toAutomatonGraph
     |> .graph
@@ -1080,7 +1080,7 @@ splitTerminalAndNonTerminal g =
             (node.outgoing |> IntDict.get node.node.id |> Maybe.map Set.toList |> Maybe.withDefault [])
           allIncoming =
             outgoingRecursive ++ incomingTransitions
-            -- |> Debug.log ("Incoming transitions to " ++ String.fromInt node.node.id)
+            |> Debug.log ("Incoming transitions to " ++ String.fromInt node.node.id)
           hasTerminal = List.any isTerminal allIncoming
           hasNonTerminal = List.any isNonTerminal allIncoming
         in
@@ -1214,7 +1214,7 @@ splitTerminalAndNonTerminal g =
     , maxId = newMaxId
     , root = g.root
     }
-    |> Automata.Debugging.debugAutomatonGraph " after split"
+    -- |> Automata.Debugging.debugAutomatonGraph " after split"
 
 
 ellipsis : Int -> String -> String
@@ -1224,15 +1224,15 @@ ellipsis n s =
   else
     s
 
-tableToString : Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> String
+tableToString : Dict (List NodeId) (Dict Char (Int, List NodeId, a)) -> String
 tableToString table =
   Dict.toList table
   |> List.map
     (\(sourceSet, columnDict) ->
       Dict.foldl
-        (\transition (destSet, v) acc ->
+        (\ch (f, destSet, v) acc ->
           acc
-          ++ (transitionToString transition) ++ "→"
+          ++ (transitionToString (ch, f)) ++ "→"
           ++ String.padRight 18 ' ' (Debug.toString destSet ++ ":" ++ ellipsis 11 (Debug.toString v))
         )
         (String.padRight 10 ' ' (Debug.toString sourceSet))
@@ -1240,7 +1240,7 @@ tableToString table =
     )
   |> String.join "\n"
 
-debugTable_ : String -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+debugTable_ : String -> Dict (List NodeId) (Dict Char (Int, List NodeId, a)) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a))
 debugTable_ s t =
   Debug.log (s ++ ":\n" ++ tableToString t) () |> \_ -> t
 
@@ -1280,7 +1280,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     sorted
   )
 
-  The exact type is: Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+  The exact type is: Dict (List NodeId) (Dict Char (Int, List NodeId, a))
 
   We can then iterate through the source-set→transition intersection (which
   gives us the unique cell that we're looking for).  When the dest-set has
@@ -1310,19 +1310,19 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     normalizeSet : List NodeId -> List NodeId
     normalizeSet = List.sort >> List.Extra.unique
 
-    populateColumnData : IntDict Connection -> Dict Transition (List NodeId, a) -> Dict Transition (List NodeId, a)
+    populateColumnData : IntDict Connection -> Dict Char (Int, List NodeId, a) -> Dict Char (Int, List NodeId, a)
     populateColumnData outgoing columnDict =
       IntDict.foldl
         (\destId conn columnDict_ ->
           Set.foldl
-            (\transition d ->
-              case Dict.get transition d of
+            (\(ch, f) d ->
+              case Dict.get ch d of
                 Nothing ->
                   Graph.get destId g.graph
-                  |> Maybe.map (\{node} -> Dict.insert transition ([destId], node.label) d)
+                  |> Maybe.map (\{node} -> Dict.insert ch (f, [destId], node.label) d)
                   |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
-                Just (list, v) ->
-                  Dict.insert transition (normalizeSet (destId::list), v) d
+                Just (_, list, v) ->
+                  Dict.insert ch (f, normalizeSet (destId::list), v) d
             )
             columnDict_
             conn
@@ -1332,7 +1332,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
 
     -- Get all transitions from the original NFA and organize them
     -- Type: Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
-    initialTable : Dict (List NodeId) (Dict Transition (List NodeId, a))
+    initialTable : Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     initialTable =
       Graph.fold
         (\node rowDict ->
@@ -1344,7 +1344,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
       |> debugTable_ "[nfaToDFA] Initial table"
 
     -- Build the complete table by adding rows for multi-element dest-sets
-    buildCompleteTable : Dict (List NodeId) (Dict Transition (List NodeId, a)) -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+    buildCompleteTable : Dict (List NodeId) (Dict Char (Int, List NodeId, a)) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     buildCompleteTable table =
       let
         -- Find all dest-sets that have more than one element and aren't already in the table
@@ -1352,7 +1352,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
           table
             |> Dict.values
             |> List.concatMap Dict.values
-            |> List.map Tuple.first
+            |> List.map (\(_, ident, _) -> ident)
             |> List.filter (\destSet -> List.length destSet > 1)
             -- |> List.map normalizeSet
             |> List.Extra.unique
@@ -1374,23 +1374,24 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
           [] -> table
           _ -> buildCompleteTable newTable
 
+    completeTable : Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     completeTable =
       buildCompleteTable initialTable
       |> debugTable_ "[nfaToDFA] Complete table"
 
     -- Step 1: Merge states with identical cell values
-    rename : List NodeId -> Set (List NodeId) -> Dict (List NodeId) (Dict Transition (List NodeId, a)) -> Dict (List NodeId) (Dict Transition (List NodeId, a))
+    rename : List NodeId -> Set (List NodeId) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a)) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     rename new_name old_names table =
       let
         with_renamed_columns =
           Dict.map
             (\_ columnDict ->
               columnDict
-              |> Dict.map (\_ (destSet, v) ->
+              |> Dict.map (\_ (f, destSet, v) ->
                 if Set.member destSet old_names then
-                  (new_name, v)
+                  (f, new_name, v)
                 else
-                  (destSet, v)
+                  (f, destSet, v)
               )
             )
             table
@@ -1413,7 +1414,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   (Dict.insert new_name v with_renamed_columns)
                   old_names
 
-    mergeIdenticalState : ((List NodeId, b), List (List NodeId, b)) -> Dict (List NodeId) (Dict Transition (List NodeId, a)) -> Dict (List NodeId) (Dict Transition (List NodeId, a))
+    mergeIdenticalState : ((List NodeId, b), List (List NodeId, b)) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a)) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     mergeIdenticalState ((mergeHead_sourceSet, _), to_merge) table =
       let
         sourceSets_to_merge = List.map Tuple.first to_merge |> Set.fromList
@@ -1422,6 +1423,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
       in
         rename mergeHead_sourceSet sourceSets_to_merge without_merged
 
+    mergedTable : Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     mergedTable =
       let
         -- Group source-sets by their transition dictionaries
@@ -1436,7 +1438,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
 
     -- Step 2: Remove unreachable states (keep only those reachable from root)
-    removeUnreachableStates : Dict (List NodeId) (Dict (Char, Int) (List NodeId, a)) -> Dict (List NodeId) (Dict (Char, Int) (List NodeId, a))
+    removeUnreachableStates : Dict (List NodeId) (Dict Char (Int, List NodeId, a)) -> Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     removeUnreachableStates table = -- not checked…
       let
         rootSet = [g.root]
@@ -1455,7 +1457,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                     Dict.get currentSet table
                     |> Maybe.withDefault Dict.empty
                     |> Dict.values
-                    |> List.map Tuple.first
+                    |> List.map (\(_, ident, _) -> ident)
                     |> List.filter (\destSet -> not (Set.member destSet newVisited))
                 in
                 findReachable (rest ++ destinations) newVisited
@@ -1465,6 +1467,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         table
         |> Dict.filter (\sourceSet _ -> Set.member sourceSet reachableStates)
 
+    reachableTable : Dict (List NodeId) (Dict Char (Int, List NodeId, a))
     reachableTable =
       removeUnreachableStates mergedTable
       |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
@@ -1503,8 +1506,8 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                 Nothing -> -- was not in the original graph
                   Dict.values finalTable
                   |> List.findMap
-                    ( Dict.Extra.find (\_ (v, _) -> v == idList)
-                      >> Maybe.map (\(_, (_, label)) -> (id, label))
+                    ( Dict.Extra.find (\_ (_, v, _) -> v == idList)
+                      >> Maybe.map (\(_, (_, _, label)) -> (id, label))
                     )
         )
         (Dict.keys finalTable)
@@ -1516,16 +1519,16 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
           case sourceSet of
             [src] ->
               Dict.foldl
-                (\transition (destSet, _) acc_ ->
+                (\ch (f, destSet, _) acc_ ->
                   case destSet of
                     [dest] ->
                       Dict.update (src, dest)
                         (\item ->
                           case item of
                             Nothing ->
-                              Just <| Set.singleton transition
+                              Just <| Set.singleton (ch, f)
                             Just conn ->
-                              Just <| Set.insert transition conn
+                              Just <| Set.insert (ch, f) conn
                         ) acc_
                     _ ->
                       acc_
@@ -1589,10 +1592,13 @@ fromAutomatonGraph =
             g.graph
       }
   in
-    Automata.Debugging.debugAutomatonGraph "before split"
+    Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received"
     >> splitTerminalAndNonTerminal
+    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
+    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
     >> craft
+    >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
 connectionToString : MConnection -> String
 connectionToString =
