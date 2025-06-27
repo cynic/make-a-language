@@ -773,6 +773,51 @@ debugFan_ s fan =
   |> Debug.log s
   |> \_ -> fan
 
+minimisation_merge : NodeId -> NodeId -> AutomatonGraph a -> AutomatonGraph a
+minimisation_merge head other g =
+  let
+    redirectFan : NodeId -> NodeId -> IntDict Connection -> IntDict Connection
+    redirectFan from to fan =
+      case IntDict.get from fan of
+        Just conn ->
+          case IntDict.get to fan of
+            Just conn2 ->
+              IntDict.insert to (Set.union conn conn2) fan
+              |> IntDict.remove from
+            Nothing ->
+              IntDict.insert to conn fan
+              |> IntDict.remove from
+        Nothing ->
+          fan
+  in
+    Maybe.map2
+      (\headNode otherNode ->
+        let
+          updatedIncoming =
+            IntDict.uniteWith
+              (\_ -> Set.union)
+              (redirectFan other head headNode.incoming {- |> debugFan_ "[minimisation_merge] headNode.incoming (redir)" -})
+              (redirectFan other head otherNode.incoming {- |> debugFan_ "[minimisation_merge] otherNode.incoming (redir)"-})
+            -- |> debugFan_ "[minimisation_merge] merged incoming"
+          updatedOutgoing =
+            IntDict.uniteWith
+              (\_ -> Set.union)
+              (redirectFan other head headNode.outgoing {- |> debugFan_ "[minimisation_merge] headNode.outgoing (redir)" -})
+              (redirectFan other head otherNode.outgoing {- |> debugFan_ "[minimisation_merge] otherNode.outgoing (redir)" -})
+            -- |> debugFan_ "[minimisation_merge] merged outgoing"
+        in
+          { g
+            | graph =
+                Graph.insert { headNode | incoming = updatedIncoming , outgoing = updatedOutgoing } g.graph
+                |> Graph.remove other
+            , root = if other == g.root then head else g.root
+          }
+      )
+      (Graph.get head g.graph)
+      (Graph.get other g.graph)
+    |> Maybe.withDefault g
+    |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
+
 minimiseNodesByCombiningTransitions : Set NodeId -> AutomatonGraph a -> AutomatonGraph a
 minimiseNodesByCombiningTransitions finals_from_dfa g_ =
   {-
@@ -854,130 +899,87 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
     fanEquals : IntDict Connection -> IntDict Connection -> Bool
     fanEquals a b =
       IntDict.toList a == IntDict.toList b
-    redirectFan : NodeId -> NodeId -> IntDict Connection -> IntDict Connection
-    redirectFan from to fan =
-      case IntDict.get from fan of
-        Just conn ->
-          case IntDict.get to fan of
-            Just conn2 ->
-              IntDict.insert to (Set.union conn conn2) fan
-              |> IntDict.remove from
-            Nothing ->
-              IntDict.insert to conn fan
-              |> IntDict.remove from
-        Nothing ->
-          fan
-    merge : NodeId -> NodeId -> AutomatonGraph a -> AutomatonGraph a
-    merge head other g =
-      Maybe.map2
-        (\headNode otherNode ->
-          let
-            updatedIncoming =
-              IntDict.uniteWith
-                (\_ -> Set.union)
-                (redirectFan other head headNode.incoming {- |> debugFan_ "[merge] headNode.incoming (redir)" -})
-                (redirectFan other head otherNode.incoming {- |> debugFan_ "[merge] otherNode.incoming (redir)"-})
-              -- |> debugFan_ "[merge] merged incoming"
-            updatedOutgoing =
-              IntDict.uniteWith
-                (\_ -> Set.union)
-                (redirectFan other head headNode.outgoing {- |> debugFan_ "[merge] headNode.outgoing (redir)" -})
-                (redirectFan other head otherNode.outgoing {- |> debugFan_ "[merge] otherNode.outgoing (redir)" -})
-              -- |> debugFan_ "[merge] merged outgoing"
-          in
-            { g
-              | graph =
-                  Graph.insert { headNode | incoming = updatedIncoming , outgoing = updatedOutgoing } g.graph
-                  |> Graph.remove other
-              , root = if other == g.root then head else g.root
-            }
-        )
-        (Graph.get head g.graph)
-        (Graph.get other g.graph)
-      |> Maybe.withDefault g
-      |> Automata.Debugging.debugAutomatonGraph ("[minimiseNodes] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
-    classify : NodeId -> AutomatonGraph a -> Maybe (AutomatonGraph a)
+    classify : NodeContext a Connection -> AutomatonGraph a -> Maybe (AutomatonGraph a)
     classify terminal g =
       -- classify the terminal node into one of the four classes
-      Graph.get terminal g.graph
-      |> Maybe.andThen
-        (\node ->
-          if IntDict.isEmpty node.outgoing then
-            -- case T1
-            let
-              otherEmptyOutgoing =
-                Graph.fold
-                  (\nodeContext state ->
-                    if IntDict.isEmpty nodeContext.outgoing && nodeContext.node.id /= node.node.id then
-                      nodeContext.node.id :: state
-                    else
-                      state
-                  )
-                  []
-                  g.graph
-                |> Debug.log ("[minimiseNodes] Nodes (besides #" ++ String.fromInt node.node.id ++ ") with no outgoing")
-              newGraph =
-                List.foldl
-                  (\nodeId state -> merge node.node.id nodeId state)
-                  g
-                  otherEmptyOutgoing
-                |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
-            in
-              case otherEmptyOutgoing of
-                [] -> Nothing
-                _ -> Just newGraph
-          else
-            let
-              targets =
-                IntDict.keys node.outgoing
-                |> List.filterMap (\target -> Graph.get target g.graph)
-              sources =
-                IntDict.keys node.incoming
-                |> List.filterMap (\source -> Graph.get source g.graph)
-            in
-              case List.find (\target -> target.node.id /= node.node.id && fanEquals target.outgoing node.outgoing) targets of
+      if IntDict.isEmpty terminal.outgoing then
+        -- case T1.  We will deal with this right at the end, during
+        -- finalisation after ALL user changes have been made for this
+        -- round of changes… OR, should we deal with it at all?!
+        Nothing
+        -- let
+        --   otherEmptyOutgoing =
+        --     Graph.fold
+        --       (\nodeContext state ->
+        --         if IntDict.isEmpty nodeContext.outgoing && nodeContext.node.id /= node.node.id then
+        --           nodeContext.node.id :: state
+        --         else
+        --           state
+        --       )
+        --       []
+        --       g.graph
+        --     |> Debug.log ("[minimiseNodes] Nodes (besides #" ++ String.fromInt node.node.id ++ ") with no outgoing")
+        --   newGraph =
+        --     List.foldl
+        --       (\nodeId state -> minimisation_merge node.node.id nodeId state)
+        --       g
+        --       otherEmptyOutgoing
+        --     |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
+        -- in
+        --   case otherEmptyOutgoing of
+        --     [] -> Nothing
+        --     _ -> Just newGraph
+      else
+        let
+          targets =
+            IntDict.keys terminal.outgoing
+            |> List.filterMap (\target -> Graph.get target g.graph)
+          sources =
+            IntDict.keys terminal.incoming
+            |> List.filterMap (\source -> Graph.get source g.graph)
+        in
+          case List.find (\target -> target.node.id /= terminal.node.id && fanEquals target.outgoing terminal.outgoing) targets of
+            Just equivalent ->
+              -- Case T2, sub-case 1
+              Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
+              Just (minimisation_merge terminal.node.id equivalent.node.id g)
+            Nothing ->
+              case List.find (\source -> source.node.id /= terminal.node.id && fanEquals source.outgoing terminal.outgoing) sources of
                 Just equivalent ->
-                  -- Case T2, sub-case 1
-                  Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt node.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
-                  Just (merge node.node.id equivalent.node.id g)
+                  -- Case T2, sub-case 2
+                  Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
+                  Just (minimisation_merge terminal.node.id equivalent.node.id g)
                 Nothing ->
-                  case List.find (\source -> source.node.id /= node.node.id && fanEquals source.outgoing node.outgoing) sources of
-                    Just equivalent ->
-                      -- Case T2, sub-case 2
-                      Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt node.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
-                      Just (merge node.node.id equivalent.node.id g)
-                    Nothing ->
-                      case List.filter (\t -> t.node.id /= node.node.id) targets of
-                        m::_ ->
-                          IntDict.get node.node.id m.incoming
-                          |> Maybe.andThen
-                            (\chosenConnection ->
-                              IntDict.toList m.incoming
-                              |> List.filterMap
-                                (\(s, conn) ->
-                                  if s /= node.node.id && conn == chosenConnection then
-                                    Graph.get s g.graph
-                                  else
-                                    Nothing
-                                )
-                              |> List.find
-                                (\n ->
-                                  fanEquals n.outgoing node.outgoing
-                                )
-                              |> Maybe.map
-                                (\equivalent ->
-                                    Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt node.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
-                                    merge node.node.id equivalent.node.id g
-                                )
+                  case List.filter (\t -> t.node.id /= terminal.node.id) targets of
+                    m::_ ->
+                      IntDict.get terminal.node.id m.incoming
+                      |> Maybe.andThen
+                        (\chosenConnection ->
+                          IntDict.toList m.incoming
+                          |> List.filterMap
+                            (\(s, conn) ->
+                              if s /= terminal.node.id && conn == chosenConnection then
+                                Graph.get s g.graph
+                              else
+                                Nothing
                             )
-                        [] ->
-                          Nothing
-        )
+                          |> List.find
+                            (\n ->
+                              fanEquals n.outgoing terminal.outgoing
+                            )
+                          |> Maybe.map
+                            (\equivalent ->
+                                Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
+                                minimisation_merge terminal.node.id equivalent.node.id g
+                            )
+                        )
+                    [] ->
+                      Nothing
     classify_all terminals g =
       case terminals of
         [] -> g
         t::ts ->
-          case classify t g of
+          case Graph.get t g.graph |> Maybe.andThen (\terminal -> classify terminal g) of
             Nothing ->
               classify_all ts g
             Just newG ->
