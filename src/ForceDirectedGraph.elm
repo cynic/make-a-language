@@ -28,8 +28,9 @@ import Html.Attributes
 import Set exposing (Set)
 import IntDict
 import Time
+import Dict
 import List.Extra as List
-import Automata.DFA exposing (wordsEndingAt, modifyConnection, removeConnection, fromAutomatonGraph)
+import Automata.DFA exposing (modifyConnection, removeConnection, fromAutomatonGraph)
 import Automata.Data exposing (isTerminal)
 import Automata.DFA exposing (toAutomatonGraph)
 import Automata.DFA exposing (union)
@@ -111,7 +112,7 @@ type RequestedGraphChanges
   --   ii.  the linking of two existing nodes or
   --  iii.  the changing of a transition
   -- does not matter.  All three of these can be covered by the same operation.
-  | UnionWith (DFARecord {} Entity)
+  | UnionWith (AutomatonGraph Entity)
   -- If we union to alter the transitions in a link, then we're only able to
   -- add transitions, not remove them.  `RemoveLink` is specialization of the
   -- link modification functionality.
@@ -424,29 +425,35 @@ path_for_removal graph start source destination =
     )
     (Graph.get destination (graph |> debugGraph "getting userchange-data from"))
 
-create_w_dfa : NodeId -> NodeId -> Graph a Connection -> Maybe (DFARecord {} a)
-create_w_dfa target start graph =
+{-| Create a DFA consisting of all paths ending at the specified transition.
+-}
+wordsEndingAt : NodeId -> AutomatonGraph a -> AutomatonGraph a
+wordsEndingAt nodeId g =
   let
-    wDFA_template =
-      { start = start
-      , transition_function = IntDict.empty
-      , states =
-          Graph.get start graph
-          |> Maybe.map (\node -> IntDict.singleton node.node.id node.node.label)
-          |> Maybe.withDefaultLazy (\() -> Debug.todo "MIGY>EFY") -- IntDict.empty -- SHOULD NEVER BE HERE!
-      , finals =
-          if Automata.Data.isTerminal start graph then
-            Set.singleton start
-          else
-            Set.empty
-      } -- |> Automata.DFA.debugDFA_ "[AddNewNode/NewLinkToNode] 'Template' DFA"
+    nodes =
+      Graph.guidedBfs
+        Graph.alongIncomingEdges
+        (Graph.ignorePath (\context acc ->
+          context.node.id :: acc
+        ))
+        [nodeId]
+        []
+        (Graph.update g.root (Maybe.map (\node -> { node | incoming = IntDict.empty })) g.graph)
+      |> Tuple.first
+    induced =
+      Graph.inducedSubgraph nodes g.graph
   in
-  Graph.get target graph
-  |> Maybe.map
-    (\node ->
-      wordsEndingAt (node.node.id, node.node.label) graph Set.empty wDFA_template
-      |> Automata.DFA.debugDFA_ "[create_w_dfa] New DFA"
-    )
+    { g
+      | graph = induced
+      , maxId = Graph.nodeIdRange induced |> Maybe.map Tuple.second |> Maybe.withDefault 0
+      , root = g.root
+    }
+
+
+create_w_dfa : NodeId -> AutomatonGraph a -> AutomatonGraph a
+create_w_dfa target g =
+  wordsEndingAt target g
+  |> Automata.Debugging.debugAutomatonGraph "[create_w_dfa] New w-AutomatonGraph for w_dfa"
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -654,21 +661,19 @@ update offset_amount msg model =
               |> debugGraph "[update→Confirm→createNewNode] updated graph"
 
             newModel =
-              create_w_dfa model.unusedId model.start updatedGraph
-              |> Maybe.map
-                (\w_dfa ->
+              create_w_dfa model.unusedId { root = model.start, graph = updatedGraph, maxId = model.unusedId - 1 }
+              |> (\w_ag ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
                   , graph = updatedGraph
-                  , userRequestedChanges = UnionWith w_dfa :: model.userRequestedChanges
+                  , userRequestedChanges = UnionWith w_ag :: model.userRequestedChanges
                   , basicForces =
                       basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
                   , unusedId = model.unusedId + 1
                   }
                 )
-              |> Maybe.withDefault model
           in
             newModel
 
@@ -930,8 +935,8 @@ confirmChanges model_ =
             RemoveLink pathA pathB ->
               applyChange_updateLink pathA pathB Set.empty g
               |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→RemoveLink]"
-            UnionWith dfa ->
-              applyChange_union dfa g
+            UnionWith w_ag ->
+              applyChange_union (fromAutomatonGraph w_ag) g
               |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→UnionWith]"
             UpdateLink pathA pathB conn ->
               applyChange_updateLink pathA pathB conn g

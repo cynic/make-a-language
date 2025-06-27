@@ -1289,13 +1289,12 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
   `table`.  The `table` is structured as
 
   source-set → transition → (dest-set, node-label)
+  [NOTE: this is a bit out-of-date…]
 
   (
     although we use the suffix "-set", they're actually lists; and they're all
     sorted
   )
-
-  The exact type is: Dict (List NodeId) (Dict Char (Int, List NodeId, a))
 
   We can then iterate through the source-set→transition intersection (which
   gives us the unique cell that we're looking for).  When the dest-set has
@@ -1460,7 +1459,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
           |> List.foldl mergeIdenticalState completeTable
       in
         groupedByTransitions
-        |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
+        -- |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
 
     -- Step 2: Remove unreachable states (keep only those reachable from root)
     removeUnreachableStates : Table a -> Table a
@@ -1499,7 +1498,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     reachableTable : Table a
     reachableTable =
       removeUnreachableStates mergedTable
-      |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
+      -- |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
 
     -- Step 3: Rename rows using maxId
     (finalTable, new_maxId) =
@@ -1519,7 +1518,9 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             reachableTable
             renameMapping
       in
-        ( renamedTable |> debugTable_ "[nfaToDFA] Rows have been renamed", g.maxId + List.length renameMapping)
+        ( renamedTable -- |> debugTable_ "[nfaToDFA] Rows have been renamed"
+        , g.maxId + List.length renameMapping
+        )
 
     -- Build the new DFA graph using the Graph API
     -- Create the new graph
@@ -1575,12 +1576,12 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
 
     newGraph =
       Graph.fromNodesAndEdges newGraphNodes newGraphEdges
-      |> debugGraph "[nfaToDFA] Resulting graph"
   in
     { graph = newGraph
     , root = g.root
     , maxId = new_maxId
     }
+    |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraph =
@@ -1635,80 +1636,6 @@ connectionToString =
   Set.map String.fromChar
   >> Set.toList
   >> String.concat
-
-{-| Create a DFA consisting of all paths ending at the specified transition.
--}
-wordsEndingAt : (NodeId, b) -> Graph.Graph b Connection -> Set NodeId -> DFARecord a b -> DFARecord a b
-wordsEndingAt (nodeId, label) graph visited_orig dfa =
-  let
-    visited = Set.insert nodeId visited_orig
-  in
-  if nodeId == dfa.start && Set.member nodeId visited_orig then
-    -- we are done!
-    { dfa | states = IntDict.insert nodeId label dfa.states }
-  else if Set.member nodeId visited_orig then
-    -- I have visited this node before. The only way that can happen is
-    -- if this node is "later" in the sequence.  If I follow it, we will
-    -- enter a loop!  So, we don't take it.
-    -- However, we must record this transition, and that is done during the
-    -- call to the wordsEndingAt function.
-    { dfa | states = IntDict.insert nodeId label dfa.states }
-  else
-    -- now, *I* must contribute to the `acc` myself.
-    Graph.get nodeId graph
-    |> Maybe.map
-      (\node -> -- the `incoming` is an IntDict Connection
-          -- my `acc` will ALSO have the things from MY `Connection`'s respective `outgoing`s.
-          -- When I get called, that will already be in `acc`.
-          node.incoming
-          |> IntDict.toList
-          |> List.foldl
-            (\(nodeid, transitions) state ->
-              -- each of the transitions effectively forms a new path back to `nodeid`
-              Graph.get nodeid graph
-              |> Maybe.map
-                (\outNode ->
-                  (Set.toList transitions
-                  |> List.foldl
-                      (\(t, isFinal) dfa_ ->
-                        wordsEndingAt
-                          (outNode.node.id, outNode.node.label)
-                          graph
-                          visited
-                          { dfa_
-                            | states = IntDict.insert nodeid outNode.node.label dfa_.states
-                            , transition_function =
-                                IntDict.update nodeid
-                                  (\maybe_dict ->
-                                      case maybe_dict of
-                                        Nothing -> Just (Dict.singleton t nodeId)
-                                        Just dict ->
-                                          case Dict.get t dict of
-                                            Just existing ->
-                                              Just dict |> Debug.log ("conflict with existing (" ++ String.fromInt existing ++ "); taking existing.")
-                                            Nothing ->
-                                              Just (Dict.insert t nodeId dict)
-                                  )
-                                  dfa_.transition_function
-                            , finals =
-                                if isFinal == 1 then
-                                  Set.insert nodeId dfa_.finals
-                                else
-                                  dfa_.finals
-                          }
-                      ) state -- link the nodeid to each transition
-                  )
-                )
-              |> Maybe.Extra.withDefaultLazy (\() -> (dfa |> debugDFA_ ("[wordsEndingAt] OOPS!  Couldn't find ID " ++ String.fromInt nodeid))) -- should NEVER be here!!
-            )
-            { dfa | states = IntDict.insert nodeId node.node.label dfa.states }
-            -- at the end of this, I should have a List (NodeId, Char) to process.
-          -- Okay; by now, I have a list of places to GO, and the characters that will get me there.
-      )
-    |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo "GIUK%S") -- SHOULD NEVER BE HERE!!!
-    |> debugDFA_ ("[wordsEndingAt(" ++ String.fromInt nodeId ++ ")] Returning result")
-    -- well, at this point, I have the DFA.  Now I need to union it.
-
 
 -----------------
 -- DEBUGGING
