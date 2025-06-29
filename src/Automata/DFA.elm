@@ -1456,7 +1456,19 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         groupedByTransitions =
           completeTable
           |> Dict.toList
-          |> List.Extra.gatherEqualsBy (\(_, transitions) -> transitions)
+          |> List.Extra.gatherEqualsBy
+              (\((finality, _), transitionsDict) ->
+                -- considered equivalent, and thus mergeable, on the basis of:
+                -- 1. Finality status
+                -- 2. Character transition
+                -- 3. Destination state-set
+                ( finality
+                , transitionsDict
+                  |> Dict.toList
+                  |> List.map (\(ch, (st, _)) -> (ch, st))
+                )
+              )
+          -- |> Debug.log "equivalent"
           |> List.filter (\(_, group) -> List.length group > 1)
           |> List.foldl mergeIdenticalState completeTable
       in
