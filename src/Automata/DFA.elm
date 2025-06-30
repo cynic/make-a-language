@@ -102,17 +102,21 @@ mkAutomatonGraph ts =
           Dict.update (src, dest)
             (\item ->
               let
-                transition =
-                  case String.toList s of
-                    ['!', ch] -> (ch, 1)
-                    [ch] -> (ch, 0)
-                    _ -> ('🛈', 0)
+                connection xs conn_ =
+                  case xs of
+                    '!'::ch::rest ->
+                      connection rest (Set.insert (ch, 1) conn_)
+                    ch::rest ->
+                      connection rest (Set.insert (ch, 0) conn_)
+                    [] -> conn_
+                conn =
+                  connection (String.toList s) Set.empty
               in
                 case item of
                   Nothing ->
-                    Just <| Set.singleton transition
-                  Just conn ->
-                    Just <| Set.insert transition conn
+                    Just conn
+                  Just existing ->
+                    Just <| Set.union existing conn
             )
             acc
         )
@@ -1035,6 +1039,48 @@ fromGraph start graph =
   }
   |> fromAutomatonGraph
 
+renumberAutomatonGraph : AutomatonGraph a -> AutomatonGraph a
+renumberAutomatonGraph g =
+  let
+    fanMapper =
+      IntDict.toList >> List.map (\(k, conn) -> (k, Set.toList conn)) 
+    nodeMap =
+      Graph.nodeIds g.graph
+      |> List.filterMap (\id -> Graph.get id g.graph)
+      |> List.sortBy
+        (\ctx ->
+          -- ignore the ids and just map by incoming & outgoing transitions.
+          ( fanMapper ctx.incoming
+          , fanMapper ctx.outgoing
+          )
+        )
+      |> List.indexedMap (\i node -> (node.node.id, i))
+      |> IntDict.fromList
+    get n =
+      case IntDict.get n nodeMap of
+        Nothing -> Debug.todo ("87TTGUEOU for" ++ String.fromInt n ++ " I SHOULD NEVER BE HERE!")
+        Just i -> i
+  in
+    { graph =
+        Graph.mapContexts
+          (\ctx ->
+            { node = { id = get ctx.node.id, label = ctx.node.label }
+            , incoming =
+                IntDict.foldl
+                  (\k -> IntDict.insert (get k))
+                  IntDict.empty
+                  ctx.incoming
+            , outgoing =
+                IntDict.foldl
+                  (\k -> IntDict.insert (get k))
+                  IntDict.empty
+                  ctx.outgoing
+            }
+          )
+          g.graph
+    , maxId = IntDict.findMax nodeMap |> Maybe.map Tuple.second |> Maybe.withDefault 0
+    , root = 0
+    }
 
 splitTerminalAndNonTerminal : AutomatonGraph a -> AutomatonGraph a
 splitTerminalAndNonTerminal g =
