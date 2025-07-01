@@ -1380,11 +1380,14 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             (\(ch, f) d ->
               case Dict.get ch d of
                 Nothing ->
+                  -- Debug.log ("Inserting first " ++ String.fromChar ch ++ "-transition (" ++ (if f == 0 then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   Graph.get destId g.graph
                   |> Maybe.map (\{node} -> Dict.insert ch ((f, [destId]), node.label) d)
                   |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
-                Just ((_, list), v) ->
-                  Dict.insert ch ((f, normalizeSet (destId::list)), v) d
+                Just ((f2, list), v) ->
+                  -- Debug.log ("Inserting another " ++ String.fromChar ch ++ "-transition (" ++ (if f == 0 then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
+                  -- if any of the transitions is final, then the created state will be final
+                  Dict.insert ch ((max f f2, normalizeSet (destId::list)), v) d
             )
             columnDict_
             conn
