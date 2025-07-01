@@ -67,7 +67,7 @@ type alias DAWGMetrics =
 type alias Model =
   { dragState : DragState
   , text : String
-  , forceDirectedGraph : Maybe (ForceDirectedGraph.Model)
+  , forceDirectedGraph : ForceDirectedGraph.Model
   , dimensions : LayoutDimensions
   , layoutConfiguration : LayoutConfiguration
   , metrics : DAWGMetrics
@@ -119,16 +119,15 @@ updateLayout fraction model =
     newConfig = { config | leftRightSplitPercentage = fraction }
     newDimensions = viewportDimensionsToLayoutDimensions model.dimensions.viewport newConfig
     newForcesGraph =
-      Maybe.map
-        (ForceDirectedGraph.update
-          (newDimensions.leftPanel.width + 10, 10)
-          (ForceDirectedGraph.ViewportUpdated
-            ( newDimensions.rightPanel.width - 10
-            , newDimensions.rightPanel.height - 10
-            )
+      (ForceDirectedGraph.update
+        (newDimensions.leftPanel.width + 10, 10)
+        (ForceDirectedGraph.ViewportUpdated
+          ( newDimensions.rightPanel.width - 10
+          , newDimensions.rightPanel.height - 10
           )
         )
-        model.forceDirectedGraph
+      )
+      model.forceDirectedGraph
   in
     { model
       | layoutConfiguration = newConfig
@@ -144,15 +143,24 @@ defaultMetrics =
   , combinable = []
   }
 
-defaultModel : Model
-defaultModel =
+defaultModel : LayoutDimensions -> Model
+defaultModel dimensions =
   { dragState = Static
   , text = ""
-  , forceDirectedGraph = Nothing
-  , dimensions = viewportDimensionsToLayoutDimensions (Dimensions 0.0 0.0) initialLayoutConfig
+  , forceDirectedGraph =
+      ForceDirectedGraph.receiveWords [] ( dimensions.viewport.width, dimensions.viewport.height )
+  , dimensions = dimensions
   , layoutConfiguration = initialLayoutConfig
   , metrics = defaultMetrics
   , mouseIsOver = False
+  }
+
+insaneLayoutDimensions : LayoutDimensions
+insaneLayoutDimensions = -- rubbish, nonsensical values.
+  { viewport = { width = 0, height = 0 }
+  , leftPanel = { width = 0, height = 0 }
+  , rightPanel = { width = 0, height = 0 }
+  , recognizedWords = { width = 0, height = 0 }
   }
 
 init : E.Value -> (Model, Cmd Msg)
@@ -162,14 +170,11 @@ init flags =
     (flip viewportDimensionsToLayoutDimensions initialLayoutConfig
     >>
     \layout ->
-      ( { defaultModel
-          | forceDirectedGraph = Nothing
-        , dimensions = layout
-        }
+      ( defaultModel layout
       , Cmd.none
       )
     )
-  |> Result.withDefault ( defaultModel , Cmd.none )
+  |> Result.withDefault ( defaultModel insaneLayoutDimensions , Cmd.none )
 
 
 -- UPDATE
@@ -225,13 +230,11 @@ update msg model =
       ( { model
           | text = text
           , forceDirectedGraph =
-              case words of
-                [] -> Nothing
-                _ ->
-                  Just
-                    ( ForceDirectedGraph.init words (model.dimensions.rightPanel.width, model.dimensions.rightPanel.height - 10)
-                      |> Tuple.first
-                    )
+              ForceDirectedGraph.receiveWords
+                words
+                ( model.dimensions.rightPanel.width
+                , model.dimensions.rightPanel.height - 10
+                )
           , metrics =
               case words of
                 [] -> defaultMetrics
@@ -260,8 +263,9 @@ update msg model =
     ForceDirectedMsg msg_ ->
       ( { model
           | forceDirectedGraph =
-              Maybe.map
-                (ForceDirectedGraph.update (model.dimensions.leftPanel.width + 10, 10) msg_)
+              ForceDirectedGraph.update
+                (model.dimensions.leftPanel.width + 10, 10)
+                msg_
                 model.forceDirectedGraph
         }
       , Cmd.none
@@ -404,12 +408,9 @@ view model =
                   , margin2 (px 5) (px 0)
                   ]
               ]
-              [ case model.forceDirectedGraph of
-                  Nothing -> Html.Styled.text "No graph"
-                  Just fdg ->
-                    ForceDirectedGraph.view fdg
-                    |> fromUnstyled
-                    |> Html.Styled.map ForceDirectedMsg
+              [ ForceDirectedGraph.view model.forceDirectedGraph
+                |> fromUnstyled
+                |> Html.Styled.map ForceDirectedMsg
               ]
         -- recognized words zone
         , let
@@ -489,16 +490,13 @@ mainSubscriptions model =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-  case model.forceDirectedGraph of
-    Nothing -> mainSubscriptions model
-    Just fdg ->
-      Sub.batch
-        [ mainSubscriptions model
-        , ForceDirectedGraph.subscriptions
-            (model.dimensions.leftPanel.width + 10, 10)
-            fdg
-          |> Sub.map ForceDirectedMsg
-        ]
+  Sub.batch
+    [ mainSubscriptions model
+    , ForceDirectedGraph.subscriptions
+        (model.dimensions.leftPanel.width + 10, 10)
+        model.forceDirectedGraph
+      |> Sub.map ForceDirectedMsg
+    ]
 
 {- The goal here is to get (mouse x / window width) on each mouse event. So if
 the mouse is at 500px and the screen is 1000px wide, we should get 0.5 from this.
