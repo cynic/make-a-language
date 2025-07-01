@@ -17,6 +17,9 @@ import Automata.DFA exposing (splitTerminalAndNonTerminal)
 import Automata.DFA exposing (renumberAutomatonGraph)
 import Graph
 import Set
+import Http exposing (Expect)
+import Automata.DFA exposing (nfaToDFA)
+import Automata.Data exposing (transitionsToString)
 
 
 -- Parser for converting string representation to AutomatonGraph transitions
@@ -63,7 +66,6 @@ labelParser =
                 |. Parser.chompWhile (\c -> c /= '-' && c /= ' ')
             )
 
-
 -- Helper function that converts string to transitions and handles errors
 mkAG_input : String -> List (Int, String, Int)
 mkAG_input input =
@@ -73,8 +75,66 @@ mkAG_input input =
     Err _ ->
       []
 
+
+
+
+-- Parser for converting string representation to AutomatonGraph transitions
+-- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]
+dfa_transitionsParser : Parser (List (Int, Char, Int))
+dfa_transitionsParser =
+    Parser.oneOf
+        [ Parser.succeed []
+            |. Parser.end
+        , Parser.loop [] dfa_transitionsHelp
+        ]
+
+
+dfa_transitionsHelp : List (Int, Char, Int) -> Parser (Parser.Step (List (Int, Char, Int)) (List (Int, Char, Int)))
+dfa_transitionsHelp revTransitions =
+    Parser.oneOf
+        [ Parser.succeed (\transition -> Parser.Loop (transition :: revTransitions))
+            |= dfa_transitionParser
+            |. Parser.oneOf
+                [ Parser.symbol " "
+                , Parser.succeed ()
+                ]
+        , Parser.succeed ()
+            |> Parser.map (\_ -> Parser.Done (List.reverse revTransitions))
+        ]
+
+
+dfa_transitionParser : Parser (Int, Char, Int)
+dfa_transitionParser =
+    Parser.succeed (\src label dest -> (src, label, dest))
+        |= Parser.int
+        |. Parser.symbol "-"
+        |= dfa_labelParser
+        |. Parser.symbol "-"
+        |= Parser.int
+
+
+dfa_labelParser : Parser Char
+dfa_labelParser =
+    Parser.succeed (String.toList >> List.head >> Maybe.withDefault '🤪')
+        |= Parser.getChompedString
+            (Parser.succeed ()
+                |. Parser.chompIf (\c -> c /= '-' && c /= ' ')
+                |. Parser.chompWhile (\c -> c /= '-' && c /= ' ')
+            )
+
+mkDFA_input : String -> List (Int, Char, Int)
+mkDFA_input input =
+  case Parser.run dfa_transitionsParser input of
+    Ok transitions ->
+      transitions
+    Err _ ->
+      []
+
 ag : String -> AutomatonGraph ()
 ag = mkAutomatonGraph << mkAG_input
+
+dfa : String -> List Int -> Automata.DFA.DFARecord {} ()
+dfa s f = mkDFA_input s |> \xs -> mkDFA xs f
 
 parseTransitions_suite : Test
 parseTransitions_suite =
@@ -136,17 +196,17 @@ ag_equals g1 g2 =
       >> \g ->
         ( Graph.nodeIds g.graph |> Set.fromList
         , Graph.edges g.graph
-          |> List.map (\e -> (e.from, e.to, Set.toList e.label))
+          |> List.map (\e -> (e.from, Set.toList e.label |> transitionsToString, e.to))
           |> Set.fromList
         , g.root
         )
     (a1, b1, c1) = normalise g1
     (a2, b2, c2) = normalise g2
   in
-    if a1 /= a2 then
-      Expect.equalSets a1 a2
-    else if b1 /= b2 then
+    if b1 /= b2 then
       Expect.equalSets b1 b2
+    else if a1 /= a2 then
+      Expect.equalSets a1 a2
     else
       Expect.equal c1 c2
 
@@ -163,8 +223,38 @@ fromAG_suite =
        information is carried by the state and not the transition.  So, in
        preparation, the graph will reflect it.
 
+       At this stage, we don't actually care about the _characters_ of the
+       transitions at all.  It's not important at all.  All we care about is
+       terminality of transitions.
+
     2. Conversion of NFA-graph to DFA-graph, using (fairly standard) subset
-       construction.  This has several phases to it.
+       construction.  At this stage, we care about the characters of the
+       transitions.  And we are also GUARANTEED, because of the previous
+       phase, that no node will have BOTH terminal & non-terminal incoming
+       transitions.
+
+       The phases of this are:
+       1. Getting the inital set of rows.  We can find these from the NFA.
+          If we run into a node with the same character leading to >1
+          transition, we remember it as one that we need to look at later on.
+
+       2. We recursively build the new subset construction table, based on
+          what going through, looking at the "combination" states we haven't
+          yet handled, handling them, and then repeating until we don't have
+          any new states generated.
+
+          (At this point, subset construction is actually, technically, DONE!)
+
+       3. Optimisation: we merge cells with identical states.  This is actually
+          interesting, because by changing our condition for what is
+          "identical", we can merge more thoroughly or more loosely… anyway!
+
+       4. Get rid of unreachable states.  We do this by following from the root
+          and seeing what we DON'T pass through.
+
+       5. Rename the final states.
+
+       6. Use the table to generate the DFA.
 
     3. Conversion of graph, which is now in DFA-friendly form, into DFA data
        structure.
@@ -228,32 +318,48 @@ fromAG_suite =
             ag_equals
               (ag "0-a-1 0-b-2 1-c-3 2-!d-4")
               (splitTerminalAndNonTerminal <| ag "0-a-1 0-b-2 1-c-3 2-!d-3")
-        ]
-
-      ]
-    , describe "handles edge cases"
-      [ test "with one node" <|
+        , test "separate links heading to one node, with an outgoing tail" <|
           \_ ->
-            let
-              g = mkAutomatonGraph [(0, "a", 1), (0, "a", 2), (1, "b", 2), (1, "k", 1), (1, "k", 0), (2, "!c", 3)]
-              expected = mkDFA [(0, 'a', 5), (2, 'c', 3), (4, 'a', 5), (4, 'b', 2), (4, 'k', 4), (5, 'b', 2), (5, 'c', 3), (5, 'k', 4)] [3]
-            in
-              Expect.equal expected (fromAutomatonGraph g)
-      ]
-    , describe "splits terminal and non-terminal nodes correctly"
-        [ test "basic recursive loop" <|
-            \_ ->
-              let
-                g = mkAutomatonGraph [(0, "!a", 1), (1, "b", 1)]
-                expected = mkDFA [(0, 'a', 1), (1, 'b', 2), (2, 'b', 2)] [1]
-              in
-                Expect.equal expected (fromAutomatonGraph g)
-        , test "basic connection with terminal & non-terminal" <|
-            \_ ->
-              let
-                g = mkAutomatonGraph [(0, "!a", 1), (0, "b", 1)]
-                expected = mkDFA [(0, 'a', 1), (0, 'b', 2)] [1]
-              in
-                Expect.equal expected (fromAutomatonGraph g)
+            ag_equals
+              (ag "0-a-1 0-b-2 1-c-3 2-!d-4 3-e-5 4-e-5")
+              (splitTerminalAndNonTerminal <| ag "0-a-1 0-b-2 1-c-3 2-!d-3 3-e-4")
+        , test "separate links heading to one recursive node, outgoing tail" <|
+          \_ ->
+            ag_equals
+              (ag "0-a-1 0-b-2 1-c-3 2-!d-4 3-e-3 4-e-3 3-f-5 4-f-5")
+              (splitTerminalAndNonTerminal <| ag "0-a-1 0-b-2 1-c-3 2-!d-3 3-e-3 3-f-4")
         ]
+      ]
+    , describe "NFA→DFA conversion"
+      [ test "three nodes, one identical backlink" <|
+        \_ ->
+          ag_equals
+            (ag "0-a-1 1-b-2 2-a-1")
+            (nfaToDFA <| ag "0-a-1 1-b-2 1-b-0")
+      -- these next two are a bit counter-intuitive!
+      -- BUT: think of where each transition lands!
+      , test "three nodes, terminal tail, one non-terminal backlink" <|
+        \_ ->
+          ag_equals
+            -- after register-and-replace, this would be minimised to
+            -- "0-a-1 1-!b-0"
+            (ag "0-a-1 1-!b-2 2-a-1")
+            (nfaToDFA <| ag "0-a-1 1-!b-2 1-b-0")
+      , test "three nodes, non-terminal tail, one terminal backlink" <|
+        \_ ->
+          ag_equals
+            -- after register-and-replace, this would be minimised to
+            -- "0-a-1 1-!b-0"
+            (ag "0-a-1 1-!b-2 2-a-1")
+            (nfaToDFA <| ag "0-a-1 1-b-2 1-!b-0")
+      ]
+    , describe "Full conversion"
+      [ describe "edge cases"
+        [ test "with one node" <|
+          \_ ->
+            Expect.equal
+              (dfa "0-a-5 2-c-3 4-a-5 4-b-2 4-k-4 5-b-2 5-c-3 5-k-4" [3])
+              (fromAutomatonGraph <| ag "0-a-1 0-a-2 1-b-2 1-k-1 1-k-0 2-!c-3")
+        ]
+      ]
     ]
