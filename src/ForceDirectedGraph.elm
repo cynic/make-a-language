@@ -450,10 +450,24 @@ wordsEndingAt nodeId g =
     }
 
 
-create_w_dfa : NodeId -> AutomatonGraph a -> AutomatonGraph a
-create_w_dfa target g =
+create_union_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
+create_union_userchange target g =
   wordsEndingAt target g
   |> Automata.Debugging.debugAutomatonGraph "[create_w_dfa] New w-AutomatonGraph for w_dfa"
+  |> UnionWith
+
+create_update_userchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
+create_update_userchange src dest conn ag =
+  Maybe.map2
+    (\a b -> UpdateLink a b conn)
+    (createPathTo src [] (\_ -> True) ag.graph ag.root)
+    (createPathTo dest [] (\_ -> True) ag.graph ag.root)
+
+create_removal_userchange : NodeId -> NodeId -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
+create_removal_userchange src dest ag =
+  Maybe.map
+    (\(a, b) -> RemoveLink a b)
+    (path_for_removal ag.graph ag.root src dest)
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -661,14 +675,14 @@ update offset_amount msg model =
               |> debugGraph "[update→Confirm→createNewNode] updated graph"
 
             newModel =
-              create_w_dfa model.unusedId { root = model.start, graph = updatedGraph, maxId = model.unusedId - 1 }
-              |> (\w_ag ->
+              create_union_userchange model.unusedId { root = model.start, graph = updatedGraph, maxId = model.unusedId - 1 }
+              |> (\change ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
                   , graph = updatedGraph
-                  , userRequestedChanges = UnionWith w_ag :: model.userRequestedChanges
+                  , userRequestedChanges = change :: model.userRequestedChanges
                   , basicForces =
                       basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
                   , unusedId = model.unusedId + 1
@@ -679,10 +693,6 @@ update offset_amount msg model =
 
         updateExistingNode src dest =
           let
-            pathA =
-              createPathTo src [] (\_ -> True) model.graph model.start
-            pathB =
-              createPathTo dest [] (\_ -> True) model.graph model.start
             updatedGraph =
               Graph.update dest
                 (Maybe.map (\node ->
@@ -703,20 +713,20 @@ update offset_amount msg model =
                 ))
               |> debugGraph "[update→Confirm→updateExistingNode] updated graph"
             newModel =
-              Maybe.map2
-                (\a b ->
+              create_update_userchange src dest model.selectedTransitions
+                { root = model.start, graph = model.graph, maxId = model.unusedId - 1 }
+              |> Maybe.map
+                (\change ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
                   , graph = updatedGraph
-                  , userRequestedChanges = UpdateLink a b model.selectedTransitions :: model.userRequestedChanges
+                  , userRequestedChanges = change :: model.userRequestedChanges
                   , basicForces =
                       basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
                   }
                 )
-                pathA
-                pathB
               |> Maybe.withDefault model
           in
             newModel
@@ -724,8 +734,6 @@ update offset_amount msg model =
         removeLink : NodeId -> NodeId -> Model
         removeLink src dest =
           let
-            path =
-              path_for_removal model.graph model.start src dest
             updatedGraph =
               Graph.update dest
                 (Maybe.map (\node ->
@@ -734,15 +742,16 @@ update offset_amount msg model =
                 model.graph
               |> debugGraph "[update→Confirm→removeLink] updated graph"
             newModel =
-              path
+              create_removal_userchange src dest
+                { root = model.start, graph = model.graph, maxId = model.unusedId - 1 }
               |> Maybe.map
-                (\(a, b) ->
+                (\change ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
                   , graph = updatedGraph
-                  , userRequestedChanges = RemoveLink a b :: model.userRequestedChanges
+                  , userRequestedChanges = change :: model.userRequestedChanges
                   , basicForces =
                       basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
                   }
