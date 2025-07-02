@@ -900,9 +900,15 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
           Case 4, the algorithm terminates.
     -}
   let
-    fanEquals : IntDict Connection -> IntDict Connection -> Bool
-    fanEquals a b =
-      IntDict.toList a == IntDict.toList b
+    fanOutEquals : NodeContext a Connection -> NodeContext a Connection -> Bool
+    fanOutEquals a b =
+      let
+        redirected o id =
+          IntDict.toList o
+          -- |> Debug.log ("[minimiseNodes→fanOutEquals] outgoing of #" ++ String.fromInt id)
+      in
+      redirected a.outgoing a.node.id == redirected b.outgoing b.node.id
+      -- |> Debug.log "[minimiseNodes→fanOutEquals] Are these equal?"
     classify : NodeContext a Connection -> AutomatonGraph a -> Maybe (AutomatonGraph a)
     classify terminal g =
       -- classify the terminal node into one of the four classes
@@ -910,55 +916,68 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
         -- case T1.  We will deal with this right at the end, during
         -- finalisation after ALL user changes have been made for this
         -- round of changes… OR, should we deal with it at all?!
-        Nothing
-        -- let
-        --   otherEmptyOutgoing =
-        --     Graph.fold
-        --       (\nodeContext state ->
-        --         if IntDict.isEmpty nodeContext.outgoing && nodeContext.node.id /= node.node.id then
-        --           nodeContext.node.id :: state
-        --         else
-        --           state
-        --       )
-        --       []
-        --       g.graph
-        --     |> Debug.log ("[minimiseNodes] Nodes (besides #" ++ String.fromInt node.node.id ++ ") with no outgoing")
-        --   newGraph =
-        --     List.foldl
-        --       (\nodeId state -> minimisation_merge node.node.id nodeId state)
-        --       g
-        --       otherEmptyOutgoing
-        --     |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
-        -- in
-        --   case otherEmptyOutgoing of
-        --     [] -> Nothing
-        --     _ -> Just newGraph
+        let
+          otherEmptyOutgoing =
+            Graph.fold
+              (\nodeContext state ->
+                if IntDict.isEmpty nodeContext.outgoing && nodeContext.node.id /= terminal.node.id then
+                  nodeContext.node.id :: state
+                else
+                  state
+              )
+              []
+              g.graph
+          newGraph =
+            List.foldl
+              (\nodeId state -> minimisation_merge terminal.node.id nodeId state)
+              g
+              otherEmptyOutgoing
+            -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
+        in
+          case otherEmptyOutgoing of
+            [] ->
+              -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " is the only node with no fan-out. Leaving it alone.") () |> \_ ->
+              Nothing
+            _ ->
+              -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " merged with") otherEmptyOutgoing |> \_ ->
+              Just newGraph
       else
         let
+          getFanExcludingMyself =
+            IntDict.keys
+            >> List.filterMap (\id ->
+              if id == terminal.node.id then
+                Nothing
+              else
+                Graph.get id g.graph
+            )
           targets =
-            IntDict.keys terminal.outgoing
-            |> List.filterMap (\target -> Graph.get target g.graph)
+            getFanExcludingMyself terminal.outgoing
           sources =
-            IntDict.keys terminal.incoming
-            |> List.filterMap (\source -> Graph.get source g.graph)
+            getFanExcludingMyself terminal.incoming
         in
-          case List.find (\target -> target.node.id /= terminal.node.id && fanEquals target.outgoing terminal.outgoing) targets of
+          -- Debug.log ("[minimiseNodes] Terminal #" ++ String.fromInt terminal.node.id ++ " has a fanout.  Checking targets to see if it is extended by another.") () |> \_ ->
+          case List.find (fanOutEquals terminal) targets of
             Just equivalent ->
               -- Case T2, sub-case 1
-              Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
+              -- Automata.Debugging.println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
               Just (minimisation_merge terminal.node.id equivalent.node.id g)
             Nothing ->
-              case List.find (\source -> source.node.id /= terminal.node.id && fanEquals source.outgoing terminal.outgoing) sources of
+              -- Debug.log ("[minimiseNodes] No suitable targets found; #" ++ String.fromInt terminal.node.id ++ " is not extended by any node.  Checking sources to see if it extends another.") () |> \_ ->
+              case List.find (fanOutEquals terminal) sources of
                 Just equivalent ->
                   -- Case T2, sub-case 2
-                  Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
+                  -- Automata.Debugging.println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
                   Just (minimisation_merge terminal.node.id equivalent.node.id g)
                 Nothing ->
-                  case List.filter (\t -> t.node.id /= terminal.node.id) targets of
+                  -- Debug.log ("[minimiseNodes] #" ++ String.fromInt terminal.node.id ++ " neither extends nor is extended.") () |> \_ ->
+                  case targets of
                     m::_ ->
+                      -- Debug.log "[minimiseNodes] Checking for common sources of target-node" m.node.id |> \_ ->
                       IntDict.get terminal.node.id m.incoming
                       |> Maybe.andThen
                         (\chosenConnection ->
+                          -- Debug.log "[minimiseNodes] transition to follow back is" chosenConnection |> \_ ->
                           IntDict.toList m.incoming
                           |> List.filterMap
                             (\(s, conn) ->
@@ -967,17 +986,17 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
                               else
                                 Nothing
                             )
-                          |> List.find
-                            (\n ->
-                              fanEquals n.outgoing terminal.outgoing
-                            )
+                          -- |> Debug.log ("[minimiseNodes] candidate nodes (excluding #" ++ String.fromInt terminal.node.id ++ ")")
+                          |> List.find (fanOutEquals terminal)
+                          -- |> Debug.log "[minimiseNodes] selected mergeable candidate"
                           |> Maybe.map
                             (\equivalent ->
-                                Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
+                                -- Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
                                 minimisation_merge terminal.node.id equivalent.node.id g
                             )
                         )
                     [] ->
+                      -- Debug.log "[minimiseNodes] No suitable targets found." () |> \_ ->
                       Nothing
     classify_all terminals g =
       case terminals of
@@ -989,7 +1008,10 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
             Just newG ->
               classify_all terminals newG
   in
-    classify_all (Set.toList finals_from_dfa) (g_ |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph")
+    classify_all
+      (Set.toList finals_from_dfa)
+      (g_ |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph")
+    |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
 
 toAutomatonGraph : DFARecord a b -> AutomatonGraph b
@@ -1646,52 +1668,52 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     }
     |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
+fromAutomatonGraphHelper : AutomatonGraph a -> DFARecord {} a
+fromAutomatonGraphHelper g =
+  -- called AFTER splitting non-terminal/terminal, and AFTER NFA→DFA conversion.
+  { states =
+      Graph.nodes g.graph
+      |> List.map (\node -> ( node.id, node.label) )
+      |> IntDict.fromList
+  , start = g.root
+  , finals =
+      Graph.fold
+        (\ctx finals ->
+          if isTerminalNode ctx then 
+            Set.insert ctx.node.id finals
+          else
+            finals
+        )
+        Set.empty
+        g.graph
+  , transition_function =
+      Graph.fold
+        (\ctx transitions ->
+          if IntDict.isEmpty ctx.outgoing then
+            -- otherwise, I will be adding a spurious Dict.empty,
+            -- which will affect comparisons in register_or_replace later on.
+            transitions
+          else
+            IntDict.foldl
+              (\dest conn dict ->
+                Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
+              )
+              Dict.empty
+              ctx.outgoing
+            |> \dict -> IntDict.insert ctx.node.id dict transitions
+        )
+        IntDict.empty
+        g.graph
+  }
+
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraph =
-  let
-    -- create the DFARecord.
-    craft g =
-      { states =
-          Graph.nodes g.graph
-          |> List.map (\node -> ( node.id, node.label) )
-          |> IntDict.fromList
-      , start = g.root
-      , finals =
-          Graph.fold
-            (\ctx finals ->
-              if isTerminalNode ctx then 
-                Set.insert ctx.node.id finals
-              else
-                finals
-            )
-            Set.empty
-            g.graph
-      , transition_function =
-          Graph.fold
-            (\ctx transitions ->
-              if IntDict.isEmpty ctx.outgoing then
-                -- otherwise, I will be adding a spurious Dict.empty,
-                -- which will affect comparisons in register_or_replace later on.
-                transitions
-              else
-                IntDict.foldl
-                  (\dest conn dict ->
-                    Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
-                  )
-                  Dict.empty
-                  ctx.outgoing
-                |> \dict -> IntDict.insert ctx.node.id dict transitions
-            )
-            IntDict.empty
-            g.graph
-      }
-  in
     Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received"
     >> splitTerminalAndNonTerminal
     >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
     >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
-    >> craft
+    >> fromAutomatonGraphHelper
     >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
 connectionToString : MConnection -> String

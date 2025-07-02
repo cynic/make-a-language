@@ -20,6 +20,11 @@ import Set
 import Http exposing (Expect)
 import Automata.DFA exposing (nfaToDFA)
 import Automata.Data exposing (transitionsToString)
+import Automata.DFA exposing (fromAutomatonGraphHelper)
+import Automata.DFA exposing (DFARecord)
+import IntDict
+import Dict
+import Automata.DFA exposing (minimiseNodesByCombiningTransitions)
 
 
 -- Parser for converting string representation to AutomatonGraph transitions
@@ -78,8 +83,7 @@ mkAG_input input =
 
 
 
--- Parser for converting string representation to AutomatonGraph transitions
--- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]
+-- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))
 dfa_transitionsParser =
     Parser.oneOf
@@ -87,7 +91,6 @@ dfa_transitionsParser =
             |. Parser.end
         , Parser.loop [] dfa_transitionsHelp
         ]
-
 
 dfa_transitionsHelp : List (Int, Char, Int) -> Parser (Parser.Step (List (Int, Char, Int)) (List (Int, Char, Int)))
 dfa_transitionsHelp revTransitions =
@@ -102,7 +105,6 @@ dfa_transitionsHelp revTransitions =
             |> Parser.map (\_ -> Parser.Done (List.reverse revTransitions))
         ]
 
-
 dfa_transitionParser : Parser (Int, Char, Int)
 dfa_transitionParser =
     Parser.succeed (\src label dest -> (src, label, dest))
@@ -111,7 +113,6 @@ dfa_transitionParser =
         |= dfa_labelParser
         |. Parser.symbol "-"
         |= Parser.int
-
 
 dfa_labelParser : Parser Char
 dfa_labelParser =
@@ -155,38 +156,58 @@ parseTransitions_suite =
     ]
 
 
--- toAG_suite : Test
--- toAG_suite =
---   describe "AutomatonGraph→DFA conversion"
---     [ describe "involves subset construction"
---       [ test "with one node" <|
---           \_ ->
---             let
---               g = mkAutomatonGraph [(0, "a", 1), (0, "a", 2), (1, "b", 2), (1, "k", 1), (1, "k", 0), (2, "!c", 3)]
---               dfa = fromAutomatonGraph g
---               expected = mkDFA [(0, 'a', 5), (2, 'c', 3), (4, 'a', 5), (4, 'b', 2), (4, 'k', 4), (5, 'b', 2), (5, 'c', 3), (5, 'k', 4)] [3]
---             in
---               Expect.equal expected dfa
---       ]
---     , describe "splits terminal and non-terminal nodes correctly"
---         [ test "basic recursive loop" <|
---             \_ ->
---               let
---                 g = mkAutomatonGraph [(0, "!a", 1), (1, "b", 1)]
---                 dfa = fromAutomatonGraph g
---                 expected = mkDFA [(0, 'a', 1), (1, 'b', 2), (2, 'b', 2)] [1]
---               in
---                 Expect.equal expected dfa
---         , test "basic connection with terminal & non-terminal" <|
---             \_ ->
---               let
---                 g = mkAutomatonGraph [(0, "!a", 1), (0, "b", 1)]
---                 dfa = fromAutomatonGraph g
---                 expected = mkDFA [(0, 'a', 1), (0, 'b', 2)] [1]
---               in
---                 Expect.equal expected dfa
---         ]
---     ]
+toAG_suite : Test
+toAG_suite =
+  describe "DFA→AutomatonGraph conversion"
+    [ let
+        mk xs s =
+          minimiseNodesByCombiningTransitions (Set.fromList xs) (ag s)
+      in
+      describe "node minimisation"
+      [ test "non-terminal node is extended by terminal node" <|
+        \_ ->
+          ag_equals
+            (ag "0-a-1 1-!b-1")
+            (mk [2] "0-a-1 1-!b-2 2-!b-2")
+      , test "terminal node is extended by non-terminal node" <|
+        \_ ->
+          ag_equals
+            (ag "0-!a-1 1-b-1")
+            (mk [2] "0-!a-1 1-b-2 2-b-2")
+      , test "joining split mid-nodes" <|
+        \_ ->
+          ag_equals
+            (ag "0-a-1 1-d!b-2 2-c-3")
+            (mk [2] "0-a-1 1-!b-2 2-c-3 1-d-4 4-c-3")
+      , test "joining split end-nodes" <|
+        \_ ->
+          ag_equals
+            (ag "0-a-1 1-!bc-2")
+            (mk [2] "0-a-1 1-c-3 1-!b-2")
+      , test "terminal node extended by non-terminal node, with tail" <|
+        \_ ->
+          ag_equals
+            (ag "0-!a-1 1-b-1 1-c-2")
+            (mk [1] "0-!a-1 1-b-2 2-b-2 2-c-3 1-c-3")
+      , test "non-terminal node extended by terminal node, with tail" <|
+        \_ ->
+          ag_equals
+            (ag "0-a-1 1-!b-1 1-c-2")
+            (mk [1] "0-a-1 1-!b-2 2-!b-2 2-c-3 1-c-3")
+      , test "combined recursion and splitting" <|
+        \_ ->
+          ag_equals
+            (ag "0-c!a-1 1-b-1 1-d-2")
+            (mk [1] "0-!a-1 0-c-2 1-b-2 2-b-2 1-d-3 2-d-3")
+      -- , describe "edge-cases and bug-fixes"
+      --   [ test "Case Ⅰ" <|
+      --     \_ ->
+      --       ag_equals
+      --         (ag "0-z-1 1-pq-2")
+      --         (mk [] "0-z-1 0-z-2 1-p-3 2-q-4")
+      --   ]
+      ]
+    ]
 
 ag_equals : AutomatonGraph a -> AutomatonGraph a -> Expect.Expectation
 ag_equals g1 g2 =
@@ -209,6 +230,29 @@ ag_equals g1 g2 =
       Expect.equalSets a1 a2
     else
       Expect.equal c1 c2
+
+dfa_equals : DFARecord a b -> DFARecord a b -> Expect.Expectation
+dfa_equals dfa1 dfa2 =
+  let
+    states1 = IntDict.keys dfa1.states |> Set.fromList
+    states2 = IntDict.keys dfa2.states |> Set.fromList
+    transitions1 =
+      IntDict.toList dfa1.transition_function
+      |> List.map (\(a, d) -> (a, Dict.toList d))
+      |> Set.fromList
+    transitions2 =
+      IntDict.toList dfa2.transition_function
+      |> List.map (\(a, d) -> (a, Dict.toList d))
+      |> Set.fromList
+  in
+    if transitions1 /= transitions2 then
+      Expect.equalSets transitions1 transitions2
+    else if states1 /= states2 then
+      Expect.equalSets states1 states2
+    else if dfa1.finals /= dfa2.finals then
+      Expect.equalSets dfa1.finals dfa2.finals
+    else
+      Expect.equal dfa1.start dfa2.start
 
 fromAG_suite : Test
 fromAG_suite =
@@ -328,6 +372,11 @@ fromAG_suite =
             ag_equals
               (ag "0-a-1 0-b-2 1-c-3 2-!d-4 3-e-3 4-e-3 3-f-5 4-f-5")
               (splitTerminalAndNonTerminal <| ag "0-a-1 0-b-2 1-c-3 2-!d-3 3-e-3 3-f-4")
+        , test "separate links for a more complex composite" <|
+          \_ ->
+            ag_equals
+              (ag "0-!a-1 0-c-2 1-b-2 2-b-2 1-d-3 2-d-3")
+              (splitTerminalAndNonTerminal <| ag "0-c!a-1 1-b-1 1-d-2")
         ]
       ]
     , describe "NFA→DFA conversion"
@@ -352,6 +401,29 @@ fromAG_suite =
             -- "0-a-1 1-!b-0"
             (ag "0-a-1 1-!b-2 2-a-1")
             (nfaToDFA <| ag "0-a-1 1-b-2 1-!b-0")
+      , test "two nodes, recursive on first" <|
+        \_ ->
+          ag_equals
+            -- after register-and-replace, this would be more minimised.
+            (ag "0-k-1 1-k-1")
+            (nfaToDFA <| ag "0-k-1 0-k-0")
+      , test "four nodes, different transitions to same endpoint" <|
+        \_ ->
+          ag_equals
+            (ag "0-z-1 1-pq-2")
+            (nfaToDFA <| ag "0-z-1 0-z-2 1-p-3 2-q-3")
+      , test "four nodes, different transitions to different endpoints" <|
+        \_ ->
+          ag_equals
+            (ag "0-z-1 1-!p-2 1-q-3")
+            (nfaToDFA <| ag "0-z-1 0-z-2 1-!p-3 2-q-4")
+      ]
+    , describe "Crafting step (post terminality-splitting, post NFA→DFA)"
+      [ test "different transitions to same endpoint" <|
+        \_ ->
+          dfa_equals 
+            (dfa "0-z-1 1-p-2 1-q-2" [])
+            (fromAutomatonGraphHelper <| ag "0-z-1 1-pq-2")
       ]
     , describe "Full conversion"
       [ describe "edge cases"
