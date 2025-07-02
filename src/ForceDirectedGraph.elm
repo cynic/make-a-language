@@ -888,18 +888,9 @@ subscriptions offset_amount model =
         , keyboardSubscription
         ]
 
-confirmChanges : Model -> Model
-confirmChanges model_ =
+applyChangesToGraph : List RequestedGraphChanges -> AutomatonGraph Entity -> AutomatonGraph Entity
+applyChangesToGraph userRequestedChanges ag =
   let
-    ag : AutomatonGraph Entity
-    ag =
-      { root = model_.start
-      , graph = model_.pristineGraph
-      , maxId =
-          Graph.nodeIds model_.pristineGraph
-          |> List.maximum
-          |> Maybe.withDefault 0
-      }
     applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
     applyChange_union w_dfa g =
       Automata.Debugging.debugAutomatonGraph "Received by applyChange_union" g |> \_ ->
@@ -916,22 +907,6 @@ confirmChanges model_ =
         (followPathTo pathA g)
         (followPathTo pathB g)
       |> Maybe.withDefault g
-
-    mkSim g model =
-      let
-        (w, h)  = model_.dimensions
-        forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
-        basic = basicForces g.root forceGraph (round h)
-        viewport = viewportForces (w, h) forceGraph
-      in
-        { model
-          | simulation = Force.simulation (basic ++ viewport)
-          , basicForces = basic
-          , graph = forceGraph
-          , pristineGraph = forceGraph
-          , viewportForces = viewport
-          , specificForces = IntDict.empty
-        }
   in
     List.foldl
       (\change g ->
@@ -947,13 +922,46 @@ confirmChanges model_ =
               |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→UpdateLink]"
       )
       ag
-      (List.reverse model_.userRequestedChanges)
+      (List.reverse userRequestedChanges)
+    |> Automata.DFA.minimiseNodesByCombiningTransitions
+
+confirmChanges : Model -> Model
+confirmChanges model =
+  let
+    ag : AutomatonGraph Entity
+    ag =
+      { root = model.start
+      , graph = model.pristineGraph
+      , maxId =
+          Graph.nodeIdRange model.pristineGraph
+          |> Maybe.map Tuple.second
+          |> Maybe.withDefault 0
+      }
+
+    mkSim g model_ =
+      let
+        (w, h)  = model_.dimensions
+        forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
+        basic = basicForces g.root forceGraph (round h)
+        viewport = viewportForces (w, h) forceGraph
+      in
+        { model_ -- make sure we are referencing the correct Model!
+          | simulation = Force.simulation (basic ++ viewport)
+          , basicForces = basic
+          , graph = forceGraph
+          , pristineGraph = forceGraph
+          , viewportForces = viewport
+          , specificForces = IntDict.empty
+        }
+  in
+    applyChangesToGraph model.userRequestedChanges ag
     |> \g ->
-      { model_
+      { model
       | userRequestedChanges = []
       , start = g.root
       , unusedId = g.maxId + 1
-      } |> mkSim g
+      }
+    |> mkSim g
 
 textChar : Char -> String
 textChar ch =
