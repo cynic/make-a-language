@@ -93,8 +93,8 @@ mkDFA transitions finals =
   , finals = Set.fromList finals
   }
 
-mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph ()
-mkAutomatonGraph ts =
+mkAutomatonGraphWithValues : (NodeId -> a) -> List (NodeId, String, NodeId) -> AutomatonGraph a
+mkAutomatonGraphWithValues valueFunction ts =
   let
     edges =
       List.foldl
@@ -130,16 +130,27 @@ mkAutomatonGraph ts =
         Set.empty
         ts
       |> Set.toList
-      |> List.map (\x -> Node x ())
+      |> List.map (\x -> Node x (valueFunction x))
   in
-    { graph =
-        Graph.fromNodesAndEdges nodes edges
-    , root =
-        case ts of
-          (src, _, _)::_ -> src
-          _ -> 0
-    , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
-    }
+    case nodes of
+      [] ->
+        { graph = Graph.fromNodesAndEdges [Node 0 (valueFunction 0)] []
+        , root = 0
+        , maxId = 0
+        }
+      _ ->
+        { graph =
+            Graph.fromNodesAndEdges nodes edges
+        , root =
+            case ts of
+              (src, _, _)::_ -> src
+              _ -> 0
+        , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
+        }
+
+mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph ()
+mkAutomatonGraph =
+  mkAutomatonGraphWithValues (\_ -> ())
 
 extend : DFARecord a b -> DFARecord a b -> ExtDFA b
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
