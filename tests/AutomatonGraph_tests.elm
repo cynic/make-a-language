@@ -160,45 +160,45 @@ toAG_suite : Test
 toAG_suite =
   describe "DFA→AutomatonGraph conversion"
     [ let
-        mk xs s =
-          minimiseNodesByCombiningTransitions (Set.fromList xs) (ag s)
+        mk s =
+          minimiseNodesByCombiningTransitions (ag s)
       in
       describe "node minimisation"
       [ test "non-terminal node is extended by terminal node" <|
         \_ ->
           ag_equals
             (ag "0-a-1 1-!b-1")
-            (mk [2] "0-a-1 1-!b-2 2-!b-2")
+            (mk "0-a-1 1-!b-2 2-!b-2")
       , test "terminal node is extended by non-terminal node" <|
         \_ ->
           ag_equals
             (ag "0-!a-1 1-b-1")
-            (mk [2] "0-!a-1 1-b-2 2-b-2")
+            (mk "0-!a-1 1-b-2 2-b-2")
       , test "joining split mid-nodes" <|
         \_ ->
           ag_equals
             (ag "0-a-1 1-d!b-2 2-c-3")
-            (mk [2] "0-a-1 1-!b-2 2-c-3 1-d-4 4-c-3")
+            (mk "0-a-1 1-!b-2 2-c-3 1-d-4 4-c-3")
       , test "joining split end-nodes" <|
         \_ ->
           ag_equals
             (ag "0-a-1 1-!bc-2")
-            (mk [2] "0-a-1 1-c-3 1-!b-2")
+            (mk "0-a-1 1-c-3 1-!b-2")
       , test "terminal node extended by non-terminal node, with tail" <|
         \_ ->
           ag_equals
             (ag "0-!a-1 1-b-1 1-c-2")
-            (mk [1] "0-!a-1 1-b-2 2-b-2 2-c-3 1-c-3")
+            (mk "0-!a-1 1-b-2 2-b-2 2-c-3 1-c-3")
       , test "non-terminal node extended by terminal node, with tail" <|
         \_ ->
           ag_equals
             (ag "0-a-1 1-!b-1 1-c-2")
-            (mk [1] "0-a-1 1-!b-2 2-!b-2 2-c-3 1-c-3")
+            (mk "0-a-1 1-!b-2 2-!b-2 2-c-3 1-c-3")
       , test "combined recursion and splitting" <|
         \_ ->
           ag_equals
             (ag "0-c!a-1 1-b-1 1-d-2")
-            (mk [1] "0-!a-1 0-c-2 1-b-2 2-b-2 1-d-3 2-d-3")
+            (mk "0-!a-1 0-c-2 1-b-2 2-b-2 1-d-3 2-d-3")
       -- , describe "edge-cases and bug-fixes"
       --   [ test "Case Ⅰ" <|
       --     \_ ->

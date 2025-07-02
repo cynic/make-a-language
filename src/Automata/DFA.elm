@@ -822,8 +822,8 @@ minimisation_merge head other g =
     |> Maybe.withDefault g
     |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
 
-minimiseNodesByCombiningTransitions : Set NodeId -> AutomatonGraph a -> AutomatonGraph a
-minimiseNodesByCombiningTransitions finals_from_dfa g_ =
+minimiseNodesByCombiningTransitions : AutomatonGraph a -> AutomatonGraph a
+minimiseNodesByCombiningTransitions g_ =
   {-
     The Graph representation encodes finality via transitions (e.g. (ch, 0) for
     a non-final state and (ch, 1) for a final state). I convert that graph
@@ -900,6 +900,26 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
           Case 4, the algorithm terminates.
     -}
   let
+    terminal_nodes : Set NodeId
+    terminal_nodes =
+      Graph.fold
+        (\ctx nodeset ->
+          IntDict.foldl
+            (\_ conn ((czech, state) as acc_) ->
+              if czech then
+                acc_
+              else if Set.foldl (\(_, f) acc -> acc || f == 1) False conn then
+                (True, Set.insert ctx.node.id state)
+              else
+                acc_
+            )
+            (False, nodeset)
+            ctx.incoming
+          |> Tuple.second
+        )
+        Set.empty
+        g_.graph
+      |> Debug.log "[minimiseNodes] Terminal nodes (i.e. starting points)"
     fanOutEquals : NodeContext a Connection -> NodeContext a Connection -> Bool
     fanOutEquals a b =
       let
@@ -1009,7 +1029,7 @@ minimiseNodesByCombiningTransitions finals_from_dfa g_ =
               classify_all terminals newG
   in
     classify_all
-      (Set.toList finals_from_dfa)
+      (Set.toList terminal_nodes)
       (g_ |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph")
     |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
@@ -1051,7 +1071,7 @@ toAutomatonGraph dfa =
         , maxId = Tuple.first h -- |> Debug.log "[toGraph] maxId"
         , root = dfa.start -- |> Debug.log "[toGraph] root"
         }
-        |> minimiseNodesByCombiningTransitions dfa.finals
+        |> minimiseNodesByCombiningTransitions
 
 fromGraph : NodeId -> Graph n Connection -> DFARecord {} n
 fromGraph start graph =
