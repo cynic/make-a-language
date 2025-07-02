@@ -2,11 +2,19 @@ module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
 import Automata.DFA exposing (splitTerminalAndNonTerminal)
-import Utility exposing (ag, dfa, ag_equals, dfa_equals)
+import Utility exposing (dfa, ag_equals, dfa_equals, mkAG_input)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import ForceDirectedGraph exposing (RequestedGraphChanges)
 import ForceDirectedGraph exposing (create_removal_userchange)
 import Graph exposing (NodeId)
+import Automata.Data exposing (AutomatonGraph)
+import Automata.DFA exposing (mkAutomatonGraphWithValues)
+import ForceDirectedGraph exposing (Entity)
+
+ag : String -> AutomatonGraph Entity
+ag =
+  mkAG_input
+  >> mkAutomatonGraphWithValues (\id -> { x = 0, y = 0, vx = 0, vy = 0, id = id, value = {} })
 
 check_remove : NodeId -> NodeId -> String -> String -> Expect.Expectation
 check_remove src dest s_ag s_expected =
