@@ -463,15 +463,33 @@ create_union_graphchange src x y conn g =
           , outgoing = IntDict.empty
           }
           g.graph
-        |> debugGraph "[update→Confirm→createNewNode] updated graph"
+        |> debugGraph "[create_union_graphchange] updated graph"
     , maxId = g.maxId + 1
   }
 
 create_union_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
 create_union_userchange target g =
   wordsEndingAt target g
-  |> Automata.Debugging.debugAutomatonGraph "[create_w_dfa] New w-AutomatonGraph for w_dfa"
+  |> Automata.Debugging.debugAutomatonGraph "[create_union_userchange] New w-AutomatonGraph for w_dfa"
   |> UnionWith
+
+create_update_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+create_update_graphchange src dest conn g =
+  { g
+    | graph =
+        Graph.update dest
+          (Maybe.map (\node ->
+            { node | incoming = IntDict.insert src conn node.incoming }
+          ))
+          g.graph
+      -- if it's recursive, I must add it to both so that it reflects in the graph.
+      -- in other cases, this should do no harm.
+      |> Graph.update src
+        (Maybe.map (\node ->
+          { node | outgoing = IntDict.insert dest conn node.outgoing }
+        ))
+  }
+  |> debugAutomatonGraph "[create_update_graphchange] updated graph"
 
 create_update_userchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
 create_update_userchange src dest conn ag =
@@ -479,6 +497,18 @@ create_update_userchange src dest conn ag =
     (\a b -> UpdateLink a b conn)
     (createPathTo src [] (\_ -> True) ag.graph ag.root)
     (createPathTo dest [] (\_ -> True) ag.graph ag.root)
+
+create_removal_graphchange : NodeId -> NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
+create_removal_graphchange src dest g =
+  { g
+    | graph =
+        Graph.update dest
+          (Maybe.map
+            (\node -> { node | incoming = IntDict.remove src node.incoming })
+          )
+          g.graph
+  }
+  |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
 create_removal_userchange : NodeId -> NodeId -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
 create_removal_userchange src dest ag =
@@ -690,124 +720,45 @@ update offset_amount msg model =
     Confirm ->
       -- What am I confirming?
       let
+        commit_change : RequestedGraphChanges -> AutomatonGraph Entity -> Model -> Model
+        commit_change change updatedGraph model_ =
+          { model_
+          | selectedTransitions = Set.empty
+          , selectedDest = NoDestination
+          , selectedSource = Nothing
+          , userGraph = updatedGraph
+          , userRequestedChanges = change :: model_.userRequestedChanges
+          , basicForces =
+              basicForces updatedGraph (round <| Tuple.second model_.dimensions)
+          }
+        
         createNewNode : NodeId -> Float -> Float -> Model
         createNewNode src x y =
           let
             updatedGraph =
-              let
-                g = model.userGraph
-              in
-                { g
-                  | graph =
-                      Graph.insert
-                        { node =
-                          { label =
-                              let
-                                initial = Force.entity (g.maxId + 1) { }
-                              in
-                                { initial | x = x, y = y }
-                          , id = g.maxId + 1
-                          }
-                        , incoming = IntDict.singleton src model.selectedTransitions
-                        , outgoing = IntDict.empty
-                        }
-                        model.userGraph.graph
-                  , maxId = g.maxId + 1
-                }
-                |> debugAutomatonGraph "[update→Confirm→createNewNode] updated graph"
-
-            newModel =
-              create_union_userchange updatedGraph.maxId updatedGraph
-              |> (\change ->
-                  { model
-                  | selectedTransitions = Set.empty
-                  , selectedDest = NoDestination
-                  , selectedSource = Nothing
-                  , userGraph = updatedGraph
-                  , userRequestedChanges = change :: model.userRequestedChanges
-                  , basicForces =
-                      basicForces updatedGraph (round <| Tuple.second model.dimensions)
-                  }
-                )
+              create_union_graphchange src x y model.selectedTransitions model.userGraph
           in
-            newModel
+            create_union_userchange updatedGraph.maxId updatedGraph
+            |> (\change -> commit_change change updatedGraph model)
 
         updateExistingNode src dest =
           let
             updatedGraph =
-              let
-                g = model.userGraph
-              in
-                { g
-                  | graph =
-                      Graph.update dest
-                        (Maybe.map (\node ->
-                          { node
-                            | incoming =
-                                IntDict.insert src model.selectedTransitions node.incoming
-                          }
-                        ))
-                        g.graph
-                    -- if it's recursive, I must add it to both so that it reflects in the graph.
-                    -- in other cases, this should do no harm.
-                    |> Graph.update src
-                      (Maybe.map (\node ->
-                        { node
-                          | outgoing =
-                              IntDict.insert dest model.selectedTransitions node.outgoing
-                        }
-                      ))
-                }
-                |> debugAutomatonGraph "[update→Confirm→updateExistingNode] updated graph"
-            newModel =
-              create_update_userchange src dest model.selectedTransitions model.userGraph
-              |> Maybe.map
-                (\change ->
-                  { model
-                  | selectedTransitions = Set.empty
-                  , selectedDest = NoDestination
-                  , selectedSource = Nothing
-                  , userGraph = updatedGraph
-                  , userRequestedChanges = change :: model.userRequestedChanges
-                  , basicForces =
-                      basicForces updatedGraph (round <| Tuple.second model.dimensions)
-                  }
-                )
-              |> Maybe.withDefault model
+              create_update_graphchange src dest model.selectedTransitions model.userGraph              
           in
-            newModel
+            create_update_userchange src dest model.selectedTransitions model.userGraph
+            |> Maybe.map (\change -> commit_change change updatedGraph model)
+            |> Maybe.withDefault model
 
         removeLink : NodeId -> NodeId -> Model
         removeLink src dest =
           let
-            g = model.userGraph
             updatedGraph =
-              { g
-                | graph =
-                    Graph.update dest
-                      (Maybe.map (\node ->
-                        { node | incoming = IntDict.remove src node.incoming }
-                      ))
-                      g.graph
-              }
-              |> debugAutomatonGraph "[update→Confirm→removeLink] updated graph"
-            newModel =
-              create_removal_userchange src dest model.userGraph
-              |> Maybe.map
-                (\change ->
-                  { model
-                  | selectedTransitions = Set.empty
-                  , selectedDest = NoDestination
-                  , selectedSource = Nothing
-                  , userGraph = updatedGraph
-                  , userRequestedChanges = change :: model.userRequestedChanges
-                  , basicForces =
-                      basicForces updatedGraph (round <| Tuple.second model.dimensions)
-                  }
-                )
-              |> Maybe.withDefault model
+              create_removal_graphchange src dest model.userGraph
           in
-            newModel
+            create_removal_userchange src dest model.userGraph
+            |> Maybe.map (\change -> commit_change change updatedGraph model)
+            |> Maybe.withDefault model
 
       in
         model.selectedSource
