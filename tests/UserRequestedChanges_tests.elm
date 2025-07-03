@@ -13,12 +13,27 @@ import ForceDirectedGraph exposing (Entity)
 import Automata.Data exposing (Transition)
 import ForceDirectedGraph exposing (create_update_userchange)
 import Set
-import ForceDirectedGraph exposing (create_union_userchange)
+import ForceDirectedGraph exposing (RequestedGraphChanges(..))
+import ForceDirectedGraph exposing (Msg(..))
+import Automata.DFA exposing (mkConn)
+import ForceDirectedGraph exposing (create_newnode_userchange)
+import ForceDirectedGraph exposing (create_newnode_graphchange)
+import Automata.Data exposing (Connection)
+import ForceDirectedGraph exposing (create_update_graphchange)
+import ForceDirectedGraph exposing (create_removal_graphchange)
+import Automata.Debugging exposing (debugAutomatonGraph)
+import ForceDirectedGraph exposing (update_change)
+import ForceDirectedGraph exposing (remove_change)
 
 ag : String -> AutomatonGraph Entity
 ag =
   mkAG_input
   >> mkAutomatonGraphWithValues (\id -> { x = 0, y = 0, vx = 0, vy = 0, id = id, value = {} })
+
+-- very thin convenience wrapper to get rid of the "x" and "y" components
+newnode_change : NodeId -> Connection -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
+newnode_change src conn g list =
+  ForceDirectedGraph.newnode_change src conn 0 0 g list
 
 check_remove : NodeId -> NodeId -> String -> String -> Expect.Expectation
 check_remove src dest s_ag s_expected =
@@ -43,12 +58,35 @@ check_update src dest connList s_ag s_expected =
 check_creating : NodeId -> String -> String -> String -> Expect.Expectation
 check_creating new_node s_new_graph s_original_graph s_expected =
   let
-    change = create_union_userchange new_node (ag s_new_graph)
+    change = create_newnode_userchange new_node (ag s_new_graph)
   in
     ag_equals
       (ag s_expected)
       (applyChangesToGraph [change] (ag s_original_graph))
-  
+
+check_multi : String -> List (AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)) -> String -> Expect.Expectation
+check_multi s_start changes s_expected =
+  let
+    start = ag s_start
+    expected = ag s_expected
+    check_multi_helper : List (AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)) -> Int -> (AutomatonGraph Entity, List RequestedGraphChanges) -> Expect.Expectation
+    check_multi_helper remaining idx (g, list) =
+      case remaining of
+        [] -> Expect.fail "No changes were specified in the test."
+        f::rest ->
+          case f g list of
+            Nothing ->
+              Expect.fail <| "User-change at index " ++ String.fromInt idx ++ " was considered to be invalid."
+            Just (usergraph, changelist) ->
+              case rest of
+                [] ->
+                  ag_equals
+                    expected
+                    (applyChangesToGraph changelist start)
+                _ ->
+                  check_multi_helper rest (idx + 1) (usergraph, changelist)
+  in
+    check_multi_helper changes 0 (start, [])
 
 suite : Test
 suite =
@@ -154,5 +192,18 @@ suite =
               2 "0-!a-1 0-b-2" "0-!a-1"
               "0-!ab-1"
         ]
+      ]
+    , describe "Multiple changes" <|
+      [ test "Can create two links, one after another" <|
+        \_ ->
+          check_multi
+            ""
+            [ newnode_change 0 (mkConn "c") -- new node: 1
+            , newnode_change 1 (mkConn "d") -- new node: 2
+            , update_change 0 1 (mkConn "!ab")
+            , newnode_change 1 (mkConn "!e") -- new node: 3
+            , remove_change 1 2
+            ]
+            "0-!ab-1 1-!e-2"
       ]
     ]

@@ -9,6 +9,7 @@ import Graph
 import IntDict
 import List
 import Dict
+import Automata.Data exposing (Connection)
 
 -- Parser for converting string representation to AutomatonGraph transitions
 -- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]

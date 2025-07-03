@@ -394,20 +394,20 @@ path_for_removal graph start source destination =
           -- (unless we are dealing with recursion).
           -- Check the recursive case first.
           if source == destination then
-            \_ -> True |> Debug.log "No accept-check, this is recursive" -- the checks in createPathTo should already cover this.
+            \_ -> True -- |> Debug.log "No accept-check, this is recursive" -- the checks in createPathTo should already cover this.
           else
             \p ->
               -- we reverse because we want to check the LAST link in the chain for 1-hop
               case List.reverse p of
                 [] ->  -- you're not recursive, so there must be AT LEAST one link!
                   False
-                  |> Debug.log "Failed accept: no links in path, but not recursive"
+                  -- |> Debug.log "Failed accept: no links in path, but not recursive"
                 h::_ ->
                   IntDict.get source dest.incoming
-                  |> Debug.log "Is there a 1-hop link?"
-                  |> Maybe.map (\conn -> Set.member (Debug.log "Checking for transition" h) (Debug.log "Connection is" conn))
+                  -- |> Debug.log "Is there a 1-hop link?"
+                  |> Maybe.map (Set.member ({- Debug.log "Checking for transition" -} h))
                   |> Maybe.withDefault False
-                  |> Debug.log ("Is there a 1-link hop from #" ++ String.fromInt destination ++ " to #" ++ String.fromInt source)
+                  -- |> Debug.log ("Is there a 1-link hop from #" ++ String.fromInt destination ++ " to #" ++ String.fromInt source)
         path =
           createPathTo destination [source] acceptFunction graph start
       in
@@ -424,7 +424,7 @@ path_for_removal graph start source destination =
           )
           path
     )
-    (Graph.get destination (graph |> debugGraph "getting userchange-data from"))
+    (Graph.get destination (graph {- |> debugGraph "getting userchange-data from" -}))
 
 {-| Create a DFA consisting of all paths ending at the specified transition.
 -}
@@ -446,8 +446,16 @@ wordsEndingAt nodeId g =
   in
     graphToAutomatonGraph g.root induced
 
-create_union_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
-create_union_graphchange src x y conn g =
+newnode_change : NodeId -> Connection -> Float -> Float -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
+newnode_change src conn x y g list =
+  let
+    newGraph = create_newnode_graphchange src x y conn g
+    change = create_newnode_userchange newGraph.maxId newGraph
+  in
+    Just (newGraph, change :: list)
+
+create_newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+create_newnode_graphchange src x y conn g =
   { g
     | graph =
         Graph.insert
@@ -457,21 +465,29 @@ create_union_graphchange src x y conn g =
                   initial = Force.entity (g.maxId + 1) { }
                 in
                   { initial | x = x, y = y }
-            , id = g.maxId
+            , id = g.maxId + 1
             }
           , incoming = IntDict.singleton src conn
           , outgoing = IntDict.empty
           }
           g.graph
-        |> debugGraph "[create_union_graphchange] updated graph"
     , maxId = g.maxId + 1
   }
+  |> debugAutomatonGraph "[create_union_graphchange] updated graph"
 
-create_union_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
-create_union_userchange target g =
+create_newnode_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
+create_newnode_userchange target g =
   wordsEndingAt target g
   |> Automata.Debugging.debugAutomatonGraph "[create_union_userchange] New w-AutomatonGraph for w_dfa"
   |> UnionWith
+
+update_change : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
+update_change src dest conn g list =
+  let
+    newGraph = create_update_graphchange src dest conn g
+    change = create_update_userchange src dest conn g
+  in
+    Maybe.map (\change_ -> (newGraph, change_ :: list)) change
 
 create_update_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
 create_update_graphchange src dest conn g =
@@ -497,6 +513,14 @@ create_update_userchange src dest conn ag =
     (\a b -> UpdateLink a b conn)
     (createPathTo src [] (\_ -> True) ag.graph ag.root)
     (createPathTo dest [] (\_ -> True) ag.graph ag.root)
+
+remove_change : NodeId -> NodeId -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
+remove_change src dest g list =
+  let
+    newGraph = create_removal_graphchange src dest g
+    change = create_removal_userchange src dest g
+  in
+    Maybe.map (\change_ -> (newGraph, change_ :: list)) change
 
 create_removal_graphchange : NodeId -> NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
 create_removal_graphchange src dest g =
@@ -720,45 +744,34 @@ update offset_amount msg model =
     Confirm ->
       -- What am I confirming?
       let
-        commit_change : RequestedGraphChanges -> AutomatonGraph Entity -> Model -> Model
-        commit_change change updatedGraph model_ =
+        commit_change : List RequestedGraphChanges -> AutomatonGraph Entity -> Model -> Model
+        commit_change updatedChanges updatedGraph model_ =
           { model_
           | selectedTransitions = Set.empty
           , selectedDest = NoDestination
           , selectedSource = Nothing
           , userGraph = updatedGraph
-          , userRequestedChanges = change :: model_.userRequestedChanges
+          , userRequestedChanges = updatedChanges
           , basicForces =
               basicForces updatedGraph (round <| Tuple.second model_.dimensions)
           }
         
         createNewNode : NodeId -> Float -> Float -> Model
         createNewNode src x y =
-          let
-            updatedGraph =
-              create_union_graphchange src x y model.selectedTransitions model.userGraph
-          in
-            create_union_userchange updatedGraph.maxId updatedGraph
-            |> (\change -> commit_change change updatedGraph model)
+          newnode_change src model.selectedTransitions x y model.userGraph model.userRequestedChanges
+          |> Maybe.map (\(newGraph, newList) -> commit_change newList newGraph model)
+          |> Maybe.withDefault model
 
         updateExistingNode src dest =
-          let
-            updatedGraph =
-              create_update_graphchange src dest model.selectedTransitions model.userGraph              
-          in
-            create_update_userchange src dest model.selectedTransitions model.userGraph
-            |> Maybe.map (\change -> commit_change change updatedGraph model)
-            |> Maybe.withDefault model
+          update_change src dest model.selectedTransitions model.userGraph model.userRequestedChanges
+          |> Maybe.map (\(newGraph, newList) -> commit_change newList newGraph model)
+          |> Maybe.withDefault model
 
         removeLink : NodeId -> NodeId -> Model
         removeLink src dest =
-          let
-            updatedGraph =
-              create_removal_graphchange src dest model.userGraph
-          in
-            create_removal_userchange src dest model.userGraph
-            |> Maybe.map (\change -> commit_change change updatedGraph model)
-            |> Maybe.withDefault model
+          remove_change src dest model.userGraph model.userRequestedChanges
+          |> Maybe.map (\(newGraph, newList) -> commit_change newList newGraph model)
+          |> Maybe.withDefault model
 
       in
         model.selectedSource
@@ -902,12 +915,12 @@ applyChangesToGraph userRequestedChanges ag =
   let
     applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
     applyChange_union w_dfa g =
-      Automata.Debugging.debugAutomatonGraph "Received by applyChange_union" g |> \_ ->
+      -- Automata.Debugging.debugAutomatonGraph "Received by applyChange_union" g |> \_ ->
       union
         (debugDFA_ "w_dfa" w_dfa)
         (debugDFA_ "m_dfa" <| Automata.DFA.fromGraph g.root g.graph)
       |> toAutomatonGraph
-      |> Automata.Debugging.debugAutomatonGraph "Generated by applyChange_union"
+      -- |> Automata.Debugging.debugAutomatonGraph "Generated by applyChange_union"
 
     applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
     applyChange_updateLink pathA pathB conn g =
@@ -922,13 +935,13 @@ applyChangesToGraph userRequestedChanges ag =
           case change of
             RemoveLink pathA pathB ->
               applyChange_updateLink pathA pathB Set.empty g
-              |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→RemoveLink]"
+              |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→RemoveLink]"
             UnionWith w_ag ->
               applyChange_union (Debug.log "Converting w-AutomatonGraph into w_dfa" () |> \_ -> fromAutomatonGraph w_ag) g
-              |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→UnionWith]"
+              |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→UnionWith]"
             UpdateLink pathA pathB conn ->
               applyChange_updateLink pathA pathB conn g
-              |> Automata.Debugging.debugAutomatonGraph "[confirmChanges→UpdateLink]"
+              |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→UpdateLink]"
       )
       ag
       (List.reverse userRequestedChanges)
