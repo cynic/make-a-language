@@ -40,6 +40,8 @@ import Automata.DFA exposing (debugDFA_)
 import Automata.DFA exposing (DFARecord)
 import TypedSvg exposing (use)
 import Tuple.Extra exposing (apply)
+import Automata.Data exposing (graphToAutomatonGraph)
+import Automata.Debugging exposing (debugAutomatonGraph)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -78,11 +80,10 @@ type alias Model =
     -- modifications.  Whenever we want to commit user edits, we can
     -- use this graph as a base for the fold; and the resulting graph
     -- can then again be our `pristineGraph`.
-  , pristineGraph : Graph Entity Connection
+  , pristineGraph : AutomatonGraph Entity
     -- This is originally the `pristineGraph`, but it is modified and
     -- messed about by the user at runtime.
-  , graph : Graph Entity Connection
-  , start : NodeId
+  , userGraph : AutomatonGraph Entity
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
@@ -96,7 +97,6 @@ type alias Model =
   , selectedTransitions : Connection
   , mouseIsHere : Bool
   , userRequestedChanges : List RequestedGraphChanges
-  , unusedId : NodeId
   }
 
 type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
@@ -180,57 +180,59 @@ makeLinkForces graph =
     graph
   |> Force.customLinks 3
 
-basicForces : NodeId -> Graph Entity Connection -> Int -> List (Force.Force NodeId)
-basicForces start graph height =
-  [ makeLinkForces graph -- the springs
-  , Force.manyBodyStrength -2000.0 (List.map .id <| Graph.nodes graph) -- the repulsion
+basicForces : AutomatonGraph Entity -> Int -> List (Force.Force NodeId)
+basicForces g height =
+  [ makeLinkForces g.graph -- the springs
+  , Force.manyBodyStrength -2000.0 (List.map .id <| Graph.nodes g.graph) -- the repulsion
   , Force.towardsX <|
       List.filterMap
         (\n ->
-          if n.id == start then
-            Just { node = start, strength = 0.1, target = 0 }
+          if n.id == g.root then
+            Just { node = g.root, strength = 0.1, target = 0 }
           else
             Nothing
         )
-        (Graph.nodes graph)
+        (Graph.nodes g.graph)
   , Force.towardsY <|
       List.filterMap
         (\n ->
-          if n.id == start then
+          if n.id == g.root then
             Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
           else
             Nothing
         )
-        (Graph.nodes graph)
+        (Graph.nodes g.graph)
   ]  
 
-makeSimulation : NodeId -> (Float, Float) -> Graph Entity Connection -> Force.State NodeId
-makeSimulation start (w, h) graph =
+makeSimulation : (Float, Float) -> AutomatonGraph Entity -> Force.State NodeId
+makeSimulation (w, h) g =
   Force.simulation
-    (basicForces start graph (round h) ++ viewportForces (w, h) graph)
+    (basicForces g (round h) ++ viewportForces (w, h) g.graph)
 
-toForceGraph : AutomatonGraph a -> Graph Entity Connection
+toForceGraph : AutomatonGraph a -> AutomatonGraph Entity
 toForceGraph g =
-  Graph.mapContexts initializeNode g.graph
+  { graph = Graph.mapContexts initializeNode g.graph
+  , root = g.root
+  , maxId = g.maxId
+  }
 
 receiveWords : List String -> (Float, Float) -> Model
 receiveWords words (w, h) =
   let
     dfa = Automata.DFA.fromWords words
-    graph = Automata.DFA.toAutomatonGraph dfa
-    forceGraph = toForceGraph (graph {- |> Debug.log "Received by ForceDirectedGraph" -} )
-    basic = basicForces graph.root forceGraph (round h)
-    viewport = viewportForces (w, h) forceGraph
+    g = Automata.DFA.toAutomatonGraph dfa
+    forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
+    basic = basicForces forceGraph (round h)
+    viewport = viewportForces (w, h) forceGraph.graph
   in
     { drag = Nothing
     , pristineGraph = forceGraph
-    , graph = forceGraph
+    , userGraph = forceGraph
     , simulation = Force.simulation (basic ++ viewport)
     , dimensions = (w, h)
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
-    , start = graph.root
     , zoom = ( 1.0, ( w/2, h/2 ) )
     , mouseCoords = ( w/2, h/2 )
     , selectedSource = Nothing
@@ -239,7 +241,6 @@ receiveWords words (w, h) =
     , pan = ( 0, 0)
     , mouseIsHere = False
     , userRequestedChanges = []
-    , unusedId = graph.maxId + 1
     }
 
 init : List String -> (Float, Float) -> (Model, Cmd Msg)
@@ -443,12 +444,28 @@ wordsEndingAt nodeId g =
     induced =
       Graph.inducedSubgraph nodes g.graph
   in
-    { g
-      | graph = induced
-      , maxId = Graph.nodeIdRange induced |> Maybe.map Tuple.second |> Maybe.withDefault 0
-      , root = g.root
-    }
+    graphToAutomatonGraph g.root induced
 
+create_union_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+create_union_graphchange src x y conn g =
+  { g
+    | graph =
+        Graph.insert
+          { node =
+            { label =
+                let
+                  initial = Force.entity (g.maxId + 1) { }
+                in
+                  { initial | x = x, y = y }
+            , id = g.maxId
+            }
+          , incoming = IntDict.singleton src conn
+          , outgoing = IntDict.empty
+          }
+          g.graph
+        |> debugGraph "[update→Confirm→createNewNode] updated graph"
+    , maxId = g.maxId + 1
+  }
 
 create_union_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
 create_union_userchange target g =
@@ -474,22 +491,26 @@ update offset_amount msg model =
   case msg of
     Tick ->
       let
+        g = model.userGraph
         ( newState, list ) =
-          Force.tick model.simulation <| List.map .label <| Graph.nodes model.graph
+          Force.tick model.simulation <| List.map .label <| Graph.nodes g.graph
       in
         case model.drag of
           Nothing ->
             { model
-              | graph = updateGraphWithList model.graph list
+              | userGraph = { g | graph = updateGraphWithList model.userGraph.graph list }
               , simulation = newState
             }
 
           Just { current, index } ->
             { model
-              | graph =
-                  Graph.update index
-                  (Maybe.map (updateNode current model.pan))
-                  (updateGraphWithList model.graph list)
+              | userGraph =
+                  { g
+                    | graph =
+                        Graph.update index
+                        (Maybe.map (updateNode current model.pan))
+                        (updateGraphWithList g.graph list)
+                  }
               , simulation = newState
             }
 
@@ -498,7 +519,7 @@ update offset_amount msg model =
 
     ViewportUpdated dim ->
       let
-        viewport = viewportForces dim model.graph
+        viewport = viewportForces dim model.userGraph.graph
       in
       { model
         | dimensions = dim
@@ -513,16 +534,25 @@ update offset_amount msg model =
       }
 
     DragAt xy ->
-      case model.drag of
-        Just { start, index } ->
-          { model
-            | drag = Just <| Drag start xy index
-            , graph = Graph.update index (Maybe.map (updateNode xy model.pan)) model.graph
-            -- , simulation = Force.reheat model.simulation
-          }
+      let
+        g = model.userGraph
+      in
+        case model.drag of
+          Just { start, index } ->
+            { model
+              | drag = Just <| Drag start xy index
+              , userGraph =
+                  { g
+                    | graph =
+                        Graph.update index
+                          (Maybe.map (updateNode xy model.pan))
+                          g.graph
+                  }
+              -- , simulation = Force.reheat model.simulation
+            }
 
-        Nothing ->
-          { model | drag = Nothing }
+          Nothing ->
+            { model | drag = Nothing }
 
     DragEnd (x,y) ->
       case model.drag of
@@ -551,10 +581,15 @@ update offset_amount msg model =
                     )
                 ]
                 model.specificForces
+            g = model.userGraph
           in
             { model
               | drag = Nothing
-              , graph = Graph.update index (Maybe.map (updateNode (x,y) model.pan)) model.graph
+              , userGraph =
+                  { g
+                    | graph =
+                        Graph.update index (Maybe.map (updateNode (x,y) model.pan)) g.graph
+                  }
               , specificForces = sf
               , simulation = Force.simulation (List.concat (IntDict.values sf))
             }
@@ -605,7 +640,7 @@ update offset_amount msg model =
       { model
       | selectedDest = ExistingNode dest
       , selectedTransitions =
-          Graph.get dest model.graph
+          Graph.get dest model.userGraph.graph
           |> Maybe.map (\node ->
             case model.selectedSource of
               Just source ->
@@ -659,33 +694,39 @@ update offset_amount msg model =
         createNewNode src x y =
           let
             updatedGraph =
-              Graph.insert
-                { node =
-                  { label =
-                      let
-                        initial = Force.entity model.unusedId { }
-                      in
-                        { initial | x = x, y = y }
-                  , id = model.unusedId
-                  }
-                , incoming = IntDict.singleton src model.selectedTransitions
-                , outgoing = IntDict.empty
+              let
+                g = model.userGraph
+              in
+                { g
+                  | graph =
+                      Graph.insert
+                        { node =
+                          { label =
+                              let
+                                initial = Force.entity (g.maxId + 1) { }
+                              in
+                                { initial | x = x, y = y }
+                          , id = g.maxId + 1
+                          }
+                        , incoming = IntDict.singleton src model.selectedTransitions
+                        , outgoing = IntDict.empty
+                        }
+                        model.userGraph.graph
+                  , maxId = g.maxId + 1
                 }
-                model.graph
-              |> debugGraph "[update→Confirm→createNewNode] updated graph"
+                |> debugAutomatonGraph "[update→Confirm→createNewNode] updated graph"
 
             newModel =
-              create_union_userchange model.unusedId { root = model.start, graph = updatedGraph, maxId = model.unusedId - 1 }
+              create_union_userchange updatedGraph.maxId updatedGraph
               |> (\change ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
-                  , graph = updatedGraph
+                  , userGraph = updatedGraph
                   , userRequestedChanges = change :: model.userRequestedChanges
                   , basicForces =
-                      basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
-                  , unusedId = model.unusedId + 1
+                      basicForces updatedGraph (round <| Tuple.second model.dimensions)
                   }
                 )
           in
@@ -694,37 +735,42 @@ update offset_amount msg model =
         updateExistingNode src dest =
           let
             updatedGraph =
-              Graph.update dest
-                (Maybe.map (\node ->
-                  { node
-                    | incoming =
-                        IntDict.insert src model.selectedTransitions node.incoming
-                  }
-                ))
-                model.graph
-              -- if it's recursive, I must add it to both so that it reflects in the graph.
-              -- in other cases, this should do no harm.
-              |> Graph.update src
-                (Maybe.map (\node ->
-                  { node
-                    | outgoing =
-                        IntDict.insert dest model.selectedTransitions node.outgoing
-                  }
-                ))
-              |> debugGraph "[update→Confirm→updateExistingNode] updated graph"
+              let
+                g = model.userGraph
+              in
+                { g
+                  | graph =
+                      Graph.update dest
+                        (Maybe.map (\node ->
+                          { node
+                            | incoming =
+                                IntDict.insert src model.selectedTransitions node.incoming
+                          }
+                        ))
+                        g.graph
+                    -- if it's recursive, I must add it to both so that it reflects in the graph.
+                    -- in other cases, this should do no harm.
+                    |> Graph.update src
+                      (Maybe.map (\node ->
+                        { node
+                          | outgoing =
+                              IntDict.insert dest model.selectedTransitions node.outgoing
+                        }
+                      ))
+                }
+                |> debugAutomatonGraph "[update→Confirm→updateExistingNode] updated graph"
             newModel =
-              create_update_userchange src dest model.selectedTransitions
-                { root = model.start, graph = model.graph, maxId = model.unusedId - 1 }
+              create_update_userchange src dest model.selectedTransitions model.userGraph
               |> Maybe.map
                 (\change ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
-                  , graph = updatedGraph
+                  , userGraph = updatedGraph
                   , userRequestedChanges = change :: model.userRequestedChanges
                   , basicForces =
-                      basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
+                      basicForces updatedGraph (round <| Tuple.second model.dimensions)
                   }
                 )
               |> Maybe.withDefault model
@@ -734,26 +780,29 @@ update offset_amount msg model =
         removeLink : NodeId -> NodeId -> Model
         removeLink src dest =
           let
+            g = model.userGraph
             updatedGraph =
-              Graph.update dest
-                (Maybe.map (\node ->
-                  { node | incoming = IntDict.remove src node.incoming }
-                ))
-                model.graph
-              |> debugGraph "[update→Confirm→removeLink] updated graph"
+              { g
+                | graph =
+                    Graph.update dest
+                      (Maybe.map (\node ->
+                        { node | incoming = IntDict.remove src node.incoming }
+                      ))
+                      g.graph
+              }
+              |> debugAutomatonGraph "[update→Confirm→removeLink] updated graph"
             newModel =
-              create_removal_userchange src dest
-                { root = model.start, graph = model.graph, maxId = model.unusedId - 1 }
+              create_removal_userchange src dest model.userGraph
               |> Maybe.map
                 (\change ->
                   { model
                   | selectedTransitions = Set.empty
                   , selectedDest = NoDestination
                   , selectedSource = Nothing
-                  , graph = updatedGraph
+                  , userGraph = updatedGraph
                   , userRequestedChanges = change :: model.userRequestedChanges
                   , basicForces =
-                      basicForces model.start updatedGraph (round <| Tuple.second model.dimensions)
+                      basicForces updatedGraph (round <| Tuple.second model.dimensions)
                   }
                 )
               |> Maybe.withDefault model
@@ -937,40 +986,24 @@ applyChangesToGraph userRequestedChanges ag =
 confirmChanges : Model -> Model
 confirmChanges model =
   let
-    ag : AutomatonGraph Entity
-    ag =
-      { root = model.start
-      , graph = model.pristineGraph
-      , maxId =
-          Graph.nodeIdRange model.pristineGraph
-          |> Maybe.map Tuple.second
-          |> Maybe.withDefault 0
-      }
-
     mkSim g model_ =
       let
         (w, h)  = model_.dimensions
         forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
-        basic = basicForces g.root forceGraph (round h)
-        viewport = viewportForces (w, h) forceGraph
+        basic = basicForces forceGraph (round h)
+        viewport = viewportForces (w, h) forceGraph.graph
       in
         { model_ -- make sure we are referencing the correct Model!
           | simulation = Force.simulation (basic ++ viewport)
           , basicForces = basic
-          , graph = forceGraph
+          , userGraph = forceGraph
           , pristineGraph = forceGraph
           , viewportForces = viewport
           , specificForces = IntDict.empty
         }
   in
-    applyChangesToGraph model.userRequestedChanges ag
-    |> \g ->
-      { model
-      | userRequestedChanges = []
-      , start = g.root
-      , unusedId = g.maxId + 1
-      }
-    |> mkSim g
+    applyChangesToGraph model.userRequestedChanges model.pristineGraph
+    |> (\g -> mkSim g { model | userRequestedChanges = [] })
 
 textChar : Char -> String
 textChar ch =
@@ -1031,7 +1064,7 @@ type LinkType
 linkExistsInGraph : Model -> NodeId -> NodeId -> Bool
 linkExistsInGraph model from to =
   -- does a link exist from `from` to `to`?
-  Graph.get from model.graph
+  Graph.get from model.userGraph.graph
   |> Maybe.map (.outgoing >> IntDict.member to)
   |> Maybe.withDefault False
 
@@ -1185,13 +1218,13 @@ path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
 
 
 viewLink : Model -> Edge Connection -> Svg Msg
-viewLink ({ graph } as model) edge =
+viewLink ({ userGraph } as model) edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from graph
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
 
     target =
-      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to graph
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
     cardinality = identifyCardinality model edge
     positioning =
       path_between source target cardinality 7 7
@@ -1256,11 +1289,11 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { start, graph, selectedSource, selectedDest } { label, id } =
+viewNode { userGraph, selectedSource, selectedDest } { label, id } =
   let
     isSelected = selectedSource == Just id
     graphNode =
-      Graph.get id graph
+      Graph.get id userGraph.graph
     thisNodeIsTerminal =
       Maybe.map Automata.Data.isTerminalNode graphNode
       |> Maybe.withDefault False
@@ -1297,10 +1330,10 @@ viewNode { start, graph, selectedSource, selectedDest } { label, id } =
           , cx label.x
           , cy label.y
           , class
-              ( if id == start then [ "start" ] else [] )
+              ( if id == userGraph.root then [ "start" ] else [] )
           ]
           []
-       ,  if thisNodeIsTerminal && id == start then
+       ,  if thisNodeIsTerminal && id == userGraph.root then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -1338,7 +1371,7 @@ viewNode { start, graph, selectedSource, selectedDest } { label, id } =
                     ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
                   ]
               ]
-          else if id == start then
+          else if id == userGraph.root then
             text_
               [ x <| label.x
               , y <| (label.y + 1)
@@ -1378,7 +1411,7 @@ nearby_node_repulsionDistance =
 
 {-| Used by nearby_node and nearby_nodes. Not for other use. -}
 nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Model -> b
-nearby_node_func f distance { graph, pan, mouseCoords, drag } =
+nearby_node_func f distance { userGraph, pan, mouseCoords, drag } =
   -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
   let
     ( xPan, yPan ) = pan
@@ -1403,7 +1436,7 @@ nearby_node_func f distance { graph, pan, mouseCoords, drag } =
           -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
           dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
       )
-      (Graph.nodes graph)
+      (Graph.nodes userGraph.graph)
 
 nearby_node : Float -> Model -> Maybe (Graph.Node Entity)
 nearby_node =
@@ -1733,18 +1766,18 @@ view model =
       [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ]
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
-      , Graph.edges model.graph
+      , Graph.edges model.userGraph.graph
         |> List.filter (\edge -> not (Set.isEmpty edge.label))
         |> List.map (viewLink model)
         |> g [ class [ "links" ] ]
-      , Graph.nodes model.graph
+      , Graph.nodes model.userGraph.graph
         |> List.map (viewNode model)
         |> g [ class [ "nodes" ] ]
       , case ( model.selectedSource, model.selectedDest ) of
           ( _, EditingTransitionTo _ ) ->
             g [] []
           ( Just id, _ ) ->
-            Graph.get id model.graph
+            Graph.get id model.userGraph.graph
             |> Maybe.map (viewPhantom model)
             |> Maybe.withDefault (g [] [])
           ( Nothing, _ ) ->
