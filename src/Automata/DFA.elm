@@ -66,6 +66,19 @@ type alias CloneResult a =
   , seen_qw : Set NodeId -- the states of q_w we've seen thus far.
   }
 
+mkConn : String -> Connection
+mkConn s =
+  let
+    helper xs acc =
+      case xs of
+        '!'::ch::rest ->
+          helper rest (Set.insert (ch, 1) acc |> Set.remove (ch, 0))
+        ch::rest ->
+          helper rest (Set.insert (ch, 0) acc |> Set.remove (ch, 1))
+        [] -> acc
+  in
+    helper (String.toList s) Set.empty
+
 -- for use from CLI
 mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
 mkDFA transitions finals =
@@ -101,22 +114,11 @@ mkAutomatonGraphWithValues valueFunction ts =
         (\(src, s, dest) acc ->
           Dict.update (src, dest)
             (\item ->
-              let
-                connection xs conn_ =
-                  case xs of
-                    '!'::ch::rest ->
-                      connection rest (Set.insert (ch, 1) conn_)
-                    ch::rest ->
-                      connection rest (Set.insert (ch, 0) conn_)
-                    [] -> conn_
-                conn =
-                  connection (String.toList s) Set.empty
-              in
-                case item of
-                  Nothing ->
-                    Just conn
-                  Just existing ->
-                    Just <| Set.union existing conn
+              case item of
+                Nothing ->
+                  Just (mkConn s)
+                Just existing ->
+                  Just <| Set.union existing (mkConn s)
             )
             acc
         )
@@ -1186,13 +1188,13 @@ splitTerminalAndNonTerminal g =
             (node.outgoing |> IntDict.get node.node.id |> Maybe.map Set.toList |> Maybe.withDefault [])
           allIncoming =
             outgoingRecursive ++ incomingTransitions
-            |> Debug.log ("Incoming transitions to " ++ String.fromInt node.node.id)
+            -- |> Debug.log ("[splitTerminalAndNonTerminal] Incoming transitions to " ++ String.fromInt node.node.id)
           hasTerminal = List.any isTerminal allIncoming
           hasNonTerminal = List.any isNonTerminal allIncoming
         in
           hasTerminal && hasNonTerminal
       )
-      |> debugLog_ "nodes to split" (Debug.toString << List.map (.node >> .id))
+      -- |> debugLog_ "[splitTerminalAndNonTerminal] nodes to split" (Debug.toString << List.map (.node >> .id))
 
     -- Build a mapping from node id to new split node id (for non-terminal transitions)
     splitMap : Dict NodeId NodeId
@@ -1468,7 +1470,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         )
         Dict.empty
         g.graph
-      |> debugTable_ "[nfaToDFA] Initial table"
+      -- |> debugTable_ "[nfaToDFA] Initial table"
 
     -- Build the complete table by adding rows for multi-element dest-sets
     buildCompleteTable : Table a -> Table a
@@ -1771,29 +1773,39 @@ printTransitions transitions =
 
 printDFA : DFARecord a b -> String
 printDFA dfa =
-  "  ▶ States: " ++
-    ( List.map (Tuple.first >> String.fromInt) (IntDict.toList dfa.states)
-      |> String.join ", "
-    )
-  ++ "\n  ▶ Transitions: " ++ printTransitions dfa.transition_function
-  ++ "\n  ▶ Finals: " ++ Debug.toString (Set.toList dfa.finals)
-  ++ "\n  ▶ Start: " ++ String.fromInt dfa.start
+  "📍" ++ String.fromInt dfa.start ++ " { " ++ 
+  ( List.map (Tuple.first >> String.fromInt) (IntDict.toList dfa.states)
+    |> String.join ","
+  ) ++
+  " | " ++ printTransitions dfa.transition_function ++ " }"
+  -- "  ▶ States: " ++
+  --   ( List.map (Tuple.first >> String.fromInt) (IntDict.toList dfa.states)
+  --     |> String.join ", "
+  --   )
+  -- ++ "\n  ▶ Transitions: " ++ printTransitions dfa.transition_function
+  -- ++ "\n  ▶ Finals: " ++ Debug.toString (Set.toList dfa.finals)
+  -- ++ "\n  ▶ Start: " ++ String.fromInt dfa.start
 
 printExtDFA : ExtDFA a -> String
 printExtDFA extDFA =
   printDFA extDFA
-  ++ "\n  ▶ Register: " ++ Debug.toString (Set.toList extDFA.register)
-  ++ "\n  ▶ Queue/Clones: " ++ Debug.toString extDFA.queue_or_clone
-  ++ "\n  ▶ clone_start: " ++ String.fromInt extDFA.clone_start
-  ++ "\n  ▶ unusedId: " ++ String.fromInt extDFA.unusedId
+  ++ "\n▶ Register / Queue|Clones = "
+  ++ Debug.toString (Set.toList extDFA.register) ++ " / "
+  ++ Debug.toString extDFA.queue_or_clone ++ "📍"
+  ++ String.fromInt extDFA.clone_start
+  ++ "; unused: " ++ String.fromInt extDFA.unusedId
+  -- ++ "\n  ▶ Register: " ++ Debug.toString (Set.toList extDFA.register)
+  -- ++ "\n  ▶ Queue/Clones: " ++ Debug.toString extDFA.queue_or_clone
+  -- ++ "\n  ▶ clone_start: " ++ String.fromInt extDFA.clone_start
+  -- ++ "\n  ▶ unusedId: " ++ String.fromInt extDFA.unusedId
 
 debugDFA_ : String -> DFARecord a b -> DFARecord a b
 debugDFA_ s dfa =
-  Debug.log (s ++ ":\n" ++ printDFA dfa) () |> \_ -> dfa
+  Debug.log (s ++ ": " ++ printDFA dfa) () |> \_ -> dfa
 
 debugExtDFA_ : String -> ExtDFA a -> ExtDFA a
 debugExtDFA_ s extDFA =
-  Debug.log (s ++ ":\n" ++ printExtDFA extDFA) () |> \_ -> extDFA
+  Debug.log (s ++ ": " ++ printExtDFA extDFA) () |> \_ -> extDFA
 
 debugDFA : DFARecord a b -> DFARecord a b
 debugDFA dfa =
