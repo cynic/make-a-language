@@ -26,6 +26,13 @@ empty =
     , root = 0
     }
 
+graphToAutomatonGraph : NodeId -> Graph a Connection -> AutomatonGraph a
+graphToAutomatonGraph start graph =
+  { graph = graph
+  , maxId = Graph.nodeIdRange graph |> Maybe.map Tuple.second |> Maybe.withDefault 0
+  , root = start
+  }
+
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : NodeContext a Connection -> Bool
 isTerminalNode node =
