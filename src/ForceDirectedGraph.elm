@@ -945,7 +945,7 @@ applyChangesToGraph userRequestedChanges ag =
       )
       ag
       (List.reverse userRequestedChanges)
-    |> Automata.DFA.minimiseNodesByCombiningTransitions
+    |> Automata.DFA.finaliseEndNodes
 
 confirmChanges : Model -> Model
 confirmChanges model =

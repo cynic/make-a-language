@@ -75,7 +75,7 @@ connectionToString : Connection -> String
 connectionToString =
   Set.map transitionToString
   >> Set.toList
-  >> String.join "\u{FEFF}" -- zero-width space. Stops terminality-marker from disappearing on subsequent characters.
+  >> String.join "\u{2008}" -- punctuation space. Stops terminality-marker from disappearing on subsequent characters.
 
 graphToString : Graph a Connection -> String
 graphToString graph =

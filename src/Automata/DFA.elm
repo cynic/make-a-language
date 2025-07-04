@@ -14,6 +14,7 @@ import Tuple.Extra
 import Automata.Debugging
 import Css exposing (row)
 import Automata.Debugging exposing (debugGraph)
+import Automata.Debugging exposing (debugAutomatonGraph)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -835,6 +836,35 @@ minimisation_merge head other g =
     |> Maybe.withDefault g
     -- |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
 
+finaliseEndNodes : AutomatonGraph a -> AutomatonGraph a
+finaliseEndNodes g =
+  let
+    emptyOutgoing =
+      Graph.fold
+        (\nodeContext state ->
+          if IntDict.isEmpty nodeContext.outgoing then
+            nodeContext.node.id :: state
+          else
+            state
+        )
+        []
+        g.graph
+      -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
+  in
+    case emptyOutgoing of
+      [] ->
+        Debug.log "[finaliseEndNodes] There are no nodes to finalise." |> \_ ->
+        g
+      [_] ->
+        Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
+        g
+      terminal::rest ->
+        List.foldl
+          (minimisation_merge terminal)
+          g
+          rest
+        |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
+
 minimiseNodesByCombiningTransitions : AutomatonGraph a -> AutomatonGraph a
 minimiseNodesByCombiningTransitions g_ =
   {-
@@ -948,32 +978,9 @@ minimiseNodesByCombiningTransitions g_ =
       if IntDict.isEmpty terminal.outgoing then
         -- case T1.  We will deal with this right at the end, during
         -- finalisation after ALL user changes have been made for this
-        -- round of changes… OR, should we deal with it at all?!
-        let
-          otherEmptyOutgoing =
-            Graph.fold
-              (\nodeContext state ->
-                if IntDict.isEmpty nodeContext.outgoing && nodeContext.node.id /= terminal.node.id then
-                  nodeContext.node.id :: state
-                else
-                  state
-              )
-              []
-              g.graph
-          newGraph =
-            List.foldl
-              (\nodeId state -> minimisation_merge terminal.node.id nodeId state)
-              g
-              otherEmptyOutgoing
-            -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
-        in
-          case otherEmptyOutgoing of
-            [] ->
-              -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " is the only node with no fan-out. Leaving it alone.") () |> \_ ->
-              Nothing
-            _ ->
-              -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " merged with") otherEmptyOutgoing |> \_ ->
-              Just newGraph
+        -- round of changes.
+        -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " has no fan-out. I won't finalise it now.") () |> \_ ->
+        Nothing
       else
         let
           getFanExcludingMyself =
@@ -1136,6 +1143,7 @@ renumberAutomatonGraph g =
     , maxId = IntDict.findMax nodeMap |> Maybe.map Tuple.second |> Maybe.withDefault 0
     , root = 0
     }
+    -- |> debugAutomatonGraph "[renumberAutomatonGraph] result"
 
 splitTerminalAndNonTerminal : AutomatonGraph a -> AutomatonGraph a
 splitTerminalAndNonTerminal g =
