@@ -251,6 +251,6 @@ suite =
             , update_change 4 1 (mkConn "l")
             , newnode_change 4 (mkConn "k") -- new node: 5
             ]
-            "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1"
+            "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1 4-k-3"
       ]
     ]
