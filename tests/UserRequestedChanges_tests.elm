@@ -24,6 +24,7 @@ import ForceDirectedGraph exposing (create_removal_graphchange)
 import Automata.Debugging exposing (debugAutomatonGraph)
 import ForceDirectedGraph exposing (update_change)
 import ForceDirectedGraph exposing (remove_change)
+import Automata.DFA exposing (renumberAutomatonGraph)
 
 ag : String -> AutomatonGraph Entity
 ag =
@@ -64,6 +65,12 @@ check_creating new_node s_new_graph s_original_graph s_expected =
       (ag s_expected)
       (applyChangesToGraph [change] (ag s_original_graph))
 
+{-
+This works, using node-id values, because all the user-changes are only submitted to the
+backend for processing at the **END** of the whole process (i.e. during applyChangesToGraph).
+Before that, we are working exclusively and only on the user-graph, where any changes
+that we make are simply accepted verbatim and no node-ids are changed at any point.
+-}
 check_multi : String -> List (AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)) -> String -> Expect.Expectation
 check_multi s_start changes s_expected =
   let
@@ -80,11 +87,17 @@ check_multi s_start changes s_expected =
             Just (usergraph, changelist) ->
               case rest of
                 [] ->
+                  debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx) usergraph |> \_ ->
                   ag_equals
                     expected
                     (applyChangesToGraph changelist start)
                 _ ->
-                  check_multi_helper rest (idx + 1) (usergraph, changelist)
+                  check_multi_helper
+                    rest
+                    (idx + 1)
+                    ( usergraph |> debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx)
+                    , changelist
+                    )
   in
     check_multi_helper changes 0 (start, [])
 

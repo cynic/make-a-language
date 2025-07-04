@@ -14,6 +14,7 @@ import Tuple.Extra
 import Automata.Debugging
 import Css exposing (row)
 import Automata.Debugging exposing (debugGraph)
+import Automata.Debugging exposing (debugAutomatonGraph)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -1136,6 +1137,7 @@ renumberAutomatonGraph g =
     , maxId = IntDict.findMax nodeMap |> Maybe.map Tuple.second |> Maybe.withDefault 0
     , root = 0
     }
+    -- |> debugAutomatonGraph "[renumberAutomatonGraph] result"
 
 splitTerminalAndNonTerminal : AutomatonGraph a -> AutomatonGraph a
 splitTerminalAndNonTerminal g =
