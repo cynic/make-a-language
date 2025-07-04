@@ -224,7 +224,7 @@ suite =
             , newnode_change 2 (mkConn "c") -- new node: 3
             ]
             "0-a-1 1-!b-2 2-c-3"
-      , test "The Cat In The Hat" <|
+      , test "Joining of end-nodes does not happen prematurely [case Ⅰ]" <|
         \_ ->
           check_multi
             ""
@@ -235,5 +235,13 @@ suite =
             , remove_change 1 2
             ]
             "0-!ab-1 1-!e-2"
+      , test "Joining of end-nodes does not happen prematurely [case Ⅱ]" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3 3-d-4"
+            [ newnode_change 3 (mkConn "e") -- new node: 5
+            , update_change 5 2 (mkConn "l")
+            ]
+            "0-a-1 1-b-2 2-c-3 3-d-4 3-e-5 5-l-2"
       ]
     ]
