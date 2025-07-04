@@ -198,6 +198,23 @@ suite =
         \_ ->
           check_multi
             ""
+            [ newnode_change 0 (mkConn "a") -- new node: 1
+            , newnode_change 1 (mkConn "b") -- new node: 2
+            ]
+            "0-a-1 1-b-2"
+      , test "Can create three links, the middle one is terminal" <|
+        \_ ->
+          check_multi
+            ""
+            [ newnode_change 0 (mkConn "a") -- new node: 1
+            , newnode_change 1 (mkConn "!b") -- new node: 2
+            , newnode_change 2 (mkConn "c") -- new node: 3
+            ]
+            "0-a-1 1-!b-2 2-c-3"
+      , test "The Cat In The Hat" <|
+        \_ ->
+          check_multi
+            ""
             [ newnode_change 0 (mkConn "c") -- new node: 1
             , newnode_change 1 (mkConn "d") -- new node: 2
             , update_change 0 1 (mkConn "!ab")

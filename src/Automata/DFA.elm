@@ -342,7 +342,7 @@ all_forward_transitions start extDFA =
             if Dict.isEmpty children then PathEnd else ForwardNode children
   in
     helper start Set.empty
-    |> Debug.log "all_forward_transitions"
+    -- |> Debug.log "[all_forward_transitions] result"
 
 w_forward_transitions : ExtDFA a -> ForwardTree
 w_forward_transitions extDFA =
@@ -367,7 +367,7 @@ w_forward_transitions extDFA =
             if Dict.isEmpty children then PathEnd else ForwardNode children
   in
     helper extDFA.clone_start Set.empty
-    |> Debug.log "w_forward_transitions"
+    -- |> Debug.log "[w_forward_transitions] result"
 
 delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
 delta q x dfa =
@@ -628,14 +628,14 @@ replace_or_register extDFA =
 union : DFARecord a b -> DFARecord a b -> DFARecord {} b
 union w_dfa_orig m_dfa =
     extend w_dfa_orig m_dfa
-    |> debugExtDFA_ "extDFA creation from merged w_dfa + dfa"
+    -- |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
     |> phase_1
-    |> debugExtDFA_ "End of Phase 1 (clone-and-queue)"
+    -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
     |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
     |> (\dfa -> { dfa | start = dfa.clone_start })
-    |> debugExtDFA_ "End of Phase 2 (remove-unreachable + switch-start)"
+    -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
     |> replace_or_register
-    |> debugExtDFA_ "End of Phase 3 (replace-or-register)"
+    -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
     |> retract
 
 complement : DFARecord a b -> DFARecord a b
@@ -833,7 +833,7 @@ minimisation_merge head other g =
       (Graph.get head g.graph)
       (Graph.get other g.graph)
     |> Maybe.withDefault g
-    |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
+    -- |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
 
 minimiseNodesByCombiningTransitions : AutomatonGraph a -> AutomatonGraph a
 minimiseNodesByCombiningTransitions g_ =
@@ -932,7 +932,7 @@ minimiseNodesByCombiningTransitions g_ =
         )
         Set.empty
         g_.graph
-      |> Debug.log "[minimiseNodes] Terminal nodes (i.e. starting points)"
+      -- |> Debug.log "[minimiseNodes] Terminal nodes (i.e. starting points)"
     fanOutEquals : NodeContext a Connection -> NodeContext a Connection -> Bool
     fanOutEquals a b =
       let
@@ -1043,8 +1043,8 @@ minimiseNodesByCombiningTransitions g_ =
   in
     classify_all
       (Set.toList terminal_nodes)
-      (g_ |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph")
-    |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
+      (g_ {- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph" -})
+    -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
 
 toAutomatonGraph : DFARecord a b -> AutomatonGraph b
@@ -1506,7 +1506,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     completeTable : Table a
     completeTable =
       buildCompleteTable initialTable
-      |> debugTable_ "[nfaToDFA] Complete table"
+      -- |> debugTable_ "[nfaToDFA] Complete table"
 
     -- Step 1: Merge states with identical cell values
     rename : StateIdentifier -> Set StateIdentifier -> Table a -> Table a
@@ -1699,7 +1699,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     , root = g.root
     , maxId = new_maxId
     }
-    |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
+    -- |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
 fromAutomatonGraphHelper : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraphHelper g =
@@ -1741,13 +1741,13 @@ fromAutomatonGraphHelper g =
 
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraph =
-    Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received"
-    >> splitTerminalAndNonTerminal
-    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
+    -- Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
+    splitTerminalAndNonTerminal
+    -- >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
-    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
+    -- >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
     >> fromAutomatonGraphHelper
-    >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
+    -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
 connectionToString : MConnection -> String
 connectionToString =
