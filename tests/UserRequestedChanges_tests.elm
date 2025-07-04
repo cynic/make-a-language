@@ -90,7 +90,7 @@ check_multi s_start changes s_expected =
                   debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx) usergraph |> \_ ->
                   ag_equals
                     expected
-                    (applyChangesToGraph changelist start)
+                    (applyChangesToGraph changelist start |> renumberAutomatonGraph)
                 _ ->
                   check_multi_helper
                     rest
@@ -238,10 +238,19 @@ suite =
       , test "Joining of end-nodes does not happen prematurely [case Ⅱ]" <|
         \_ ->
           check_multi
-            "0-a-1 1-b-2 2-c-3 3-d-4"
-            [ newnode_change 3 (mkConn "e") -- new node: 5
-            , update_change 5 2 (mkConn "l")
+            "0-a-1 1-b-2 2-c-3"
+            [ newnode_change 2 (mkConn "e") -- new node: 4
+            , update_change 4 1 (mkConn "l")
             ]
-            "0-a-1 1-b-2 2-c-3 3-d-4 3-e-5 5-l-2"
+            "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1"
+      , test "Joining of end-nodes happens at the end [case Ⅰ]" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3"
+            [ newnode_change 2 (mkConn "e") -- new node: 4
+            , update_change 4 1 (mkConn "l")
+            , newnode_change 4 (mkConn "k") -- new node: 5
+            ]
+            "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1"
       ]
     ]

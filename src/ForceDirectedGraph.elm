@@ -42,6 +42,7 @@ import TypedSvg exposing (use)
 import Tuple.Extra exposing (apply)
 import Automata.Data exposing (graphToAutomatonGraph)
 import Automata.Debugging exposing (debugAutomatonGraph)
+import Automata.DFA exposing (partial_union)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -916,7 +917,7 @@ applyChangesToGraph userRequestedChanges ag =
     applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
     applyChange_union w_dfa g =
       -- Automata.Debugging.debugAutomatonGraph "Received by applyChange_union" g |> \_ ->
-      union
+      partial_union
         ({- debugDFA_ "w_dfa" -} w_dfa)
         ({- debugDFA_ "m_dfa" <| -} Automata.DFA.fromGraph g.root g.graph)
       |> toAutomatonGraph
@@ -929,12 +930,20 @@ applyChangesToGraph userRequestedChanges ag =
         (followPathTo pathA g)
         (followPathTo pathB g)
       |> Maybe.withDefault g
+
+    applyChange_removeLink : RequestedChangePath -> RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
+    applyChange_removeLink pathA pathB g =
+      Maybe.map2
+        (\from to -> removeConnection from to g)
+        (followPathTo pathA g)
+        (followPathTo pathB g)
+      |> Maybe.withDefault g
   in
     List.foldl
       (\change g ->
           case change of
             RemoveLink pathA pathB ->
-              applyChange_updateLink pathA pathB Set.empty g
+              applyChange_removeLink pathA pathB g
               |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→RemoveLink]"
             CreateNode w_ag ->
               applyChange_union ({- Debug.log "Converting w-AutomatonGraph into w_dfa" () |> \_ -> -} fromAutomatonGraph w_ag) g
