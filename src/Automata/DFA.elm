@@ -639,6 +639,24 @@ union w_dfa_orig m_dfa =
     -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
     |> retract
 
+{-
+This is like union, but without the final step (register-or-replace).  That's
+because, during user changes, if we join nodes too eagerly, we might end up
+joining nodes that the user hasn't intended to join; fundamentally, the problem
+is that we don't know (yet) if the right-language is complete. Until we know,
+doing register-or-replace will be inaccurate.
+-}
+partial_union : DFARecord a b -> DFARecord a b -> DFARecord {} b
+partial_union w_dfa_orig m_dfa =
+    extend w_dfa_orig m_dfa
+    -- |> debugExtDFA_ "[partial_union] extDFA creation from merged w_dfa + dfa"
+    |> phase_1
+    -- |> debugExtDFA_ "[partial_union] End of Phase 1 (clone-and-queue)"
+    |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
+    |> (\dfa -> { dfa | start = dfa.clone_start })
+    -- |> debugExtDFA_ "[partial_union] End of Phase 2 (remove-unreachable + switch-start)"
+    |> retract
+
 complement : DFARecord a b -> DFARecord a b
 complement dfa =
   -- the non-final states become the final states, and vice-versa.
@@ -647,7 +665,7 @@ complement dfa =
   }
 
 modifyConnection : NodeId -> NodeId -> Connection -> AutomatonGraph a -> AutomatonGraph a
-modifyConnection source target newConn g =
+modifyConnection source target newConn =
   -- find the correct source.  From there, I can change the connection.
   -- Changing the connection cannot possibly affect anything that is
   -- later in the graph—all of that is set—but it can affect things that
@@ -697,41 +715,91 @@ modifyConnection source target newConn g =
             [ source, target ]
       , unusedId = IntDict.keys dfa.states |> List.maximum |> Maybe.withDefault 0 |> (+) 1
       }
-    rewriteLink : Graph a Connection -> Graph a Connection
-    rewriteLink =
-      Graph.update source
-        (Maybe.map (\sourceContext ->
-          { sourceContext
-            | outgoing =
-                if Set.isEmpty newConn then
-                  IntDict.remove target sourceContext.outgoing
-                else
-                  IntDict.insert target newConn sourceContext.outgoing
-          }
-        ))
+    rewriteLink : AutomatonGraph a -> AutomatonGraph a
+    rewriteLink g =
+      { g
+        | graph =
+            Graph.update source
+              (Maybe.map (\sourceContext ->
+                { sourceContext
+                  | outgoing =
+                      if Set.isEmpty newConn then
+                        IntDict.remove target sourceContext.outgoing
+                      else
+                        IntDict.insert target newConn sourceContext.outgoing
+                }
+              ))
+              g.graph
+      }
   in
-    rewriteLink g.graph
+    rewriteLink
     -- |> Automata.Debugging.debugGraph "[modifyConnection] After rewriteLink"
-    |> fromGraph g.root
+    >> fromAutomatonGraph
     -- |> debugDFA_ "[modifyConnection] After conversion to DFA"
-    |> craaazy_extend
+    >> craaazy_extend
     -- |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
-    |>( \dfa ->
-          if Set.isEmpty newConn then
-            remove_unreachable (all_forward_transitions target dfa) dfa
-          else
-            dfa -- skip step; nothing is disconnected by this.
-      )
-    |> (\dfa -> { dfa | start = dfa.clone_start })
-    -- |> debugExtDFA_ "[modifyConnection] If newConn was empty, this is also after remove_unreachable"
-    |> replace_or_register
+    >> (\dfa -> { dfa | start = dfa.clone_start })
+    -- >> replace_or_register
     -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
-    |> retract
-    |> toAutomatonGraph
+    >> retract
+    >> toAutomatonGraph
 
 removeConnection : NodeId -> NodeId -> AutomatonGraph a -> AutomatonGraph a
-removeConnection a b g =
-  modifyConnection a b Set.empty g
+removeConnection source target =
+  let
+    craaazy_extend : DFARecord {} b -> ExtDFA b
+    craaazy_extend dfa =
+      { states = dfa.states
+      , transition_function = dfa.transition_function
+      , start =
+          -- remember, .start functions as the OLD start, and is the value used in
+          -- `remove_unreachable`.  After that phase is done, we set it to be the same
+          -- value as .clone_start, which then functions as the NEW start.
+          -- We don't actually HAVE a good value for this!
+          -- Because the set is empty, .start can be the `target`.  `remove_unreachable`
+          -- should get rid of it for us.
+          target
+      , finals = dfa.finals
+      , register =
+          IntDict.keys dfa.states
+          |> Set.fromList
+          |> Set.remove source
+          |> Set.remove target
+      , clone_start =
+          -- see the comment for .start.
+          dfa.start
+      , queue_or_clone =
+          if source == target then
+            [ source ]
+          else
+            [ source, target ]
+      , unusedId = IntDict.keys dfa.states |> List.maximum |> Maybe.withDefault 0 |> (+) 1
+      }
+    removeLink : AutomatonGraph a -> AutomatonGraph a
+    removeLink g_ =
+      { g_
+        | graph =
+            Graph.update source
+              (Maybe.map (\sourceContext ->
+                { sourceContext
+                  | outgoing = IntDict.remove target sourceContext.outgoing
+                }
+              ))
+              g_.graph
+      }
+  in
+    removeLink
+    >> fromAutomatonGraph
+    -- |> debugDFA_ "[removeConnection] After conversion to DFA"
+    >> craaazy_extend
+    -- |> debugExtDFA_ "[removeConnection] After craaazy extension…"
+    >>(\dfa -> remove_unreachable (all_forward_transitions target dfa) dfa)
+    >> (\dfa -> { dfa | start = dfa.clone_start })
+    -- |> debugExtDFA_ "[removeConnection] After remove_unreachable"
+    -- >> replace_or_register
+    -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
+    >> retract
+    >> toAutomatonGraph
 
 addString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
 addString string maybe_dfa =
@@ -836,6 +904,102 @@ minimisation_merge head other g =
     |> Maybe.withDefault g
     -- |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
 
+type alias TupleEdge = (NodeId, NodeId, Transition)
+type alias Partition = Set NodeId
+type alias HopcroftRecord =
+  { w : List Partition -- still to be processed.
+  , p : List Partition -- partitions
+  }
+
+hopcroft : AutomatonGraph a -> List (List Int)
+hopcroft dawg =
+  -- This is Hopcroft's Algorithm
+  let
+    edges = -- Edge (Transition)
+      Graph.edges dawg.graph
+      |> List.concatMap
+        (\{from, to, label} ->
+          Set.toList label
+          |> List.map (\t -> (from, to, t))
+        )
+    (finals, nonFinals) = -- the initial partition.
+      -- those which lead to finality, and those which don't.
+      List.partition (\(_, _, (_, isFinal)) -> isFinal == 1) edges
+      |> \(a, b) -> ( List.map (\(_,v,_) -> v) a |> Set.fromList, 0::List.map (\(_,v,_) -> v) b |> Set.fromList )
+      -- |> debug_log "Finals and non-finals"
+    refine : HopcroftRecord -> List Partition
+    refine r =
+      case (r {- |> debug_log "hopcroft"-}).w of
+        [] ->
+          r.p
+        a::w_rest ->
+          let
+            xs =
+              List.filterMap
+                (\(from, to, t) ->
+                  if Set.member to a then
+                    Just (t, from)
+                  else
+                    Nothing
+                ) edges
+              |> List.gatherEqualsBy Tuple.first
+              |> List.map (\((transition, h), t) -> (transition, Set.fromList (h::List.map Tuple.second t))) -- Now I should have a list of (ch, {states_from_w_which_go_to_`a`})
+              -- |> debug_log ("`X` set, given `A` of " ++ (Debug.toString (Set.toList a)))
+            refine_for_input_and_y : Partition -> Partition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
+            refine_for_input_and_y y further_split remaining_after w p =
+              ( if List.member y w then
+                  (further_split :: remaining_after :: List.remove y w)
+                  -- |> debug_log "Refining w, stage Ⅱa"
+                else
+                  if Set.size further_split <= Set.size remaining_after then
+                    (further_split :: w)
+                    -- |> debug_log "Refining w, stage Ⅱb"
+                  else
+                    (remaining_after :: w)
+                    -- |> debug_log "Refining w, stage Ⅱc"
+              , (further_split :: remaining_after :: List.remove y p)
+                -- |> debug_log "Refining p, stage Ⅱ"
+              )
+            refine_for_input : Transition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
+            refine_for_input _ x w p = -- really, the transition _ is only there for potential debugging.
+              let
+                candidate_sets =
+                  List.filterMap
+                    (\potential_y ->
+                      let
+                        further_split = Set.intersect x potential_y -- |> debug_log ("Intersection of " ++ Debug.toString x ++ " and " ++ Debug.toString potential_y)
+                        remaining_after = Set.diff potential_y x -- |> debug_log ("Subtraction: " ++ Debug.toString potential_y ++ " minus " ++ Debug.toString x)
+                      in
+                        if Set.isEmpty remaining_after || Set.isEmpty further_split then
+                          Nothing
+                        else
+                          Just (potential_y, further_split, remaining_after)
+                    )
+                    p
+              in
+                case candidate_sets of
+                  [] ->
+                    (w, p)
+                  _ ->
+                    -- println ("Refining for input " ++ String.fromChar ch)
+                    List.foldl (\(y, further, remaining) (w_, p_) -> refine_for_input_and_y y further remaining w_ p_) (w, p) candidate_sets
+            (new_w, new_p) =
+              List.foldl (\(t, x) (w, p) -> refine_for_input t x w p) (w_rest, r.p) xs
+          in
+            refine
+              { w = new_w
+              , p = new_p
+              }
+  in
+    refine
+      { w = [finals, nonFinals]
+      , p = [finals, nonFinals]
+      }
+    -- |> debug_log "Hopcroft raw result"
+    -- |> debugLog "Hopcroft result" (List.map Set.size)
+    |> List.filter (\s -> Set.size s > 1)
+    |> List.map Set.toList
+
 finaliseEndNodes : AutomatonGraph a -> AutomatonGraph a
 finaliseEndNodes g =
   let
@@ -864,6 +1028,7 @@ finaliseEndNodes g =
           g
           rest
         |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
+        |> \v -> hopcroft v |> Debug.log "Hopcroft data [will this show up??]" |> \_ -> v
 
 minimiseNodesByCombiningTransitions : AutomatonGraph a -> AutomatonGraph a
 minimiseNodesByCombiningTransitions g_ =
