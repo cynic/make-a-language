@@ -1000,36 +1000,6 @@ hopcroft dawg =
     |> List.filter (\s -> Set.size s > 1)
     |> List.map Set.toList
 
-finaliseEndNodes : AutomatonGraph a -> AutomatonGraph a
-finaliseEndNodes g =
-  let
-    emptyOutgoing =
-      Graph.fold
-        (\nodeContext state ->
-          if IntDict.isEmpty nodeContext.outgoing then
-            nodeContext.node.id :: state
-          else
-            state
-        )
-        []
-        g.graph
-      -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
-  in
-    case emptyOutgoing of
-      [] ->
-        Debug.log "[finaliseEndNodes] There are no nodes to finalise." |> \_ ->
-        g
-      [_] ->
-        Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
-        g
-      terminal::rest ->
-        List.foldl
-          (minimisation_merge terminal)
-          g
-          rest
-        |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
-        |> \v -> hopcroft v |> Debug.log "Hopcroft data [will this show up??]" |> \_ -> v
-
 minimiseNodesByCombiningTransitions : AutomatonGraph a -> AutomatonGraph a
 minimiseNodesByCombiningTransitions g_ =
   {-
@@ -1108,22 +1078,25 @@ minimiseNodesByCombiningTransitions g_ =
           Case 4, the algorithm terminates.
     -}
   let
-    terminal_nodes : Set NodeId
-    terminal_nodes =
+    ending_nodes : Set NodeId
+    ending_nodes =
       Graph.fold
         (\ctx nodeset ->
-          IntDict.foldl
-            (\_ conn ((czech, state) as acc_) ->
-              if czech then
-                acc_
-              else if Set.foldl (\(_, f) acc -> acc || f == 1) False conn then
-                (True, Set.insert ctx.node.id state)
-              else
-                acc_
-            )
-            (False, nodeset)
-            ctx.incoming
-          |> Tuple.second
+          if IntDict.isEmpty ctx.outgoing then
+            Set.insert ctx.node.id nodeset
+          else
+            IntDict.foldl
+              (\_ conn ((czech, state) as acc_) ->
+                if czech then
+                  acc_
+                else if Set.foldl (\(_, f) acc -> acc || f == 1) False conn then
+                  (True, Set.insert ctx.node.id state)
+                else
+                  acc_
+              )
+              (False, nodeset)
+              ctx.incoming
+            |> Tuple.second
         )
         Set.empty
         g_.graph
@@ -1145,7 +1118,33 @@ minimiseNodesByCombiningTransitions g_ =
         -- finalisation after ALL user changes have been made for this
         -- round of changes.
         -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " has no fan-out. I won't finalise it now.") () |> \_ ->
-        Nothing
+        let
+          emptyOutgoing =
+            Graph.fold
+              (\nodeContext state ->
+                if IntDict.isEmpty nodeContext.outgoing then
+                  nodeContext.node.id :: state
+                else
+                  state
+              )
+              []
+              g.graph
+            -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] After merging T1 nodes"
+        in
+          case emptyOutgoing of
+            [] ->
+              -- Debug.log "[finaliseEndNodes] There are no nodes to finalise." |> \_ ->
+              Nothing
+            [_] ->
+              Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
+              Nothing
+            term::rest ->
+              List.foldl
+                (minimisation_merge term)
+                g
+                rest
+              |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
+              |> Just
       else
         let
           getFanExcludingMyself =
@@ -1214,7 +1213,7 @@ minimiseNodesByCombiningTransitions g_ =
               classify_all terminals newG
   in
     classify_all
-      (Set.toList terminal_nodes)
+      (Set.toList ending_nodes)
       (g_ {- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph" -})
     -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
@@ -1914,11 +1913,11 @@ fromAutomatonGraphHelper g =
 
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraph =
-    -- Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
+    Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
     splitTerminalAndNonTerminal
-    -- >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
+    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
-    -- >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
+    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
     >> fromAutomatonGraphHelper
     -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
