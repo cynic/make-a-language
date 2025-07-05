@@ -804,10 +804,12 @@ update offset_amount msg model =
           model
 
     Undo ->
-      case model.undoBuffer of
-        [] ->
+      case (model.selectedSource, model.undoBuffer) of
+        (_, []) ->
           model
-        h::t ->
+        (Just _, _) ->
+          model -- do not permit undo/redo while I'm performing any operation.
+        (Nothing, h::t) ->
           { model
             | undoBuffer = t
             , redoBuffer = model.userGraph :: model.redoBuffer
@@ -816,10 +818,12 @@ update offset_amount msg model =
           }
 
     Redo ->
-      case model.redoBuffer of
-        [] ->
+      case (model.selectedSource, model.redoBuffer) of
+        (_, []) ->
           model
-        h::t ->
+        (Just _, _) ->
+          model -- do not permit undo/redo while I'm performing any operation.
+        (Nothing, h::t) ->
           { model
             | redoBuffer = t
             , undoBuffer = model.userGraph :: model.undoBuffer
