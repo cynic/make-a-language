@@ -104,6 +104,16 @@ path.link + text:hover tspan {
   cursor: pointer;
 }
 
+rect.undo.current {
+  stroke-width: 1.25;
+  stroke: grey;
+}
+
+rect.redo {
+  fill: gray;
+  fill-opacity: 0.7;
+}
+
 .start {
   fill: black;
   stroke-width: 2px;
