@@ -10,8 +10,8 @@
     "serve": "^14.2.4"
   },
   "scripts": {
-    "start": "npx parcel src/index.html",
-    "hot": "npx concurrently \"npx elm-watch hot\" \"cd src && npx serve -p 1234\"",
-    "benchmarks": "cd benchmarks && npx concurrently \"npx elm-watch hot\" \"npx serve -l 3001\""
+    "start": "pnpx parcel src/index.html",
+    "hot": "pnpx concurrently \"pnpx elm-watch hot\" \"cd src && npx serve -p 1234\"",
+    "benchmarks": "cd benchmarks && npx concurrently \"pnpx elm-watch hot\" \"pnpx serve -l 3001\""
   }
 }

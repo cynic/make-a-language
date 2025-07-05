@@ -14,6 +14,7 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             nodejs_24   # Node.js 24 from nixos-unstable
+            pnpm
           ];
 
           shellHook = ''
