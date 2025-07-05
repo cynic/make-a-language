@@ -1,0 +1,7 @@
+onlyBuiltDependencies:
+  - '@parcel/watcher'
+  - '@swc/core'
+  - elm
+  - elm-test-rs
+  - lmdb
+  - msgpackr-extract
