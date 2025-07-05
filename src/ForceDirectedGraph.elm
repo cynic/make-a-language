@@ -16,7 +16,7 @@ import TypedSvg.Attributes exposing
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x, y, height, fontSize
-  , markerWidth, markerHeight)
+  , markerWidth, markerHeight, width, rx , ry)
 import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
@@ -65,6 +65,8 @@ type Msg
   | Confirm -- the universal "Yeah! Let's Go!" key & command
   | EditTransition NodeId NodeId Connection
   | Reheat
+  | Undo
+  | Redo
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -710,7 +712,8 @@ update offset_amount msg model =
           , selectedDest = NoDestination
           , selectedSource = Nothing
           , userGraph = updatedGraph
-          , undoBuffer = updatedGraph :: model_.undoBuffer
+                   -- NOTE ⬇ WELL! This isn't a typo!
+          , undoBuffer = model.userGraph :: model_.undoBuffer
           , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
           , basicForces =
               basicForces updatedGraph (round <| Tuple.second model_.dimensions)
@@ -800,6 +803,30 @@ update offset_amount msg model =
         _ ->
           model
 
+    Undo ->
+      case model.undoBuffer of
+        [] ->
+          model
+        h::t ->
+          { model
+            | undoBuffer = t
+            , redoBuffer = model.userGraph :: model.redoBuffer
+            , userGraph = h
+            , disconnectedNodes = identifyDisconnectedNodes h
+          }
+
+    Redo ->
+      case model.redoBuffer of
+        [] ->
+          model
+        h::t ->
+          { model
+            | redoBuffer = t
+            , undoBuffer = model.userGraph :: model.undoBuffer
+            , userGraph = h
+            , disconnectedNodes = identifyDisconnectedNodes h
+          }
+
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
   (x - offset_x, y - offset_y)
@@ -832,6 +859,14 @@ subscriptions offset_amount model =
                     Decode.succeed Escape
                   ( "Tab", False) ->
                     Decode.succeed Reheat
+                  ( "z", True) ->
+                    Decode.succeed Undo
+                  ( "Z", True) ->
+                    Decode.succeed Undo
+                  ( "y", True) ->
+                    Decode.succeed Redo
+                  ( "Y", True) ->
+                    Decode.succeed Redo
                   ( ch, False ) ->
                     case model.selectedDest of
                       NoDestination ->
@@ -899,7 +934,7 @@ confirmChanges model =
         }
   in
     applyChangesToGraph model.userGraph
-    |> (\g -> mkSim g { model | undoBuffer = [] })
+    |> (\g -> mkSim g { model | undoBuffer = [], redoBuffer = [] })
 
 textChar : Char -> String
 textChar ch =
@@ -1589,11 +1624,75 @@ viewSvgTransitionChooser model =
             ( if Set.isEmpty model.selectedTransitions then
                 [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
               else
-                [ tspan [] [ text "Press «Enter» to confirm these transitions" ] ]
+                [ tspan [] [ text "Press «Enter» to confirm these transitions." ] ]
             )
         ]
     :: List.map (\(item, col, row) -> viewSingleKey model item (col, row)) gridItemsAndCoordinates
     )
+
+viewUndoRedoVisualisation : Model -> Svg a
+viewUndoRedoVisualisation { undoBuffer, redoBuffer, dimensions } =
+  let
+    (_, h) = dimensions
+    rect_width = 30
+    rect_height = 10
+    rect_spacing = 3
+    num_undo = List.length undoBuffer
+    idxToY idx =
+      h - (toFloat (40 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
+
+    worst = Color.rgb255 0xfe 0x00 0x02 -- fire
+    scale =
+      [ Color.rgb255 0x00 0xf0 0xa8 -- spring
+      , Color.rgb255 0x50 0xc8 0x78 -- emerald
+      , Color.rgb255 0x00 0xa8 0x6b -- jade
+      , Color.rgb255 0x00 0x9e 0x60 -- shamrock
+      , Color.rgb255 0x80 0xf9 0xad -- sea foam
+      , Color.rgb255 0x98 0xfb 0x98 -- mint
+      , Color.rgb255 0xdf 0xff 0x00 -- chartreuse
+      , Color.rgb255 0xff 0xff 0x00 -- yellow
+      , Color.rgb255 0xff 0xd7 0x00 -- gold
+      , Color.rgb255 0xff 0xa6 0x00 -- cheese
+      , Color.rgb255 0xff 0x80 0x00 -- orange
+      , Color.rgb255 0xfc 0x4c 0x02 -- tangelo
+      , Color.rgb255 0xff 0x24 0x00 -- scarlet
+      , worst
+      ]
+  in
+    g
+      []
+      (
+        ( List.indexedMap
+            (\idx _ ->
+              rect
+                [ width rect_width
+                , height rect_height
+                , fill <| Paint (List.getAt idx scale |> Maybe.withDefault worst)
+                , ry 2
+                , x 15
+                , y <| idxToY idx
+                , class ["undo", if num_undo - 1 == idx then "current" else ""]
+                ]
+                []
+            )
+            undoBuffer
+        )
+        ++
+        ( List.indexedMap
+            (\idx _ ->
+              rect
+                [ width rect_width
+                , height rect_height
+                , ry 2
+                , x 15
+                , y <| idxToY (idx + num_undo)
+                , class ["redo"]
+                ]
+                []
+            )
+            redoBuffer
+        )
+      )
 
 matrixFromZoom : (Float, Float) -> (Float, Float) -> ( Float, ( Float, Float ) ) -> ( Float, Float ) -> Transform
 matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
@@ -1667,7 +1766,9 @@ view model =
     , Mouse.onOver (\_ -> SetMouseOver)
     , Mouse.onOut (\_ -> SetMouseOut)
     ] ++ interactivity)
-    [ g
+    [ -- this stuff is in the background.
+      viewUndoRedoVisualisation model
+    , g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
       [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ]
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
@@ -1771,7 +1872,7 @@ view model =
                 [] ->
                   g [] []
                 _ ->
-                  bottomMsg "Press «Enter» to apply these changes."
+                  bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
         ]
     ]
 
