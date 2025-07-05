@@ -43,6 +43,7 @@ import Tuple.Extra exposing (apply)
 import Automata.Data exposing (graphToAutomatonGraph)
 import Automata.Debugging exposing (debugAutomatonGraph)
 import Automata.DFA exposing (partial_union)
+import Automata.DFA exposing (transitions_from_source)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -55,7 +56,6 @@ type Msg
   | Zoom Float (Float, Float)
   | ResetView
   | SelectNode NodeId
-  | DeselectNode
   | ToggleSelectedTransition Char
   | SetMouseOver
   | SetMouseOut
@@ -67,6 +67,7 @@ type Msg
   | Reheat
   | Undo
   | Redo
+  | StartSplit NodeId
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -76,16 +77,13 @@ type LinkDestination
   | EditingTransitionTo NodeId
   | NewNode ( Float, Float ) -- with X and Y coordinates
 
+type UserOperation
+  = Splitting NodeId
+  | Dragging Drag
+  | ModifyingGraph Modifying
+ 
 type alias Model =
-  { drag : Maybe Drag
-    -- When we get a graph from somewhere, we store a copy here.
-    -- This copy has one feature: it does not have ANY user-directed
-    -- modifications.  Whenever we want to commit user edits, we can
-    -- use this graph as a base for the fold; and the resulting graph
-    -- can then again be our `pristineGraph`.
-  , pristineGraph : AutomatonGraph Entity
-    -- This is originally the `pristineGraph`, but it is modified and
-    -- messed about by the user at runtime.
+  { currentOperation : Maybe UserOperation
   , userGraph : AutomatonGraph Entity
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
@@ -95,9 +93,6 @@ type alias Model =
   , zoom : ( Float, ( Float, Float ) ) -- ( zoom-factor, zoom-center-coordinates )
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
-  , selectedSource : Maybe NodeId
-  , selectedDest : LinkDestination
-  , selectedTransitions : Connection
   , mouseIsHere : Bool
   , undoBuffer : List (AutomatonGraph Entity)
   , redoBuffer : List (AutomatonGraph Entity)
@@ -112,10 +107,11 @@ type alias Drag =
   , index : NodeId
   }
 
-type NodeAvailability
-  = Available -- the node is available for user modification
-  | Disconnected -- the node is disconnected: if you want to make changes, connect it first.
-  | NFANode -- the node is part of an NFA. A commit must be done before it can be available for changes.
+type alias Modifying =
+  { source : NodeId
+  , dest : LinkDestination
+  , transitions : Connection
+  }
 
 type alias Entity =
   Force.Entity NodeId { value : { } }
@@ -208,8 +204,7 @@ receiveWords words (w, h) =
     basic = basicForces forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph.graph
   in
-    { drag = Nothing
-    , pristineGraph = forceGraph
+    { currentOperation = Nothing
     , userGraph = forceGraph
     , simulation = Force.simulation (basic ++ viewport)
     , dimensions = (w, h)
@@ -218,9 +213,6 @@ receiveWords words (w, h) =
     , specificForces = IntDict.empty
     , zoom = ( 1.0, ( w/2, h/2 ) )
     , mouseCoords = ( w/2, h/2 )
-    , selectedSource = Nothing
-    , selectedDest = NoDestination
-    , selectedTransitions = Set.empty
     , pan = ( 0, 0)
     , mouseIsHere = False
     , undoBuffer = []
@@ -510,14 +502,8 @@ update offset_amount msg model =
         ( newState, list ) =
           Force.tick model.simulation <| List.map .label <| Graph.nodes g.graph
       in
-        case model.drag of
-          Nothing ->
-            { model
-              | userGraph = { g | graph = updateGraphWithList model.userGraph.graph list }
-              , simulation = newState
-            }
-
-          Just { current, index } ->
+        case model.currentOperation of
+          Just (Dragging { current, index }) ->
             { model
               | userGraph =
                   { g
@@ -526,6 +512,12 @@ update offset_amount msg model =
                         (Maybe.map (updateNode current model.pan))
                         (updateGraphWithList g.graph list)
                   }
+              , simulation = newState
+            }
+
+          _ ->
+            { model
+              | userGraph = { g | graph = updateGraphWithList model.userGraph.graph list }
               , simulation = newState
             }
 
@@ -544,7 +536,7 @@ update offset_amount msg model =
 
     DragStart index xy ->
       { model
-      | drag = Just <| Drag (offset offset_amount xy) (offset offset_amount xy) index
+      | currentOperation = Just <| Dragging <| Drag (offset offset_amount xy) (offset offset_amount xy) index
       -- , simulation = Force.reheat model.simulation
       }
 
@@ -552,10 +544,10 @@ update offset_amount msg model =
       let
         g = model.userGraph
       in
-        case model.drag of
-          Just { start, index } ->
+        case model.currentOperation of
+          Just (Dragging { start, index }) ->
             { model
-              | drag = Just <| Drag start xy index
+              | currentOperation = Just <| Dragging <| Drag start xy index
               , userGraph =
                   { g
                     | graph =
@@ -566,12 +558,12 @@ update offset_amount msg model =
               -- , simulation = Force.reheat model.simulation
             }
 
-          Nothing ->
-            { model | drag = Nothing }
+          _ ->
+            model
 
     DragEnd (x,y) ->
-      case model.drag of
-        Just { index } ->
+      case model.currentOperation of
+        Just (Dragging { index }) ->
           let
             ( offsetX, offsetY ) = model.pan
             nearby =
@@ -599,7 +591,7 @@ update offset_amount msg model =
             g = model.userGraph
           in
             { model
-              | drag = Nothing
+              | currentOperation = Nothing
               , userGraph =
                   { g
                     | graph =
@@ -609,8 +601,8 @@ update offset_amount msg model =
               , simulation = Force.simulation (List.concat (IntDict.values sf))
             }
 
-        Nothing ->
-          { model | drag = Nothing }
+        _ ->
+          model
 
     Zoom amount ( x, y ) ->
       let
@@ -632,18 +624,19 @@ update offset_amount msg model =
       { model
       | mouseCoords = (x, y)
       , pan =
-          case model.selectedDest of
-            NoDestination ->
-              ( xPan + xPanAt model x, yPan + yPanAt model y )
+          case model.currentOperation of
+            Just (ModifyingGraph {dest}) ->
+              case dest of
+                NoDestination ->
+                  ( xPan + xPanAt model x, yPan + yPanAt model y )
+                _ ->
+                  model.pan
             _ ->
               model.pan
       }
 
     SelectNode index ->
-      { model | selectedSource = Just index }
-
-    DeselectNode ->
-      { model | selectedSource = Nothing }
+      { model | currentOperation = Just <| ModifyingGraph <| Modifying index NoDestination Set.empty }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
@@ -652,55 +645,60 @@ update offset_amount msg model =
       { model | mouseIsHere = False }
 
     CreateOrUpdateLinkTo dest ->
-      { model
-      | selectedDest = ExistingNode dest
-      , selectedTransitions =
-          Graph.get dest model.userGraph.graph
-          |> Maybe.map (\node ->
-            case model.selectedSource of
-              Just source ->
+      case model.currentOperation of
+        Just (ModifyingGraph { source }) ->
+          let
+            transitions =
+              Graph.get dest model.userGraph.graph
+              |> Maybe.map (\node ->
                 case IntDict.get source node.incoming of
                   Just conn ->
                     conn
                   Nothing -> -- no link to this node, at present.
                     Set.empty
-              Nothing ->
-                -- NO SOURCE?!!!
-                Set.empty
-          )
-          |> Maybe.withDefault Set.empty
-      }
+              )
+              |> Maybe.withDefault Set.empty
+          in
+            { model
+              | currentOperation =
+                  Just <| ModifyingGraph <| Modifying source (ExistingNode dest) transitions
+            }
+        _ ->
+          model
 
     CreateNewNodeAt ( x, y ) ->
-      { model | selectedDest = NewNode ( x, y ) }
+      case model.currentOperation of
+        Just (ModifyingGraph { source, transitions }) ->
+          { model
+            | currentOperation =
+                Just <| ModifyingGraph <| Modifying source (NewNode ( x, y )) transitions
+          }
+        _ ->
+          model
 
     Escape ->
       let
-        escape_from_initial_node_selection =
-          case model.selectedSource of
-            Nothing ->
+        escapery =
+          case model.currentOperation of
+            Just (ModifyingGraph { source, dest, transitions }) ->
+              case dest of
+                NoDestination ->
+                  -- I must be escaping from something earlier.
+                  { model | currentOperation = Nothing }
+                EditingTransitionTo _ ->
+                  -- back of ALL the way
+                  { model | currentOperation = Nothing }
+                _ ->
+                  { model
+                    | currentOperation =
+                        Just <| ModifyingGraph <| Modifying source NoDestination transitions
+                  }
+            _ ->
               -- ??? I guess I'm escaping from nothing.
               model
-            Just _ ->
-              { model | selectedSource = Nothing }
-        escape_from_node_link =
-          case model.selectedDest of
-            NoDestination ->
-              -- hmm. I must be escaping from something earlier!
-              escape_from_initial_node_selection
-            EditingTransitionTo _ ->
-              -- back off ALL the way.
-              { model
-              | selectedDest = NoDestination
-              , selectedTransitions = Set.empty
-              , selectedSource = Nothing
-              }
-            _ ->
-              { model | selectedDest = NoDestination }
-        escape_from_anything = escape_from_node_link
       in
       -- ooh!  What are we "escaping" from, though?
-      escape_from_anything
+        escapery
 
     Confirm ->
       -- What am I confirming?
@@ -708,9 +706,7 @@ update offset_amount msg model =
         commit_change : AutomatonGraph Entity -> Model -> Model
         commit_change updatedGraph model_ =
           { model_
-          | selectedTransitions = Set.empty
-          , selectedDest = NoDestination
-          , selectedSource = Nothing
+          | currentOperation = Nothing
           , userGraph = updatedGraph
                    -- NOTE ⬇ WELL! This isn't a typo!
           , undoBuffer = model.userGraph :: model_.undoBuffer
@@ -721,13 +717,13 @@ update offset_amount msg model =
               identifyDisconnectedNodes updatedGraph
           }
         
-        createNewNode : NodeId -> Float -> Float -> Model
-        createNewNode src x y =
-          newnode_graphchange src x y model.selectedTransitions model.userGraph
+        createNewNode : NodeId -> Connection -> Float -> Float -> Model
+        createNewNode src conn x y =
+          newnode_graphchange src x y conn model.userGraph
           |> \newGraph -> commit_change newGraph model
 
-        updateExistingNode src dest =
-          updateLink_graphchange src dest model.selectedTransitions model.userGraph
+        updateExistingNode src dest conn =
+          updateLink_graphchange src dest conn model.userGraph
           |> \newGraph -> commit_change newGraph model
 
         removeLink : NodeId -> NodeId -> Model
@@ -736,48 +732,54 @@ update offset_amount msg model =
           |> \newGraph -> commit_change newGraph model
 
       in
-        model.selectedSource
-        |> Maybe.map (\src -> -- if we have a source, there may be "active", confirmable transitions that the user has selected
-          case model.selectedDest of
-            ( NewNode ( x, y ) ) ->
-              -- create a totally new node, never before seen!
-              createNewNode src x y
-            ( ExistingNode dest ) ->
-              if Set.isEmpty model.selectedTransitions then
-                removeLink src dest
-              else
-                updateExistingNode src dest
-            ( EditingTransitionTo dest ) ->
-              if Set.isEmpty model.selectedTransitions then
-                removeLink src dest
-              else
-                updateExistingNode src dest
-            ( NoDestination ) ->
-              -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
-              model
-        )
-        |> Maybe.withDefaultLazy (\() ->
-          -- in this branch, there are no "active", confirmable transitions to confirm.
-          -- however…
-          case model.undoBuffer of
-            [] ->
-              model -- nothing for me to do!
-            _ ->
-              confirmChanges model
-        )
+        case model.currentOperation of
+          Just (ModifyingGraph { source, dest, transitions }) ->
+            case dest of
+              ( NewNode ( x, y ) ) ->
+                -- create a totally new node, never before seen!
+                createNewNode source transitions x y
+              ( ExistingNode destination ) ->
+                if Set.isEmpty transitions then
+                  removeLink source destination
+                else
+                  updateExistingNode source destination transitions
+              ( EditingTransitionTo destination ) ->
+                if Set.isEmpty transitions then
+                  removeLink source destination
+                else
+                  updateExistingNode source destination transitions
+              ( NoDestination ) ->
+                -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
+                model
+          Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
+            case model.undoBuffer of
+              [] -> -- no changes are proposed, so…
+                model -- …there is nothing for me to do!
+              _ ->
+                confirmChanges model
+          _ ->
+            -- no idea what I'm confirming.
+            model
 
     ToggleSelectedTransition ch ->
-      let
-        newSelectedTransitions =
-          if Set.member (ch, 0) model.selectedTransitions then
-            Set.remove (ch, 0) model.selectedTransitions
-            |> Set.insert (ch, 1)
-          else if Set.member (ch, 1) model.selectedTransitions then
-            Set.remove (ch, 1) model.selectedTransitions
-          else
-            Set.insert (ch, 0) model.selectedTransitions
-      in
-        { model | selectedTransitions = newSelectedTransitions }
+      case model.currentOperation of
+        Just (ModifyingGraph ({ transitions } as mod)) ->
+          { model
+            | currentOperation =
+                Just <| ModifyingGraph <|
+                  { mod
+                    | transitions =
+                        if Set.member (ch, 0) transitions then
+                          Set.remove (ch, 0) transitions
+                          |> Set.insert (ch, 1)
+                        else if Set.member (ch, 1) transitions then
+                          Set.remove (ch, 1) transitions
+                        else
+                          Set.insert (ch, 0) transitions
+                  }
+          }
+        _ ->
+          model
 
     EditTransition src dest conn ->
       -- … and this will take us to much same place that
@@ -787,14 +789,13 @@ update offset_amount msg model =
       -- escape out of it, we clear source & dest & transitions
       -- all at once.
       { model
-      | selectedSource = Just src
-      , selectedDest = EditingTransitionTo dest
-      , selectedTransitions = conn
+        | currentOperation =
+            Just <| ModifyingGraph <| Modifying src (EditingTransitionTo dest) conn
       }
 
     Reheat ->
       -- If I'm not doing anything else, permit auto-layout
-      case model.selectedSource of
+      case model.currentOperation of
         Nothing ->
           { model
           | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
@@ -803,8 +804,11 @@ update offset_amount msg model =
         _ ->
           model
 
+    StartSplit nodeId ->
+      model
+
     Undo ->
-      case (model.selectedSource, model.undoBuffer) of
+      case (model.currentOperation, model.undoBuffer) of
         (_, []) ->
           model
         (Just _, _) ->
@@ -818,7 +822,7 @@ update offset_amount msg model =
           }
 
     Redo ->
-      case (model.selectedSource, model.redoBuffer) of
+      case (model.currentOperation, model.redoBuffer) of
         (_, []) ->
           model
         (Just _, _) ->
@@ -871,42 +875,42 @@ subscriptions offset_amount model =
                     Decode.succeed Redo
                   ( "Y", True) ->
                     Decode.succeed Redo
-                  ( ch, False ) ->
-                    case model.selectedDest of
-                      NoDestination ->
-                        Decode.fail "Not a recognized key combination"
-                      _ ->
-                        case String.toList ch of
-                          [char] ->
-                            Decode.succeed (ToggleSelectedTransition char)
+                  ( ch, _ ) ->
+                    case model.currentOperation of
+                      Just (ModifyingGraph { dest }) ->
+                        case dest of
+                          NoDestination ->
+                            Decode.fail "Not a recognized key combination"
                           _ ->
-                            Decode.fail "Not a character key"
-                  _ ->
-                    -- Debug.log "hmm" v |> \_ ->
-                    Decode.fail "Not a recognized key combination"
+                            case String.toList ch of
+                              [char] ->
+                                Decode.succeed (ToggleSelectedTransition char)
+                              _ ->
+                                Decode.fail "Not a character key"
+                      _ ->
+                        Decode.fail "Not a recognized key combination"
               )
           )
       else
         Sub.none
   in
-  case model.drag of
-    Nothing ->
-      -- This allows us to save resources, as if the simulation is done, there is no point in subscribing
-      -- to the rAF.
-      if Force.isCompleted model.simulation then
-        Sub.batch [ keyboardSubscription, panSubscription ]
+    case model.currentOperation of
+      Just (Dragging _) ->
+        Sub.batch
+          [ Browser.Events.onMouseMove (Decode.map (.clientPos >> (offset offset_amount) >> DragAt) Mouse.eventDecoder)
+          , Browser.Events.onMouseUp (Decode.map (.clientPos >> (offset offset_amount) >> DragEnd) Mouse.eventDecoder)
+          , Browser.Events.onAnimationFrame (always Tick)
+          , panSubscription
+          , keyboardSubscription
+          ]
+      _ ->
+        -- This allows us to save resources, as if the simulation is done, there is no point in subscribing
+        -- to the rAF.
+        if Force.isCompleted model.simulation then
+          Sub.batch [ keyboardSubscription, panSubscription ]
 
-      else
-        Sub.batch [ keyboardSubscription, panSubscription, Browser.Events.onAnimationFrame (always Tick) ]
-
-    Just _ ->
-      Sub.batch
-        [ Browser.Events.onMouseMove (Decode.map (.clientPos >> (offset offset_amount) >> DragAt) Mouse.eventDecoder)
-        , Browser.Events.onMouseUp (Decode.map (.clientPos >> (offset offset_amount) >> DragEnd) Mouse.eventDecoder)
-        , Browser.Events.onAnimationFrame (always Tick)
-        , panSubscription
-        , keyboardSubscription
-        ]
+        else
+          Sub.batch [ keyboardSubscription, panSubscription, Browser.Events.onAnimationFrame (always Tick) ]
 
 applyChangesToGraph : AutomatonGraph Entity -> AutomatonGraph Entity
 applyChangesToGraph g =
@@ -932,7 +936,6 @@ confirmChanges model =
           | simulation = Force.simulation (basic ++ viewport)
           , basicForces = basic
           , userGraph = forceGraph
-          , pristineGraph = forceGraph
           , viewportForces = viewport
           , specificForces = IntDict.empty
         }
@@ -1224,15 +1227,20 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label, id } =
+viewNode { userGraph, currentOperation, disconnectedNodes } { label, id } =
   let
     selectableClass =
-      if selectedSource == Just id then
-        "selected"
-      else if Set.member id disconnectedNodes && Maybe.isNothing selectedSource then
-        "disconnected"
-      else
-        ""
+      case currentOperation of
+        Just (ModifyingGraph { source }) ->
+          if source == id then
+            "selected"
+          else
+            ""
+        _ ->
+          if Set.member id disconnectedNodes then
+            "disconnected"
+          else
+            ""
     graphNode =
       Graph.get id userGraph.graph
     thisNodeIsTerminal =
@@ -1246,23 +1254,28 @@ viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label,
           if e.keys.shift then
             e.clientPos |> DragStart id
           else
-            case selectedSource of
-              Just _ ->
+            case currentOperation of
+              Just (ModifyingGraph _) ->
                 -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
                 CreateOrUpdateLinkTo id
-              Nothing ->
+              _ ->
                 SelectNode id
         )
 
     interactivity =
-      case selectedDest of
-        NoDestination ->
-          if Maybe.isNothing selectedSource && Set.member id disconnectedNodes then
+      case currentOperation of
+        Just (ModifyingGraph { dest }) ->
+          case dest of
+            NoDestination ->
+              [ permit_node_reselection ]
+            _ ->
+              []
+        _ ->
+          if Set.member id disconnectedNodes then
             []
           else
             [ permit_node_reselection ]
-        _ ->
-          []
+
     titleText =
       (if thisNodeIsTerminal && id == userGraph.root then
         "Start AND end of computation\n"
@@ -1357,16 +1370,16 @@ nearby_node_repulsionDistance =
 
 {-| Used by nearby_node and nearby_nodes. Not for other use. -}
 nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Model -> b
-nearby_node_func f distance { userGraph, pan, mouseCoords, drag } =
+nearby_node_func f distance { userGraph, pan, mouseCoords, currentOperation } =
   -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
   let
     ( xPan, yPan ) = pan
     ( mouse_x, mouse_y ) =
-      case drag of
-        Just { current } ->
+      case currentOperation of
+        Just (Dragging { current }) ->
           -- we are dragging! Use this for preference.
           current -- |> Debug.log "Dragcoords"
-        Nothing ->
+        _ ->
           -- not dragging; rely on less accurate mouse-coords.
           mouseCoords -- |> Debug.log "Mousecoords"
     adjustment_x = xPan + mouse_x
@@ -1527,14 +1540,14 @@ transition_spacing : Float
 transition_spacing = 15
 
 -- https://ishadeed.com/article/target-size/
-viewSingleKey : Model -> Char -> (Int, Int) -> Svg Msg
-viewSingleKey model ch (gridX, gridY) =
+viewSingleKey : Char -> Connection -> (Int, Int) -> Svg Msg
+viewSingleKey ch conn (gridX, gridY) =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
-    isThisNodeTerminal = Set.member (ch, 1) model.selectedTransitions
+    isThisNodeTerminal = Set.member (ch, 1) conn
     keyClass =
-      if Set.member (ch, 0) model.selectedTransitions then
+      if Set.member (ch, 0) conn then
         [ "transition-chooser-key", "selected" ]
       else if isThisNodeTerminal then
         [ "transition-chooser-key", "selected", "terminal" ]
@@ -1588,6 +1601,13 @@ viewSvgTransitionChooser model =
         ([], (0, 0))
         alphabet
       |> Tuple.first
+    conn =
+      case model.currentOperation of
+        Just (ModifyingGraph { transitions }) ->
+          transitions
+        _ ->
+          Set.empty
+          |> Debug.log "CXO<DPO(*EU I should not be here!"
   in
   g
     []
@@ -1608,10 +1628,10 @@ viewSvgTransitionChooser model =
             , class [ "link" ]
             ]
             ( tspan [] [ text "Selected transitions: " ] ::
-              ( if Set.isEmpty model.selectedTransitions then
+              ( if Set.isEmpty conn then
                   [ tspan [] [ text "None" ] ]
                 else
-                  connectionToSvgText model.selectedTransitions
+                  connectionToSvgText conn
               )
             )
         , text_
@@ -1627,13 +1647,13 @@ viewSvgTransitionChooser model =
             , stroke <| Paint <| paletteColors.background
             , strokeWidth 4
             ]
-            ( if Set.isEmpty model.selectedTransitions then
+            ( if Set.isEmpty conn then
                 [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
               else
                 [ tspan [] [ text "Press «Enter» to confirm these transitions." ] ]
             )
         ]
-    :: List.map (\(item, col, row) -> viewSingleKey model item (col, row)) gridItemsAndCoordinates
+    :: List.map (\(item, col, row) -> viewSingleKey item conn (col, row)) gridItemsAndCoordinates
     )
 
 viewUndoRedoVisualisation : Model -> Svg a
@@ -1741,8 +1761,8 @@ view model =
             ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
             ( 2, 1 ) -> CursorEResize
             _ ->
-              case model.selectedSource of
-                Just _ -> Cursor "none"
+              case model.currentOperation of
+                Just (ModifyingGraph _) -> Cursor "none"
                 _ -> CursorDefault
       ]
     permit_node_selection =
@@ -1750,20 +1770,24 @@ view model =
         "mousedown"
         { stopPropagation = True, preventDefault = True }
         (\_ ->
-          case model.selectedSource of
-            Just _ ->
+          case model.currentOperation of
+            Just (ModifyingGraph _) ->
               case nearby_node nearby_node_lockOnDistance model of
                 Just node -> -- in this case, the UI would show it being "locked-on"
                   CreateOrUpdateLinkTo node.id
                 Nothing ->
                   CreateNewNodeAt model.mouseCoords
-            Nothing ->
+            _ ->
               Escape
         )
     interactivity =
-      case model.selectedDest of
-        NoDestination ->
-          permit_node_selection :: permit_zoom :: permit_pan
+      case model.currentOperation of
+        Just (ModifyingGraph { dest }) ->
+          case dest of
+            NoDestination ->
+              permit_node_selection :: permit_zoom :: permit_pan
+            _ ->
+              []
         _ ->
           []
   in
@@ -1785,21 +1809,27 @@ view model =
       , Graph.nodes model.userGraph.graph
         |> List.map (viewNode model)
         |> g [ class [ "nodes" ] ]
-      , case ( model.selectedSource, model.selectedDest ) of
-          ( _, EditingTransitionTo _ ) ->
-            g [] []
-          ( Just id, _ ) ->
-            Graph.get id model.userGraph.graph
-            |> Maybe.map (viewPhantom model)
-            |> Maybe.withDefault (g [] [])
-          ( Nothing, _ ) ->
+      , case model.currentOperation of
+          Just (ModifyingGraph { source, dest }) ->
+            case ( source, dest ) of
+              ( _, EditingTransitionTo _ ) ->
+                g [] []
+              ( id, _ ) ->
+                Graph.get id model.userGraph.graph
+                |> Maybe.map (viewPhantom model)
+                |> Maybe.withDefault (g [] [])
+          _ ->
             g [] []
       ]
-    , case model.selectedDest of
-        NoDestination ->
-          g [] []
+    , case model.currentOperation of
+        Just (ModifyingGraph { dest }) ->
+          case dest of
+            NoDestination ->
+              g [] []
+            _ ->
+              viewSvgTransitionChooser model
         _ ->
-          viewSvgTransitionChooser model
+          g [] []
     ,
       let
         bottomMsg message =
@@ -1864,15 +1894,17 @@ view model =
                 )
               )
             ]
-        , case (model.selectedSource, model.selectedDest) of
-            (Just _, NoDestination) ->
-              bottomMsg "Press «Esc» to cancel link creation"
-            (_, ExistingNode _) ->
-              bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
-            (_, NewNode _) ->
-              bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            (_, EditingTransitionTo _) ->
-              bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+        , case model.currentOperation of
+            Just (ModifyingGraph { dest }) ->
+              case dest of
+                NoDestination ->
+                  bottomMsg "Press «Esc» to cancel link creation"
+                ExistingNode _ ->
+                  bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
+                NewNode _ ->
+                  bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+                EditingTransitionTo _ ->
+                  bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
             _ ->
               case model.undoBuffer of
                 [] ->
