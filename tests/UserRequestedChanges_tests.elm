@@ -1,29 +1,20 @@
 module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
-import Automata.DFA exposing (splitTerminalAndNonTerminal)
 import Utility exposing (dfa, ag_equals, dfa_equals, mkAG_input)
 import ForceDirectedGraph exposing (applyChangesToGraph)
-import ForceDirectedGraph exposing (RequestedGraphChanges)
-import ForceDirectedGraph exposing (create_removal_userchange)
 import Graph exposing (NodeId)
 import Automata.Data exposing (AutomatonGraph)
 import Automata.DFA exposing (mkAutomatonGraphWithValues)
 import ForceDirectedGraph exposing (Entity)
 import Automata.Data exposing (Transition)
-import ForceDirectedGraph exposing (create_update_userchange)
 import Set
-import ForceDirectedGraph exposing (RequestedGraphChanges(..))
 import ForceDirectedGraph exposing (Msg(..))
 import Automata.DFA exposing (mkConn)
-import ForceDirectedGraph exposing (create_newnode_userchange)
-import ForceDirectedGraph exposing (create_newnode_graphchange)
 import Automata.Data exposing (Connection)
-import ForceDirectedGraph exposing (create_update_graphchange)
-import ForceDirectedGraph exposing (create_removal_graphchange)
 import Automata.Debugging exposing (debugAutomatonGraph)
-import ForceDirectedGraph exposing (update_change)
-import ForceDirectedGraph exposing (remove_change)
+import ForceDirectedGraph exposing (updateLink_graphchange)
+import ForceDirectedGraph exposing (removeLink_graphchange)
 import Automata.DFA exposing (renumberAutomatonGraph)
 
 ag : String -> AutomatonGraph Entity
@@ -32,39 +23,27 @@ ag =
   >> mkAutomatonGraphWithValues (\id -> { x = 0, y = 0, vx = 0, vy = 0, id = id, value = {} })
 
 -- very thin convenience wrapper to get rid of the "x" and "y" components
-newnode_change : NodeId -> Connection -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
-newnode_change src conn g list =
-  ForceDirectedGraph.newnode_change src conn 0 0 g list
+newnode_change : NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+newnode_change src conn g =
+  ForceDirectedGraph.newnode_graphchange src 0 0 conn g
 
 check_remove : NodeId -> NodeId -> String -> String -> Expect.Expectation
 check_remove src dest s_ag s_expected =
-  case remove_change src dest (ag s_ag) [] of
-    Just (_, changes) ->
-      ag_equals
-        (ag s_expected)
-        (applyChangesToGraph changes (ag s_ag))
-    _ ->
-      Expect.fail <| "Removal userchange couldn't be created for " ++ s_ag
+  ag_equals
+    (ag s_expected)
+    (applyChangesToGraph <| removeLink_graphchange src dest (ag s_ag))
 
-check_update : NodeId -> NodeId -> List Transition -> String -> String -> Expect.Expectation
-check_update src dest connList s_ag s_expected =
-  case update_change src dest (Set.fromList connList) (ag s_ag) [] of
-    Just (_, changes) ->
-      ag_equals
-        (ag s_expected)
-        (applyChangesToGraph changes (ag s_ag))
-    Nothing ->
-      Expect.fail <| "Update userchange couldn't be created for " ++ s_ag
+check_update : NodeId -> NodeId -> String -> String -> String -> Expect.Expectation
+check_update src dest s_conn s_ag s_expected =
+  ag_equals
+    (ag s_expected)
+    (applyChangesToGraph <| updateLink_graphchange src dest (mkConn s_conn) (ag s_ag))
 
 check_creating : String -> NodeId -> String -> String -> Expect.Expectation
 check_creating s_original src s_conn s_expected =
-  case newnode_change src (mkConn s_conn) (ag s_original) [] of
-    Just (_, changes) ->
-      ag_equals
-        (ag s_expected)
-        (applyChangesToGraph changes (ag s_original))
-    Nothing ->
-      Expect.fail <| "Update userchange couldn't be created for " ++ s_original
+  ag_equals
+    (ag s_expected)
+    (applyChangesToGraph <| newnode_change src (mkConn s_conn) (ag s_original))
 
 {-
 This works, using node-id values, because all the user-changes are only submitted to the
@@ -72,35 +51,32 @@ backend for processing at the **END** of the whole process (i.e. during applyCha
 Before that, we are working exclusively and only on the user-graph, where any changes
 that we make are simply accepted verbatim and no node-ids are changed at any point.
 -}
-check_multi : String -> List (AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)) -> String -> Expect.Expectation
+check_multi : String -> List (AutomatonGraph Entity -> AutomatonGraph Entity) -> String -> Expect.Expectation
 check_multi s_start changes s_expected =
   let
     start = ag s_start
     expected = ag s_expected
-    check_multi_helper : List (AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)) -> Int -> (AutomatonGraph Entity, List RequestedGraphChanges) -> Expect.Expectation
-    check_multi_helper remaining idx (g, list) =
+    check_multi_helper : List (AutomatonGraph Entity -> AutomatonGraph Entity) -> Int -> AutomatonGraph Entity -> Expect.Expectation
+    check_multi_helper remaining idx acc =
       case remaining of
         [] -> Expect.fail "No changes were specified in the test."
         f::rest ->
-          case f g list of
-            Nothing ->
-              Expect.fail <| "User-change at index " ++ String.fromInt idx ++ " was considered to be invalid."
-            Just (usergraph, changelist) ->
-              case rest of
-                [] ->
-                  debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx) usergraph |> \_ ->
-                  ag_equals
-                    expected
-                    (applyChangesToGraph changelist start |> renumberAutomatonGraph)
-                _ ->
-                  check_multi_helper
-                    rest
-                    (idx + 1)
-                    ( usergraph |> debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx)
-                    , changelist
-                    )
+          let
+            new = f acc
+          in
+            case rest of
+              [] ->
+                debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx) new |> \_ ->
+                ag_equals
+                  expected
+                  (applyChangesToGraph new |> renumberAutomatonGraph)
+              _ ->
+                check_multi_helper
+                  rest
+                  (idx + 1)
+                  (new |> debugAutomatonGraph ("◉◉◉ User-modified graph, post-#" ++ String.fromInt idx))
   in
-    check_multi_helper changes 0 (start, [])
+    check_multi_helper changes 0 start
 
 suite : Test
 suite =
@@ -122,49 +98,49 @@ suite =
         [ test "Changing a link completely works" <|
           \_ ->
             check_update
-              0 1 [('b', 0)] "0-a-1"
+              0 1 "b" "0-a-1"
               "0-b-1"
         , test "Adding transition to a link works" <|
           \_ ->
             check_update
-              0 1 [('b', 0), ('a', 0)] "0-a-1"
+              0 1 "ab" "0-a-1"
               "0-ab-1"
         , test "Removing transition from a link works" <|
           \_ ->
             check_update
-              0 1 [('a', 0)] "0-ab-1"
+              0 1 "a" "0-ab-1"
               "0-a-1"
         , test "Adding and removing from a link works" <|
           \_ ->
             check_update
-              0 1 [('a', 0),('c', 0)] "0-ab-1"
+              0 1 "ac" "0-ab-1"
               "0-ac-1"
         , test "Changing terminality of a link works" <|
           \_ ->
             check_update
-              0 1 [('a', 1)] "0-a-1"
+              0 1 "!a" "0-a-1"
               "0-!a-1"
         , test "Partially changing terminality of a link works" <|
           \_ ->
             check_update
-              0 1 [('a', 0), ('b', 1)] "0-ab-1"
+              0 1 "a!b" "0-ab-1"
               "0-a!b-1"
         ]
       , describe "Creating a new link"
         [ test "Can create a link between two existing nodes" <|
           \_ ->
             check_update
-              1 3 [('k', 0)] "0-a-1 1-b-2 2-c-3"
+              1 3 "k" "0-a-1 1-b-2 2-c-3"
               "0-a-1 1-b-2 2-c-3 1-k-3"
         , test "Can create a link to source" <|
           \_ ->
             check_update
-              2 0 [('k', 0)] "0-a-1 1-b-2"
+              2 0 "k" "0-a-1 1-b-2"
               "0-a-1 1-b-2 2-k-0"
         , test "Can create a link from source" <|
           \_ ->
             check_update
-              0 2 [('k', 0)] "0-a-1 1-b-2"
+              0 2 "k" "0-a-1 1-b-2"
               "0-a-1 1-b-2 0-k-2"
         ]
       ]
@@ -231,9 +207,9 @@ suite =
             ""
             [ newnode_change 0 (mkConn "c") -- new node: 1
             , newnode_change 1 (mkConn "d") -- new node: 2
-            , update_change 0 1 (mkConn "!ab")
+            , updateLink_graphchange 0 1 (mkConn "!ab")
             , newnode_change 1 (mkConn "!e") -- new node: 3
-            , remove_change 1 2
+            , removeLink_graphchange 1 2
             ]
             "0-!ab-1 1-!e-2"
       , test "Joining of end-nodes does not happen prematurely [case Ⅱ]" <|
@@ -241,7 +217,7 @@ suite =
           check_multi
             "0-a-1 1-b-2 2-c-3"
             [ newnode_change 2 (mkConn "e") -- new node: 4
-            , update_change 4 1 (mkConn "l")
+            , updateLink_graphchange 4 1 (mkConn "l")
             ]
             "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1"
       , test "Joining of end-nodes happens at the end [case Ⅰ]" <|
@@ -249,7 +225,7 @@ suite =
           check_multi
             "0-a-1 1-b-2 2-c-3"
             [ newnode_change 2 (mkConn "e") -- new node: 4
-            , update_change 4 1 (mkConn "l")
+            , updateLink_graphchange 4 1 (mkConn "l")
             , newnode_change 4 (mkConn "k") -- new node: 5
             ]
             "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1 4-k-3"
@@ -258,56 +234,56 @@ suite =
           \_ ->
             check_multi
               "0-a-1 1-b-2 2-c-3"
-              [ remove_change 1 2
-              , update_change 1 2 (mkConn "d")
+              [ removeLink_graphchange 1 2
+              , updateLink_graphchange 1 2 (mkConn "d")
               ]
               "0-a-1 1-d-2 2-c-3"
         , test "Disconnect from one branch and reconnect to another" <|
           \_ ->
             check_multi
               "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
-              [ remove_change 2 3
-              , remove_change 2 4
-              , update_change 2 4 (mkConn "z")
+              [ removeLink_graphchange 2 3
+              , removeLink_graphchange 2 4
+              , updateLink_graphchange 2 4 (mkConn "z")
               ]
               "0-a-1 1-b-2 2-z-4 4-f-6"
         , test "Disconnect from one branch and reconnect from another" <|
           \_ ->
             check_multi
               "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
-              [ remove_change 2 3
-              , remove_change 2 4
-              , update_change 1 4 (mkConn "z")
+              [ removeLink_graphchange 2 3
+              , removeLink_graphchange 2 4
+              , updateLink_graphchange 1 4 (mkConn "z")
               ]
               "0-a-1 1-b-2 1-z-3 3-f-2"
         , test "Disconnect from branches and reconnect both differently" <|
           \_ ->
             check_multi
               "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6 5-g-7 6-h-8"
-              [ remove_change 3 5
-              , remove_change 4 6
-              , update_change 3 6 (mkConn "p")
-              , update_change 4 5 (mkConn "q")
+              [ removeLink_graphchange 3 5
+              , removeLink_graphchange 4 6
+              , updateLink_graphchange 3 6 (mkConn "p")
+              , updateLink_graphchange 4 5 (mkConn "q")
               ]
               "0-a-1 1-b-2 2-c-3 2-d-4 3-p-5 4-q-6 5-h-7 6-g-7"
         , test "Disconnect from branches and reconnect them afterwards [case Ⅰ]" <|
           \_ ->
             check_multi
               "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
-              [ remove_change 2 3
-              , remove_change 2 4
-              , update_change 2 3 (mkConn "r")
-              , update_change 2 4 (mkConn "s")
+              [ removeLink_graphchange 2 3
+              , removeLink_graphchange 2 4
+              , updateLink_graphchange 2 3 (mkConn "r")
+              , updateLink_graphchange 2 4 (mkConn "s")
               ]
               "0-a-1 1-b-2 2-r-3 2-s-4 3-e-5 4-f-5"
         , test "Disconnect from branches and reconnect them afterwards [case Ⅱ]" <|
           \_ ->
             check_multi
               "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
-              [ remove_change 2 3
-              , remove_change 2 4
-              , update_change 2 4 (mkConn "r")
-              , update_change 2 3 (mkConn "s")
+              [ removeLink_graphchange 2 3
+              , removeLink_graphchange 2 4
+              , updateLink_graphchange 2 4 (mkConn "r")
+              , updateLink_graphchange 2 3 (mkConn "s")
               ]
               "0-a-1 1-b-2 2-r-4 2-s-3 3-e-5 4-f-5"
         ]

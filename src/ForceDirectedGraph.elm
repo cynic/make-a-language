@@ -97,13 +97,12 @@ type alias Model =
   , selectedDest : LinkDestination
   , selectedTransitions : Connection
   , mouseIsHere : Bool
-  , userRequestedChanges : List RequestedGraphChanges
+  , undoBuffer : List (AutomatonGraph Entity)
+  , redoBuffer : List (AutomatonGraph Entity)
   , disconnectedNodes : Set NodeId
   }
 
 type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
-
-type RequestedGraphChanges = FROOP (AutomatonGraph Entity)
 
 type alias Drag =
   { start : ( Float, Float )
@@ -222,7 +221,8 @@ receiveWords words (w, h) =
     , selectedTransitions = Set.empty
     , pan = ( 0, 0)
     , mouseIsHere = False
-    , userRequestedChanges = []
+    , undoBuffer = []
+    , redoBuffer = []
     , disconnectedNodes = Set.empty
     }
 
@@ -448,16 +448,8 @@ wordsEndingAt nodeId g =
   in
     graphToAutomatonGraph g.root induced
 
-newnode_change : NodeId -> Connection -> Float -> Float -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
-newnode_change src conn x y g list =
-  let
-    newGraph = create_newnode_graphchange src x y conn g
-    change = create_newnode_userchange newGraph.maxId newGraph
-  in
-    Just (newGraph, FROOP newGraph :: list)
-
-create_newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
-create_newnode_graphchange src x y conn g =
+newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+newnode_graphchange src x y conn g =
   { g
     | graph =
         Graph.insert
@@ -477,20 +469,8 @@ create_newnode_graphchange src x y conn g =
   }
   -- |> debugAutomatonGraph "[create_union_graphchange] updated graph"
 
-create_newnode_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
-create_newnode_userchange target g =
-  FROOP g
-
-update_change : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
-update_change src dest conn g list =
-  let
-    newGraph = create_update_graphchange src dest conn g
-    change = create_update_userchange src dest conn g
-  in
-    Maybe.map (\change_ -> (newGraph, FROOP newGraph :: list)) change
-
-create_update_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
-create_update_graphchange src dest conn g =
+updateLink_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+updateLink_graphchange src dest conn g =
   { g
     | graph =
         Graph.update dest
@@ -507,20 +487,8 @@ create_update_graphchange src dest conn g =
   }
   -- |> debugAutomatonGraph "[create_update_graphchange] updated graph"
 
-create_update_userchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
-create_update_userchange src dest conn ag =
-  Just <| FROOP ag
-
-remove_change : NodeId -> NodeId -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
-remove_change src dest g list =
-  let
-    newGraph = create_removal_graphchange src dest g
-    change = create_removal_userchange src dest g
-  in
-    Maybe.map (\change_ -> (newGraph, FROOP newGraph :: list)) change
-
-create_removal_graphchange : NodeId -> NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
-create_removal_graphchange src dest g =
+removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
+removeLink_graphchange src dest g =
   { g
     | graph =
         Graph.update dest
@@ -530,10 +498,6 @@ create_removal_graphchange src dest g =
           g.graph
   }
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
-
-create_removal_userchange : NodeId -> NodeId -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
-create_removal_userchange src dest ag =
-  Just <| FROOP ag
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -739,14 +703,15 @@ update offset_amount msg model =
     Confirm ->
       -- What am I confirming?
       let
-        commit_change : List RequestedGraphChanges -> AutomatonGraph Entity -> Model -> Model
-        commit_change updatedChanges updatedGraph model_ =
+        commit_change : AutomatonGraph Entity -> Model -> Model
+        commit_change updatedGraph model_ =
           { model_
           | selectedTransitions = Set.empty
           , selectedDest = NoDestination
           , selectedSource = Nothing
           , userGraph = updatedGraph
-          , userRequestedChanges = updatedChanges
+          , undoBuffer = updatedGraph :: model_.undoBuffer
+          , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
           , basicForces =
               basicForces updatedGraph (round <| Tuple.second model_.dimensions)
           , disconnectedNodes =
@@ -755,20 +720,17 @@ update offset_amount msg model =
         
         createNewNode : NodeId -> Float -> Float -> Model
         createNewNode src x y =
-          newnode_change src model.selectedTransitions x y model.userGraph model.userRequestedChanges
-          |> Maybe.map (\(newGraph, newList) -> commit_change newList newGraph model)
-          |> Maybe.withDefault model
+          newnode_graphchange src x y model.selectedTransitions model.userGraph
+          |> \newGraph -> commit_change newGraph model
 
         updateExistingNode src dest =
-          update_change src dest model.selectedTransitions model.userGraph model.userRequestedChanges
-          |> Maybe.map (\(newGraph, newList) -> commit_change newList newGraph model)
-          |> Maybe.withDefault model
+          updateLink_graphchange src dest model.selectedTransitions model.userGraph
+          |> \newGraph -> commit_change newGraph model
 
         removeLink : NodeId -> NodeId -> Model
         removeLink src dest =
-          remove_change src dest model.userGraph model.userRequestedChanges
-          |> Maybe.map (\(newGraph, newList) -> commit_change newList newGraph model)
-          |> Maybe.withDefault model
+          removeLink_graphchange src dest model.userGraph
+          |> \newGraph -> commit_change newGraph model
 
       in
         model.selectedSource
@@ -794,7 +756,7 @@ update offset_amount msg model =
         |> Maybe.withDefaultLazy (\() ->
           -- in this branch, there are no "active", confirmable transitions to confirm.
           -- however…
-          case model.userRequestedChanges of
+          case model.undoBuffer of
             [] ->
               model -- nothing for me to do!
             _ ->
@@ -907,43 +869,15 @@ subscriptions offset_amount model =
         , keyboardSubscription
         ]
 
-applyChangesToGraph : List RequestedGraphChanges -> AutomatonGraph Entity -> AutomatonGraph Entity
-applyChangesToGraph userRequestedChanges ag =
-  let
-    applyChange_union : DFARecord {} Entity -> AutomatonGraph Entity -> AutomatonGraph Entity
-    applyChange_union w_dfa g =
-      -- Automata.Debugging.debugAutomatonGraph "Received by applyChange_union" g |> \_ ->
-      partial_union
-        ({- debugDFA_ "w_dfa" -} w_dfa)
-        ({- debugDFA_ "m_dfa" <| -} Automata.DFA.fromGraph g.root g.graph)
-      |> toAutomatonGraph
-      -- |> Automata.Debugging.debugAutomatonGraph "Generated by applyChange_union"
-
-    applyChange_updateLink : RequestedChangePath -> RequestedChangePath -> Connection -> AutomatonGraph a -> AutomatonGraph a
-    applyChange_updateLink pathA pathB conn g =
-      Maybe.map2
-        (\from to -> modifyConnection from to conn g)
-        (followPathTo pathA g)
-        (followPathTo pathB g)
-      |> Maybe.withDefault g
-
-    applyChange_removeLink : RequestedChangePath -> RequestedChangePath -> AutomatonGraph a -> AutomatonGraph a
-    applyChange_removeLink pathA pathB g =
-      Maybe.map2
-        (\from to -> removeConnection from to g)
-        (followPathTo pathA g)
-        (followPathTo pathB g)
-      |> Maybe.withDefault g
-  in
-    case userRequestedChanges of
-      FROOP h::_ ->
-        let
-          disconnected = identifyDisconnectedNodes (debugAutomatonGraph "last" h)
-        in
-          { h | graph = Set.foldl (\id acc -> Graph.remove id acc) h.graph disconnected }
-        |> (fromAutomatonGraph >> toAutomatonGraph)
-      [] ->
-        ag
+applyChangesToGraph : AutomatonGraph Entity -> AutomatonGraph Entity
+applyChangesToGraph g =
+    { g
+      | graph =
+          -- first, actually remove all disconnected nodes.
+          identifyDisconnectedNodes g
+          |> Set.foldl Graph.remove g.graph
+    }
+    |> (fromAutomatonGraph >> toAutomatonGraph)
 
 confirmChanges : Model -> Model
 confirmChanges model =
@@ -964,8 +898,8 @@ confirmChanges model =
           , specificForces = IntDict.empty
         }
   in
-    applyChangesToGraph model.userRequestedChanges model.pristineGraph
-    |> (\g -> mkSim g { model | userRequestedChanges = [] })
+    applyChangesToGraph model.userGraph
+    |> (\g -> mkSim g { model | undoBuffer = [] })
 
 textChar : Char -> String
 textChar ch =
@@ -1833,7 +1767,7 @@ view model =
             (_, EditingTransitionTo _) ->
               bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
             _ ->
-              case model.userRequestedChanges of
+              case model.undoBuffer of
                 [] ->
                   g [] []
                 _ ->
