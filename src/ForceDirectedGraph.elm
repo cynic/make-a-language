@@ -1263,6 +1263,26 @@ viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label,
             [ permit_node_reselection ]
         _ ->
           []
+    titleText =
+      (if thisNodeIsTerminal && id == userGraph.root then
+        "Start AND end of computation\n"
+      else if thisNodeIsTerminal then
+        "End of computation\n"
+      else if id == userGraph.root then
+        "Start of computation\n"
+      else
+        "")
+      ++ "Shift-drag to reposition" ++
+      (Maybe.map
+        (\node ->
+          if IntDict.size node.incoming > 1 || (IntDict.findMin node.incoming |> Maybe.map (\(_, conn) -> Set.size conn > 1) |> Maybe.withDefault False) then
+            "\nCtrl-click to split transitions"
+          else
+            ""
+        ) graphNode
+      |> Maybe.withDefault "")
+      ++ "\nClick to create or link a new transition"
+      ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
   in
     g
       ( class ["state-node", selectableClass]
@@ -1290,11 +1310,7 @@ viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label,
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
               ]
               [ text "💥"
-              , title
-                  []
-                  [ text <| "Start AND end of computation"
-                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
-                  ]
+              , title [] [text titleText]
               ]
           else if thisNodeIsTerminal then
             text_
@@ -1309,11 +1325,7 @@ viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label,
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
               ]
               [ text "🎯"
-              , title
-                  []
-                  [ text <| "End of computation"
-                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
-                  ]
+              , title [] [text titleText]
               ]
           else if id == userGraph.root then
             text_
@@ -1329,21 +1341,11 @@ viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label,
               , fill <| Paint <| Color.grey
               ]
               [ text "⭐"
-              , title
-                  []
-                  [ text <| "Start of computation"
-                    ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
-                  ]
+              , title [] [text titleText]
               ]
           else
             g [] []
-      , title
-          []
-          [ text <|
-              -- String.fromInt node.id
-              "Shift-drag to reposition\nClick to create or link a new transition"
-              ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
-          ]
+      , title [] [text titleText]
       ]
 
 nearby_node_lockOnDistance : Float
