@@ -38,32 +38,33 @@ newnode_change src conn g list =
 
 check_remove : NodeId -> NodeId -> String -> String -> Expect.Expectation
 check_remove src dest s_ag s_expected =
-  case create_removal_userchange src dest (ag s_ag) of
-    Nothing ->
-      Expect.fail <| "Removal userchange couldn't be created for " ++ s_ag
-    Just change ->
+  case remove_change src dest (ag s_ag) [] of
+    Just (_, changes) ->
       ag_equals
         (ag s_expected)
-        (applyChangesToGraph [change] (ag s_ag))
+        (applyChangesToGraph changes (ag s_ag))
+    _ ->
+      Expect.fail <| "Removal userchange couldn't be created for " ++ s_ag
 
 check_update : NodeId -> NodeId -> List Transition -> String -> String -> Expect.Expectation
 check_update src dest connList s_ag s_expected =
-  case create_update_userchange src dest (Set.fromList connList) (ag s_ag) of
-    Nothing ->
-      Expect.fail <| "Update userchange couldn't be created for " ++ s_ag
-    Just change ->
+  case update_change src dest (Set.fromList connList) (ag s_ag) [] of
+    Just (_, changes) ->
       ag_equals
         (ag s_expected)
-        (applyChangesToGraph [change] (ag s_ag))
+        (applyChangesToGraph changes (ag s_ag))
+    Nothing ->
+      Expect.fail <| "Update userchange couldn't be created for " ++ s_ag
 
-check_creating : NodeId -> String -> String -> String -> Expect.Expectation
-check_creating new_node s_new_graph s_original_graph s_expected =
-  let
-    change = create_newnode_userchange new_node (ag s_new_graph)
-  in
-    ag_equals
-      (ag s_expected)
-      (applyChangesToGraph [change] (ag s_original_graph))
+check_creating : String -> NodeId -> String -> String -> Expect.Expectation
+check_creating s_original src s_conn s_expected =
+  case newnode_change src (mkConn s_conn) (ag s_original) [] of
+    Just (_, changes) ->
+      ag_equals
+        (ag s_expected)
+        (applyChangesToGraph changes (ag s_original))
+    Nothing ->
+      Expect.fail <| "Update userchange couldn't be created for " ++ s_original
 
 {-
 This works, using node-id values, because all the user-changes are only submitted to the
@@ -171,38 +172,38 @@ suite =
       [ test "Can create a new node from the source" <|
         \_ ->
           check_creating
-            1 "0-a-1" ""
+            "" 0 "a"
             "0-a-1"
       , test "Can create a new node that isn't from the source" <|
         \_ ->
           check_creating
-            2 "0-a-1 1-b-2" "0-a-1"
+            "0-a-1 1-b-2" 1 "b"
             "0-a-1 1-b-2"
       , describe "Cases where merging happens"
         [ test "Replicating a link causes a merge" <|
           \_ ->
             check_creating
-              2 "0-a-1 0-a-2" "0-a-1"
+              "0-a-1" 0 "a"
               "0-a-1"
         , test "Two same-terminality nodes going to the same end are merged [case Ⅰ]" <|
           \_ ->
             check_creating
-              2 "0-a-1 0-b-2" "0-a-1"
+              "0-a-1" 0 "b"
               "0-ab-1"
         , test "Two same-terminality nodes going to the same end are merged [case Ⅱ]" <|
           \_ ->
             check_creating
-              2 "0-!a-1 0-!b-2" "0-!a-1"
+              "0-!a-1" 0 "!b"
               "0-!a!b-1"
         , test "Two different-terminality nodes going to the same end are merged [case Ⅰ]" <|
           \_ ->
             check_creating
-              2 "0-a-1 0-!b-2" "0-a-1"
+              "0-a-1" 0 "!b"
               "0-a!b-1"
         , test "Two different-terminality nodes going to the same end are merged [case Ⅱ]" <|
           \_ ->
             check_creating
-              2 "0-!a-1 0-b-2" "0-!a-1"
+              "0-!a-1" 0 "b"
               "0-!ab-1"
         ]
       ]
@@ -252,5 +253,63 @@ suite =
             , newnode_change 4 (mkConn "k") -- new node: 5
             ]
             "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1 4-k-3"
+      , describe "Disconnection / Reconnection scenarios"
+        [ test "Disconnecting nodes and reconnecting them afterwards" <|
+          \_ ->
+            check_multi
+              "0-a-1 1-b-2 2-c-3"
+              [ remove_change 1 2
+              , update_change 1 2 (mkConn "d")
+              ]
+              "0-a-1 1-d-2 2-c-3"
+        , test "Disconnect from one branch and reconnect to another" <|
+          \_ ->
+            check_multi
+              "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+              [ remove_change 2 3
+              , remove_change 2 4
+              , update_change 2 4 (mkConn "z")
+              ]
+              "0-a-1 1-b-2 2-z-4 4-f-6"
+        , test "Disconnect from one branch and reconnect from another" <|
+          \_ ->
+            check_multi
+              "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+              [ remove_change 2 3
+              , remove_change 2 4
+              , update_change 1 4 (mkConn "z")
+              ]
+              "0-a-1 1-b-2 1-z-3 3-f-2"
+        , test "Disconnect from branches and reconnect both differently" <|
+          \_ ->
+            check_multi
+              "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6 5-g-7 6-h-8"
+              [ remove_change 3 5
+              , remove_change 4 6
+              , update_change 3 6 (mkConn "p")
+              , update_change 4 5 (mkConn "q")
+              ]
+              "0-a-1 1-b-2 2-c-3 2-d-4 3-p-5 4-q-6 5-h-7 6-g-7"
+        , test "Disconnect from branches and reconnect them afterwards [case Ⅰ]" <|
+          \_ ->
+            check_multi
+              "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+              [ remove_change 2 3
+              , remove_change 2 4
+              , update_change 2 3 (mkConn "r")
+              , update_change 2 4 (mkConn "s")
+              ]
+              "0-a-1 1-b-2 2-r-3 2-s-4 3-e-5 4-f-5"
+        , test "Disconnect from branches and reconnect them afterwards [case Ⅱ]" <|
+          \_ ->
+            check_multi
+              "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+              [ remove_change 2 3
+              , remove_change 2 4
+              , update_change 2 4 (mkConn "r")
+              , update_change 2 3 (mkConn "s")
+              ]
+              "0-a-1 1-b-2 2-r-4 2-s-3 3-e-5 4-f-5"
+        ]
       ]
     ]

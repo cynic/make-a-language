@@ -98,31 +98,12 @@ type alias Model =
   , selectedTransitions : Connection
   , mouseIsHere : Bool
   , userRequestedChanges : List RequestedGraphChanges
+  , disconnectedNodes : Set NodeId
   }
 
 type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
 
-type RequestedGraphChanges
-  -- transition-related changes: convert non-final to final, convert final to non-final, remove a transition, add a transition
-  -- all of which can & should be handled via ModifyTransition tbh
-  = RemoveLink RequestedChangePath RequestedChangePath
-  -- I use `wordsEndingAt` to get the w_dfa based only on the target, and
-  -- with `union` and knowledge of the dfa _just before_ the operation, I
-  -- can complete the operation; and whether it is
-  --    i.  the adding of a new node or
-  --   ii.  the linking of two existing nodes or
-  --  iii.  the changing of a transition
-  -- does not matter.  All three of these can be covered by the same operation.
-  | CreateNode (AutomatonGraph Entity)
-  -- If we union to alter the transitions in a link, then we're only able to
-  -- add transitions, not remove them.  `RemoveLink` is specialization of the
-  -- link modification functionality.
-  | UpdateLink RequestedChangePath RequestedChangePath Connection
-  -- We don't actually need node-removal.  Why?  Because we can always just remove
-  -- a link, and then the nodes after it will go away (if they should have done so).
-  -- Of course, we will not be able to remove the "start" node… and actually, that's
-  -- fine, and probably quite preferred.
---  | RemoveNode NodeId
+type RequestedGraphChanges = FROOP (AutomatonGraph Entity)
 
 type alias Drag =
   { start : ( Float, Float )
@@ -242,6 +223,7 @@ receiveWords words (w, h) =
     , pan = ( 0, 0)
     , mouseIsHere = False
     , userRequestedChanges = []
+    , disconnectedNodes = Set.empty
     }
 
 init : List String -> (Float, Float) -> (Model, Cmd Msg)
@@ -292,6 +274,25 @@ yPanAt model y =
     -1
   else
     0
+
+identifyDisconnectedNodes : AutomatonGraph a -> Set NodeId
+identifyDisconnectedNodes g =
+  Graph.mapContexts
+    (\ctx ->
+      { ctx
+        | incoming = IntDict.filter (\_ -> not << Set.isEmpty) ctx.incoming
+        , outgoing = IntDict.filter (\_ -> not << Set.isEmpty) ctx.outgoing
+      }
+    )
+    g.graph
+  |> Graph.guidedDfs
+    Graph.alongOutgoingEdges
+    (\_ acc -> (acc, identity))
+    [g.root]
+    ()
+  |> Tuple.second
+  |> Graph.nodeIds
+  |> Set.fromList
 
 {-| Obtain the shortest path to a specified NodeId.
 
@@ -453,7 +454,7 @@ newnode_change src conn x y g list =
     newGraph = create_newnode_graphchange src x y conn g
     change = create_newnode_userchange newGraph.maxId newGraph
   in
-    Just (newGraph, change :: list)
+    Just (newGraph, FROOP newGraph :: list)
 
 create_newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
 create_newnode_graphchange src x y conn g =
@@ -478,9 +479,7 @@ create_newnode_graphchange src x y conn g =
 
 create_newnode_userchange : NodeId -> AutomatonGraph Entity -> RequestedGraphChanges
 create_newnode_userchange target g =
-  wordsEndingAt target g
-  -- |> Automata.Debugging.debugAutomatonGraph "[create_union_userchange] New w-AutomatonGraph for w_dfa"
-  |> CreateNode
+  FROOP g
 
 update_change : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
 update_change src dest conn g list =
@@ -488,7 +487,7 @@ update_change src dest conn g list =
     newGraph = create_update_graphchange src dest conn g
     change = create_update_userchange src dest conn g
   in
-    Maybe.map (\change_ -> (newGraph, change_ :: list)) change
+    Maybe.map (\change_ -> (newGraph, FROOP newGraph :: list)) change
 
 create_update_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
 create_update_graphchange src dest conn g =
@@ -510,10 +509,7 @@ create_update_graphchange src dest conn g =
 
 create_update_userchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
 create_update_userchange src dest conn ag =
-  Maybe.map2
-    (\a b -> UpdateLink a b conn)
-    (createPathTo src [] (\_ -> True) ag.graph ag.root)
-    (createPathTo dest [] (\_ -> True) ag.graph ag.root)
+  Just <| FROOP ag
 
 remove_change : NodeId -> NodeId -> AutomatonGraph Entity -> List RequestedGraphChanges -> Maybe (AutomatonGraph Entity, List RequestedGraphChanges)
 remove_change src dest g list =
@@ -521,7 +517,7 @@ remove_change src dest g list =
     newGraph = create_removal_graphchange src dest g
     change = create_removal_userchange src dest g
   in
-    Maybe.map (\change_ -> (newGraph, change_ :: list)) change
+    Maybe.map (\change_ -> (newGraph, FROOP newGraph :: list)) change
 
 create_removal_graphchange : NodeId -> NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
 create_removal_graphchange src dest g =
@@ -537,9 +533,7 @@ create_removal_graphchange src dest g =
 
 create_removal_userchange : NodeId -> NodeId -> AutomatonGraph Entity -> Maybe RequestedGraphChanges
 create_removal_userchange src dest ag =
-  Maybe.map
-    (\(a, b) -> RemoveLink a b)
-    (path_for_removal ag.graph ag.root src dest)
+  Just <| FROOP ag
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -755,6 +749,8 @@ update offset_amount msg model =
           , userRequestedChanges = updatedChanges
           , basicForces =
               basicForces updatedGraph (round <| Tuple.second model_.dimensions)
+          , disconnectedNodes =
+              identifyDisconnectedNodes updatedGraph
           }
         
         createNewNode : NodeId -> Float -> Float -> Model
@@ -939,22 +935,15 @@ applyChangesToGraph userRequestedChanges ag =
         (followPathTo pathB g)
       |> Maybe.withDefault g
   in
-    List.foldl
-      (\change g ->
-          case change of
-            RemoveLink pathA pathB ->
-              applyChange_removeLink pathA pathB g
-              |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→RemoveLink]"
-            CreateNode w_ag ->
-              applyChange_union ({- Debug.log "Converting w-AutomatonGraph into w_dfa" () |> \_ -> -} fromAutomatonGraph w_ag) g
-              |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→CreateNode]"
-            UpdateLink pathA pathB conn ->
-              applyChange_updateLink pathA pathB conn g
-              |> Automata.Debugging.debugAutomatonGraph "🟢 [confirmChanges→UpdateLink]"
-      )
-      ag
-      (List.reverse userRequestedChanges)
-    |> Automata.DFA.finaliseEndNodes
+    case userRequestedChanges of
+      FROOP h::_ ->
+        let
+          disconnected = identifyDisconnectedNodes (debugAutomatonGraph "last" h)
+        in
+          { h | graph = Set.foldl (\id acc -> Graph.remove id acc) h.graph disconnected }
+        |> (fromAutomatonGraph >> toAutomatonGraph)
+      [] ->
+        ag
 
 confirmChanges : Model -> Model
 confirmChanges model =
@@ -1262,9 +1251,15 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, selectedSource, selectedDest } { label, id } =
+viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label, id } =
   let
-    isSelected = selectedSource == Just id
+    selectableClass =
+      if selectedSource == Just id then
+        "selected"
+      else if Set.member id disconnectedNodes && Maybe.isNothing selectedSource then
+        "disconnected"
+      else
+        ""
     graphNode =
       Graph.get id userGraph.graph
     thisNodeIsTerminal =
@@ -1289,12 +1284,15 @@ viewNode { userGraph, selectedSource, selectedDest } { label, id } =
     interactivity =
       case selectedDest of
         NoDestination ->
-          [ permit_node_reselection ]
+          if Maybe.isNothing selectedSource && Set.member id disconnectedNodes then
+            []
+          else
+            [ permit_node_reselection ]
         _ ->
           []
   in
     g
-      ( class ("state-node" :: if isSelected then [ "selected" ] else [])
+      ( class ["state-node", selectableClass]
       ::interactivity
       )
       [ circle

@@ -7,7 +7,6 @@ import Automata.DFA exposing (nfaToDFA)
 import Automata.DFA exposing (fromAutomatonGraphHelper)
 import Automata.DFA exposing (minimiseNodesByCombiningTransitions)
 import Utility exposing (ag, dfa, ag_equals, dfa_equals)
-import Automata.DFA exposing (finaliseEndNodes)
 
 toAG_suite : Test
 toAG_suite =
@@ -15,7 +14,7 @@ toAG_suite =
     [ let
         mk s =
           minimiseNodesByCombiningTransitions (ag s)
-          |> finaliseEndNodes -- this will only be called at the end of all user-changes.
+          -- |> finaliseEndNodes -- this will only be called at the end of all user-changes.
       in
       describe "node minimisation"
       [ test "non-terminal node is extended by terminal node" <|
