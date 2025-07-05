@@ -98,6 +98,7 @@ type alias Model =
   , selectedTransitions : Connection
   , mouseIsHere : Bool
   , userRequestedChanges : List RequestedGraphChanges
+  , disconnectedNodes : Set NodeId
   }
 
 type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
@@ -118,6 +119,7 @@ type RequestedGraphChanges
   -- add transitions, not remove them.  `RemoveLink` is specialization of the
   -- link modification functionality.
   | UpdateLink RequestedChangePath RequestedChangePath Connection
+  
   -- We don't actually need node-removal.  Why?  Because we can always just remove
   -- a link, and then the nodes after it will go away (if they should have done so).
   -- Of course, we will not be able to remove the "start" node… and actually, that's
@@ -242,6 +244,7 @@ receiveWords words (w, h) =
     , pan = ( 0, 0)
     , mouseIsHere = False
     , userRequestedChanges = []
+    , disconnectedNodes = Set.empty
     }
 
 init : List String -> (Float, Float) -> (Model, Cmd Msg)
@@ -292,6 +295,25 @@ yPanAt model y =
     -1
   else
     0
+
+identifyDisconnectedNodes : AutomatonGraph a -> Set NodeId
+identifyDisconnectedNodes g =
+  Graph.mapContexts
+    (\ctx ->
+      { ctx
+        | incoming = IntDict.filter (\_ -> not << Set.isEmpty) ctx.incoming
+        , outgoing = IntDict.filter (\_ -> not << Set.isEmpty) ctx.outgoing
+      }
+    )
+    g.graph
+  |> Graph.guidedDfs
+    Graph.alongOutgoingEdges
+    (\_ acc -> (acc, identity))
+    [g.root]
+    ()
+  |> Tuple.second
+  |> Graph.nodeIds
+  |> Set.fromList
 
 {-| Obtain the shortest path to a specified NodeId.
 
@@ -755,6 +777,8 @@ update offset_amount msg model =
           , userRequestedChanges = updatedChanges
           , basicForces =
               basicForces updatedGraph (round <| Tuple.second model_.dimensions)
+          , disconnectedNodes =
+              identifyDisconnectedNodes updatedGraph
           }
         
         createNewNode : NodeId -> Float -> Float -> Model
@@ -1262,9 +1286,15 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, selectedSource, selectedDest } { label, id } =
+viewNode { userGraph, selectedSource, selectedDest, disconnectedNodes } { label, id } =
   let
-    isSelected = selectedSource == Just id
+    selectableClass =
+      if selectedSource == Just id then
+        "selected"
+      else if Set.member id disconnectedNodes && Maybe.isNothing selectedSource then
+        "disconnected"
+      else
+        ""
     graphNode =
       Graph.get id userGraph.graph
     thisNodeIsTerminal =
@@ -1289,12 +1319,15 @@ viewNode { userGraph, selectedSource, selectedDest } { label, id } =
     interactivity =
       case selectedDest of
         NoDestination ->
-          [ permit_node_reselection ]
+          if Maybe.isNothing selectedSource && Set.member id disconnectedNodes then
+            []
+          else
+            [ permit_node_reselection ]
         _ ->
           []
   in
     g
-      ( class ("state-node" :: if isSelected then [ "selected" ] else [])
+      ( class ["state-node", selectableClass]
       ::interactivity
       )
       [ circle

@@ -40,6 +40,14 @@ textarea:focus {
 .state-node.selected {
   fill: rgb(255, 0, 179)
 }
+.state-node.disconnected {
+  fill: rgba(110, 110, 110, 0.7)
+}
+.state-node.disconnected:hover {
+  animation: none;
+  fill: rgba(60, 60, 60, 0.7);
+  cursor: not-allowed;
+}
 /* #reset-view rect {
   fill: rgba(255, 255, 255, 0.8);
   transition: all 0.25s ease;

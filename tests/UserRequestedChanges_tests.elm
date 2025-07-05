@@ -252,5 +252,61 @@ suite =
             , newnode_change 4 (mkConn "k") -- new node: 5
             ]
             "0-a-1 1-b-2 2-c-3 2-e-4 4-l-1 4-k-3"
+      , test "Disconnecting nodes and reconnecting them afterwards" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3"
+            [ remove_change 1 2
+            , update_change 1 2 (mkConn "d")
+            ]
+            "0-a-1 1-d-2 2-c-3"
+      , test "Disconnect from one branch and reconnect to another" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+            [ remove_change 2 3
+            , remove_change 2 4
+            , update_change 2 4 (mkConn "z")
+            ]
+            "0-a-1 1-b-2 2-z-4 4-f-6"
+      , test "Disconnect from one branch and reconnect from another" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+            [ remove_change 2 3
+            , remove_change 2 4
+            , update_change 1 4 (mkConn "z")
+            ]
+            "0-a-1 1-b-2 1-z-4 4-f-6"
+      , test "Disconnect from branches and reconnect both differently" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6 5-g-7 6-h-8"
+            [ remove_change 3 5
+            , remove_change 4 6
+            , update_change 3 6 (mkConn "p")
+            , update_change 4 5 (mkConn "q")
+            ]
+            "0-a-1 1-b-2 2-c-3 2-d-4 3-p-6 4-q-5 5-g-7 6-h-8"
+      , test "Disconnect from branches and reconnect them afterwards [case Ⅰ]" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+            [ remove_change 2 3
+            , remove_change 2 4
+            , update_change 2 3 (mkConn "r")
+            , update_change 2 4 (mkConn "s")
+            ]
+            "0-a-1 1-b-2 2-r-3 2-s-4 3-e-5 4-f-6"
+      , test "Disconnect from branches and reconnect them afterwards [case Ⅱ]" <|
+        \_ ->
+          check_multi
+            "0-a-1 1-b-2 2-c-3 2-d-4 3-e-5 4-f-6"
+            [ remove_change 2 3
+            , remove_change 2 4
+            , update_change 2 4 (mkConn "r")
+            , update_change 2 3 (mkConn "s")
+            ]
+            "0-a-1 1-b-2 2-r-4 2-s-3 3-e-5 4-f-6"
       ]
     ]
