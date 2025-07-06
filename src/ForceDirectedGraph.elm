@@ -500,7 +500,7 @@ removeLink_graphchange src dest g =
   }
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
-splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> Model
+splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> AutomatonGraph Entity
 splitNode node left right model =
   let
     (recursive, nonRecursive) =
@@ -566,19 +566,8 @@ splitNode node left right model =
               )
         , maxId = ag.maxId + 1
       }
-    basic =
-      basicForces newUserGraph (round <| Tuple.second model.dimensions)
-    viewport =
-      viewportForces model.dimensions newUserGraph.graph
   in
-    { model
-      | userGraph = newUserGraph
-      , basicForces = basic
-      , viewportForces = viewport
-      , simulation = Force.simulation (basic ++ viewport)
-      , currentOperation = Nothing
-      , disconnectedNodes = identifyDisconnectedNodes newUserGraph
-    }
+    newUserGraph
 
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
@@ -794,14 +783,21 @@ update offset_amount msg model =
       let
         commit_change : AutomatonGraph Entity -> Model -> Model
         commit_change updatedGraph model_ =
+          let
+            basic =
+              basicForces updatedGraph (round <| Tuple.second model_.dimensions)
+            viewport =
+              viewportForces model_.dimensions updatedGraph.graph
+          in
           { model_
           | currentOperation = Nothing
           , userGraph = updatedGraph
                    -- NOTE ⬇ WELL! This isn't a typo!
           , undoBuffer = model.userGraph :: model_.undoBuffer
           , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-          , basicForces =
-              basicForces updatedGraph (round <| Tuple.second model_.dimensions)
+          , basicForces = basic
+          , viewportForces = viewport
+          , simulation = Force.simulation (basic ++ viewport)
           , disconnectedNodes =
               identifyDisconnectedNodes updatedGraph
           }
@@ -845,7 +841,10 @@ update offset_amount msg model =
               { model | currentOperation = Nothing }
             else
               Graph.get to_split model.userGraph.graph
-              |> Maybe.map (\node -> splitNode node left right model)
+              |> Maybe.map (\node ->
+                splitNode node left right model
+                |> \g -> commit_change g model
+              )
               |> Maybe.withDefault model
           Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
             case model.undoBuffer of
