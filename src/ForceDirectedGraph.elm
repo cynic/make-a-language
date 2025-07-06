@@ -17,6 +17,7 @@ import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x, y, height, fontSize
   , markerWidth, markerHeight, width, rx , ry)
+import TypedSvg.Attributes.InEm
 import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
@@ -78,9 +79,9 @@ type LinkDestination
   | NewNode ( Float, Float ) -- with X and Y coordinates
 
 type UserOperation
-  = Splitting NodeId
+  = Splitting Split
   | Dragging Drag
-  | ModifyingGraph Modifying
+  | ModifyingGraph Modify
  
 type alias Model =
   { currentOperation : Maybe UserOperation
@@ -107,10 +108,16 @@ type alias Drag =
   , index : NodeId
   }
 
-type alias Modifying =
+type alias Modify =
   { source : NodeId
   , dest : LinkDestination
   , transitions : Connection
+  }
+
+type alias Split =
+  { to_split : NodeId
+  , left : Connection
+  , right : Connection
   }
 
 type alias Entity =
@@ -493,6 +500,86 @@ removeLink_graphchange src dest g =
   }
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
+splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> Model
+splitNode node left right model =
+  let
+    (recursive, nonRecursive) =
+      node.incoming
+      |> IntDict.partition (\k _ -> k == node.node.id)
+    recursive_connection =
+      recursive
+      |> IntDict.values
+      |> List.foldl Set.union Set.empty
+    ( leftConnections, rightConnections ) =
+      nonRecursive
+      |> IntDict.foldl
+          (\k conn (l, r) ->
+            -- classify each transition into 'left' or 'right'.
+            Set.foldl
+              (\transition (l_, r_) ->
+                if Set.member transition left then
+                  ( IntDict.update k
+                      ( Maybe.map (Set.insert transition)
+                        >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
+                      )
+                      l_
+                  , r_
+                  )
+                else
+                  ( l_
+                  , IntDict.update k
+                    ( Maybe.map (Set.insert transition)
+                      >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
+                    )
+                    r_
+                  )
+              )
+              (l, r)
+              conn
+          )
+          (IntDict.empty, IntDict.empty)
+    ag = model.userGraph
+    newUserGraph =
+      { ag
+        | graph =
+            ag.graph
+            |> Graph.insert
+              { node =
+                  { label = Force.entity (ag.maxId + 1) { }
+                  , id = ag.maxId + 1
+                  }
+              , incoming =
+                  leftConnections
+                  |> IntDict.insert (ag.maxId + 1) recursive_connection
+              , outgoing =
+                  node.outgoing
+                  |> IntDict.insert (ag.maxId + 1) recursive_connection
+              }
+            |> Graph.update node.node.id
+              (\_ ->
+                Just <|
+                  { node
+                    | incoming =
+                        rightConnections
+                        |> IntDict.insert node.node.id recursive_connection
+                  }
+              )
+        , maxId = ag.maxId + 1
+      }
+    basic =
+      basicForces newUserGraph (round <| Tuple.second model.dimensions)
+    viewport =
+      viewportForces model.dimensions newUserGraph.graph
+  in
+    { model
+      | userGraph = newUserGraph
+      , basicForces = basic
+      , viewportForces = viewport
+      , simulation = Force.simulation (basic ++ viewport)
+      , currentOperation = Nothing
+      , disconnectedNodes = identifyDisconnectedNodes newUserGraph
+    }
+
 update : (Float, Float) -> Msg -> Model -> Model
 update offset_amount msg model =
   case msg of
@@ -636,7 +723,7 @@ update offset_amount msg model =
       }
 
     SelectNode index ->
-      { model | currentOperation = Just <| ModifyingGraph <| Modifying index NoDestination Set.empty }
+      { model | currentOperation = Just <| ModifyingGraph <| Modify index NoDestination Set.empty }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
@@ -661,7 +748,7 @@ update offset_amount msg model =
           in
             { model
               | currentOperation =
-                  Just <| ModifyingGraph <| Modifying source (ExistingNode dest) transitions
+                  Just <| ModifyingGraph <| Modify source (ExistingNode dest) transitions
             }
         _ ->
           model
@@ -671,7 +758,7 @@ update offset_amount msg model =
         Just (ModifyingGraph { source, transitions }) ->
           { model
             | currentOperation =
-                Just <| ModifyingGraph <| Modifying source (NewNode ( x, y )) transitions
+                Just <| ModifyingGraph <| Modify source (NewNode ( x, y )) transitions
           }
         _ ->
           model
@@ -691,8 +778,10 @@ update offset_amount msg model =
                 _ ->
                   { model
                     | currentOperation =
-                        Just <| ModifyingGraph <| Modifying source NoDestination transitions
+                        Just <| ModifyingGraph <| Modify source NoDestination transitions
                   }
+            Just (Splitting _) ->
+              { model | currentOperation = Nothing }
             _ ->
               -- ??? I guess I'm escaping from nothing.
               model
@@ -751,6 +840,13 @@ update offset_amount msg model =
               ( NoDestination ) ->
                 -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
                 model
+          Just (Splitting { to_split, left, right }) ->
+            if Set.isEmpty left || Set.isEmpty right then
+              { model | currentOperation = Nothing }
+            else
+              Graph.get to_split model.userGraph.graph
+              |> Maybe.map (\node -> splitNode node left right model)
+              |> Maybe.withDefault model
           Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
             case model.undoBuffer of
               [] -> -- no changes are proposed, so…
@@ -778,6 +874,39 @@ update offset_amount msg model =
                           Set.insert (ch, 0) transitions
                   }
           }
+        Just (Splitting { to_split, left, right }) ->
+          let
+            onLeft_0 = Set.member (ch, 0) left
+            onLeft_1 = Set.member (ch, 1) left
+            onRight_0 = Set.member (ch, 0) right
+            onRight_1 = Set.member (ch, 1) right
+            pushToRight t =
+              ( Set.remove t left, Set.insert t right )
+            pushToLeft t =
+              ( Set.insert t left, Set.remove t right )
+            ( newLeft, newRight ) =
+              if onLeft_0 && onLeft_1 then
+                -- push the non-terminal to the right.
+                pushToRight (ch, 0)
+              else if onLeft_1 then
+                -- push the terminal to the right
+                pushToRight (ch, 1)
+              else if onRight_0 && onRight_1 then
+                -- push the non-terminal to the left
+                pushToLeft (ch, 0)
+              else if onRight_1 then
+                pushToLeft (ch, 1)
+              else if onLeft_0 then
+                pushToRight (ch, 0)
+              else if onRight_0 then
+                pushToLeft (ch, 0)
+              else
+                ( left, right )
+          in
+            { model
+              | currentOperation =
+                  Just <| Splitting <| Split to_split newLeft newRight
+            }
         _ ->
           model
 
@@ -790,7 +919,7 @@ update offset_amount msg model =
       -- all at once.
       { model
         | currentOperation =
-            Just <| ModifyingGraph <| Modifying src (EditingTransitionTo dest) conn
+            Just <| ModifyingGraph <| Modify src (EditingTransitionTo dest) conn
       }
 
     Reheat ->
@@ -805,7 +934,28 @@ update offset_amount msg model =
           model
 
     StartSplit nodeId ->
-      model
+      Graph.get nodeId model.userGraph.graph
+      |> Maybe.map
+        (\node ->
+          { model
+            | currentOperation =
+                Just <| Splitting <|
+                  Split
+                    node.node.id
+                    ( IntDict.foldl
+                        (\k v acc ->
+                            if k /= node.node.id then
+                              Set.union v acc
+                            else
+                              acc
+                        )
+                        Set.empty
+                        node.incoming
+                    )
+                    Set.empty
+          }
+        )
+      |> Maybe.withDefault model
 
     Undo ->
       case (model.currentOperation, model.undoBuffer) of
@@ -887,6 +1037,12 @@ subscriptions offset_amount model =
                                 Decode.succeed (ToggleSelectedTransition char)
                               _ ->
                                 Decode.fail "Not a character key"
+                      Just (Splitting _) ->
+                        case String.toList ch of
+                          [char] ->
+                            Decode.succeed (ToggleSelectedTransition char)
+                          _ ->
+                            Decode.fail "Not a character key"
                       _ ->
                         Decode.fail "Not a recognized key combination"
               )
@@ -1243,6 +1399,20 @@ viewNode { userGraph, currentOperation, disconnectedNodes } { label, id } =
             ""
     graphNode =
       Graph.get id userGraph.graph
+    splittable =
+      Maybe.map
+        (\node ->
+          let
+            nonRecursive = IntDict.filter (\k _ -> k /= id) node.incoming
+          in
+          IntDict.size nonRecursive > 1 ||
+          ( IntDict.findMin nonRecursive
+            |> Maybe.map (\(_, conn) -> Set.size conn > 1)
+            |> Maybe.withDefault False
+          )
+        )
+        graphNode
+      |> Maybe.withDefault False
     thisNodeIsTerminal =
       Maybe.map Automata.Data.isTerminalNode graphNode
       |> Maybe.withDefault False
@@ -1253,6 +1423,8 @@ viewNode { userGraph, currentOperation, disconnectedNodes } { label, id } =
         (\e ->
           if e.keys.shift then
             e.clientPos |> DragStart id
+          else if e.keys.ctrl && splittable then
+            StartSplit id
           else
             case currentOperation of
               Just (ModifyingGraph _) ->
@@ -1288,7 +1460,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes } { label, id } =
       ++ "Shift-drag to reposition" ++
       (Maybe.map
         (\node ->
-          if IntDict.size node.incoming > 1 || (IntDict.findMin node.incoming |> Maybe.map (\(_, conn) -> Set.size conn > 1) |> Maybe.withDefault False) then
+          if splittable then
             "\nCtrl-click to split transitions"
           else
             ""
@@ -1656,6 +1828,96 @@ viewSvgTransitionChooser model =
     :: List.map (\(item, col, row) -> viewSingleKey item conn (col, row)) gridItemsAndCoordinates
     )
 
+viewSvgTransitionSplitter : NodeContext Entity Connection -> Connection -> Connection -> Model -> Svg Msg
+viewSvgTransitionSplitter to_split left right model =
+  let
+    ( w, _ ) = model.dimensions
+    paddingLeftRight = 15
+    calc_width n =
+      ( paddingLeftRight * 2 + -- padding on left & right
+        1 * font_size * -- space per character, with a weight factor
+        toFloat n -- multiplied by number of characters
+      )
+    max_box_width =
+      calc_width (Set.size left + Set.size right)
+    leftCenter = w / 2 - max_box_width
+    rightCenter = w / 2 + max_box_width
+    font_size = 24
+    box centerPosition set color =
+      rect
+        [ x <| centerPosition - calc_width (Set.size set) / 2
+        , y <| 100 - font_size
+        , width <| calc_width (Set.size set) 
+        , height <| font_size * 2
+        , fill <| Paint <| color
+        , rx 10
+        , ry 10
+        , class ["splitter-box"]
+        ]
+        []
+    box_text centerPosition set =
+      text_
+        [ x centerPosition
+        , y 100
+        , textAnchor AnchorMiddle
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        , fontSize font_size
+        , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+        ]
+        ( connectionToSvgText set )
+    box_title centerPosition s =
+      text_
+        [ x centerPosition
+        , y <| (100 + font_size * 1.8)
+        , textAnchor AnchorMiddle
+        , fontSize <| font_size * 0.6
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+        , stroke <| Paint <| paletteColors.background
+        , strokeWidth 5
+        ]
+        [ text s ]
+  in
+    g
+      []
+      [ box leftCenter left Color.lightGreen
+      , box rightCenter right Color.lightPurple
+      , box_text leftCenter left
+      , box_text rightCenter right
+      , box_title leftCenter "Node “A”"
+      , box_title rightCenter "Node “B”"
+      , text_
+          [ x <| w / 2
+          , y <| 180
+          , fill <| Paint <| Color.darkCharcoal
+          , textAnchor AnchorMiddle
+          , alignmentBaseline AlignmentCentral
+          , dominantBaseline DominantBaselineMiddle
+          , pointerEvents "none"
+          , fontSize 16
+          , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+          , stroke <| Paint <| paletteColors.background
+          , strokeWidth 4
+          ]
+          ( if Set.isEmpty left || Set.isEmpty right then
+              [ tspan [] [ text "If either side has no transitions, then no changes will be made." ] ]
+            else
+              [ tspan [] [ text "Press «Enter» to confirm this split, or «Esc» to cancel." ] ]
+          )
+      ]
+  -- rect
+  --   [ x 100
+  --   , y 100
+  --   , fill <| Paint Color.lightOrange
+  --   , width 150
+  --   , height 100
+  --   ]
+  --   []
+
 viewUndoRedoVisualisation : Model -> Svg a
 viewUndoRedoVisualisation { undoBuffer, redoBuffer, dimensions } =
   let
@@ -1828,6 +2090,12 @@ view model =
               g [] []
             _ ->
               viewSvgTransitionChooser model
+        Just (Splitting { to_split, left, right }) ->
+          Graph.get to_split model.userGraph.graph
+          |> Maybe.map (\node ->
+            viewSvgTransitionSplitter node left right model
+          )
+          |> Maybe.withDefault (g [] [])
         _ ->
           g [] []
     ,
@@ -1905,6 +2173,8 @@ view model =
                   bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
                 EditingTransitionTo _ ->
                   bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+            Just (Splitting _) ->
+              g [] []
             _ ->
               case model.undoBuffer of
                 [] ->
