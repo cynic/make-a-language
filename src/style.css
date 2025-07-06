@@ -81,18 +81,22 @@ path.link {
   stroke: darkgray;
 }
 
+rect.splitter-box {
+  transition: all 0.2s linear;
+}
+
 path.link.background {
   stroke-width: 5;
   stroke: rgb(211, 215, 207); /* the "background" color */
 
 }
-text.link tspan.final {
+text tspan.final {
   font-weight:  bold;
   fill: darkorange; /* the "final" color */
   stroke-width: 4;
   stroke: rgb(211, 215, 207); /* the "background" color */
 }
-text.link tspan.nonfinal {
+text tspan.nonfinal {
   fill: rgb(64, 64, 64); /* the "nonfinal" color */
   stroke-width: 4;
   stroke: rgb(211, 215, 207); /* the "background" color */
