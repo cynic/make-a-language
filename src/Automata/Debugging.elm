@@ -13,10 +13,13 @@ debugGraph txt graph =
   debug_log txt (graphToString graph)
   |> \_ -> graph
 
+printAutomatonGraph : AutomatonGraph a -> String
+printAutomatonGraph g =
+    ("📍" ++ String.fromInt g.root ++ " " ++ graphToString g.graph)
+
 debugAutomatonGraph : String -> AutomatonGraph a -> AutomatonGraph a
 debugAutomatonGraph txt g =
-  debug_log txt
-    ("📍" ++ String.fromInt g.root ++ " " ++ graphToString g.graph)
+  debug_log txt (printAutomatonGraph g)
   |> \_ -> g
 
 println : String -> a -> a
