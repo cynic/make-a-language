@@ -180,11 +180,16 @@ fromAG_suite =
             ag_equals
               (ag "0-a-1 0-b-2 1-c-3 2-!d-4 3-e-3 4-e-3 3-f-5 4-f-5")
               (splitTerminalAndNonTerminal <| ag "0-a-1 0-b-2 1-c-3 2-!d-3 3-e-3 3-f-4")
-        , test "separate links for a more complex composite" <|
+        , test "separate links for a more complex composite [case Ⅰ]" <|
           \_ ->
             ag_equals
               (ag "0-!a-1 0-c-2 1-b-2 2-b-2 1-d-3 2-d-3")
-              (splitTerminalAndNonTerminal <| ag "0-c!a-1 1-b-1 1-d-2")
+              (splitTerminalAndNonTerminal <| ag "0-c!a-1 1-b-1 1-d-2 [case Ⅱ]")
+        , test "separate links for a more complex composite [case Ⅱ]" <|
+          \_ ->
+            ag_equals
+              (ag "2-!a-0 0-k-2 0-kz-3 1-k-2 1-kz-3 2-b-1")
+              (splitTerminalAndNonTerminal <| ag "0-!ab-1 1-kz-2 1-k-0")
         ]
       ]
     , describe "NFA→DFA conversion"
@@ -225,6 +230,11 @@ fromAG_suite =
           ag_equals
             (ag "0-z-1 1-!p-2 1-q-3")
             (nfaToDFA <| ag "0-z-1 0-z-2 1-!p-3 2-q-4")
+      , test "three nodes, one backlink" <|
+        \_ ->
+          ag_equals
+            (ag "0-!ab-1 1-k-2 1-z-3 2-!ab-1")
+            (nfaToDFA <| ag "0-!ab-1 1-kz-2 1-k-0")
       ]
     , describe "Crafting step (post terminality-splitting, post NFA→DFA)"
       [ test "different transitions to same endpoint" <|
