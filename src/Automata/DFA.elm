@@ -1305,7 +1305,7 @@ renumberAutomatonGraph g =
           )
           g.graph
     , maxId = IntDict.findMax nodeMap |> Maybe.map Tuple.second |> Maybe.withDefault 0
-    , root = 0
+    , root = get g.root
     }
     -- |> debugAutomatonGraph "[renumberAutomatonGraph] result"
 
