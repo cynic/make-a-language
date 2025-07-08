@@ -5,11 +5,17 @@ import Automata.Data exposing (AutomatonGraph, transitionsToString)
 import Automata.DFA exposing (mkAutomatonGraph, DFARecord, mkDFA, renumberAutomatonGraph)
 import Expect
 import Set
-import Graph
+import Graph exposing (NodeId)
 import IntDict
 import List
 import Dict
 import Automata.Data exposing (Connection)
+import Automata.Debugging exposing (debugAutomatonGraph)
+import Automata.Debugging exposing (printAutomatonGraph)
+import List.Extra
+import IntDict exposing (IntDict)
+import Set exposing (Set)
+import Maybe.Extra
 
 -- Parser for converting string representation to AutomatonGraph transitions
 -- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]
@@ -121,27 +127,6 @@ ag = mkAutomatonGraph << mkAG_input
 dfa : String -> List Int -> Automata.DFA.DFARecord {} ()
 dfa s f = mkDFA_input s |> \xs -> mkDFA xs f
 
-ag_equals : AutomatonGraph a -> AutomatonGraph a -> Expect.Expectation
-ag_equals g1 g2 =
-  let
-    normalise =
-      renumberAutomatonGraph
-      >> \g ->
-        ( Graph.nodeIds g.graph |> Set.fromList
-        , Graph.edges g.graph
-          |> List.map (\e -> (e.from, Set.toList e.label |> transitionsToString, e.to))
-          |> Set.fromList
-        , g.root
-        )
-    (a1, b1, c1) = normalise g1
-    (a2, b2, c2) = normalise g2
-  in
-    if b1 /= b2 then
-      Expect.equalSets b1 b2
-    else if a1 /= a2 then
-      Expect.equalSets a1 a2
-    else
-      Expect.equal c1 c2
 
 dfa_equals : DFARecord a b -> DFARecord a b -> Expect.Expectation
 dfa_equals dfa1 dfa2 =
@@ -165,6 +150,183 @@ dfa_equals dfa1 dfa2 =
       Expect.equalSets dfa1.finals dfa2.finals
     else
       Expect.equal dfa1.start dfa2.start
+
+type PairResult a
+  = One a
+  | Many (List a)
+ag_equals : AutomatonGraph a -> AutomatonGraph a -> Expect.Expectation
+ag_equals g_expected g_actual =
+  let
+    getEdges g =
+      Graph.edges g.graph
+      |> List.map (\{ from, to, label } -> ( from, to, Set.toList label ))
+      |> List.sortBy (\(_, _, v) -> v)
+    edges1 = getEdges g_expected
+    edges2 = getEdges g_actual
+    partition : List (NodeId, NodeId, comparable) -> List (NodeId, NodeId, comparable) -> Set NodeId -> IntDict NodeId -> Maybe String
+    partition edges_e edges_a seen mapping =
+      case ( edges_e, edges_a ) of
+        ( [], [] ) ->
+          Nothing -- alhamdulillah!
+        ( xs, [] ) ->
+          debugAutomatonGraph "Expected" g_expected |> \_ ->
+          debugAutomatonGraph "Actual" g_actual |> \_ ->
+          Debug.log "Remaining edges" xs |> \_ ->
+          Just "Expected graph had more edges than actual graph."
+        ( [], ys ) ->
+          debugAutomatonGraph "Expected" g_expected |> \_ ->
+          debugAutomatonGraph "Actual" g_actual |> \_ ->
+          Debug.log "Remaining edges" ys |> \_ ->
+          Just "Actual graph had more edges than expected graph."
+        ( xs, ys ) ->
+          -- find all edges that start with `checking`.
+          let
+            (checking_e, checking_a) =
+              Set.foldl (IntDict.remove) mapping seen
+              |> IntDict.findMin
+              |> Maybe.Extra.withDefaultLazy
+                (\() ->
+                  Debug.log "HUH?? How can I be here! HDIYNI" (-1, -1)
+                )
+            newSeen = Set.insert checking_e seen
+            (xs_edges, xs_rest) =
+              List.partition (\(from, _, _) -> from == checking_e) xs
+            (ys_edges, ys_rest) =
+              List.partition (\(from, _, _) -> from == checking_a) ys
+            gather vs =
+              List.Extra.gatherEqualsBy (\(_, _, c) -> c) vs
+              |> List.map
+                (\(a, a_s) ->
+                  case a_s of
+                    [] -> One a
+                    _ -> Many (a::a_s)
+                )
+            gathered_xs = gather xs_edges
+            gathered_ys = gather ys_edges
+            add_to_mapping =
+              List.foldl
+                (\(e, a) acc ->
+                  Result.andThen
+                    (\m ->
+                      case IntDict.get e m of
+                        Just v ->
+                          if v == a then
+                            Ok m
+                          else
+                            Err <| "Inconsistent state correlation: #" ++ String.fromInt a ++ " vs. " ++ String.fromInt v
+                        Nothing ->
+                          Ok <| IntDict.insert e a m
+                    )
+                    acc
+                )
+            update_mapping (e_from, e_to, e_label) (a_from, a_to, a_label) acc =
+              Result.andThen
+                (\m ->
+                  if a_label /= e_label then
+                    Err <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                  else
+                    -- now I know that e_from is correlated with a_from, and
+                    -- e_to is correlated with a_to
+                    add_to_mapping (Ok m) [(e_from, a_from), (e_to, a_to)]
+                )
+                acc
+            pair_up e_list a_list m =
+              case ( e_list, a_list ) of
+                ( [], [] ) ->
+                  partition xs_rest ys_rest newSeen m
+                ( [], _ ) ->
+                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                ( _, [] ) ->
+                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                ( One _::_, Many _::_ ) ->
+                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                ( Many _::_ , One _::_ ) ->
+                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                ( One (e_from, e_to, e_label)::rest_e, One (a_from, a_to, a_label)::rest_a) ->
+                  if a_label /= e_label then
+                    Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                  else
+                    -- now I know that e_from is correlated with a_from, and
+                    -- e_to is correlated with a_to
+                    case add_to_mapping (Ok m) [(e_from, a_from), (e_to, a_to)] of
+                      Err nope ->
+                        Just nope
+                      Ok updated ->
+                        pair_up rest_e rest_a updated
+                ( Many es::rest_e, Many a_s::rest_a) ->
+                  -- Now this is an interesting one.
+                  -- We'll only reach here when we have an NFA.
+                  -- We don't know WHICH of these is actually going to be
+                  -- the correct correlation.  So it's going to be
+                  -- backtracking time for us.
+                  if List.length es /= List.length a_s then
+                    Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                  else
+                    let
+                      allCombinations =
+                        List.Extra.cartesianProduct [ List.Extra.permutations es, List.Extra.permutations a_s ]
+                        |> List.filterMap
+                          (\l ->
+                            case l of
+                              [a, b] -> Just ( a, b )
+                              _ -> Nothing
+                          )
+                      mappings_without_immediate_conflicts =
+                        List.filterMap
+                          (\(ex, ax) ->
+                            -- ex is a list of (from, to, label).
+                            -- ax is also a list of (from, to, label).
+                            -- Now, if the graphs are equivalent, ALL pairings will work.
+                            List.foldl
+                              (\(eDatum, aDatum) -> update_mapping eDatum aDatum)
+                              (Ok m)
+                              (List.Extra.zip ex ax)
+                            -- now we have an "Ok updated" if this worked, or an Err if it didn't.
+                            |> Result.toMaybe
+                            -- If it worked, we'll now have a Just.
+                          )
+                          allCombinations
+                      -- Now I have a list of mappings, with each mapping containing a possible
+                      -- pairing that ISN'T immediately insane.
+                      -- As I follow these mappings, I may find differently.
+                      -- As I follow through now, if the result is Nothing, then I've found no
+                      -- error.  If I find a Just, that's what the error is.
+                      errorStrings =
+                        List.filterMap (pair_up rest_e rest_a) mappings_without_immediate_conflicts
+                      -- and what I'm hoping for here is a totally empty list, because
+                      -- that will indicate that there are no errors that arose due to
+                      -- the way that I have paired things up here.
+                    in
+                      case errorStrings of
+                        [] -> Nothing
+                        e::_ -> Just e
+          in
+            -- now, see if I can match them up.
+            pair_up gathered_xs gathered_ys mapping
+  in
+    case partition edges1 edges2 Set.empty (IntDict.singleton g_expected.root g_actual.root) of
+      Just err ->
+        debugAutomatonGraph "Expected" g_expected |> \_ ->
+        debugAutomatonGraph "Actual" g_actual |> \_ ->
+        Expect.fail err
+      Nothing ->
+        Expect.pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 parseTransitions_suite : Test
 parseTransitions_suite =
