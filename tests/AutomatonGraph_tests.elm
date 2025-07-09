@@ -235,6 +235,11 @@ fromAG_suite =
           ag_equals
             (ag "0-!ab-1 1-k-2 1-z-3 2-!ab-1")
             (nfaToDFA <| ag "0-!ab-1 1-kz-2 1-k-0")
+      , test "do not merge equivalent rows unless they have the same terminality" <|
+        \_ ->
+          ag_equals
+            (ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-k-2 8-z-2 1-k-2 1-z-2")
+            (nfaToDFA <| ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-kz-2 1-kz-2")
       ]
     , describe "Crafting step (post terminality-splitting, post NFA→DFA)"
       [ test "different transitions to same endpoint" <|
