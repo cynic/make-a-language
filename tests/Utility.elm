@@ -127,30 +127,6 @@ ag = mkAutomatonGraph << mkAG_input
 dfa : String -> List Int -> Automata.DFA.DFARecord {} ()
 dfa s f = mkDFA_input s |> \xs -> mkDFA xs f
 
-
-dfa_equals : DFARecord a b -> DFARecord a b -> Expect.Expectation
-dfa_equals dfa1 dfa2 =
-  let
-    states1 = IntDict.keys dfa1.states |> Set.fromList
-    states2 = IntDict.keys dfa2.states |> Set.fromList
-    transitions1 =
-      IntDict.toList dfa1.transition_function
-      |> List.map (\(a, d) -> (a, Dict.toList d))
-      |> Set.fromList
-    transitions2 =
-      IntDict.toList dfa2.transition_function
-      |> List.map (\(a, d) -> (a, Dict.toList d))
-      |> Set.fromList
-  in
-    if transitions1 /= transitions2 then
-      Expect.equalSets transitions1 transitions2
-    else if states1 /= states2 then
-      Expect.equalSets states1 states2
-    else if dfa1.finals /= dfa2.finals then
-      Expect.equalSets dfa1.finals dfa2.finals
-    else
-      Expect.equal dfa1.start dfa2.start
-
 type PairResult a
   = One a
   | Many (List a)
@@ -213,7 +189,10 @@ ag_equals g_expected g_actual =
                           if v == a then
                             Ok m
                           else
-                            Err <| "Inconsistent state correlation: #" ++ String.fromInt a ++ " vs. " ++ String.fromInt v
+                            Err <|
+                              "Inconsistent state correlation: #" ++ String.fromInt a
+                              ++ " vs. #" ++ String.fromInt v ++ " in actual, when trying to map #"
+                              ++ String.fromInt e ++ " from expected. These graphs are not equivalent."
                         Nothing ->
                           Ok <| IntDict.insert e a m
                     )
@@ -312,21 +291,102 @@ ag_equals g_expected g_actual =
       Nothing ->
         Expect.pass
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+dfa_equals : DFARecord a b -> DFARecord a b -> Expect.Expectation
+dfa_equals dfa1 dfa2 =
+  let
+    -- Build a canonical representation of the DFA structure starting from the start state
+    -- This creates a mapping from original state IDs to canonical state IDs based on structure
+    buildCanonicalMapping : DFARecord a b -> Result String (IntDict Int, Set Int)
+    buildCanonicalMapping dfaRecord =
+      let
+        -- BFS traversal to assign canonical state IDs based on reachability from start
+        traverse : List Int -> IntDict Int -> Int -> Result String (IntDict Int, Set Int)
+        traverse queue mapping nextId =
+          case queue of
+            [] ->
+              -- Determine which canonical states are final
+              let
+                canonicalFinals =
+                  Set.foldl
+                    (\originalState acc ->
+                      case IntDict.get originalState mapping of
+                        Just canonicalState -> Set.insert canonicalState acc
+                        Nothing -> acc
+                    )
+                    Set.empty
+                    dfaRecord.finals
+              in
+              Ok (mapping, canonicalFinals)
+            
+            currentState :: restQueue ->
+              case IntDict.get currentState mapping of
+                Just _ ->
+                  -- Already processed this state
+                  traverse restQueue mapping nextId
+                Nothing ->
+                  -- Assign canonical ID to this state
+                  let
+                    newMapping = IntDict.insert currentState nextId mapping
+                    
+                    -- Get all destination states from current state
+                    destinations =
+                      IntDict.get currentState dfaRecord.transition_function
+                      |> Maybe.map (Dict.values >> List.filter (\dest -> not (IntDict.member dest newMapping)))
+                      |> Maybe.withDefault []
+                    
+                    newQueue = restQueue ++ destinations
+                  in
+                  traverse newQueue newMapping (nextId + 1)
+      in
+      traverse [dfaRecord.start] IntDict.empty 0
+    
+    -- Convert DFA to canonical form using the mapping
+    toCanonicalForm : DFARecord a b -> Result String (List (Int, Char, Int), Int, Set Int)
+    toCanonicalForm dfaRecord =
+      buildCanonicalMapping dfaRecord
+      |> Result.andThen (\(mapping, canonicalFinals) ->
+          let
+            canonicalStart =
+              IntDict.get dfaRecord.start mapping
+              |> Result.fromMaybe ("Start state not found in mapping")
+            
+            canonicalTransitions =
+              IntDict.toList dfaRecord.transition_function
+              |> List.concatMap (\(src, transitions) ->
+                  case IntDict.get src mapping of
+                    Nothing -> []
+                    Just canonicalSrc ->
+                      Dict.toList transitions
+                      |> List.filterMap (\(ch, dest) ->
+                          case IntDict.get dest mapping of
+                            Nothing -> Nothing
+                            Just canonicalDest -> Just (canonicalSrc, ch, canonicalDest)
+                        )
+                )
+              |> List.sort
+          in
+          canonicalStart
+          |> Result.map (\start -> (canonicalTransitions, start, canonicalFinals))
+        )
+    
+    -- Compare the canonical forms
+    result1 = toCanonicalForm dfa1 |> Debug.log "Canonical form 0"
+    result2 = toCanonicalForm dfa2 |> Debug.log "Canonical form 1"
+  in
+  case (result1, result2) of
+    (Err err1, _) ->
+      Expect.fail ("Error processing first DFA: " ++ err1)
+    (_, Err err2) ->
+      Expect.fail ("Error processing second DFA: " ++ err2)
+    (Ok (transitions1, start1, finals1), Ok (transitions2, start2, finals2)) ->
+      if start1 /= start2 then
+        Expect.equal start1 start2
+      else if transitions1 /= transitions2 then
+        Expect.equal transitions1 transitions2
+      else if finals1 /= finals2 then
+        Expect.equal finals1 finals2
+      else
+        Expect.pass
 
 parseTransitions_suite : Test
 parseTransitions_suite =
