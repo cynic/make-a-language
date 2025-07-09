@@ -83,6 +83,7 @@ mkConn s =
 -- for use from CLI
 mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
 mkDFA transitions finals =
+
   { states = List.concatMap (\(a, _, b) -> [(a, ()), (b, ())]) transitions |> IntDict.fromList
   , transition_function =
       List.foldl
@@ -93,6 +94,7 @@ mkDFA transitions finals =
                 Nothing -> Just <| Dict.singleton ch b
                 Just existing ->
                   -- overwrite if we have a collision.
+                  Debug.log "Overwriting (new, existing)" ((a, ch, b), (a, existing)) |> \_ ->
                   Just <| Dict.insert ch b existing
             )
             state
@@ -1136,14 +1138,14 @@ minimiseNodesByCombiningTransitions g_ =
               -- Debug.log "[finaliseEndNodes] There are no nodes to finalise." |> \_ ->
               Nothing
             [_] ->
-              Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
+              -- Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
               Nothing
             term::rest ->
               List.foldl
                 (minimisation_merge term)
                 g
                 rest
-              |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
+              -- |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
               |> Just
       else
         let
@@ -1221,11 +1223,11 @@ minimiseNodesByCombiningTransitions g_ =
 toAutomatonGraph : DFARecord a b -> AutomatonGraph b
 toAutomatonGraph dfa =
   let
-    stateList = IntDict.toList dfa.states |> List.reverse --|> Debug.log "[toGraph] State-list"
+    stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toAutomatonGraph] State-list"
     graph =
       Graph.fromNodesAndEdges
         (stateList |> List.map (\(id, label) -> Node id label))
-        (IntDict.toList dfa.transition_function
+        (IntDict.toList (dfa {- |> debugDFA_ "[toAutomatonGraph] DFA as received" -}).transition_function
         |> List.foldl
           (\(from, dict) state ->
             Dict.toList dict
@@ -1250,11 +1252,13 @@ toAutomatonGraph dfa =
     case stateList of
       [] ->
         Automata.Data.empty
+        -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, since DFA was empty"
       h::_ ->
         { graph = graph
         , maxId = Tuple.first h -- |> Debug.log "[toGraph] maxId"
         , root = dfa.start -- |> Debug.log "[toGraph] root"
         }
+        -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
         |> minimiseNodesByCombiningTransitions
 
 fromGraph : NodeId -> Graph n Connection -> DFARecord {} n
@@ -1715,14 +1719,22 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   (Dict.insert new_name v with_renamed_columns)
                   old_names
 
-    mergeIdenticalState : ((StateIdentifier, b), List (StateIdentifier, b)) -> Table a -> Table a
-    mergeIdenticalState ((mergeHead_sourceSet, _), to_merge) table =
-      let
-        sourceSets_to_merge = List.map Tuple.first to_merge |> Set.fromList
-        without_merged =
-          Set.foldl (\sourceSet table_ -> Dict.remove sourceSet table_) table sourceSets_to_merge
-      in
-        rename mergeHead_sourceSet sourceSets_to_merge without_merged
+    mergeIdenticalStates : List (StateIdentifier, b) -> Table a -> Table a
+    mergeIdenticalStates to_merge table =
+        case to_merge of
+          [] -> table -- nothing to merge! Also, impossible :-).
+          [_] -> table -- nothing to merge!
+          head::tail ->
+            let
+              sourceSets_to_merge =
+                List.map Tuple.first tail
+                |> Set.fromList
+                -- |> debugLog_ "[nfaToDFA] source-sets to merge" (Set.map stateIdentifierToString >> Debug.toString)
+              without_merged =
+                Set.foldl Dict.remove table sourceSets_to_merge
+                -- |> debugTable_ "[nfaToDFA] After removals"
+            in
+              rename (Tuple.first head) sourceSets_to_merge without_merged
 
     mergedTable : Table a
     mergedTable =
@@ -1744,9 +1756,28 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   |> List.map (\(ch, (st, _)) -> (ch, st))
                 )
               )
-          -- |> Debug.log "equivalent"
-          |> List.filter (\(_, group) -> List.length group > 1)
-          |> List.foldl mergeIdenticalState completeTable
+          |> List.map (\(x, xs) -> x::xs)
+          -- |> debugLog_
+          --     "equivalent, and therefore mergeable"
+          --     (List.map
+          --       (List.map
+          --         (\(a, b) ->
+          --           ( stateIdentifierToString a
+          --           , Dict.toList b
+          --             |> List.map Tuple.first
+          --           )
+          --         )
+          --       )
+          --      >> Debug.toString
+          --     )
+          -- Never mind the filter; I'll do this in `mergeIdenticalStates`
+          -- |> List.filter
+          --   (\list ->
+          --     Debug.log "Checking " list |> \_ ->
+          --     List.length list > 1
+          --     |> Debug.log "Result"
+          --   )
+          |> List.foldl mergeIdenticalStates completeTable
       in
         groupedByTransitions
         -- |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
@@ -1913,11 +1944,11 @@ fromAutomatonGraphHelper g =
 
 fromAutomatonGraph : AutomatonGraph a -> DFARecord {} a
 fromAutomatonGraph =
-    Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
+    -- Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
     splitTerminalAndNonTerminal
-    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
+    -- >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
-    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
+    -- >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
     >> fromAutomatonGraphHelper
     -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
@@ -1946,7 +1977,14 @@ printTransitions transitions =
 printDFA : DFARecord a b -> String
 printDFA dfa =
   "📍" ++ String.fromInt dfa.start ++ " { " ++ 
-  ( List.map (Tuple.first >> String.fromInt) (IntDict.toList dfa.states)
+  ( List.map
+      (\(id, _) ->
+        if Set.member id dfa.finals then
+          "*" ++ String.fromInt id
+        else
+          String.fromInt id
+      )
+      (IntDict.toList dfa.states)
     |> String.join ","
   ) ++
   " | " ++ printTransitions dfa.transition_function ++ " }"

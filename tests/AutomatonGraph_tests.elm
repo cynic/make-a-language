@@ -196,7 +196,7 @@ fromAG_suite =
       [ test "three nodes, one identical backlink" <|
         \_ ->
           ag_equals
-            (ag "0-a-1 1-b-2 2-a-1")
+            (ag "0-a-1 1-b-0")
             (nfaToDFA <| ag "0-a-1 1-b-2 1-b-0")
       -- these next two are a bit counter-intuitive!
       -- BUT: think of where each transition lands!
@@ -210,15 +210,12 @@ fromAG_suite =
       , test "three nodes, non-terminal tail, one terminal backlink" <|
         \_ ->
           ag_equals
-            -- after register-and-replace, this would be minimised to
-            -- "0-a-1 1-!b-0"
-            (ag "0-a-1 1-!b-2 2-a-1")
+            (ag "0-a-1 1-!b-0")
             (nfaToDFA <| ag "0-a-1 1-b-2 1-!b-0")
       , test "two nodes, recursive on first" <|
         \_ ->
           ag_equals
-            -- after register-and-replace, this would be more minimised.
-            (ag "0-k-1 1-k-1")
+            (ag "0-k-0")
             (nfaToDFA <| ag "0-k-1 0-k-0")
       , test "four nodes, different transitions to same endpoint" <|
         \_ ->
@@ -233,12 +230,12 @@ fromAG_suite =
       , test "three nodes, one backlink" <|
         \_ ->
           ag_equals
-            (ag "0-!ab-1 1-k-2 1-z-3 2-!ab-1")
+            (ag "0-!ab-1 1-k-0 1-z-2")
             (nfaToDFA <| ag "0-!ab-1 1-kz-2 1-k-0")
       , test "do not merge equivalent rows unless they have the same terminality" <|
         \_ ->
           ag_equals
-            (ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-k-2 8-z-2 1-k-2 1-z-2")
+            (ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-z-2 1-z-2")
             (nfaToDFA <| ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-kz-2 1-kz-2")
       ]
     , describe "Crafting step (post terminality-splitting, post NFA→DFA)"
