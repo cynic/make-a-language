@@ -213,14 +213,6 @@ ag_equals g_expected g_actual =
               case ( e_list, a_list ) of
                 ( [], [] ) ->
                   partition xs_rest ys_rest newSeen m
-                ( [], _ ) ->
-                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
-                ( _, [] ) ->
-                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
-                ( One _::_, Many _::_ ) ->
-                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
-                ( Many _::_ , One _::_ ) ->
-                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
                 ( One (e_from, e_to, e_label)::rest_e, One (a_from, a_to, a_label)::rest_a) ->
                   if a_label /= e_label then
                     Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
@@ -279,6 +271,9 @@ ag_equals g_expected g_actual =
                       case errorStrings of
                         [] -> Nothing
                         e::_ -> Just e
+                -- this next case covers: ( [], _ ); ( _, [] ); (One _::_, Many _::_); and (Many _::_, One _::_)
+                _ ->
+                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
           in
             -- now, see if I can match them up.
             pair_up gathered_xs gathered_ys mapping
