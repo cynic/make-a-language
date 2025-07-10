@@ -10,7 +10,7 @@
     "serve": "^14.2.4"
   },
   "scripts": {
-    "start": "pnpx parcel src/index.html",
+    "css": "pnpx parcel src/index.html",
     "hot": "pnpx concurrently \"pnpx elm-watch hot\" \"cd src && pnpx serve -p 1234\"",
     "benchmarks": "cd benchmarks && npx concurrently \"pnpx elm-watch hot\" \"pnpx serve -l 3001\""
   }

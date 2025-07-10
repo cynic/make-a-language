@@ -145,13 +145,19 @@ update msg model =
             (False, Nothing)  -- Close panel if same icon clicked
           else
             (True, Just icon)  -- Open panel with new icon
+        (newRightTopWidth, newRightTopHeight) = calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
       in
       ( { model 
         | leftPanelOpen = newLeftPanelOpen
         , selectedIcon = newSelectedIcon
+        , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
         }
       , Cmd.none
       )
+
+
+
+
 
     StartDraggingHorizontalSplitter ->
       ( { model | isDraggingHorizontalSplitter = True }, Cmd.none )
