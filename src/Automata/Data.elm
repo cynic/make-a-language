@@ -2,6 +2,7 @@ module Automata.Data exposing (..)
 import IntDict exposing (IntDict(..))
 import Set exposing (Set)
 import Graph exposing (Graph, NodeContext, NodeId)
+import Dict exposing (Dict)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -18,6 +19,51 @@ type alias AutomatonGraph a =
   , maxId : NodeId
   , root : NodeId
   }
+
+{- So with an DFA, I can basically do anything that's deterministic.
+
+Looping back to previous nodes? Go ahead.
+Looping back to ourselves? Definitely!
+
+Now with that said, nodes without outgoing edges SHOULD be terminal nodes.
+And everything is connected.  And outgoing nodes have deterministic transitions.
+-}
+
+type alias DFARecord extending label =
+  { extending |
+    states : IntDict label -- the () is the label.
+  , transition_function: IntDict (Dict Char NodeId) -- NodeId × Char → NodeId
+  , start : NodeId
+  , finals : Set NodeId
+  }
+
+type alias ExtDFA label =
+  { states : IntDict label
+  , transition_function: IntDict (Dict Char NodeId)
+  , start : NodeId
+  , finals : Set NodeId
+  , register : Set NodeId
+  , clone_start : NodeId
+  , queue_or_clone : List NodeId
+  , unusedId : NodeId
+  }
+type alias ExecutionData =
+  { transitionsTaken : List (Char, Int)
+  , remainingData : List Char
+  , currentNode : NodeId
+  }
+
+type ExecutionState
+  = Accepted ExecutionData
+  | Rejected ExecutionData
+  | RequestedNodeDoesNotExist ExecutionData -- this is an internal error
+  | NoPossibleTransition ExecutionData
+
+type ExecutionResult
+  = EndOfInput ExecutionState
+  | EndOfComputation ExecutionState
+  | CanContinue ExecutionState
+  | InternalError
 
 empty : AutomatonGraph a
 empty =

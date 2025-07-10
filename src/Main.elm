@@ -49,7 +49,6 @@ type LeftPanelIcon
 type ExecutionState
   = Ready
   | Running
-  | Stopped
   | StepThrough
 
 type alias Model =
@@ -95,7 +94,7 @@ init flags =
       , rightBottomPanelOpen = True
       , rightBottomPanelHeight = 128
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
-      , bottomPanelContent = "// Welcome to the automaton editor\n// Type your code here..."
+      , bottomPanelContent = "" -- "// Welcome to the automaton editor\n// Type your code here..."
       , isDraggingHorizontalSplitter = False
       , isDraggingVerticalSplitter = False
       , mousePosition = ( 0, 0 )
@@ -255,7 +254,7 @@ update msg model =
 
     StopExecution ->
       ( { model 
-        | executionState = Stopped
+        | executionState = Ready
         , executionOutput = model.executionOutput ++ [ "Execution stopped by user." ]
         }
       , Cmd.none
@@ -546,12 +545,7 @@ viewBottomPanelContent model =
           div 
             [ HA.class "execution-output" ]
             (List.map (\line -> p [ HA.class "output-line" ] [ text line ]) model.executionOutput)
-        
-        Stopped ->
-          div 
-            [ HA.class "execution-output" ]
-            (List.map (\line -> p [ HA.class "output-line" ] [ text line ]) model.executionOutput)
-        
+                
         StepThrough ->
           div 
             [ HA.class "debug-output" ]
@@ -561,9 +555,8 @@ viewBottomPanelContent model =
 getBottomPanelTitle : ExecutionState -> String
 getBottomPanelTitle state =
   case state of
-    Ready -> "Terminal"
-    Running -> "Execution Output"
-    Stopped -> "Execution Stopped"
+    Ready -> "Ready"
+    Running -> "Running" -- show execution output
     StepThrough -> "Step-through Debug"
 
 getActionButtonClass : ExecutionState -> Msg -> String
@@ -572,7 +565,6 @@ getActionButtonClass currentState buttonAction =
     baseClass = "action-button"
     activeClass = case (currentState, buttonAction) of
       (Running, RunExecution) -> " action-button--active"
-      (Stopped, StopExecution) -> " action-button--active"
       (StepThrough, StepThroughExecution) -> " action-button--active"
       _ -> ""
   in
@@ -601,7 +593,6 @@ getStatusMessage state =
   case state of
     Ready -> "Ready"
     Running -> "Running..."
-    Stopped -> "Stopped"
     StepThrough -> "Debug Mode"
 
 -- SUBSCRIPTIONS

@@ -15,6 +15,7 @@ import Automata.Debugging
 import Css exposing (row)
 import Automata.Debugging exposing (debugGraph)
 import Automata.Debugging exposing (debugAutomatonGraph)
+import Svg.Attributes exposing (k)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -26,46 +27,109 @@ type alias MTransition = Char
 type alias MConnection = Set MTransition -- a MConnection is a link between two nodes.
 -- type alias Connections = IntDict MConnection
 type alias Node = NodeContext Bool MConnection -- a Node indicates terminality
-type alias FAGraph = Graph Bool MConnection -- finally, the Finite Automaton.
-type alias RegisterValue = ( Int, List ( NodeId, List MTransition ) ) -- (isFinal, list-of-outgoing)
 
-{- So with an DFA, I can basically do anything that's deterministic.
 
-Looping back to previous nodes? Go ahead.
-Looping back to ourselves? Definitely!
+oneTransition : AutomatonGraph a -> ExecutionState -> ExecutionState
+oneTransition g executionState =
+  let
+    transitionWithData : ExecutionData -> ExecutionState
+    transitionWithData data =
+      Graph.get data.currentNode g.graph
+      |> Maybe.map
+        (\ctx ->
+          case data.remainingData of
+            [] ->
+              executionState -- we're done! Can't go any further!
+            h::t ->
+              ctx.outgoing
+              |> IntDict.toList
+              |> List.findMap
+                (\(k, conn) ->
+                  if Set.member (h, 1) conn then
+                    Just <| Accepted
+                      { data
+                        | transitionsTaken = (h, 1)::data.transitionsTaken
+                        , remainingData = t
+                        , currentNode = k
+                      }
+                  else if Set.member (h, 0) conn then
+                    Just <| Rejected
+                      { data
+                        | transitionsTaken = (h, 0)::data.transitionsTaken
+                        , remainingData = t
+                        , currentNode = k
+                      }
+                  else
+                    Nothing
+                )
+              |> Maybe.withDefault (NoPossibleTransition data)
+        )
+      |> Maybe.withDefault (RequestedNodeDoesNotExist data)
+  in
+    case executionState of
+      Accepted d ->
+        transitionWithData d
+      Rejected d ->
+        transitionWithData d
+      RequestedNodeDoesNotExist _ ->
+        executionState
+      NoPossibleTransition _ ->
+        executionState
 
-Now with that said, nodes without outgoing edges SHOULD be terminal nodes.
-And everything is connected.  And outgoing nodes have deterministic transitions.
--}
+step : AutomatonGraph a -> ExecutionResult -> ExecutionResult
+step g executionResult =
+  case executionResult of
+    CanContinue executionState ->
+      case oneTransition g executionState of
+        Accepted ({ remainingData } as d) ->
+          case remainingData of
+            [] -> EndOfInput (Accepted d)
+            _ -> CanContinue (Accepted d)
+        Rejected ({ remainingData } as d) ->
+          case remainingData of
+            [] -> EndOfInput (Rejected d)
+            _ -> CanContinue (Rejected d)
+        RequestedNodeDoesNotExist d ->
+          Debug.log "INTERNAL ERROR! NODE DOES NOT EXIST!" d |> \_ ->
+          InternalError
+        NoPossibleTransition d ->
+          -- I only arrive here when there IS remaining data,
+          -- but there IS NOT a matching transition for it.
+          case d.transitionsTaken of
+            [] ->
+              -- Finality is stored on the TRANSITION, not the STATE.
+              -- Therefore, I must take at least one TRANSITION to
+              -- accept.  Otherwise—by default—I will reject.
+              EndOfComputation (Rejected d)
+            (_, 1)::_ ->
+              EndOfComputation (Accepted d)
+            (_, _)::_ -> -- i.e. (_, 0)::_
+              EndOfComputation (Rejected d)
+    EndOfInput _ ->
+      executionResult
+    EndOfComputation _ ->
+      executionResult
+    InternalError ->
+      executionResult
 
-type alias NodeId = Int
-type alias ATransition = ( (NodeId, Char), NodeId )
+stepThroughInitial : String -> AutomatonGraph a -> ExecutionResult
+stepThroughInitial s g =
+  step g
+    (CanContinue <| Rejected <|
+      ExecutionData [] (String.toList s) g.root
+    )
 
-type alias DFARecord extending label =
-  { extending |
-    states : IntDict label -- the () is the label.
-  , transition_function: IntDict (Dict Char NodeId) -- NodeId × Char → NodeId
-  , start : NodeId
-  , finals : Set NodeId
-  }
-
-type alias ExtDFA label =
-  { states : IntDict label
-  , transition_function: IntDict (Dict Char NodeId)
-  , start : NodeId
-  , finals : Set NodeId
-  , register : Set NodeId
-  , clone_start : NodeId
-  , queue_or_clone : List NodeId
-  , unusedId : NodeId
-  }
-
-type alias CloneResult a =
-  { extDFA : ExtDFA a
-  , q_w : Maybe NodeId -- Nothing, if we've reached the end.
-  , q_m : Maybe NodeId -- Nothing, if we reached a break in the transitions.
-  , seen_qw : Set NodeId -- the states of q_w we've seen thus far.
-  }
+run : String -> AutomatonGraph a -> ExecutionResult
+run s g =
+  let
+    execute result =
+      case step g result of
+        (CanContinue _) as okay ->
+          execute okay
+        x ->
+          x
+  in
+    execute (stepThroughInitial s g)
 
 mkConn : String -> Connection
 mkConn s =

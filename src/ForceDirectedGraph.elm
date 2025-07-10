@@ -38,13 +38,13 @@ import Automata.DFA exposing (union)
 import Automata.Debugging exposing (debugGraph)
 import Maybe.Extra as Maybe exposing (withDefaultLazy)
 import Automata.DFA exposing (debugDFA_)
-import Automata.DFA exposing (DFARecord)
 import TypedSvg exposing (use)
 import Tuple.Extra exposing (apply)
 import Automata.Data exposing (graphToAutomatonGraph)
 import Automata.Debugging exposing (debugAutomatonGraph)
 import Automata.DFA exposing (partial_union)
 import Automata.DFA exposing (transitions_from_source)
+import Automata.Data exposing (..)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -69,6 +69,8 @@ type Msg
   | Undo
   | Redo
   | StartSplit NodeId
+  -- to add: Execute, Step, Stop
+  -- also: when I make a change to the graph, set .execution to Nothing!
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
@@ -98,6 +100,7 @@ type alias Model =
   , undoBuffer : List (AutomatonGraph Entity)
   , redoBuffer : List (AutomatonGraph Entity)
   , disconnectedNodes : Set NodeId
+  , execution : Maybe ExecutionResult
   }
 
 type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
@@ -137,6 +140,10 @@ initializeNode ctx =
   , incoming = ctx.incoming
   , outgoing = ctx.outgoing
   }
+
+canExecute : Model -> Bool
+canExecute model =
+  List.isEmpty model.undoBuffer
 
 viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
 viewportForces (w, h) _ =
@@ -225,6 +232,7 @@ receiveWords words (w, h) =
     , undoBuffer = []
     , redoBuffer = []
     , disconnectedNodes = Set.empty
+    , execution = Nothing
     }
 
 init : List String -> (Float, Float) -> (Model, Cmd Msg)
