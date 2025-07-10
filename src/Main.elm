@@ -245,17 +245,9 @@ calculateRightTopDimensions model =
 view : Model -> Html Msg
 view model =
   div 
-    [ HA.class "main-container"
-    , HA.style "height" "100vh"
-    , HA.style "display" "flex"
-    , HA.style "flex-direction" "column"
-    ]
+    [ HA.class "main-container layout-flex-column" ]
     [ div 
-      [ HA.class "main-content"
-      , HA.style "flex" "1"
-      , HA.style "display" "flex"
-      , HA.style "overflow" "hidden"
-      ]
+      [ HA.class "main-content" ]
       [ viewLeftSection model
       , viewRightSection model
       ]
@@ -265,15 +257,11 @@ view model =
 viewLeftSection : Model -> Html Msg
 viewLeftSection model =
   div 
-    [ HA.class "left-section"
-    , HA.style "display" "flex"
-    ]
+    [ HA.class "left-section" ]
     [ viewIconBar model
     , if model.leftPanelOpen then
         div 
-          [ HA.class "left-panel-container"
-          , HA.style "display" "flex"
-          ]
+          [ HA.class "left-panel-container" ]
           [ viewLeftPanel model
           , viewHorizontalSplitter
           ]
@@ -284,13 +272,7 @@ viewLeftSection model =
 viewIconBar : Model -> Html Msg
 viewIconBar model =
   div 
-    [ HA.class "icon-bar"
-    , HA.style "width" "60px"
-    , HA.style "background-color" "#282a36"
-    , HA.style "display" "flex"
-    , HA.style "flex-direction" "column"
-    , HA.style "padding" "10px 0"
-    ]
+    [ HA.class "icon-bar" ]
     [ viewIcon FileIcon "📁" model
     , viewIcon SearchIcon "🔍" model
     , viewIcon GitIcon "🌿" model
@@ -302,32 +284,12 @@ viewIcon : LeftPanelIcon -> String -> Model -> Html Msg
 viewIcon icon iconText model =
   let
     isSelected = model.selectedIcon == Just icon
-    baseStyles = 
-      [ HA.style "width" "40px"
-      , HA.style "height" "40px"
-      , HA.style "margin" "5px 10px"
-      , HA.style "display" "flex"
-      , HA.style "align-items" "center"
-      , HA.style "justify-content" "center"
-      , HA.style "border-radius" "8px"
-      , HA.style "cursor" "pointer"
-      , HA.style "transition" "all 0.2s ease"
-      , HA.style "font-size" "20px"
-      , HA.style "user-select" "none"
-      , onClick (ClickIcon icon)
-      ]
-    selectedStyles = 
-      if isSelected then
-        [ HA.style "background-color" "#44475a"
-        , HA.style "border-left" "3px solid #bd93f9"
-        ]
-      else
-        [ HA.style "background-color" "transparent"
-        ]
-    hoverClass = if isSelected then "icon-selected" else "icon-normal"
+    iconClass = if isSelected then "icon icon--selected" else "icon"
   in
   div 
-    (baseStyles ++ selectedStyles ++ [HA.class hoverClass])
+    [ HA.class iconClass
+    , onClick (ClickIcon icon)
+    ]
     [ text iconText ]
 
 viewLeftPanel : Model -> Html Msg
@@ -335,17 +297,13 @@ viewLeftPanel model =
   div 
     [ HA.class "left-panel"
     , HA.style "width" (String.fromFloat model.leftPanelWidth ++ "px")
-    , HA.style "background-color" "#f8f8f2"
-    , HA.style "border-right" "1px solid #6272a4"
-    , HA.style "padding" "20px"
-    , HA.style "overflow-y" "auto"
     ]
     [ case model.selectedIcon of
         Just FileIcon ->
           div []
-            [ h3 [ HA.style "color" "#282a36" ] [ text "File Explorer" ]
-            , p [ HA.style "color" "#6272a4" ] [ text "File management functionality would go here." ]
-            , ul [ HA.style "color" "#44475a" ]
+            [ h3 [] [ text "File Explorer" ]
+            , p [] [ text "File management functionality would go here." ]
+            , ul []
               [ li [] [ text "📄 main.elm" ]
               , li [] [ text "📄 style.css" ]
               , li [] [ text "📁 src/" ]
@@ -355,24 +313,19 @@ viewLeftPanel model =
         
         Just SearchIcon ->
           div []
-            [ h3 [ HA.style "color" "#282a36" ] [ text "Search" ]
+            [ h3 [] [ text "Search" ]
             , input 
               [ HA.type_ "text"
               , HA.placeholder "Search in files..."
-              , HA.style "width" "100%"
-              , HA.style "padding" "8px"
-              , HA.style "border" "1px solid #6272a4"
-              , HA.style "border-radius" "4px"
-              , HA.style "margin-bottom" "10px"
               ] []
-            , p [ HA.style "color" "#6272a4" ] [ text "Search results would appear here." ]
+            , p [] [ text "Search results would appear here." ]
             ]
         
         Just GitIcon ->
           div []
-            [ h3 [ HA.style "color" "#282a36" ] [ text "Source Control" ]
-            , p [ HA.style "color" "#6272a4" ] [ text "Git integration would go here." ]
-            , div [ HA.style "color" "#44475a" ]
+            [ h3 [] [ text "Source Control" ]
+            , p [] [ text "Git integration would go here." ]
+            , div [ HA.class "panel-content" ]
               [ p [] [ text "• 3 changes" ]
               , p [] [ text "• 1 staged file" ]
               , p [] [ text "• main branch" ]
@@ -381,9 +334,9 @@ viewLeftPanel model =
         
         Just DebugIcon ->
           div []
-            [ h3 [ HA.style "color" "#282a36" ] [ text "Debug Console" ]
-            , p [ HA.style "color" "#6272a4" ] [ text "Debugging tools would go here." ]
-            , div [ HA.style "font-family" "monospace", HA.style "color" "#44475a" ]
+            [ h3 [] [ text "Debug Console" ]
+            , p [] [ text "Debugging tools would go here." ]
+            , div [ HA.class "panel-content panel-content--monospace" ]
               [ p [] [ text "> Ready to debug" ]
               , p [] [ text "> Breakpoints: 0" ]
               ]
@@ -391,11 +344,11 @@ viewLeftPanel model =
         
         Just ExtensionsIcon ->
           div []
-            [ h3 [ HA.style "color" "#282a36" ] [ text "Extensions" ]
-            , p [ HA.style "color" "#6272a4" ] [ text "Extension management would go here." ]
-            , div [ HA.style "color" "#44475a" ]
+            [ h3 [] [ text "Extensions" ]
+            , p [] [ text "Extension management would go here." ]
+            , div [ HA.class "panel-content" ]
               [ p [] [ text "🔧 Elm Language Support" ]
-              , p [] [ text "��� Dracula Theme" ]
+              , p [] [ text "🎨 Dracula Theme" ]
               , p [] [ text "📝 Auto Format" ]
               ]
             ]
@@ -408,10 +361,6 @@ viewHorizontalSplitter : Html Msg
 viewHorizontalSplitter =
   div 
     [ HA.class "horizontal-splitter"
-    , HA.style "width" "8px"
-    , HA.style "background-color" "#6272a4"
-    , HA.style "cursor" "col-resize"
-    , HA.style "transition" "background-color 0.2s ease"
     , onMouseDown StartDraggingHorizontalSplitter
     ]
     []
@@ -419,11 +368,7 @@ viewHorizontalSplitter =
 viewRightSection : Model -> Html Msg
 viewRightSection model =
   div 
-    [ HA.class "right-section"
-    , HA.style "flex" "1"
-    , HA.style "display" "flex"
-    , HA.style "flex-direction" "column"
-    ]
+    [ HA.class "right-section" ]
     [ viewRightTopPanel model
     , if model.rightBottomPanelOpen then
         div []
@@ -441,25 +386,14 @@ viewRightTopPanel model =
     (width, height) = model.rightTopPanelDimensions
   in
   div 
-    [ HA.class "right-top-panel"
-    , HA.style "flex" "1"
-    , HA.style "background-color" "#f8f8f2"
-    , HA.style "border" "1px solid #6272a4"
-    , HA.style "border-radius" "8px"
-    , HA.style "margin" "10px"
-    , HA.style "padding" "20px"
-    , HA.style "overflow" "hidden"
-    , HA.style "position" "relative"
-    ]
+    [ HA.class "right-top-panel" ]
     [ -- For now, display dimensions as requested in comments
       div 
-        [ HA.style "color" "#282a36"
-        , HA.style "font-family" "monospace"
-        ]
+        [ HA.class "right-top-panel__content" ]
         [ h3 [] [ text "Force Directed Graph View" ]
         , p [] [ text ("Width: " ++ String.fromFloat width ++ "px") ]
         , p [] [ text ("Height: " ++ String.fromFloat height ++ "px") ]
-        , p [ HA.style "color" "#6272a4" ] 
+        , p [ HA.class "text--muted" ] 
           [ text "The ForceDirectedGraph.view would be rendered here." ]
         ]
       -- TODO: Integrate ForceDirectedGraph.view here
@@ -470,21 +404,10 @@ viewVerticalSplitter : Html Msg
 viewVerticalSplitter =
   div 
     [ HA.class "vertical-splitter"
-    , HA.style "height" "8px"
-    , HA.style "background-color" "#6272a4"
-    , HA.style "cursor" "row-resize"
-    , HA.style "display" "flex"
-    , HA.style "align-items" "center"
-    , HA.style "justify-content" "center"
-    , HA.style "transition" "background-color 0.2s ease"
     , onMouseDown StartDraggingVerticalSplitter
     ]
     [ div 
-      [ HA.style "width" "30px"
-      , HA.style "height" "4px"
-      , HA.style "background-color" "#bd93f9"
-      , HA.style "border-radius" "2px"
-      , HA.style "cursor" "pointer"
+      [ HA.class "vertical-splitter__handle"
       , onClick ToggleBottomPanel
       ]
       []
@@ -494,24 +417,10 @@ viewCollapsedVerticalSplitter : Html Msg
 viewCollapsedVerticalSplitter =
   div 
     [ HA.class "collapsed-vertical-splitter"
-    , HA.style "height" "4px"
-    , HA.style "background-color" "#6272a4"
-    , HA.style "cursor" "pointer"
-    , HA.style "display" "flex"
-    , HA.style "align-items" "center"
-    , HA.style "justify-content" "center"
-    , HA.style "transition" "all 0.2s ease"
-    , HA.style "margin" "0 10px"
-    , HA.style "border-radius" "2px"
     , onClick ToggleBottomPanel
     ]
     [ div 
-      [ HA.style "width" "40px"
-      , HA.style "height" "2px"
-      , HA.style "background-color" "#bd93f9"
-      , HA.style "border-radius" "1px"
-      , HA.style "opacity" "0.7"
-      ]
+      [ HA.class "collapsed-vertical-splitter__handle" ]
       []
     ]
 
@@ -520,25 +429,11 @@ viewRightBottomPanel model =
   div 
     [ HA.class "right-bottom-panel"
     , HA.style "height" (String.fromFloat model.rightBottomPanelHeight ++ "px")
-    , HA.style "background-color" "#282a36"
-    , HA.style "border" "1px solid #6272a4"
-    , HA.style "border-radius" "8px"
-    , HA.style "margin" "0 10px 10px 10px"
-    , HA.style "overflow" "auto"
     ]
     [ textarea 
-      [ HA.value model.bottomPanelContent
+      [ HA.class "right-bottom-panel__textarea"
+      , HA.value model.bottomPanelContent
       , onInput UpdateBottomPanelContent
-      , HA.style "width" "100%"
-      , HA.style "height" "100%"
-      , HA.style "background-color" "transparent"
-      , HA.style "color" "#f8f8f2"
-      , HA.style "border" "none"
-      , HA.style "padding" "15px"
-      , HA.style "font-family" "monospace"
-      , HA.style "font-size" "14px"
-      , HA.style "resize" "none"
-      , HA.style "outline" "none"
       ]
       []
     ]
@@ -546,38 +441,18 @@ viewRightBottomPanel model =
 viewStatusBar : Model -> Html Msg
 viewStatusBar model =
   div 
-    [ HA.class "status-bar"
-    , HA.style "height" "30px"
-    , HA.style "background-color" "#bd93f9"
-    , HA.style "color" "#282a36"
-    , HA.style "display" "flex"
-    , HA.style "align-items" "center"
-    , HA.style "padding" "0 15px"
-    , HA.style "font-size" "12px"
-    , HA.style "font-weight" "500"
-    ]
+    [ HA.class "status-bar" ]
     [ span [] [ text "Ready" ]
     , div 
-      [ HA.style "margin-left" "20px"
-      , HA.style "display" "flex"
-      , HA.style "align-items" "center"
-      , HA.style "gap" "10px"
-      ]
+      [ HA.class "status-bar__section" ]
       [ button
-        [ onClick ToggleBottomPanel
-        , HA.style "background-color" (if model.rightBottomPanelOpen then "#282a36" else "transparent")
-        , HA.style "color" (if model.rightBottomPanelOpen then "#f8f8f2" else "#282a36")
-        , HA.style "border" "1px solid #282a36"
-        , HA.style "border-radius" "4px"
-        , HA.style "padding" "2px 8px"
-        , HA.style "font-size" "11px"
-        , HA.style "cursor" "pointer"
-        , HA.style "transition" "all 0.2s ease"
+        [ HA.class (if model.rightBottomPanelOpen then "status-bar__button status-bar__button--active" else "status-bar__button")
+        , onClick ToggleBottomPanel
         ]
         [ text "Terminal" ]
       ]
     , span 
-      [ HA.style "margin-left" "auto" ]
+      [ HA.class "status-bar__section--right" ]
       [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions)) ]
     ]
 
