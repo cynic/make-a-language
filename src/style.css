@@ -11,74 +11,210 @@
   }
 }
 
+/* Dracula Theme Colors */
+:root {
+  --dracula-background: #282a36;
+  --dracula-current-line: #44475a;
+  --dracula-foreground: #f8f8f2;
+  --dracula-comment: #6272a4;
+  --dracula-cyan: #8be9fd;
+  --dracula-green: #50fa7b;
+  --dracula-orange: #ffb86c;
+  --dracula-pink: #ff79c6;
+  --dracula-purple: #bd93f9;
+  --dracula-red: #ff5555;
+  --dracula-yellow: #f1fa8c;
+}
+
 body {
   margin: 0;
-  /* overflow-y: hidden; */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  background-color: var(--dracula-background);
+  color: var(--dracula-foreground);
+  overflow: hidden;
 }
+
+/* Main Container */
+.main-container {
+  border: 2px solid var(--dracula-comment);
+  border-radius: 12px;
+  overflow: hidden;
+  background-color: var(--dracula-background);
+}
+
+/* Icon Bar */
+.icon-bar {
+  border-right: 1px solid var(--dracula-comment);
+}
+
+.icon-normal:hover {
+  background-color: var(--dracula-current-line) !important;
+  transform: scale(1.05);
+}
+
+.icon-selected:hover {
+  background-color: var(--dracula-current-line) !important;
+  border-left: 3px solid var(--dracula-purple) !important;
+}
+
+/* Left Panel */
+.left-panel {
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+}
+
+.left-panel h3 {
+  margin-top: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.left-panel p {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.left-panel ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.left-panel li {
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+/* Splitters */
+.horizontal-splitter:hover {
+  background-color: var(--dracula-purple) !important;
+}
+
+.vertical-splitter:hover {
+  background-color: var(--dracula-purple) !important;
+}
+
+.vertical-splitter:hover div {
+  background-color: var(--dracula-foreground) !important;
+}
+
+/* Right Panels */
+.right-top-panel {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.right-bottom-panel {
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Status Bar */
+.status-bar {
+  border-top: 1px solid var(--dracula-comment);
+  font-family: monospace;
+}
+
+/* Textarea Styling */
 textarea {
   transition: background-color 0.35s ease;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dracula-comment) var(--dracula-background);
 }
+
 textarea:focus {
   outline: none;
-  background-color: lightgrey;
+  background-color: rgba(68, 71, 90, 0.3);
 }
+
+textarea::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+textarea::-webkit-scrollbar-track {
+  background: var(--dracula-background);
+}
+
+textarea::-webkit-scrollbar-thumb {
+  background: var(--dracula-comment);
+  border-radius: 4px;
+}
+
+textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--dracula-purple);
+}
+
+/* Input Styling */
+input[type="text"] {
+  background-color: var(--dracula-background);
+  color: var(--dracula-foreground);
+  transition: border-color 0.2s ease;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: var(--dracula-purple);
+  box-shadow: 0 0 0 2px rgba(189, 147, 249, 0.2);
+}
+
+/* Existing automaton graph styles */
 .state-node {
-  fill: rgb(0,222,255);
+  fill: var(--dracula-cyan);
   transition: all 0.25s ease;
 }
+
 .phantom-state-node {
-  stroke: rgb(102, 102, 102);
+  stroke: var(--dracula-comment);
 }
+
 .phantom-link {
-  stroke: rgb(102, 102, 102);
+  stroke: var(--dracula-comment);
 }
+
 .state-node:hover {
   animation: pulse 1.25s ease-in-out infinite;
-  fill: rgb(9, 255, 0);
+  fill: var(--dracula-green);
   cursor: pointer;
 }
+
 .state-node.selected {
-  fill: rgb(255, 0, 179)
+  fill: var(--dracula-pink);
 }
+
 .state-node.disconnected {
-  fill: rgba(110, 110, 110, 0.7)
+  fill: rgba(110, 110, 110, 0.7);
 }
+
 .state-node.disconnected:hover {
   animation: none;
   fill: rgba(60, 60, 60, 0.7);
   cursor: not-allowed;
 }
-/* #reset-view rect {
-  fill: rgba(255, 255, 255, 0.8);
-  transition: all 0.25s ease;
-}
-#reset-view rect:hover {
-  fill: gray;
-  cursor: pointer;
-}
-#reset-view text {
-  pointer-events: none;
-} */
+
 path.link {
   pointer-events: none;
 }
+
 .transition-chooser-key {
   transition: all 0.3s ease;
-  fill: rgb(170, 170, 170);
+  fill: var(--dracula-comment);
 }
-.transition-chooser-key:hover, .transition-chooser-key.selected:hover, .transition-chooser-key.selected.terminal:hover {
-  fill:rgb(157, 255, 0)
+
+.transition-chooser-key:hover, 
+.transition-chooser-key.selected:hover, 
+.transition-chooser-key.selected.terminal:hover {
+  fill: var(--dracula-green);
 }
+
 .transition-chooser-key.terminal.selected {
-  fill: orange;
-  stroke: black;
+  fill: var(--dracula-orange);
+  stroke: var(--dracula-background);
 }
+
 .transition-chooser-key.terminal + text {
   font-weight: bold;
 }
+
 .transition-chooser-key.selected {
-  fill:rgb(238, 255, 0);
-  stroke: darkgray;
+  fill: var(--dracula-yellow);
+  stroke: var(--dracula-comment);
 }
 
 rect.splitter-box {
@@ -87,39 +223,90 @@ rect.splitter-box {
 
 path.link.background {
   stroke-width: 5;
-  stroke: rgb(211, 215, 207); /* the "background" color */
+  stroke: var(--dracula-foreground);
+}
 
-}
 text tspan.final {
-  font-weight:  bold;
-  fill: darkorange; /* the "final" color */
+  font-weight: bold;
+  fill: var(--dracula-orange);
   stroke-width: 4;
-  stroke: rgb(211, 215, 207); /* the "background" color */
+  stroke: var(--dracula-foreground);
 }
+
 text tspan.nonfinal {
-  fill: rgb(64, 64, 64); /* the "nonfinal" color */
+  fill: var(--dracula-comment);
   stroke-width: 4;
-  stroke: rgb(211, 215, 207); /* the "background" color */
+  stroke: var(--dracula-foreground);
 }
+
 path.link + text:hover tspan {
   stroke-width: 4;
-  stroke: rgb(131, 216, 46); /* the "background" color */
-  background-color: red;
+  stroke: var(--dracula-green);
   cursor: pointer;
 }
 
 rect.undo.current {
   stroke-width: 1.25;
-  stroke: grey;
+  stroke: var(--dracula-comment);
 }
 
 rect.redo {
-  fill: gray;
+  fill: var(--dracula-comment);
   fill-opacity: 0.7;
 }
 
 .start {
-  fill: black;
+  fill: var(--dracula-background);
   stroke-width: 2px;
-  stroke: blue;
+  stroke: var(--dracula-purple);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .icon-bar {
+    width: 50px;
+  }
+  
+  .icon-normal, .icon-selected {
+    width: 35px !important;
+    height: 35px !important;
+    font-size: 16px !important;
+  }
+  
+  .left-panel {
+    min-width: 200px;
+  }
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus indicators for keyboard navigation */
+.icon-normal:focus,
+.icon-selected:focus {
+  outline: 2px solid var(--dracula-purple);
+  outline-offset: 2px;
+}
+
+.horizontal-splitter:focus,
+.vertical-splitter:focus {
+  outline: 2px solid var(--dracula-purple);
+  outline-offset: 1px;
+}
+
+/* Selection styling */
+::selection {
+  background-color: var(--dracula-purple);
+  color: var(--dracula-foreground);
+}
+
+::-moz-selection {
+  background-color: var(--dracula-purple);
+  color: var(--dracula-foreground);
 }
