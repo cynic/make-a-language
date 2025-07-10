@@ -46,6 +46,12 @@ type LeftPanelIcon
   | DebugIcon
   | ExtensionsIcon
 
+type ExecutionState
+  = Ready
+  | Running
+  | Stopped
+  | StepThrough
+
 type alias Model =
   { forceDirectedGraph : ForceDirectedGraph.Model
   , mainPanelDimensions : ( Float, Float )
@@ -59,6 +65,9 @@ type alias Model =
   , isDraggingHorizontalSplitter : Bool
   , isDraggingVerticalSplitter : Bool
   , mousePosition : ( Float, Float )
+  , executionState : ExecutionState
+  , executionOutput : List String
+  , debugSteps : List String
   }
 
 decodeDimensions : D.Decoder ( Float, Float )
@@ -84,12 +93,15 @@ init flags =
       , selectedIcon = Nothing
       , leftPanelWidth = 250
       , rightBottomPanelOpen = True
-      , rightBottomPanelHeight = 100
+      , rightBottomPanelHeight = 128
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
       , bottomPanelContent = "// Welcome to the automaton editor\n// Type your code here..."
       , isDraggingHorizontalSplitter = False
       , isDraggingVerticalSplitter = False
       , mousePosition = ( 0, 0 )
+      , executionState = Ready
+      , executionOutput = []
+      , debugSteps = []
       }
     , Task.perform (\_ -> NoOp) (Task.succeed ())
     )
@@ -108,6 +120,9 @@ type Msg
   | ToggleBottomPanel
   | UpdateBottomPanelContent String
   | UpdateRightTopDimensions Float Float
+  | RunExecution
+  | StopExecution
+  | StepThroughExecution
   | NoOp
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -190,7 +205,7 @@ update msg model =
       else if model.isDraggingVerticalSplitter then
         let
           (_, viewportHeight) = model.mainPanelDimensions
-          minHeight = 96  -- 6em ≈ 96px
+          minHeight = 128  -- 8em @ 16px font ≈ 96px
           maxHeight = viewportHeight / 2
           statusBarHeight = 30
           newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
@@ -224,6 +239,42 @@ update msg model =
 
     UpdateRightTopDimensions width height ->
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
+
+    RunExecution ->
+      ( { model 
+        | executionState = Running
+        , executionOutput = 
+          [ "Starting execution..."
+          , "Parsing automaton..."
+          , "Validating transitions..."
+          , "Execution in progress..."
+          ]
+        }
+      , Cmd.none
+      )
+
+    StopExecution ->
+      ( { model 
+        | executionState = Stopped
+        , executionOutput = model.executionOutput ++ [ "Execution stopped by user." ]
+        }
+      , Cmd.none
+      )
+
+    StepThroughExecution ->
+      ( { model 
+        | executionState = StepThrough
+        , debugSteps = 
+          [ "Step 1: Initialize state machine"
+          , "Step 2: Read input symbol 'a'"
+          , "Step 3: Transition from q0 to q1"
+          , "Step 4: Read input symbol 'b'"
+          , "Step 5: Transition from q1 to q2"
+          , "Current state: q2 (accepting)"
+          ]
+        }
+      , Cmd.none
+      )
 
     NoOp ->
       ( model, Cmd.none )
@@ -443,19 +494,95 @@ viewRightBottomPanel model =
     [ HA.class "right-bottom-panel"
     , HA.style "height" (String.fromFloat model.rightBottomPanelHeight ++ "px")
     ]
-    [ textarea 
-      [ HA.class "right-bottom-panel__textarea"
-      , HA.value model.bottomPanelContent
-      , onInput UpdateBottomPanelContent
-      ]
-      []
+    [ viewBottomPanelHeader model
+    , viewBottomPanelContent model
     ]
+
+viewBottomPanelHeader : Model -> Html Msg
+viewBottomPanelHeader model =
+  div 
+    [ HA.class "bottom-panel__header" ]
+    [ div 
+      [ HA.class "bottom-panel__title" ]
+      [ text (getBottomPanelTitle model.executionState) ]
+    , div 
+      [ HA.class "bottom-panel__actions" ]
+      [ button
+        [ HA.class (getActionButtonClass model.executionState RunExecution)
+        , onClick RunExecution
+        , HA.disabled (model.executionState == Running)
+        ]
+        [ text "▶️" ]
+      , button
+        [ HA.class (getActionButtonClass model.executionState StopExecution)
+        , onClick StopExecution
+        , HA.disabled (model.executionState == Ready)
+        ]
+        [ text "⏹️" ]
+      , button
+        [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
+        , onClick StepThroughExecution
+        , HA.disabled (model.executionState == Running)
+        ]
+        [ text "⏭️" ]
+      ]
+    ]
+
+viewBottomPanelContent : Model -> Html Msg
+viewBottomPanelContent model =
+  div 
+    [ HA.class "bottom-panel__content" ]
+    [ case model.executionState of
+        Ready ->
+          textarea 
+            [ HA.class "right-bottom-panel__textarea"
+            , HA.value model.bottomPanelContent
+            , onInput UpdateBottomPanelContent
+            , HA.placeholder "Enter your automaton definition or test input..."
+            ]
+            []
+        
+        Running ->
+          div 
+            [ HA.class "execution-output" ]
+            (List.map (\line -> p [ HA.class "output-line" ] [ text line ]) model.executionOutput)
+        
+        Stopped ->
+          div 
+            [ HA.class "execution-output" ]
+            (List.map (\line -> p [ HA.class "output-line" ] [ text line ]) model.executionOutput)
+        
+        StepThrough ->
+          div 
+            [ HA.class "debug-output" ]
+            (List.map (\step -> p [ HA.class "debug-step" ] [ text step ]) model.debugSteps)
+    ]
+
+getBottomPanelTitle : ExecutionState -> String
+getBottomPanelTitle state =
+  case state of
+    Ready -> "Terminal"
+    Running -> "Execution Output"
+    Stopped -> "Execution Stopped"
+    StepThrough -> "Step-through Debug"
+
+getActionButtonClass : ExecutionState -> Msg -> String
+getActionButtonClass currentState buttonAction =
+  let
+    baseClass = "action-button"
+    activeClass = case (currentState, buttonAction) of
+      (Running, RunExecution) -> " action-button--active"
+      (Stopped, StopExecution) -> " action-button--active"
+      (StepThrough, StepThroughExecution) -> " action-button--active"
+      _ -> ""
+  in
+  baseClass ++ activeClass
 
 viewStatusBar : Model -> Html Msg
 viewStatusBar model =
   div 
     [ HA.class "status-bar" ]
-    [ span [] [ text "Ready" ]
+    [ span [] [ text (getStatusMessage model.executionState) ]
     , div 
       [ HA.class "status-bar__section" ]
       [ button
@@ -466,10 +593,16 @@ viewStatusBar model =
       ]
     , span 
       [ HA.class "status-bar__section--right" ]
-      [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions))
-      , text (" Graph area: " ++ String.fromFloat (Tuple.first model.rightTopPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.rightTopPanelDimensions))
-      ]
+      [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions)) ]
     ]
+
+getStatusMessage : ExecutionState -> String
+getStatusMessage state =
+  case state of
+    Ready -> "Ready"
+    Running -> "Running..."
+    Stopped -> "Stopped"
+    StepThrough -> "Debug Mode"
 
 -- SUBSCRIPTIONS
 

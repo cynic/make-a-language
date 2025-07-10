@@ -552,3 +552,132 @@ rect.redo {
   background-color: var(--dracula-purple);
   color: var(--dracula-foreground);
 }
+/* Bottom Panel Header */
+.bottom-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 15px;
+  background-color: var(--dracula-current-line);
+  border-bottom: 1px solid var(--dracula-comment);
+  min-height: 32px;
+}
+
+.bottom-panel__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dracula-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bottom-panel__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.action-button {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--dracula-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+}
+
+.action-button:hover {
+  background-color: var(--dracula-comment);
+  opacity: 1;
+}
+
+.action-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.action-button:disabled:hover {
+  background-color: transparent;
+}
+
+.action-button--active {
+  background-color: var(--dracula-purple);
+  opacity: 1;
+}
+
+.action-button--active:hover {
+  background-color: var(--dracula-purple);
+  filter: brightness(1.1);
+}
+
+/* Bottom Panel Content */
+.bottom-panel__content {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+}
+
+.execution-output {
+  padding: 15px;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.output-line {
+  margin: 0 0 4px 0;
+  color: var(--dracula-foreground);
+}
+
+.output-line:last-child {
+  margin-bottom: 0;
+}
+
+.debug-output {
+  padding: 15px;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.debug-step {
+  margin: 0 0 8px 0;
+  color: var(--dracula-foreground);
+  padding: 4px 8px;
+  background-color: rgba(189, 147, 249, 0.1);
+  border-left: 3px solid var(--dracula-purple);
+  border-radius: 0 4px 4px 0;
+}
+
+.debug-step:last-child {
+  margin-bottom: 0;
+  background-color: rgba(80, 250, 123, 0.1);
+  border-left-color: var(--dracula-green);
+}
+
+/* Execution State Indicators */
+.execution-output::before {
+  content: "📋 Execution Log";
+  display: block;
+  font-size: 11px;
+  color: var(--dracula-comment);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.debug-output::before {
+  content: "🔍 Debug Steps";
+  display: block;
+  font-size: 11px;
+  color: var(--dracula-comment);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
