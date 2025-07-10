@@ -310,3 +310,23 @@ rect.redo {
   background-color: var(--dracula-purple);
   color: var(--dracula-foreground);
 }
+/* Collapsed Splitter */
+.collapsed-vertical-splitter {
+  opacity: 0.6;
+}
+
+.collapsed-vertical-splitter:hover {
+  opacity: 1;
+}
+
+.collapsed-vertical-splitter:hover div {
+  opacity: 1;
+}
+
+/* Status Bar Button */
+button {
+  font-family: inherit;
+}
+
+button:hover {
+}

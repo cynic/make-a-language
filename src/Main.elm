@@ -2,7 +2,7 @@ module Main exposing (..)
 
 import Browser
 import Browser.Events as BE
-import Html.Styled exposing (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text)
+import Html.Styled exposing (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button)
 import Html.Styled.Events exposing (onClick, onInput, onMouseDown)
 import Json.Encode as E
 import Json.Decode as D
@@ -232,7 +232,8 @@ calculateRightTopDimensions model =
     leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth else 0
     statusBarHeight = 30
     bottomPanelHeight = if model.rightBottomPanelOpen then model.rightBottomPanelHeight else 0
-    splitterHeight = if model.rightBottomPanelOpen then 8 else 0
+    -- Always account for some splitter height (either full splitter or collapsed splitter)
+    splitterHeight = if model.rightBottomPanelOpen then 8 else 4
     
     rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth
     rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - splitterHeight
@@ -394,7 +395,7 @@ viewLeftPanel model =
             , p [ HA.style "color" "#6272a4" ] [ text "Extension management would go here." ]
             , div [ HA.style "color" "#44475a" ]
               [ p [] [ text "🔧 Elm Language Support" ]
-              , p [] [ text "🎨 Dracula Theme" ]
+              , p [] [ text "��� Dracula Theme" ]
               , p [] [ text "📝 Auto Format" ]
               ]
             ]
@@ -430,7 +431,8 @@ viewRightSection model =
           , viewRightBottomPanel model
           ]
       else
-        text ""
+        -- Show a minimal splitter when panel is closed
+        viewCollapsedVerticalSplitter
     ]
 
 viewRightTopPanel : Model -> Html Msg
@@ -488,6 +490,31 @@ viewVerticalSplitter =
       []
     ]
 
+viewCollapsedVerticalSplitter : Html Msg
+viewCollapsedVerticalSplitter =
+  div 
+    [ HA.class "collapsed-vertical-splitter"
+    , HA.style "height" "4px"
+    , HA.style "background-color" "#6272a4"
+    , HA.style "cursor" "pointer"
+    , HA.style "display" "flex"
+    , HA.style "align-items" "center"
+    , HA.style "justify-content" "center"
+    , HA.style "transition" "all 0.2s ease"
+    , HA.style "margin" "0 10px"
+    , HA.style "border-radius" "2px"
+    , onClick ToggleBottomPanel
+    ]
+    [ div 
+      [ HA.style "width" "40px"
+      , HA.style "height" "2px"
+      , HA.style "background-color" "#bd93f9"
+      , HA.style "border-radius" "1px"
+      , HA.style "opacity" "0.7"
+      ]
+      []
+    ]
+
 viewRightBottomPanel : Model -> Html Msg
 viewRightBottomPanel model =
   div 
@@ -530,6 +557,25 @@ viewStatusBar model =
     , HA.style "font-weight" "500"
     ]
     [ span [] [ text "Ready" ]
+    , div 
+      [ HA.style "margin-left" "20px"
+      , HA.style "display" "flex"
+      , HA.style "align-items" "center"
+      , HA.style "gap" "10px"
+      ]
+      [ button
+        [ onClick ToggleBottomPanel
+        , HA.style "background-color" (if model.rightBottomPanelOpen then "#282a36" else "transparent")
+        , HA.style "color" (if model.rightBottomPanelOpen then "#f8f8f2" else "#282a36")
+        , HA.style "border" "1px solid #282a36"
+        , HA.style "border-radius" "4px"
+        , HA.style "padding" "2px 8px"
+        , HA.style "font-size" "11px"
+        , HA.style "cursor" "pointer"
+        , HA.style "transition" "all 0.2s ease"
+        ]
+        [ text "Terminal" ]
+      ]
     , span 
       [ HA.style "margin-left" "auto" ]
       [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions)) ]
