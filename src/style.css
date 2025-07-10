@@ -264,7 +264,7 @@ body {
   border: 1px solid var(--dracula-comment);
   border-top-right-radius: 8px;
   margin: 0px;
-  padding: 20px;
+  /* padding: 20px; */
   overflow: hidden;
   position: relative;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);

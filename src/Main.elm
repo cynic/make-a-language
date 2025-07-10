@@ -14,6 +14,7 @@ import Platform.Cmd as Cmd
 import Html.Styled.Attributes as HA
 import List.Extra
 import Automata.DFA
+import Html
 
 {-
 Quality / technology requirements:
@@ -97,7 +98,6 @@ init flags =
 
 type Msg
   = ForceDirectedMsg ForceDirectedGraph.Msg
-  | ViewportResizeTrigger
   | OnResize (Float, Float)
   | SetMouseOver Bool
   | ClickIcon LeftPanelIcon
@@ -121,17 +121,15 @@ update msg model =
       , Cmd.none
       )
 
-    ViewportResizeTrigger ->
-      ( model
-      , Task.perform (\viewport -> OnResize (viewport.viewport.width, viewport.viewport.height)) Browser.Dom.getViewport
-      )
-
     OnResize (width, height) ->
       let
         newModel = { model | mainPanelDimensions = (width, height) }
-        (newRightTopWidth, newRightTopHeight) = calculateRightTopDimensions newModel
+        (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions newModel
       in
-      ( { newModel | rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight) }
+      ( { newModel
+          | rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
+          , forceDirectedGraph = newGraph
+        }
       , Cmd.none
       )
 
@@ -145,19 +143,16 @@ update msg model =
             (False, Nothing)  -- Close panel if same icon clicked
           else
             (True, Just icon)  -- Open panel with new icon
-        (newRightTopWidth, newRightTopHeight) = calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
+        (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
       in
       ( { model 
         | leftPanelOpen = newLeftPanelOpen
         , selectedIcon = newSelectedIcon
         , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
+        , forceDirectedGraph = newGraph
         }
       , Cmd.none
       )
-
-
-
-
 
     StartDraggingHorizontalSplitter ->
       ( { model | isDraggingHorizontalSplitter = True }, Cmd.none )
@@ -183,11 +178,12 @@ update msg model =
           minWidth = 100
           maxWidth = viewportWidth / 2
           newLeftPanelWidth = clamp minWidth maxWidth x
-          (newRightTopWidth, newRightTopHeight) = calculateRightTopDimensions { newModel | leftPanelWidth = newLeftPanelWidth }
+          (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { newModel | leftPanelWidth = newLeftPanelWidth }
         in
         ( { newModel 
           | leftPanelWidth = newLeftPanelWidth
           , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
+          , forceDirectedGraph = newGraph
           }
         , Cmd.none
         )
@@ -198,11 +194,12 @@ update msg model =
           maxHeight = viewportHeight / 2
           statusBarHeight = 30
           newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
-          (newRightTopWidth, newRightTopHeight) = calculateRightTopDimensions { newModel | rightBottomPanelHeight = newBottomHeight }
+          (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { newModel | rightBottomPanelHeight = newBottomHeight }
         in
         ( { newModel 
           | rightBottomPanelHeight = newBottomHeight
           , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
+          , forceDirectedGraph = newGraph
           }
         , Cmd.none
         )
@@ -212,11 +209,12 @@ update msg model =
     ToggleBottomPanel ->
       let
         newBottomPanelOpen = not model.rightBottomPanelOpen
-        (newRightTopWidth, newRightTopHeight) = calculateRightTopDimensions { model | rightBottomPanelOpen = newBottomPanelOpen }
+        (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { model | rightBottomPanelOpen = newBottomPanelOpen }
       in
       ( { model 
         | rightBottomPanelOpen = newBottomPanelOpen
         , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
+        , forceDirectedGraph = newGraph
         }
       , Cmd.none
       )
@@ -230,7 +228,7 @@ update msg model =
     NoOp ->
       ( model, Cmd.none )
 
-calculateRightTopDimensions : Model -> ( Float, Float )
+calculateRightTopDimensions : Model -> ( Float, Float, ForceDirectedGraph.Model )
 calculateRightTopDimensions model =
   let
     (viewportWidth, viewportHeight) = model.mainPanelDimensions
@@ -243,8 +241,20 @@ calculateRightTopDimensions model =
     
     rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth
     rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - splitterHeight
+    newGraph =
+      ForceDirectedGraph.update
+        ( if model.leftPanelOpen then
+            60 + model.leftPanelWidth
+          else
+            60
+        , 1
+        )
+        (ForceDirectedGraph.ViewportUpdated
+          (rightTopWidth, rightTopHeight)
+        )
+        model.forceDirectedGraph
   in
-  ( rightTopWidth, rightTopHeight )
+  ( rightTopWidth, rightTopHeight, newGraph )
 
 -- VIEW
 
@@ -396,14 +406,11 @@ viewRightTopPanel model =
     [ -- For now, display dimensions as requested in comments
       div 
         [ HA.class "right-top-panel__content" ]
-        [ h3 [] [ text "Force Directed Graph View" ]
-        , p [] [ text ("Width: " ++ String.fromFloat width ++ "px") ]
-        , p [] [ text ("Height: " ++ String.fromFloat height ++ "px") ]
-        , p [ HA.class "text--muted" ] 
-          [ text "The ForceDirectedGraph.view would be rendered here." ]
+        [ Html.Styled.fromUnstyled
+            ( ForceDirectedGraph.view model.forceDirectedGraph
+              |> Html.map ForceDirectedMsg
+            )
         ]
-      -- TODO: Integrate ForceDirectedGraph.view here
-      -- Html.Styled.fromUnstyled (ForceDirectedGraph.view model.forceDirectedGraph |> Html.map ForceDirectedMsg)
     ]
 
 viewVerticalSplitter : Html Msg
@@ -459,7 +466,9 @@ viewStatusBar model =
       ]
     , span 
       [ HA.class "status-bar__section--right" ]
-      [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions)) ]
+      [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions))
+      , text (" Graph area: " ++ String.fromFloat (Tuple.first model.rightTopPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.rightTopPanelDimensions))
+      ]
     ]
 
 -- SUBSCRIPTIONS
