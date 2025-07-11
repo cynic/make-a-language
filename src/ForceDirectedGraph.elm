@@ -45,6 +45,8 @@ import Automata.Debugging exposing (debugAutomatonGraph)
 import Automata.DFA exposing (partial_union)
 import Automata.DFA exposing (transitions_from_source)
 import Automata.Data exposing (..)
+import Automata.DFA as DFA
+import Dict exposing (Dict)
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -69,6 +71,10 @@ type Msg
   | Undo
   | Redo
   | StartSplit NodeId
+  | Load String
+  | Run
+  | Step
+  | Stop
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
 
@@ -144,6 +150,9 @@ initializeNode ctx =
 canExecute : Model -> Bool
 canExecute model =
   List.isEmpty model.undoBuffer
+
+getExecutionResult : Model -> Maybe ExecutionResult
+getExecutionResult = .execution
 
 viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
 viewportForces (w, h) _ =
@@ -808,6 +817,7 @@ update offset_amount msg model =
           , simulation = Force.simulation (basic ++ viewport)
           , disconnectedNodes =
               identifyDisconnectedNodes updatedGraph
+          , execution = Nothing
           }
         
         createNewNode : NodeId -> Connection -> Float -> Float -> Model
@@ -991,6 +1001,27 @@ update offset_amount msg model =
             , userGraph = h
             , disconnectedNodes = identifyDisconnectedNodes h
           }
+    
+    Load s ->
+      -- first, can we?
+      case model.undoBuffer of
+        [] ->
+          { model | execution = Just <| DFA.stepThroughInitial s model.userGraph }
+        _ ->
+          model -- nothing to do!
+    
+    Run ->
+      { model
+        | execution = Maybe.map (DFA.run model.userGraph) model.execution
+      }
+
+    Step ->
+      { model
+        | execution = Maybe.map (DFA.step model.userGraph >> Debug.log "Here comes the hot-stepper") model.execution
+      }
+
+    Stop ->
+      { model | execution = Nothing }
 
 offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
@@ -1114,26 +1145,27 @@ textChar ch =
     _ ->
       String.fromChar ch
 
-transitionToTextSpan : (Char, Int) -> Svg msg
-transitionToTextSpan transition =
+transitionToTextSpan : (Char, Int) -> (Char -> List String) -> Svg msg
+transitionToTextSpan transition otherClasses =
   case transition of
     (ch, 0) ->
       tspan
-        [ class [ "nonfinal" ]
-        ]
-        [ text <| textChar ch
-        ]
+        [ class <| "nonfinal" :: otherClasses ch ]
+        [ text <| textChar ch ]
     (ch, _) ->
       tspan
-        [ class [ "final" ]
-        ]
-        [ text <| textChar ch
-        ]
+        [ class <| "final" :: otherClasses ch ]
+        [ text <| textChar ch ]
 
 connectionToSvgText : Connection -> List (Svg msg)
 connectionToSvgText =
   Set.toList
-  >> List.map transitionToTextSpan
+  >> List.map (\t -> transitionToTextSpan t (\_ -> []))
+
+connectionToSvgTextHighlightingChars : Connection -> (Char -> List String) -> List (Svg msg)
+connectionToSvgTextHighlightingChars conn highlightFunction =
+  Set.toList conn
+  |> List.map (\t -> transitionToTextSpan t highlightFunction)
 
 paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
 paletteColors =
@@ -1317,9 +1349,45 @@ path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
     , target_connection_point = shorten_target
     }
 
+executionData : ExecutionResult -> Maybe ExecutionData
+executionData r =
+  let
+    getData s =
+      case s of
+        Accepted d -> d
+        Rejected d -> d
+        RequestedNodeDoesNotExist d -> d
+        NoPossibleTransition d -> d
+  in
+  case r of
+    InternalError -> Nothing
+    EndOfInput s -> Just <| getData s
+    EndOfComputation s -> Just <| getData s
+    CanContinue s -> Just <| getData s
 
-viewLink : Model -> Edge Connection -> Svg Msg
-viewLink ({ userGraph } as model) edge =
+executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (Set Char)
+executing_edges result =
+  let
+    trace data acc =
+      case data.transitionsTaken of
+        [] ->
+          acc
+        (src, (ch, _))::tail ->
+          trace
+            { data | transitionsTaken = tail, currentNode = src }
+            (Dict.update (src, data.currentNode)
+              ( Maybe.map (Set.insert ch)
+                >> Maybe.orElse (Just <| Set.singleton ch)
+              )
+              acc
+            )
+  in
+    executionData result
+    |> Maybe.map (\data -> trace data Dict.empty)
+    |> Maybe.withDefault Dict.empty
+
+viewLink : Model -> Dict (NodeId, NodeId) (Set Char) -> Edge Connection -> Svg Msg
+viewLink ({ userGraph } as model) executing edge =
   let
     source =
       Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
@@ -1330,6 +1398,19 @@ viewLink ({ userGraph } as model) edge =
     positioning =
       path_between source target cardinality 7 7
     font_size = 16.0 -- this is the default, if not otherwise set
+    labelText =
+      case Dict.get (edge.from, edge.to) executing of
+        Nothing ->
+          connectionToSvgText edge.label
+        Just to_highlight ->
+          connectionToSvgTextHighlightingChars
+            edge.label
+            (\c ->
+              if Set.member c to_highlight then
+                [ "executed" ]
+              else
+                []
+            )
   in
     g
       []
@@ -1346,7 +1427,13 @@ viewLink ({ userGraph } as model) edge =
           , d positioning.pathString
           , markerEnd "url(#arrowhead)"
           , noFill
-          , class [ "link" ]
+          , class
+              [ "link"
+              , if Dict.member (edge.from, edge.to) executing then
+                  "executed"
+                else
+                  ""
+              ]
           ]
           [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , text_
@@ -1361,7 +1448,8 @@ viewLink ({ userGraph } as model) edge =
           , class [ "link" ]
           , onClick (EditTransition edge.from edge.to edge.label)
           ]
-          ( title [] [ text "Click to modify" ] :: connectionToSvgText edge.label )
+          ( title [] [ text "Click to modify" ] :: labelText 
+          )
       -- for debugging the paths.
       -- , circle
       --     [ cx <| positioning.control_point.x
@@ -1390,7 +1478,7 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, currentOperation, disconnectedNodes } { label, id } =
+viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, id } =
   let
     selectableClass =
       case currentOperation of
@@ -1403,7 +1491,16 @@ viewNode { userGraph, currentOperation, disconnectedNodes } { label, id } =
           if Set.member id disconnectedNodes then
             "disconnected"
           else
-            ""
+            execution
+            |> Maybe.andThen executionData
+            |> Maybe.map
+              (\{ currentNode } ->
+                if id == currentNode then
+                  "current-node"
+                else
+                  ""
+              )
+            |> Maybe.withDefault ""
     graphNode =
       Graph.get id userGraph.graph
     splittable =
@@ -2073,7 +2170,11 @@ view model =
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.userGraph.graph
         |> List.filter (\edge -> not (Set.isEmpty edge.label))
-        |> List.map (viewLink model)
+        |> List.map
+          (viewLink
+            model
+            ( Maybe.map executing_edges model.execution
+              |> Maybe.withDefault Dict.empty))
         |> g [ class [ "links" ] ]
       , Graph.nodes model.userGraph.graph
         |> List.map (viewNode model)

@@ -417,6 +417,11 @@ body {
   cursor: pointer;
 }
 
+.state-node.current-node {
+  animation: pulse 1.25s ease-in-out infinite;
+  fill: var(--dracula-yellow);
+}
+
 .state-node.selected {
   fill: var(--dracula-pink);
 }
@@ -480,6 +485,14 @@ text tspan.nonfinal {
   fill: var(--dracula-comment);
   stroke-width: 4;
   stroke: var(--dracula-foreground);
+}
+
+text tspan.executed {
+  stroke: var(--dracula-green) !important;
+}
+
+path.link.executed {
+  stroke: var(--dracula-green) !important;
 }
 
 path.link + text:hover tspan {
@@ -639,7 +652,7 @@ rect.redo {
   margin-bottom: 0;
 }
 
-.debug-output {
+.debug-output, .notready-output {
   padding: 15px;
   font-family: monospace;
   font-size: 13px;
@@ -674,6 +687,16 @@ rect.redo {
 
 .debug-output::before {
   content: "🔍 Debug Steps";
+  display: block;
+  font-size: 11px;
+  color: var(--dracula-comment);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.notready-output::before {
+  content: "⚠️ Cannot execute";
   display: block;
   font-size: 11px;
   color: var(--dracula-comment);

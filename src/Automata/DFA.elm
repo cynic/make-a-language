@@ -48,14 +48,14 @@ oneTransition g executionState =
                   if Set.member (h, 1) conn then
                     Just <| Accepted
                       { data
-                        | transitionsTaken = (h, 1)::data.transitionsTaken
+                        | transitionsTaken = (data.currentNode, (h, 1))::data.transitionsTaken
                         , remainingData = t
                         , currentNode = k
                       }
                   else if Set.member (h, 0) conn then
                     Just <| Rejected
                       { data
-                        | transitionsTaken = (h, 0)::data.transitionsTaken
+                        | transitionsTaken = (data.currentNode, (h, 0))::data.transitionsTaken
                         , remainingData = t
                         , currentNode = k
                       }
@@ -78,7 +78,7 @@ oneTransition g executionState =
 
 step : AutomatonGraph a -> ExecutionResult -> ExecutionResult
 step g executionResult =
-  case executionResult of
+  case executionResult |> Debug.log "Step with" of
     CanContinue executionState ->
       case oneTransition g executionState of
         Accepted ({ remainingData } as d) ->
@@ -101,9 +101,9 @@ step g executionResult =
               -- Therefore, I must take at least one TRANSITION to
               -- accept.  Otherwise—by default—I will reject.
               EndOfComputation (Rejected d)
-            (_, 1)::_ ->
+            (_, (_, 1))::_ ->
               EndOfComputation (Accepted d)
-            (_, _)::_ -> -- i.e. (_, 0)::_
+            _::_ -> -- i.e. (_, (_, 0))::_
               EndOfComputation (Rejected d)
     EndOfInput _ ->
       executionResult
@@ -112,15 +112,8 @@ step g executionResult =
     InternalError ->
       executionResult
 
-stepThroughInitial : String -> AutomatonGraph a -> ExecutionResult
-stepThroughInitial s g =
-  step g
-    (CanContinue <| Rejected <|
-      ExecutionData [] (String.toList s) g.root
-    )
-
-run : String -> AutomatonGraph a -> ExecutionResult
-run s g =
+run : AutomatonGraph a -> ExecutionResult -> ExecutionResult
+run g r =
   let
     execute result =
       case step g result of
@@ -129,7 +122,15 @@ run s g =
         x ->
           x
   in
-    execute (stepThroughInitial s g)
+    execute r
+
+stepThroughInitial : String -> AutomatonGraph a -> ExecutionResult
+stepThroughInitial s g =
+  step g
+    (CanContinue <| Rejected <|
+      ExecutionData [] (String.toList s) g.root
+    )
+
 
 mkConn : String -> Connection
 mkConn s =

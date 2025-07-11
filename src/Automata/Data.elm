@@ -48,7 +48,7 @@ type alias ExtDFA label =
   , unusedId : NodeId
   }
 type alias ExecutionData =
-  { transitionsTaken : List (Char, Int)
+  { transitionsTaken : List (NodeId, (Char, Int)) -- (src, transition)
   , remainingData : List Char
   , currentNode : NodeId
   }

@@ -2,12 +2,12 @@ module Main exposing (..)
 
 import Browser
 import Browser.Events as BE
-import Html.Styled exposing (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button)
+import Html.Styled exposing (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button, strong)
 import Html.Styled.Events exposing (onClick, onInput, onMouseDown)
 import Json.Encode as E
 import Json.Decode as D
-import ForceDirectedGraph
-import Automata.Data exposing (AutomatonGraph)
+import ForceDirectedGraph as FDG
+import Automata.Data exposing (..)
 import Browser.Dom
 import Task
 import Platform.Cmd as Cmd
@@ -15,6 +15,7 @@ import Html.Styled.Attributes as HA
 import List.Extra
 import Automata.DFA
 import Html
+import Maybe.Extra
 
 {-
 Quality / technology requirements:
@@ -48,11 +49,12 @@ type LeftPanelIcon
 
 type ExecutionState
   = Ready
+  | NotReady
   | Running
   | StepThrough
 
 type alias Model =
-  { forceDirectedGraph : ForceDirectedGraph.Model
+  { forceDirectedGraph : FDG.Model
   , mainPanelDimensions : ( Float, Float )
   , leftPanelOpen : Bool
   , selectedIcon : Maybe LeftPanelIcon
@@ -86,7 +88,7 @@ init flags =
     initialRightTopWidth = width - 60  -- 60px for icon bar
     initialRightTopHeight = height - 30 - 100  -- 30px status bar, 100px bottom panel
   in
-    ( { forceDirectedGraph = ForceDirectedGraph.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
+    ( { forceDirectedGraph = FDG.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
       , mainPanelDimensions = ( width, height )
       , leftPanelOpen = False
       , selectedIcon = Nothing
@@ -108,7 +110,7 @@ init flags =
 -- UPDATE
 
 type Msg
-  = ForceDirectedMsg ForceDirectedGraph.Msg
+  = ForceDirectedMsg FDG.Msg
   | OnResize (Float, Float)
   | SetMouseOver Bool
   | ClickIcon LeftPanelIcon
@@ -129,7 +131,7 @@ update msg model =
   case msg of
     ForceDirectedMsg fdMsg ->
       let
-        newFdModel = ForceDirectedGraph.update (0, 0) fdMsg model.forceDirectedGraph
+        newFdModel = FDG.update (0, 0) fdMsg model.forceDirectedGraph
       in
       ( { model | forceDirectedGraph = newFdModel }
       , Cmd.none
@@ -240,45 +242,63 @@ update msg model =
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
 
     RunExecution ->
-      ( { model 
-        | executionState = Running
-        , executionOutput = 
-          [ "Starting execution..."
-          , "Parsing automaton..."
-          , "Validating transitions..."
-          , "Execution in progress..."
-          ]
-        }
-      , Cmd.none
-      )
+      if FDG.canExecute model.forceDirectedGraph then
+        ( { model 
+          | executionState = Running
+          , forceDirectedGraph =
+              fdg_update model (FDG.Load model.bottomPanelContent)
+              |> \m -> fdg_update { model | forceDirectedGraph = m } FDG.Run
+          }
+        , Cmd.none
+        )
+      else
+        ( { model | executionState = NotReady }
+        , Cmd.none
+        )
 
     StopExecution ->
       ( { model 
         | executionState = Ready
-        , executionOutput = model.executionOutput ++ [ "Execution stopped by user." ]
+        , forceDirectedGraph = fdg_update model FDG.Stop
         }
       , Cmd.none
       )
 
     StepThroughExecution ->
-      ( { model 
-        | executionState = StepThrough
-        , debugSteps = 
-          [ "Step 1: Initialize state machine"
-          , "Step 2: Read input symbol 'a'"
-          , "Step 3: Transition from q0 to q1"
-          , "Step 4: Read input symbol 'b'"
-          , "Step 5: Transition from q1 to q2"
-          , "Current state: q2 (accepting)"
-          ]
-        }
-      , Cmd.none
-      )
+      if FDG.canExecute model.forceDirectedGraph then
+        ( { model 
+          | executionState = StepThrough
+          , forceDirectedGraph =
+              if model.executionState /= StepThrough then
+                -- this is the first click of stepping, so do a load first.
+                fdg_update model (FDG.Load model.bottomPanelContent)
+              else
+                fdg_update model FDG.Step
+          }
+        , Cmd.none
+        )
+      else
+        ( { model | executionState = NotReady }
+        , Cmd.none
+        )
 
     NoOp ->
       ( model, Cmd.none )
 
-calculateRightTopDimensions : Model -> ( Float, Float, ForceDirectedGraph.Model )
+fdg_update : Model -> FDG.Msg -> FDG.Model
+fdg_update model updateMessage =
+  FDG.update
+    ( if model.leftPanelOpen then
+        60 + model.leftPanelWidth
+      else
+        60
+    , 1
+    )
+    updateMessage
+    model.forceDirectedGraph
+
+
+calculateRightTopDimensions : Model -> ( Float, Float, FDG.Model )
 calculateRightTopDimensions model =
   let
     (viewportWidth, viewportHeight) = model.mainPanelDimensions
@@ -292,17 +312,9 @@ calculateRightTopDimensions model =
     rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth
     rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - splitterHeight
     newGraph =
-      ForceDirectedGraph.update
-        ( if model.leftPanelOpen then
-            60 + model.leftPanelWidth
-          else
-            60
-        , 1
-        )
-        (ForceDirectedGraph.ViewportUpdated
-          (rightTopWidth, rightTopHeight)
-        )
-        model.forceDirectedGraph
+      fdg_update
+        model
+        (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
   in
   ( rightTopWidth, rightTopHeight, newGraph )
 
@@ -457,7 +469,7 @@ viewRightTopPanel model =
       div 
         [ HA.class "right-top-panel__content" ]
         [ Html.Styled.fromUnstyled
-            ( ForceDirectedGraph.view model.forceDirectedGraph
+            ( FDG.view model.forceDirectedGraph
               |> Html.map ForceDirectedMsg
             )
         ]
@@ -527,6 +539,62 @@ viewBottomPanelHeader model =
       ]
     ]
 
+executionText : Model -> Html a
+executionText { forceDirectedGraph, bottomPanelContent } =
+  case forceDirectedGraph.execution of
+    Nothing ->
+      text "" -- eheh?! I should never be here!
+    Just result ->
+      case result of
+        EndOfInput (Accepted _) ->
+          p
+            [ HA.class "output-line" ]
+            [ text "✅ " 
+            , strong [] [ text bottomPanelContent ]
+            , text " accepted."
+            ]
+        EndOfInput (Rejected _) ->
+          p
+            [ HA.class "output-line" ]
+            [ text "❌ " 
+            , strong [] [ text bottomPanelContent ]
+            , text " rejected."
+            ]
+        EndOfComputation (Accepted d) ->
+          p
+            [ HA.class "output-line" ]
+            [ text "⛓️ Full input ("
+            , strong [] [ text bottomPanelContent ]
+            , text ") could not be handled. Computation terminated in an '✅ Accepting' state."
+            ]
+        EndOfComputation (Rejected d) ->
+          p
+            [ HA.class "output-line" ]
+            [ text "⛓️ Full input ("
+            , strong [] [ text bottomPanelContent ]
+            , text ") could not be handled. Computation terminated in a '❌ Rejecting' state."
+            ]
+        CanContinue (Accepted { transitionsTaken, remainingData }) ->
+          p
+            [ HA.class "output-line" ]
+            [ text <| "🟢 Continuing execution; " ++ String.fromInt (List.length transitionsTaken)
+                ++ " paths taken, " ++ String.fromInt (List.length remainingData)
+                ++ " characters remain to be matched.  Currently in an '✅ Accepting' state."
+            ]
+        CanContinue (Rejected { transitionsTaken, remainingData }) ->
+          p
+            [ HA.class "output-line" ]
+            [ text <| "🟢 Continuing execution; " ++ String.fromInt (List.length transitionsTaken)
+                ++ " paths taken, " ++ String.fromInt (List.length remainingData)
+                ++ " characters remain to be matched.  Currently in a '❌ Rejecting' state."
+            ]
+        x ->
+          p
+            [ HA.class "output-line" ]
+            [ text <| "🦗 Bug!  " ++ Debug.toString x ++ ".  You should never see this message.  I need to figure out what just happened here…"
+            ]
+
+
 viewBottomPanelContent : Model -> Html Msg
 viewBottomPanelContent model =
   div 
@@ -537,19 +605,35 @@ viewBottomPanelContent model =
             [ HA.class "right-bottom-panel__textarea"
             , HA.value model.bottomPanelContent
             , onInput UpdateBottomPanelContent
-            , HA.placeholder "Enter your automaton definition or test input..."
+            , HA.placeholder "Enter your test input here"
+            , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
             ]
             []
+
+        NotReady ->
+          div
+            []
+            [ div 
+                [ HA.class "notready-output" ]
+                [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
+            , textarea
+                [ HA.class "right-bottom-panel__textarea"
+                , HA.value model.bottomPanelContent
+                , onInput UpdateBottomPanelContent
+                , HA.placeholder "Enter your test input here"
+                , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+                ]
+                []
+            ]
         
         Running ->
           div 
             [ HA.class "execution-output" ]
-            (List.map (\line -> p [ HA.class "output-line" ] [ text line ]) model.executionOutput)
-                
+            [ executionText model ]
         StepThrough ->
           div 
             [ HA.class "debug-output" ]
-            (List.map (\step -> p [ HA.class "debug-step" ] [ text step ]) model.debugSteps)
+            [ executionText model ]
     ]
 
 getBottomPanelTitle : ExecutionState -> String
@@ -558,6 +642,7 @@ getBottomPanelTitle state =
     Ready -> "Ready"
     Running -> "Running" -- show execution output
     StepThrough -> "Step-through Debug"
+    NotReady -> "Cannot execute (yet)"
 
 getActionButtonClass : ExecutionState -> Msg -> String
 getActionButtonClass currentState buttonAction =
@@ -594,13 +679,14 @@ getStatusMessage state =
     Ready -> "Ready"
     Running -> "Running..."
     StepThrough -> "Debug Mode"
+    NotReady -> "Uncommitted"
 
 -- SUBSCRIPTIONS
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch
-    [ ForceDirectedGraph.subscriptions
+    [ FDG.subscriptions
         model.rightTopPanelDimensions
         model.forceDirectedGraph
       |> Sub.map ForceDirectedMsg
