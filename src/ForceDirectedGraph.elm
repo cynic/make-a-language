@@ -1017,7 +1017,7 @@ update offset_amount msg model =
 
     Step ->
       { model
-        | execution = Maybe.map (DFA.step model.userGraph >> Debug.log "Here comes the hot-stepper") model.execution
+        | execution = Maybe.map (DFA.step model.userGraph) model.execution
       }
 
     Stop ->

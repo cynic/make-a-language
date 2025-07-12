@@ -288,6 +288,8 @@ body {
 }
 
 .right-bottom-panel {
+  display:flex;
+  flex-direction: row;
   background-color: var(--dracula-background);
   border: 1px solid var(--dracula-comment);
   overflow: auto;
@@ -568,7 +570,9 @@ rect.redo {
 /* Bottom Panel Header */
 .bottom-panel__header {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
   align-items: center;
   padding: 8px 15px;
   background-color: var(--dracula-current-line);
@@ -582,11 +586,16 @@ rect.redo {
   color: var(--dracula-foreground);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  height: 100%;
+  flex: 0 1;
+  padding: 10px 0px 5px 15px;
 }
 
 .bottom-panel__actions {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 5px;
+  flex: 0 0;
 }
 
 .action-button {
@@ -600,7 +609,7 @@ rect.redo {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 24px;
   transition: all 0.2s ease;
   opacity: 0.7;
 }
@@ -632,6 +641,8 @@ rect.redo {
 /* Bottom Panel Content */
 .bottom-panel__content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 0;
 }
@@ -686,7 +697,7 @@ rect.redo {
 }
 
 .debug-output::before {
-  content: "🔍 Debug Steps";
+  content: "🔍 Current step";
   display: block;
   font-size: 11px;
   color: var(--dracula-comment);

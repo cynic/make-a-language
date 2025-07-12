@@ -16,6 +16,7 @@ import List.Extra
 import Automata.DFA
 import Html
 import Maybe.Extra
+import Css
 
 {-
 Quality / technology requirements:
@@ -50,7 +51,7 @@ type LeftPanelIcon
 type ExecutionState
   = Ready
   | NotReady
-  | Running
+  | ExecutionComplete
   | StepThrough
 
 type alias Model =
@@ -86,7 +87,7 @@ init flags =
       |> Result.withDefault ( 800, 600 )
     
     initialRightTopWidth = width - 60  -- 60px for icon bar
-    initialRightTopHeight = height - 30 - 100  -- 30px status bar, 100px bottom panel
+    initialRightTopHeight = height - 215  -- 30px status bar + 185px bottom panel
   in
     ( { forceDirectedGraph = FDG.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
       , mainPanelDimensions = ( width, height )
@@ -94,7 +95,7 @@ init flags =
       , selectedIcon = Nothing
       , leftPanelWidth = 250
       , rightBottomPanelOpen = True
-      , rightBottomPanelHeight = 128
+      , rightBottomPanelHeight = 185
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
       , bottomPanelContent = "" -- "// Welcome to the automaton editor\n// Type your code here..."
       , isDraggingHorizontalSplitter = False
@@ -122,7 +123,7 @@ type Msg
   | UpdateBottomPanelContent String
   | UpdateRightTopDimensions Float Float
   | RunExecution
-  | StopExecution
+  | ResetExecution
   | StepThroughExecution
   | NoOp
 
@@ -133,7 +134,17 @@ update msg model =
       let
         newFdModel = FDG.update (0, 0) fdMsg model.forceDirectedGraph
       in
-      ( { model | forceDirectedGraph = newFdModel }
+      ( { model
+          | forceDirectedGraph = newFdModel
+          , executionState =
+              if FDG.canExecute newFdModel then
+                if model.executionState == NotReady then
+                  Ready
+                else
+                  model.executionState
+              else
+                NotReady
+        }
       , Cmd.none
       )
 
@@ -206,7 +217,7 @@ update msg model =
       else if model.isDraggingVerticalSplitter then
         let
           (_, viewportHeight) = model.mainPanelDimensions
-          minHeight = 128  -- 8em @ 16px font ≈ 96px
+          minHeight = 185  -- 8em @ 16px font ≈ 128px
           maxHeight = viewportHeight / 2
           statusBarHeight = 30
           newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
@@ -242,21 +253,21 @@ update msg model =
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
 
     RunExecution ->
-      if FDG.canExecute model.forceDirectedGraph then
-        ( { model 
-          | executionState = Running
-          , forceDirectedGraph =
-              fdg_update model (FDG.Load model.bottomPanelContent)
-              |> \m -> fdg_update { model | forceDirectedGraph = m } FDG.Run
-          }
-        , Cmd.none
-        )
-      else
-        ( { model | executionState = NotReady }
-        , Cmd.none
-        )
+      -- for this and StepThrough, if the FDG.canExecute is false, then
+      -- the 'Run' and 'Step' buttons on the UI will be disabled.
+      -- Therefore, I don't need to handle those cases here, and can
+      -- assume that when I get this message, the precondition of
+      -- a 'Ready' state has already been met.
+      ( { model 
+        | executionState = ExecutionComplete
+        , forceDirectedGraph =
+            fdg_update model (FDG.Load model.bottomPanelContent)
+            |> \m -> fdg_update { model | forceDirectedGraph = m } FDG.Run
+        }
+      , Cmd.none
+      )
 
-    StopExecution ->
+    ResetExecution ->
       ( { model 
         | executionState = Ready
         , forceDirectedGraph = fdg_update model FDG.Stop
@@ -265,22 +276,28 @@ update msg model =
       )
 
     StepThroughExecution ->
-      if FDG.canExecute model.forceDirectedGraph then
-        ( { model 
-          | executionState = StepThrough
-          , forceDirectedGraph =
-              if model.executionState /= StepThrough then
-                -- this is the first click of stepping, so do a load first.
-                fdg_update model (FDG.Load model.bottomPanelContent)
-              else
-                fdg_update model FDG.Step
-          }
-        , Cmd.none
-        )
-      else
-        ( { model | executionState = NotReady }
-        , Cmd.none
-        )
+      let
+        newFdModel =
+          if model.executionState /= StepThrough then
+            -- this is the first click of stepping, so do a load first.
+            fdg_update model (FDG.Load model.bottomPanelContent)
+          else
+            fdg_update model FDG.Step
+      in
+      ( { model 
+        | executionState =
+            case newFdModel.execution of
+              Nothing ->
+                model.executionState
+              Just (CanContinue _) ->
+                StepThrough
+              _ ->
+                ExecutionComplete
+        , forceDirectedGraph =
+            newFdModel
+        }
+      , Cmd.none
+      )
 
     NoOp ->
       ( model, Cmd.none )
@@ -379,13 +396,43 @@ viewLeftPanel model =
     [ case model.selectedIcon of
         Just FileIcon ->
           div []
-            [ h3 [] [ text "File Explorer" ]
-            , p [] [ text "File management functionality would go here." ]
+            [ h3 [] [ text "Graphs" ]
+            -- , p [] [ text "File management functionality would go here." ]
             , ul []
-              [ li [] [ text "📄 main.elm" ]
-              , li [] [ text "📄 style.css" ]
-              , li [] [ text "📁 src/" ]
-              , li [] [ text "📁 tests/" ]
+              [ li
+                [ HA.css
+                    [ Css.display Css.flex_ ]
+                ]
+                [ span
+                    [ HA.css
+                      [ Css.flex3 Css.zero (Css.num 1) (Css.pct 100)
+                      , Css.whiteSpace Css.nowrap
+                      , Css.overflow Css.hidden
+                      , Css.textOverflow Css.ellipsis
+                      ]
+                    ]
+                    [ text "Unsaved graph" ]
+                , span
+                    [ HA.css
+                        [ Css.flex2 Css.zero Css.zero
+                        , Css.cursor Css.pointer
+                        , Css.marginRight (Css.px 8)
+                        ]
+                    , HA.title "Edit graph name"
+                    ]
+                    [ text "🖋️" ]
+                , span
+                    [ HA.css
+                        [ Css.flex2 Css.zero Css.zero
+                        , Css.cursor Css.pointer
+                        ]
+                    , HA.title "Save graph"
+                    ]
+                    [ text "💾" ]
+                ]
+              -- , li [] [ text "📄 style.css" ]
+              -- , li [] [ text "📁 src/" ]
+              -- , li [] [ text "📁 tests/" ]
               ]
             ]
         
@@ -514,26 +561,26 @@ viewBottomPanelHeader model =
   div 
     [ HA.class "bottom-panel__header" ]
     [ div 
-      [ HA.class "bottom-panel__title" ]
-      [ text (getBottomPanelTitle model.executionState) ]
-    , div 
       [ HA.class "bottom-panel__actions" ]
       [ button
         [ HA.class (getActionButtonClass model.executionState RunExecution)
         , onClick RunExecution
-        , HA.disabled (model.executionState == Running)
+        , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
+        , HA.title "Run"
         ]
         [ text "▶️" ]
       , button
-        [ HA.class (getActionButtonClass model.executionState StopExecution)
-        , onClick StopExecution
-        , HA.disabled (model.executionState == Ready)
+        [ HA.class (getActionButtonClass model.executionState ResetExecution)
+        , onClick ResetExecution
+        , HA.disabled (model.executionState == Ready || model.executionState == NotReady)
+        , HA.title "Reset"
         ]
         [ text "⏹️" ]
       , button
         [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
         , onClick StepThroughExecution
-        , HA.disabled (model.executionState == Running)
+        , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
+        , HA.title "Step-through"
         ]
         [ text "⏭️" ]
       ]
@@ -599,7 +646,10 @@ viewBottomPanelContent : Model -> Html Msg
 viewBottomPanelContent model =
   div 
     [ HA.class "bottom-panel__content" ]
-    [ case model.executionState of
+    [  div 
+      [ HA.class "bottom-panel__title" ]
+      [ text (getBottomPanelTitle model.executionState) ]
+    , case model.executionState of
         Ready ->
           textarea 
             [ HA.class "right-bottom-panel__textarea"
@@ -626,7 +676,7 @@ viewBottomPanelContent model =
                 []
             ]
         
-        Running ->
+        ExecutionComplete ->
           div 
             [ HA.class "execution-output" ]
             [ executionText model ]
@@ -639,17 +689,17 @@ viewBottomPanelContent model =
 getBottomPanelTitle : ExecutionState -> String
 getBottomPanelTitle state =
   case state of
-    Ready -> "Ready"
-    Running -> "Running" -- show execution output
-    StepThrough -> "Step-through Debug"
-    NotReady -> "Cannot execute (yet)"
+    Ready -> "Testing // Ready"
+    ExecutionComplete -> "Testing // Execution complete" -- show execution output
+    StepThrough -> "Testing // Step-through"
+    NotReady -> "Testing // Not ready"
 
 getActionButtonClass : ExecutionState -> Msg -> String
 getActionButtonClass currentState buttonAction =
   let
     baseClass = "action-button"
     activeClass = case (currentState, buttonAction) of
-      (Running, RunExecution) -> " action-button--active"
+      (ExecutionComplete, RunExecution) -> " action-button--active"
       (StepThrough, StepThroughExecution) -> " action-button--active"
       _ -> ""
   in
@@ -677,7 +727,7 @@ getStatusMessage : ExecutionState -> String
 getStatusMessage state =
   case state of
     Ready -> "Ready"
-    Running -> "Running..."
+    ExecutionComplete -> "Running..."
     StepThrough -> "Debug Mode"
     NotReady -> "Uncommitted"
 

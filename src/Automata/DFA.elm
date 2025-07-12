@@ -2017,6 +2017,33 @@ fromAutomatonGraph =
     >> fromAutomatonGraphHelper
     -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
+serializeAutomatonGraph : AutomatonGraph a -> String
+serializeAutomatonGraph g =
+  Graph.edges g.graph
+  |> List.sortWith
+    (\a b ->
+      if a.from == g.root && b.from == g.root then EQ
+      else if a.from == g.root then LT
+      else if b.from == g.root then GT
+      else compare a.from b.from
+    )
+  |> List.map
+    (\{from, to, label} ->
+      String.fromInt from ++ "-" ++
+        ( Set.toList label
+          |> List.map
+              (\(ch, f) ->
+                  if f == 0 then
+                    String.fromChar ch
+                  else
+                    "!" ++ String.fromChar ch
+              )
+          |> String.concat
+        ) ++
+        String.fromInt to
+    )
+  |> String.join " "
+
 connectionToString : MConnection -> String
 connectionToString =
   Set.map String.fromChar
