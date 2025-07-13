@@ -17,6 +17,7 @@ import Automata.DFA
 import Html
 import Maybe.Extra
 import Css
+import Platform.Cmd as Cmd
 
 {-
 Quality / technology requirements:
@@ -54,6 +55,10 @@ type ExecutionState
   | ExecutionComplete
   | StepThrough
 
+type BottomPanel
+  = AddTestPanel
+  | EditDescriptionPanel
+
 type alias Model =
   { forceDirectedGraph : FDG.Model
   , mainPanelDimensions : ( Float, Float )
@@ -63,13 +68,13 @@ type alias Model =
   , rightBottomPanelOpen : Bool
   , rightBottomPanelHeight : Float
   , rightTopPanelDimensions : ( Float, Float )
-  , bottomPanelContent : String
+  , testPanelContent : String
   , isDraggingHorizontalSplitter : Bool
   , isDraggingVerticalSplitter : Bool
   , mousePosition : ( Float, Float )
   , executionState : ExecutionState
-  , executionOutput : List String
-  , debugSteps : List String
+  , selectedBottomPanel : BottomPanel
+  , descriptionPanelContent : String
   }
 
 decodeDimensions : D.Decoder ( Float, Float )
@@ -97,13 +102,13 @@ init flags =
       , rightBottomPanelOpen = True
       , rightBottomPanelHeight = 185
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
-      , bottomPanelContent = "" -- "// Welcome to the automaton editor\n// Type your code here..."
+      , testPanelContent = "" -- "// Welcome to the automaton editor\n// Type your code here..."
       , isDraggingHorizontalSplitter = False
       , isDraggingVerticalSplitter = False
       , mousePosition = ( 0, 0 )
       , executionState = Ready
-      , executionOutput = []
-      , debugSteps = []
+      , selectedBottomPanel = AddTestPanel
+      , descriptionPanelContent = ""
       }
     , Task.perform (\_ -> NoOp) (Task.succeed ())
     )
@@ -120,12 +125,14 @@ type Msg
   | StopDragging
   | MouseMove Float Float
   | ToggleBottomPanel
-  | UpdateBottomPanelContent String
+  | UpdateTestPanelContent String
+  | UpdateDescriptionPanelContent String
   | UpdateRightTopDimensions Float Float
   | RunExecution
   | ResetExecution
   | StepThroughExecution
   | SaveTest
+  | SelectBottomPanel BottomPanel
   | NoOp
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -247,8 +254,11 @@ update msg model =
       , Cmd.none
       )
 
-    UpdateBottomPanelContent content ->
-      ( { model | bottomPanelContent = content }, Cmd.none )
+    UpdateTestPanelContent content ->
+      ( { model | testPanelContent = content }, Cmd.none )
+
+    UpdateDescriptionPanelContent content ->
+      ( { model | descriptionPanelContent = content }, Cmd.none )
 
     UpdateRightTopDimensions width height ->
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
@@ -262,7 +272,7 @@ update msg model =
       ( { model 
         | executionState = ExecutionComplete
         , forceDirectedGraph =
-            fdg_update model (FDG.Load model.bottomPanelContent)
+            fdg_update model (FDG.Load model.testPanelContent)
             |> \m -> fdg_update { model | forceDirectedGraph = m } FDG.Run
         }
       , Cmd.none
@@ -281,7 +291,7 @@ update msg model =
         newFdModel =
           if model.executionState /= StepThrough then
             -- this is the first click of stepping, so do a load first.
-            fdg_update model (FDG.Load model.bottomPanelContent)
+            fdg_update model (FDG.Load model.testPanelContent)
           else
             fdg_update model FDG.Step
       in
@@ -297,6 +307,11 @@ update msg model =
         , forceDirectedGraph =
             newFdModel
         }
+      , Cmd.none
+      )
+
+    SelectBottomPanel p ->
+      ( { model | selectedBottomPanel = p }
       , Cmd.none
       )
 
@@ -560,45 +575,66 @@ viewRightBottomPanel model =
     , viewBottomPanelContent model
     ]
 
+viewTestPanelButtons : Model -> List (Html Msg)
+viewTestPanelButtons model =
+  [ button
+    [ HA.class (getActionButtonClass model.executionState RunExecution)
+    , onClick RunExecution
+    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
+    , HA.title "Run"
+    ]
+    [ text "▶️" ]
+  , button
+    [ HA.class (getActionButtonClass model.executionState ResetExecution)
+    , onClick ResetExecution
+    , HA.disabled (model.executionState == Ready || model.executionState == NotReady)
+    , HA.title "Reset"
+    ]
+    [ text "⏹️" ]
+  , button
+    [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
+    , onClick StepThroughExecution
+    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
+    , HA.title "Step-through"
+    ]
+    [ text "⏭️" ]
+  , button
+    [ HA.class (getActionButtonClass model.executionState SaveTest)
+    , onClick SaveTest
+    , HA.disabled (String.isEmpty model.testPanelContent)
+    , HA.title "Save test"
+    ]
+    [ text "💾" ]
+  ]
+
+viewDescriptionPanelButtons : Model -> List (Html Msg)
+viewDescriptionPanelButtons model =
+  []
+
 viewBottomPanelHeader : Model -> Html Msg
 viewBottomPanelHeader model =
+  let
+    buttons =
+      ( case model.selectedBottomPanel of
+          AddTestPanel ->
+            viewTestPanelButtons model
+          EditDescriptionPanel ->
+            viewDescriptionPanelButtons model
+      )
+  in
   div 
-    [ HA.class "bottom-panel__header" ]
+    [ HA.classList
+        [ ("bottom-panel__header", True)
+        , ("open", not <| List.isEmpty buttons)
+        ]
+    ]
     [ div 
       [ HA.class "bottom-panel__actions" ]
-      [ button
-        [ HA.class (getActionButtonClass model.executionState RunExecution)
-        , onClick RunExecution
-        , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
-        , HA.title "Run"
-        ]
-        [ text "▶️" ]
-      , button
-        [ HA.class (getActionButtonClass model.executionState ResetExecution)
-        , onClick ResetExecution
-        , HA.disabled (model.executionState == Ready || model.executionState == NotReady)
-        , HA.title "Reset"
-        ]
-        [ text "⏹️" ]
-      , button
-        [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
-        , onClick StepThroughExecution
-        , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
-        , HA.title "Step-through"
-        ]
-        [ text "⏭️" ]
-      , button
-        [ HA.class (getActionButtonClass model.executionState SaveTest)
-        , onClick SaveTest
-        , HA.disabled (String.isEmpty model.bottomPanelContent)
-        , HA.title "Save test"
-        ]
-        [ text "💾" ]
-      ]
+      buttons
     ]
 
 executionText : Model -> Html a
-executionText { forceDirectedGraph, bottomPanelContent } =
+executionText { forceDirectedGraph, testPanelContent } =
   case forceDirectedGraph.execution of
     Nothing ->
       text "" -- eheh?! I should never be here!
@@ -608,28 +644,28 @@ executionText { forceDirectedGraph, bottomPanelContent } =
           p
             [ HA.class "output-line" ]
             [ text "✅ " 
-            , strong [] [ text bottomPanelContent ]
+            , strong [] [ text testPanelContent ]
             , text " accepted."
             ]
         EndOfInput (Rejected _) ->
           p
             [ HA.class "output-line" ]
             [ text "❌ " 
-            , strong [] [ text bottomPanelContent ]
+            , strong [] [ text testPanelContent ]
             , text " rejected."
             ]
         EndOfComputation (Accepted d) ->
           p
             [ HA.class "output-line" ]
             [ text "⛓️ Full input ("
-            , strong [] [ text bottomPanelContent ]
+            , strong [] [ text testPanelContent ]
             , text ") could not be handled. Computation terminated in an '✅ Accepting' state."
             ]
         EndOfComputation (Rejected d) ->
           p
             [ HA.class "output-line" ]
             [ text "⛓️ Full input ("
-            , strong [] [ text bottomPanelContent ]
+            , strong [] [ text testPanelContent ]
             , text ") could not be handled. Computation terminated in a '❌ Rejecting' state."
             ]
         CanContinue (Accepted { transitionsTaken, remainingData }) ->
@@ -652,6 +688,54 @@ executionText { forceDirectedGraph, bottomPanelContent } =
             [ text <| "🦗 Bug!  " ++ Debug.toString x ++ ".  You should never see this message.  I need to figure out what just happened here…"
             ]
 
+viewAddTestPanelContent : Model -> Html Msg
+viewAddTestPanelContent model =
+  case model.executionState of
+    Ready ->
+      textarea 
+        [ HA.class "right-bottom-panel__textarea"
+        , HA.value model.testPanelContent
+        , onInput UpdateTestPanelContent
+        , HA.placeholder "Enter your test input here"
+        , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+        ]
+        []
+
+    NotReady ->
+      div
+        []
+        [ div 
+            [ HA.class "notready-output" ]
+            [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
+        , textarea
+            [ HA.class "right-bottom-panel__textarea"
+            , HA.value model.testPanelContent
+            , onInput UpdateTestPanelContent
+            , HA.placeholder "Enter your test input here"
+            , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+            ]
+            []
+        ]
+    
+    ExecutionComplete ->
+      div 
+        [ HA.class "execution-output" ]
+        [ executionText model ]
+    StepThrough ->
+      div 
+        [ HA.class "debug-output" ]
+        [ executionText model ]
+
+viewEditDescriptionPanelContent : Model -> Html Msg
+viewEditDescriptionPanelContent model =
+  textarea 
+    [ HA.class "right-bottom-panel__textarea"
+    , HA.value model.descriptionPanelContent
+    , onInput UpdateDescriptionPanelContent
+    , HA.placeholder "What does this computation do?"
+    , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+    ]
+    []
 
 viewBottomPanelContent : Model -> Html Msg
 viewBottomPanelContent model =
@@ -661,66 +745,47 @@ viewBottomPanelContent model =
       [ HA.class "bottom-panel__titlebar" ]
       [ div
         [ HA.class "bottom-panel__title" ]
-        [ text (getBottomPanelTitle model.executionState) ]
+        [ text (getBottomPanelTitle model.selectedBottomPanel model.executionState) ]
       , div
-        [ HA.class "bottom-panel__tab-buttons"
-        ]
+        [ HA.class "bottom-panel__tab-buttons" ]
         [ button
-          [ HA.class "action-button"
-          , HA.title "Add tests"
+          [ HA.classList
+              [ ("tab-button", True)
+              , ("tab-button--selected", model.selectedBottomPanel == AddTestPanel)
+              ]
+          , onClick <| SelectBottomPanel AddTestPanel
+          , HA.title "Add test"
           ]
           [ text "🧪" ]
         , button
-          [ HA.class "action-button"
-          , HA.title "Describe graph"
+          [ HA.classList
+              [ ("tab-button", True)
+              , ("tab-button--selected", model.selectedBottomPanel == EditDescriptionPanel)
+              ]
+          , onClick <| SelectBottomPanel EditDescriptionPanel
+          , HA.title "Describe computation"
           ]
           [ text "🗃️" ]
         ]
       ]
-    , case model.executionState of
-        Ready ->
-          textarea 
-            [ HA.class "right-bottom-panel__textarea"
-            , HA.value model.bottomPanelContent
-            , onInput UpdateBottomPanelContent
-            , HA.placeholder "Enter your test input here"
-            , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
-            ]
-            []
-
-        NotReady ->
-          div
-            []
-            [ div 
-                [ HA.class "notready-output" ]
-                [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
-            , textarea
-                [ HA.class "right-bottom-panel__textarea"
-                , HA.value model.bottomPanelContent
-                , onInput UpdateBottomPanelContent
-                , HA.placeholder "Enter your test input here"
-                , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
-                ]
-                []
-            ]
-        
-        ExecutionComplete ->
-          div 
-            [ HA.class "execution-output" ]
-            [ executionText model ]
-        StepThrough ->
-          div 
-            [ HA.class "debug-output" ]
-            [ executionText model ]
+    , case model.selectedBottomPanel of
+        AddTestPanel ->
+          viewAddTestPanelContent model
+        EditDescriptionPanel ->
+          viewEditDescriptionPanelContent model
     ]
 
-getBottomPanelTitle : ExecutionState -> String
-getBottomPanelTitle state =
-  case state of
-    Ready -> "Testing // Ready"
-    ExecutionComplete -> "Testing // Execution complete" -- show execution output
-    StepThrough -> "Testing // Step-through"
-    NotReady -> "Testing // Not ready"
+getBottomPanelTitle : BottomPanel -> ExecutionState -> String
+getBottomPanelTitle panel state =
+  case panel of
+    AddTestPanel ->
+      case state of
+        Ready -> "Testing // Ready"
+        ExecutionComplete -> "Testing // Execution complete" -- show execution output
+        StepThrough -> "Testing // Step-through"
+        NotReady -> "Testing // Not ready"
+    EditDescriptionPanel ->
+      "Describe computation"
 
 getActionButtonClass : ExecutionState -> Msg -> String
 getActionButtonClass currentState buttonAction =

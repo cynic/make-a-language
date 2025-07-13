@@ -11,8 +11,8 @@
   }
 }
 
-/* Dracula Theme Colors */
 :root {
+/* Dracula Theme Colors */
   --dracula-background: #282a36;
   --dracula-current-line: #44475a;
   --dracula-foreground: #f8f8f2;
@@ -24,6 +24,8 @@
   --dracula-purple: #bd93f9;
   --dracula-red: #ff5555;
   --dracula-yellow: #f1fa8c;
+/* general variables */
+  --button-size: 30px;
 }
 
 body {
@@ -572,12 +574,17 @@ rect.redo {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  padding: 8px 15px;
+  padding: 0px;
   background-color: var(--dracula-current-line);
-  border-bottom: 1px solid var(--dracula-comment);
-  min-height: 32px;
+  width: 0px;
+  transition: all 0.1s ease;
+}
+
+.bottom-panel__header.open {
+  padding: 10px 12px;
+  width: var(--button-size);
 }
 
 .bottom-panel__titlebar {
@@ -600,10 +607,46 @@ rect.redo {
 .bottom-panel__tab-buttons {
   font-size: 24px;
   flex: 0 0;
-  gap: 10px;
+  gap: 5px;
   display: flex;
 }
 
+.tab-button {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background-color: transparent;
+  color: var(--dracula-foreground);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+}
+
+.tab-button:hover {
+  background-color: var(--dracula-comment);
+  opacity: 1;
+}
+
+.tab-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  filter: saturate(0%);
+}
+
+.tab-button:disabled:hover {
+  background-color: transparent;
+}
+
+.tab-button--selected, .tab-button--selected:hover {
+  background-color: var(--dracula-current-line);
+  opacity: 1;
+  cursor: default;
+}
 
 .bottom-panel__actions {
   display: flex;
@@ -613,8 +656,8 @@ rect.redo {
 }
 
 .action-button {
-  width: 30px;
-  height: 30px;
+  width: var(--button-size);
+  height: var(--button-size);
   border: none;
   border-radius: 4px;
   background-color: transparent;
