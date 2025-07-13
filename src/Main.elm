@@ -87,7 +87,7 @@ init flags =
       |> Result.withDefault ( 800, 600 )
     
     initialRightTopWidth = width - 60  -- 60px for icon bar
-    initialRightTopHeight = height - 215  -- 30px status bar + 185px bottom panel
+    initialRightTopHeight = height - 223  -- 30px status bar + 185px bottom panel + 8px splitter
   in
     ( { forceDirectedGraph = FDG.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
       , mainPanelDimensions = ( width, height )
@@ -658,8 +658,25 @@ viewBottomPanelContent model =
   div 
     [ HA.class "bottom-panel__content" ]
     [  div 
-      [ HA.class "bottom-panel__title" ]
-      [ text (getBottomPanelTitle model.executionState) ]
+      [ HA.class "bottom-panel__titlebar" ]
+      [ div
+        [ HA.class "bottom-panel__title" ]
+        [ text (getBottomPanelTitle model.executionState) ]
+      , div
+        [ HA.class "bottom-panel__tab-buttons"
+        ]
+        [ button
+          [ HA.class "action-button"
+          , HA.title "Add tests"
+          ]
+          [ text "🧪" ]
+        , button
+          [ HA.class "action-button"
+          , HA.title "Describe graph"
+          ]
+          [ text "🗃️" ]
+        ]
+      ]
     , case model.executionState of
         Ready ->
           textarea 

@@ -580,16 +580,30 @@ rect.redo {
   min-height: 32px;
 }
 
+.bottom-panel__titlebar {
+  display: flex;
+  height: 100%;
+  flex: 0 1;
+  padding: 10px 15px 5px 15px;
+  align-items: center;
+}
+
 .bottom-panel__title {
   font-size: 12px;
   font-weight: 600;
   color: var(--dracula-foreground);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  height: 100%;
-  flex: 0 1;
-  padding: 10px 0px 5px 15px;
+  flex: 1 1;
 }
+
+.bottom-panel__tab-buttons {
+  font-size: 24px;
+  flex: 0 0;
+  gap: 10px;
+  display: flex;
+}
+
 
 .bottom-panel__actions {
   display: flex;
@@ -599,8 +613,8 @@ rect.redo {
 }
 
 .action-button {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   border: none;
   border-radius: 4px;
   background-color: transparent;
@@ -622,6 +636,7 @@ rect.redo {
 .action-button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+  filter: saturate(0%);
 }
 
 .action-button:disabled:hover {
@@ -631,11 +646,12 @@ rect.redo {
 .action-button--active {
   background-color: var(--dracula-purple);
   opacity: 1;
+  filter: saturate(300%);
 }
 
 .action-button--active:hover {
   background-color: var(--dracula-purple);
-  filter: brightness(1.1);
+  filter: brightness(1.15);
 }
 
 /* Bottom Panel Content */
