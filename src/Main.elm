@@ -45,7 +45,7 @@ type LeftPanelIcon
   = FileIcon
   | SearchIcon
   | GitIcon
-  | DebugIcon
+  | TestsIcon
   | ExtensionsIcon
 
 type ExecutionState
@@ -125,6 +125,7 @@ type Msg
   | RunExecution
   | ResetExecution
   | StepThroughExecution
+  | SaveTest
   | NoOp
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -299,6 +300,9 @@ update msg model =
       , Cmd.none
       )
 
+    SaveTest ->
+      Debug.todo "SAVE TEST FUNCTIONALITY"
+
     NoOp ->
       ( model, Cmd.none )
 
@@ -369,9 +373,9 @@ viewIconBar model =
   div 
     [ HA.class "icon-bar" ]
     [ viewIcon FileIcon "📁" model
+    , viewIcon TestsIcon "🧪" model
     , viewIcon SearchIcon "🔍" model
     , viewIcon GitIcon "🌿" model
-    , viewIcon DebugIcon "🐛" model
     , viewIcon ExtensionsIcon "🧩" model
     ]
 
@@ -457,7 +461,7 @@ viewLeftPanel model =
               ]
             ]
         
-        Just DebugIcon ->
+        Just TestsIcon ->
           div []
             [ h3 [] [ text "Debug Console" ]
             , p [] [ text "Debugging tools would go here." ]
@@ -583,6 +587,13 @@ viewBottomPanelHeader model =
         , HA.title "Step-through"
         ]
         [ text "⏭️" ]
+      , button
+        [ HA.class (getActionButtonClass model.executionState SaveTest)
+        , onClick SaveTest
+        , HA.disabled (String.isEmpty model.bottomPanelContent)
+        , HA.title "Save test"
+        ]
+        [ text "💾" ]
       ]
     ]
 

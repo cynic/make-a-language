@@ -297,7 +297,6 @@ body {
 }
 
 .right-bottom-panel__textarea {
-  width: 100%;
   height: 100%;
   background-color: transparent;
   color: var(--dracula-foreground);
@@ -308,6 +307,7 @@ body {
   resize: none;
   outline: none;
   transition: background-color 0.35s ease;
+  overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--dracula-comment) var(--dracula-background);
 }
@@ -687,7 +687,7 @@ rect.redo {
 
 /* Execution State Indicators */
 .execution-output::before {
-  content: "📋 Execution Log";
+  content: "📋 Execution Result";
   display: block;
   font-size: 11px;
   color: var(--dracula-comment);
