@@ -27,8 +27,7 @@
    <script type="text/javascript" src="hot.js"></script>
    <script>
     // right, let's create and initialize a database!
-    const dbname = "tbd";
-    const db_open = indexedDB.open(dbName);
+    const db_open = indexedDB.open("tahira");
     let db;
     db_open.onerror = (err) => {
       console.error(`Database error: ${event.target.error?.message}`);

@@ -48,7 +48,7 @@ main =
 -- MODEL
 
 type LeftPanelIcon
-  = FileIcon
+  = ComputationsIcon
   | SearchIcon
   | GitIcon
   | TestsIcon
@@ -459,7 +459,7 @@ viewIconBar : Model -> Html Msg
 viewIconBar model =
   div 
     [ HA.class "icon-bar" ]
-    [ viewIcon FileIcon "📁" model
+    [ viewIcon ComputationsIcon "📁" model
     , viewIcon TestsIcon "🧪" model
     , viewIcon SearchIcon "🔍" model
     , viewIcon GitIcon "🌿" model
@@ -485,9 +485,9 @@ viewLeftPanel model =
     , HA.style "width" (String.fromFloat model.leftPanelWidth ++ "px")
     ]
     [ case model.selectedIcon of
-        Just FileIcon ->
+        Just ComputationsIcon ->
           div []
-            [ h3 [] [ text "Graphs" ]
+            [ h3 [] [ text "Computations" ]
             -- , p [] [ text "File management functionality would go here." ]
             , ul []
               [ li
