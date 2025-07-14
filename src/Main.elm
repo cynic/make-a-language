@@ -18,6 +18,11 @@ import Html
 import Maybe.Extra
 import Css
 import Platform.Cmd as Cmd
+import Uuid
+import Random.Pcg.Extended as Random
+import Time
+import Dict exposing (Dict)
+import Ports
 
 {-
 Quality / technology requirements:
@@ -59,8 +64,17 @@ type BottomPanel
   = AddTestPanel
   | EditDescriptionPanel
 
+type alias GraphPackage =
+  { model : FDG.Model
+  , description : Maybe String
+  , uuid : Uuid.Uuid
+  , created : Time.Posix -- for ordering
+  , currentTest : (String, Maybe String)
+  , tests : Dict String String
+  }
+
 type alias Model =
-  { forceDirectedGraph : FDG.Model
+  { currentPackage : GraphPackage
   , mainPanelDimensions : ( Float, Float )
   , leftPanelOpen : Bool
   , selectedIcon : Maybe LeftPanelIcon
@@ -68,49 +82,67 @@ type alias Model =
   , rightBottomPanelOpen : Bool
   , rightBottomPanelHeight : Float
   , rightTopPanelDimensions : ( Float, Float )
-  , testPanelContent : String
   , isDraggingHorizontalSplitter : Bool
   , isDraggingVerticalSplitter : Bool
   , mousePosition : ( Float, Float )
   , executionState : ExecutionState
   , selectedBottomPanel : BottomPanel
-  , descriptionPanelContent : String
+  , uuidSeed : Random.Seed
   }
 
-decodeDimensions : D.Decoder ( Float, Float )
+type alias Flags =
+  { width : Float
+  , height : Float
+  , initialSeed : Int
+  , extendedSeeds : List Int
+  , startTime : Time.Posix
+  }
+
+decodeDimensions : D.Decoder Flags
 decodeDimensions =
-  D.map2
-    (\w h -> ( w, h ))
+  D.map5 Flags
     (D.field "width" D.float)
     (D.field "height" D.float)
+    (D.field "initialSeed" D.int)
+    (D.field "extendedSeeds" <| D.list D.int)
+    (D.field "startTime" <| D.map Time.millisToPosix D.int)
 
 init : E.Value -> (Model, Cmd Msg)
 init flags =
   let
-    (width, height) =
+    decoded =
       D.decodeValue decodeDimensions flags
-      |> Result.withDefault ( 800, 600 )
+      |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0))
     
-    initialRightTopWidth = width - 60  -- 60px for icon bar
-    initialRightTopHeight = height - 223  -- 30px status bar + 185px bottom panel + 8px splitter
+    initialRightTopWidth = decoded.width - 60  -- 60px for icon bar
+    initialRightTopHeight = decoded.height - 223  -- 30px status bar + 185px bottom panel + 8px splitter
+    initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
+    (uuid, newSeed) = Random.step Uuid.generator initialSeed
+    (uuid2, newSeed2) = Random.step Uuid.stringGenerator newSeed
   in
-    ( { forceDirectedGraph = FDG.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
-      , mainPanelDimensions = ( width, height )
+    ( { currentPackage =
+          { model = FDG.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
+          , description = Nothing
+          , uuid = uuid
+          , created = decoded.startTime
+          , currentTest = (uuid2, Nothing)
+          , tests = Dict.empty
+          }
+      , mainPanelDimensions = ( decoded.width, decoded.height )
       , leftPanelOpen = False
       , selectedIcon = Nothing
       , leftPanelWidth = 250
       , rightBottomPanelOpen = True
       , rightBottomPanelHeight = 185
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
-      , testPanelContent = "" -- "// Welcome to the automaton editor\n// Type your code here..."
       , isDraggingHorizontalSplitter = False
       , isDraggingVerticalSplitter = False
       , mousePosition = ( 0, 0 )
       , executionState = Ready
       , selectedBottomPanel = AddTestPanel
-      , descriptionPanelContent = ""
+      , uuidSeed = newSeed2
       }
-    , Task.perform (\_ -> NoOp) (Task.succeed ())
+    , Cmd.none
     )
 
 -- UPDATE
@@ -133,17 +165,18 @@ type Msg
   | StepThroughExecution
   | SaveTest
   | SelectBottomPanel BottomPanel
-  | NoOp
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg of
     ForceDirectedMsg fdMsg ->
       let
-        newFdModel = FDG.update (0, 0) fdMsg model.forceDirectedGraph
+        currentPackage = model.currentPackage
+        newFdModel = FDG.update (0, 0) fdMsg currentPackage.model
       in
       ( { model
-          | forceDirectedGraph = newFdModel
+          | currentPackage =
+              { currentPackage | model = newFdModel }
           , executionState =
               if FDG.canExecute newFdModel then
                 if model.executionState == NotReady then
@@ -159,11 +192,11 @@ update msg model =
     OnResize (width, height) ->
       let
         newModel = { model | mainPanelDimensions = (width, height) }
-        (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions newModel
+        (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions newModel
       in
       ( { newModel
           | rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-          , forceDirectedGraph = newGraph
+          , currentPackage = newGraphPackage
         }
       , Cmd.none
       )
@@ -178,13 +211,13 @@ update msg model =
             (False, Nothing)  -- Close panel if same icon clicked
           else
             (True, Just icon)  -- Open panel with new icon
-        (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
+        (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
       in
       ( { model 
         | leftPanelOpen = newLeftPanelOpen
         , selectedIcon = newSelectedIcon
         , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-        , forceDirectedGraph = newGraph
+        , currentPackage = newGraphPackage
         }
       , Cmd.none
       )
@@ -213,12 +246,12 @@ update msg model =
           minWidth = 100
           maxWidth = viewportWidth / 2
           newLeftPanelWidth = clamp minWidth maxWidth x
-          (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { newModel | leftPanelWidth = newLeftPanelWidth }
+          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { newModel | leftPanelWidth = newLeftPanelWidth }
         in
         ( { newModel 
           | leftPanelWidth = newLeftPanelWidth
           , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-          , forceDirectedGraph = newGraph
+          , currentPackage = newGraphPackage
           }
         , Cmd.none
         )
@@ -229,12 +262,12 @@ update msg model =
           maxHeight = viewportHeight / 2
           statusBarHeight = 30
           newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
-          (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { newModel | rightBottomPanelHeight = newBottomHeight }
+          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { newModel | rightBottomPanelHeight = newBottomHeight }
         in
-        ( { newModel 
+        ( { newModel
           | rightBottomPanelHeight = newBottomHeight
           , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-          , forceDirectedGraph = newGraph
+          , currentPackage = newGraphPackage
           }
         , Cmd.none
         )
@@ -244,21 +277,48 @@ update msg model =
     ToggleBottomPanel ->
       let
         newBottomPanelOpen = not model.rightBottomPanelOpen
-        (newRightTopWidth, newRightTopHeight, newGraph) = calculateRightTopDimensions { model | rightBottomPanelOpen = newBottomPanelOpen }
+        (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | rightBottomPanelOpen = newBottomPanelOpen }
       in
       ( { model 
         | rightBottomPanelOpen = newBottomPanelOpen
         , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-        , forceDirectedGraph = newGraph
+        , currentPackage = newGraphPackage
         }
       , Cmd.none
       )
 
     UpdateTestPanelContent content ->
-      ( { model | testPanelContent = content }, Cmd.none )
+      let
+        currentPackage = model.currentPackage
+        updatedTest =
+          case (content, currentPackage.currentTest) of
+            ("", (k, _)) -> (k, Nothing)
+            (_, (k, _)) ->
+              (k, Just content)
+      in
+        ( { model
+            | currentPackage =
+                { currentPackage | currentTest = updatedTest }
+          }
+        , Cmd.none
+        )
 
     UpdateDescriptionPanelContent content ->
-      ( { model | descriptionPanelContent = content }, Cmd.none )
+      let
+        currentPackage = model.currentPackage
+      in
+      ( { model
+          | currentPackage =
+              { currentPackage
+                | description =
+                    if content == "" then
+                      Nothing
+                    else
+                      Just content
+              }
+        }
+      , Cmd.none
+      )
 
     UpdateRightTopDimensions width height ->
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
@@ -271,9 +331,14 @@ update msg model =
       -- a 'Ready' state has already been met.
       ( { model 
         | executionState = ExecutionComplete
-        , forceDirectedGraph =
-            fdg_update model (FDG.Load model.testPanelContent)
-            |> \m -> fdg_update { model | forceDirectedGraph = m } FDG.Run
+        , currentPackage =
+            fdg_update model
+              ( FDG.Load
+                  ( Tuple.second model.currentPackage.currentTest
+                    |> Maybe.withDefault ""
+                  )
+              )
+            |> \pkg -> fdg_update { model | currentPackage = pkg } FDG.Run
         }
       , Cmd.none
       )
@@ -281,7 +346,7 @@ update msg model =
     ResetExecution ->
       ( { model 
         | executionState = Ready
-        , forceDirectedGraph = fdg_update model FDG.Stop
+        , currentPackage = fdg_update model FDG.Stop
         }
       , Cmd.none
       )
@@ -291,20 +356,25 @@ update msg model =
         newFdModel =
           if model.executionState /= StepThrough then
             -- this is the first click of stepping, so do a load first.
-            fdg_update model (FDG.Load model.testPanelContent)
+            fdg_update model
+              ( FDG.Load
+                  ( Tuple.second model.currentPackage.currentTest
+                    |> Maybe.withDefault ""
+                  )
+              )
           else
             fdg_update model FDG.Step
       in
       ( { model 
         | executionState =
-            case newFdModel.execution of
+            case newFdModel.model.execution of
               Nothing ->
                 model.executionState
               Just (CanContinue _) ->
                 StepThrough
               _ ->
                 ExecutionComplete
-        , forceDirectedGraph =
+        , currentPackage =
             newFdModel
         }
       , Cmd.none
@@ -318,23 +388,25 @@ update msg model =
     SaveTest ->
       Debug.todo "SAVE TEST FUNCTIONALITY"
 
-    NoOp ->
-      ( model, Cmd.none )
-
-fdg_update : Model -> FDG.Msg -> FDG.Model
+fdg_update : Model -> FDG.Msg -> GraphPackage
 fdg_update model updateMessage =
-  FDG.update
-    ( if model.leftPanelOpen then
-        60 + model.leftPanelWidth
-      else
-        60
-    , 1
-    )
-    updateMessage
-    model.forceDirectedGraph
+  let
+    currentPackage = model.currentPackage
+    newModel = 
+      FDG.update
+        ( if model.leftPanelOpen then
+            60 + model.leftPanelWidth
+          else
+            60
+        , 1
+        )
+        updateMessage
+        model.currentPackage.model
+  in
+    { currentPackage | model = newModel }
 
 
-calculateRightTopDimensions : Model -> ( Float, Float, FDG.Model )
+calculateRightTopDimensions : Model -> ( Float, Float, GraphPackage )
 calculateRightTopDimensions model =
   let
     (viewportWidth, viewportHeight) = model.mainPanelDimensions
@@ -535,7 +607,7 @@ viewRightTopPanel model =
       div 
         [ HA.class "right-top-panel__content" ]
         [ Html.Styled.fromUnstyled
-            ( FDG.view model.forceDirectedGraph
+            ( FDG.view model.currentPackage.model
               |> Html.map ForceDirectedMsg
             )
         ]
@@ -580,7 +652,7 @@ viewTestPanelButtons model =
   [ button
     [ HA.class (getActionButtonClass model.executionState RunExecution)
     , onClick RunExecution
-    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
+    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
     , HA.title "Run"
     ]
     [ text "▶️" ]
@@ -594,14 +666,14 @@ viewTestPanelButtons model =
   , button
     [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
     , onClick StepThroughExecution
-    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.forceDirectedGraph))
+    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
     , HA.title "Step-through"
     ]
     [ text "⏭️" ]
   , button
     [ HA.class (getActionButtonClass model.executionState SaveTest)
     , onClick SaveTest
-    , HA.disabled (String.isEmpty model.testPanelContent)
+    , HA.disabled (Maybe.Extra.isNothing <| Tuple.second model.currentPackage.currentTest)
     , HA.title "Save test"
     ]
     [ text "💾" ]
@@ -634,59 +706,57 @@ viewBottomPanelHeader model =
     ]
 
 executionText : Model -> Html a
-executionText { forceDirectedGraph, testPanelContent } =
-  case forceDirectedGraph.execution of
-    Nothing ->
-      text "" -- eheh?! I should never be here!
-    Just result ->
-      case result of
-        EndOfInput (Accepted _) ->
-          p
-            [ HA.class "output-line" ]
-            [ text "✅ " 
-            , strong [] [ text testPanelContent ]
-            , text " accepted."
-            ]
-        EndOfInput (Rejected _) ->
-          p
-            [ HA.class "output-line" ]
-            [ text "❌ " 
-            , strong [] [ text testPanelContent ]
-            , text " rejected."
-            ]
-        EndOfComputation (Accepted d) ->
-          p
-            [ HA.class "output-line" ]
-            [ text "⛓️ Full input ("
-            , strong [] [ text testPanelContent ]
-            , text ") could not be handled. Computation terminated in an '✅ Accepting' state."
-            ]
-        EndOfComputation (Rejected d) ->
-          p
-            [ HA.class "output-line" ]
-            [ text "⛓️ Full input ("
-            , strong [] [ text testPanelContent ]
-            , text ") could not be handled. Computation terminated in a '❌ Rejecting' state."
-            ]
-        CanContinue (Accepted { transitionsTaken, remainingData }) ->
-          p
-            [ HA.class "output-line" ]
-            [ text <| "🟢 Continuing execution; " ++ String.fromInt (List.length transitionsTaken)
-                ++ " paths taken, " ++ String.fromInt (List.length remainingData)
-                ++ " characters remain to be matched.  Currently in an '✅ Accepting' state."
-            ]
-        CanContinue (Rejected { transitionsTaken, remainingData }) ->
-          p
-            [ HA.class "output-line" ]
-            [ text <| "🟢 Continuing execution; " ++ String.fromInt (List.length transitionsTaken)
-                ++ " paths taken, " ++ String.fromInt (List.length remainingData)
-                ++ " characters remain to be matched.  Currently in a '❌ Rejecting' state."
-            ]
-        x ->
-          p
-            [ HA.class "output-line" ]
-            [ text <| "🦗 Bug!  " ++ Debug.toString x ++ ".  You should never see this message.  I need to figure out what just happened here…"
-            ]
+executionText { currentPackage } =
+  div
+    []
+    [ case currentPackage.model.execution of
+        Nothing ->
+          p [] [ text "🦗 Bug! K%UGFCR" ] -- eheh?! I should never be here!
+        Just result ->
+          let
+            maybeDatum = FDG.executionData result
+          in
+            p
+              [ HA.class "output-line" ]
+              [ text <|
+                  case result of
+                    EndOfInput (Accepted _) ->
+                        "✅ Success! 🎉"
+                    EndOfInput (Rejected _) ->
+                        "❌ Rejected 😔.  The computation did not end with an accepting transition."
+                    EndOfComputation _ ->
+                        "❌ Rejected 😔.  The input was longer than the computation."
+                    CanContinue _ ->
+                        "🟢 Continuing execution."
+                    x ->
+                        "🦗 Bug!  " ++ Debug.toString x ++ ".  You should never see this message.  I need to figure out what just happened here…"
+              , Maybe.map
+                  (\datum ->
+                    p
+                      [ HA.class "computation-progress" ]
+                      [ span
+                          [ HA.class "computation-progress-processed" ]
+                          ( datum.transitionsTaken
+                            |> List.reverse
+                            |> List.map 
+                              (\(_, (ch, isFinal)) ->
+                                span
+                                  [ HA.class <| if isFinal == 1 then "final" else "non-final" ]
+                                  [ text <| FDG.textChar ch ]
+                              )
+                          )
+                      , span
+                          [ HA.class "computation-progress-to-do" ]
+                          [ List.map (\ch -> FDG.textChar ch) datum.remainingData
+                            |> String.concat
+                            |> text
+                          ]
+                      ]
+                  )
+                  maybeDatum
+                |> Maybe.withDefault (text "")
+              ]
+    ]
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =
@@ -694,10 +764,10 @@ viewAddTestPanelContent model =
     Ready ->
       textarea 
         [ HA.class "right-bottom-panel__textarea"
-        , HA.value model.testPanelContent
+        , HA.value (Tuple.second model.currentPackage.currentTest |> Maybe.withDefault "")
         , onInput UpdateTestPanelContent
         , HA.placeholder "Enter your test input here"
-        , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+        , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
         ]
         []
 
@@ -709,10 +779,10 @@ viewAddTestPanelContent model =
             [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
         , textarea
             [ HA.class "right-bottom-panel__textarea"
-            , HA.value model.testPanelContent
+            , HA.value (Tuple.second model.currentPackage.currentTest |> Maybe.withDefault "")
             , onInput UpdateTestPanelContent
             , HA.placeholder "Enter your test input here"
-            , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+            , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
             ]
             []
         ]
@@ -730,10 +800,10 @@ viewEditDescriptionPanelContent : Model -> Html Msg
 viewEditDescriptionPanelContent model =
   textarea 
     [ HA.class "right-bottom-panel__textarea"
-    , HA.value model.descriptionPanelContent
+    , HA.value (model.currentPackage.description |> Maybe.withDefault "")
     , onInput UpdateDescriptionPanelContent
     , HA.placeholder "What does this computation do?"
-    , HA.disabled <| Maybe.Extra.isJust model.forceDirectedGraph.currentOperation
+    , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
     ]
     []
 
@@ -831,7 +901,7 @@ subscriptions model =
   Sub.batch
     [ FDG.subscriptions
         model.rightTopPanelDimensions
-        model.forceDirectedGraph
+        model.currentPackage.model
       |> Sub.map ForceDirectedMsg
     , BE.onResize (\w h -> OnResize (toFloat w, toFloat h))
     , if model.isDraggingHorizontalSplitter || model.isDraggingVerticalSplitter then

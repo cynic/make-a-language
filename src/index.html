@@ -26,12 +26,51 @@
   <!-- <script type="module" src="index.js"></script> -->
    <script type="text/javascript" src="hot.js"></script>
    <script>
-        // Initialize the Elm app with viewport dimensions
+    // right, let's create and initialize a database!
+    const dbname = "tbd";
+    const db_open = indexedDB.open(dbName);
+    let db;
+    db_open.onerror = (err) => {
+      console.error(`Database error: ${event.target.error?.message}`);
+    };
+    db_open.onupgradeneeded = (e) => { // also called during initial creation
+      // right now, there's only one version, so I'm going to be v.lazy.
+      const mydb = e.target.result;
+      const computations = mydb.createObjectStore("computations", { "keyPath" : "uuid" });
+    };
+    db_open.onsuccess = (e) => {
+      db = e.result;
+    };
+
+    // Initialize the Elm app with viewport dimensions
+    // We also use 8 'extended' seeds for the PCG generator. Technically,
+    // this should give us a period of 2^(5*32) or 1.461 501 637 × 10^48.
+    // A V4 UUID has 122 bits of randomness, so 5.316 911 983 × 10^36.
+    // So I'm reasonably happy with how the period is matching up here.
+    const random_seeds = new Uint32Array(5);
+    crypto.getRandomValues(random_seeds);
     const flags =
         { width : document.getElementsByTagName('html')[0].clientWidth
         , height : document.getElementsByTagName('html')[0].clientHeight
+        , initialSeed : random_seeds[0]
+        , extendedSeeds : random_seeds.slice(1)
+        , startTime : Date.now()
         };
     const app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
+
+    app.ports.saveToStorage.subscribe((item) => {
+      const store = db.transaction(["computations"], "readwrite").objectStore("computations");
+      const get_request = store.get(item.uuid);
+      get_request.onsuccess = (e) => {
+        if (e.target.result) {
+          // it exists; update it.
+          store.put(item);
+        } else {
+          // item does not exist; insert it.
+          store.add(item);
+        }
+      };
+    });
    </script>
 </body>
 
