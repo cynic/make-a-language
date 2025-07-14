@@ -23,6 +23,7 @@ import Random.Pcg.Extended as Random
 import Time
 import Dict exposing (Dict)
 import Ports
+import Platform.Cmd as Cmd
 
 {-
 Quality / technology requirements:
@@ -88,6 +89,7 @@ type alias Model =
   , executionState : ExecutionState
   , selectedBottomPanel : BottomPanel
   , uuidSeed : Random.Seed
+  , currentTime : Time.Posix
   }
 
 type alias Flags =
@@ -141,6 +143,7 @@ init flags =
       , executionState = Ready
       , selectedBottomPanel = AddTestPanel
       , uuidSeed = newSeed2
+      , currentTime = decoded.startTime
       }
     , Cmd.none
     )
@@ -165,6 +168,7 @@ type Msg
   | StepThroughExecution
   | SaveTest
   | SelectBottomPanel BottomPanel
+  | Seconded Time.Posix
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -382,6 +386,11 @@ update msg model =
 
     SelectBottomPanel p ->
       ( { model | selectedBottomPanel = p }
+      , Cmd.none
+      )
+
+    Seconded t ->
+      ( { model | currentTime = t }
       , Cmd.none
       )
 
@@ -904,6 +913,12 @@ subscriptions model =
         model.currentPackage.model
       |> Sub.map ForceDirectedMsg
     , BE.onResize (\w h -> OnResize (toFloat w, toFloat h))
+    , Time.every 450 -- 'sup, homie Nyquist? All good?
+        ( Time.posixToMillis
+          >> (\v -> (v // 1000) * 1000)
+          >> Time.millisToPosix
+          >> Seconded
+        )
     , if model.isDraggingHorizontalSplitter || model.isDraggingVerticalSplitter then
         Sub.batch
           [ BE.onMouseMove (D.map2 MouseMove (D.field "clientX" D.float) (D.field "clientY" D.float))
