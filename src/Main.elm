@@ -26,6 +26,7 @@ import Ports
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
 import Automata.Data as Data
+import Result.Extra
 
 {-
 Quality / technology requirements:
@@ -150,6 +151,7 @@ init flags =
   let
     decoded =
       D.decodeValue decodeFlags flags
+      |> Result.mapError (\err -> Debug.log "OH NO! FLAGS WAS NOT PARSED CORRECTLY!!" err)
       |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0) [])
     
     initialRightTopWidth = decoded.width - 60  -- 60px for icon bar

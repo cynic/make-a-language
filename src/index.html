@@ -62,9 +62,9 @@
             { width : document.getElementsByTagName('html')[0].clientWidth
             , height : document.getElementsByTagName('html')[0].clientHeight
             , initialSeed : random_seeds[0]
-            , extendedSeeds : random_seeds.slice(1)
+            , extendedSeeds : Array.from(random_seeds.slice(1))
             , startTime : Date.now()
-            , packages : e.result
+            , packages : e.target.result
             };
 
           app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
