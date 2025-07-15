@@ -24,6 +24,8 @@ import Time
 import Dict exposing (Dict)
 import Ports
 import Platform.Cmd as Cmd
+import Automata.DFA as DFA
+import Automata.Data as Data
 
 {-
 Quality / technology requirements:
@@ -70,7 +72,7 @@ type alias GraphPackage =
   , description : Maybe String
   , uuid : Uuid.Uuid
   , created : Time.Posix -- for ordering
-  , currentTest : (String, Maybe String)
+  , currentTestKey : String
   , tests : Dict String String
   }
 
@@ -100,6 +102,33 @@ type alias Flags =
   , startTime : Time.Posix
   }
 
+encodeGraphPackage : GraphPackage -> E.Value
+encodeGraphPackage pkg =
+  E.object
+    [ ("model", DFA.serializeAutomatonGraph pkg.model.userGraph |> E.string)
+    , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
+    , ("uuid", Uuid.encode pkg.uuid)
+    , ("created", E.int (Time.posixToMillis pkg.created))
+    , ("tests", E.dict identity E.string pkg.tests)
+    , ("currentTestKey", E.string pkg.currentTestKey)
+    ]
+
+decodeGraphPackage : (Float, Float) -> D.Decoder GraphPackage
+decodeGraphPackage (w, h) =
+  let
+    initialize_fdg serialized =
+      Data.mkAG_input serialized
+      |> DFA.mkAutomatonGraph
+      |> FDG.automatonGraphToModel (w, h)
+  in
+  D.map6 GraphPackage
+    (D.field "model" <| D.map initialize_fdg D.string)
+    (D.field "description" <| D.map Just D.string)
+    (D.field "uuid" Uuid.decoder)
+    (D.field "created" <| D.map Time.millisToPosix D.int)
+    (D.field "currentTestKey" D.string)
+    (D.field "tests" <| D.dict D.string)
+
 decodeDimensions : D.Decoder Flags
 decodeDimensions =
   D.map5 Flags
@@ -123,11 +152,11 @@ init flags =
     (uuid2, newSeed2) = Random.step Uuid.stringGenerator newSeed
   in
     ( { currentPackage =
-          { model = FDG.receiveWords [] ( initialRightTopWidth, initialRightTopHeight )
+          { model = FDG.initializeModel ( initialRightTopWidth, initialRightTopHeight )
           , description = Nothing
           , uuid = uuid
           , created = decoded.startTime
-          , currentTest = (uuid2, Nothing)
+          , currentTestKey = uuid2
           , tests = Dict.empty
           }
       , mainPanelDimensions = ( decoded.width, decoded.height )
@@ -166,7 +195,7 @@ type Msg
   | RunExecution
   | ResetExecution
   | StepThroughExecution
-  | SaveTest
+  | DeleteTest
   | SelectBottomPanel BottomPanel
   | Seconded Time.Posix
 
@@ -294,15 +323,16 @@ update msg model =
     UpdateTestPanelContent content ->
       let
         currentPackage = model.currentPackage
-        updatedTest =
-          case (content, currentPackage.currentTest) of
-            ("", (k, _)) -> (k, Nothing)
-            (_, (k, _)) ->
-              (k, Just content)
+        updatedTests =
+          case content of
+            "" ->
+              Dict.remove currentPackage.currentTestKey currentPackage.tests
+            _ ->
+              Dict.insert currentPackage.currentTestKey content currentPackage.tests
       in
         ( { model
             | currentPackage =
-                { currentPackage | currentTest = updatedTest }
+                { currentPackage | tests = updatedTests }
           }
         , Cmd.none
         )
@@ -338,7 +368,7 @@ update msg model =
         , currentPackage =
             fdg_update model
               ( FDG.Load
-                  ( Tuple.second model.currentPackage.currentTest
+                  ( Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
                     |> Maybe.withDefault ""
                   )
               )
@@ -362,7 +392,7 @@ update msg model =
             -- this is the first click of stepping, so do a load first.
             fdg_update model
               ( FDG.Load
-                  ( Tuple.second model.currentPackage.currentTest
+                  ( Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
                     |> Maybe.withDefault ""
                   )
               )
@@ -394,8 +424,18 @@ update msg model =
       , Cmd.none
       )
 
-    SaveTest ->
-      Debug.todo "SAVE TEST FUNCTIONALITY"
+    DeleteTest ->
+      let
+        currentPackage = model.currentPackage
+      in
+        ( { model
+            | currentPackage =
+                { currentPackage
+                  | tests = Dict.remove currentPackage.currentTestKey currentPackage.tests
+                }
+          }
+        , Cmd.none
+        )
 
 fdg_update : Model -> FDG.Msg -> GraphPackage
 fdg_update model updateMessage =
@@ -680,12 +720,12 @@ viewTestPanelButtons model =
     ]
     [ text "⏭️" ]
   , button
-    [ HA.class (getActionButtonClass model.executionState SaveTest)
-    , onClick SaveTest
-    , HA.disabled (Maybe.Extra.isNothing <| Tuple.second model.currentPackage.currentTest)
-    , HA.title "Save test"
+    [ HA.class (getActionButtonClass model.executionState DeleteTest)
+    , onClick DeleteTest
+    , HA.disabled (model.executionState /= StepThrough)
+    , HA.title "Delete test"
     ]
-    [ text "💾" ]
+    [ text "🗑️" ]
   ]
 
 viewDescriptionPanelButtons : Model -> List (Html Msg)
@@ -769,41 +809,46 @@ executionText { currentPackage } =
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =
-  case model.executionState of
-    Ready ->
-      textarea 
-        [ HA.class "right-bottom-panel__textarea"
-        , HA.value (Tuple.second model.currentPackage.currentTest |> Maybe.withDefault "")
-        , onInput UpdateTestPanelContent
-        , HA.placeholder "Enter your test input here"
-        , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
-        ]
-        []
+  let
+    testContent =
+      Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+      |> Maybe.withDefault ""
+  in
+    case model.executionState of
+      Ready ->
+        textarea 
+          [ HA.class "right-bottom-panel__textarea"
+          , HA.value testContent
+          , onInput UpdateTestPanelContent
+          , HA.placeholder "Enter your test input here"
+          , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
+          ]
+          []
 
-    NotReady ->
-      div
-        []
-        [ div 
-            [ HA.class "notready-output" ]
-            [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
-        , textarea
-            [ HA.class "right-bottom-panel__textarea"
-            , HA.value (Tuple.second model.currentPackage.currentTest |> Maybe.withDefault "")
-            , onInput UpdateTestPanelContent
-            , HA.placeholder "Enter your test input here"
-            , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
-            ]
-            []
-        ]
-    
-    ExecutionComplete ->
-      div 
-        [ HA.class "execution-output" ]
-        [ executionText model ]
-    StepThrough ->
-      div 
-        [ HA.class "debug-output" ]
-        [ executionText model ]
+      NotReady ->
+        div
+          []
+          [ div 
+              [ HA.class "notready-output" ]
+              [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
+          , textarea
+              [ HA.class "right-bottom-panel__textarea"
+              , HA.value testContent
+              , onInput UpdateTestPanelContent
+              , HA.placeholder "Enter your test input here"
+              , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
+              ]
+              []
+          ]
+      
+      ExecutionComplete ->
+        div 
+          [ HA.class "execution-output" ]
+          [ executionText model ]
+      StepThrough ->
+        div 
+          [ HA.class "debug-output" ]
+          [ executionText model ]
 
 viewEditDescriptionPanelContent : Model -> Html Msg
 viewEditDescriptionPanelContent model =

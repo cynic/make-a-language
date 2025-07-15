@@ -3,6 +3,7 @@ import IntDict exposing (IntDict(..))
 import Set exposing (Set)
 import Graph exposing (Graph, NodeContext, NodeId)
 import Dict exposing (Dict)
+import Parser exposing (Parser, (|=), (|.))
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -129,3 +130,61 @@ graphToString graph =
     (\_ -> Nothing)
     (Just << connectionToString)
     graph
+
+
+
+
+
+
+-- Parser for converting string representation to AutomatonGraph transitions
+-- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]
+transitionsParser : Parser (List (Int, String, Int))
+transitionsParser =
+    Parser.oneOf
+        [ Parser.succeed []
+            |. Parser.end
+        , Parser.loop [] transitionsHelp
+        ]
+
+
+transitionsHelp : List (Int, String, Int) -> Parser (Parser.Step (List (Int, String, Int)) (List (Int, String, Int)))
+transitionsHelp revTransitions =
+    Parser.oneOf
+        [ Parser.succeed (\transition -> Parser.Loop (transition :: revTransitions))
+            |= transitionParser
+            |. Parser.oneOf
+                [ Parser.symbol " "
+                , Parser.succeed ()
+                ]
+        , Parser.succeed ()
+            |> Parser.map (\_ -> Parser.Done (List.reverse revTransitions))
+        ]
+
+
+transitionParser : Parser (Int, String, Int)
+transitionParser =
+    Parser.succeed (\src label dest -> (src, label, dest))
+        |= Parser.int
+        |. Parser.symbol "-"
+        |= labelParser
+        |. Parser.symbol "-"
+        |= Parser.int
+
+
+labelParser : Parser String
+labelParser =
+    Parser.succeed identity
+        |= Parser.getChompedString
+            (Parser.succeed ()
+                |. Parser.chompIf (\c -> c /= '-' && c /= ' ')
+                |. Parser.chompWhile (\c -> c /= '-' && c /= ' ')
+            )
+
+-- Helper function that converts string to transitions and handles errors
+mkAG_input : String -> List (Int, String, Int)
+mkAG_input input =
+  case Parser.run transitionsParser input of
+    Ok transitions ->
+      transitions
+    Err _ ->
+      []

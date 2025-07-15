@@ -47,13 +47,13 @@ import Automata.DFA exposing (transitions_from_source)
 import Automata.Data exposing (..)
 import Automata.DFA as DFA
 import Dict exposing (Dict)
+import Svg.Attributes exposing (mode)
 
 type Msg
   = DragStart NodeId ( Float, Float )
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
-  | WordsUpdated (List String)
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
   | Zoom Float (Float, Float)
@@ -218,12 +218,10 @@ toForceGraph g =
   , maxId = g.maxId
   }
 
-receiveWords : List String -> (Float, Float) -> Model
-receiveWords words (w, h) =
+automatonGraphToModel : (Float, Float) -> AutomatonGraph a -> Model
+automatonGraphToModel (w, h) g =
   let
-    dfa = Automata.DFA.fromWords words
-    g = Automata.DFA.toAutomatonGraph dfa
-    forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
+    forceGraph = toForceGraph g
     basic = basicForces forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph.graph
   in
@@ -244,9 +242,15 @@ receiveWords words (w, h) =
     , execution = Nothing
     }
 
-init : List String -> (Float, Float) -> (Model, Cmd Msg)
-init words (w, h) =
-  ( receiveWords words (w, h), Cmd.none )
+initializeModel : (Float, Float) -> Model
+initializeModel (w, h) =
+  automatonGraphToModel (w, h) (Automata.DFA.empty () |> toAutomatonGraph)
+
+init : (Float, Float) -> (Model, Cmd Msg)
+init (w, h) =
+  ( initializeModel (w, h)
+  , Cmd.none
+  )
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
@@ -613,9 +617,6 @@ update offset_amount msg model =
               | userGraph = { g | graph = updateGraphWithList model.userGraph.graph list }
               , simulation = newState
             }
-
-    WordsUpdated words ->      
-      receiveWords words model.dimensions
 
     ViewportUpdated dim ->
       let
