@@ -79,7 +79,7 @@ type alias GraphPackage =
 
 type alias Model =
   { currentPackage : GraphPackage
-  , packages : List GraphPackage
+  , packages : Dict String GraphPackage
   , mainPanelDimensions : ( Float, Float )
   , leftPanelOpen : Bool
   , selectedIcon : Maybe LeftPanelIcon
@@ -126,7 +126,7 @@ decodeGraphPackage (w, h) =
   in
   D.map6 GraphPackage
     (D.field "model" <| D.map initialize_fdg D.string)
-    (D.field "description" <| D.map Just D.string)
+    (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
     (D.field "uuid" Uuid.decoder)
     (D.field "created" <| D.map Time.millisToPosix D.int)
     (D.field "currentTestKey" D.string)
@@ -146,6 +146,16 @@ decodeFlags =
         (D.field "packages" <| D.list (decodeGraphPackage (w, h)))
     )
 
+createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> (Float, Float) -> GraphPackage
+createNewPackage uuid testUuid currentTime (w, h) = -- this is the width & height of the panel
+  { model = FDG.initializeModel ( w, h )
+  , description = Nothing
+  , uuid = uuid
+  , created = currentTime
+  , currentTestKey = Uuid.toString testUuid
+  , tests = Dict.empty
+  }
+
 init : E.Value -> (Model, Cmd Msg)
 init flags =
   let
@@ -158,17 +168,11 @@ init flags =
     initialRightTopHeight = decoded.height - 223  -- 30px status bar + 185px bottom panel + 8px splitter
     initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
     (uuid, newSeed) = Random.step Uuid.generator initialSeed
-    (uuid2, newSeed2) = Random.step Uuid.stringGenerator newSeed
+    (uuid2, newSeed2) = Random.step Uuid.generator newSeed
   in
-    ( { currentPackage =
-          { model = FDG.initializeModel ( initialRightTopWidth, initialRightTopHeight )
-          , description = Nothing
-          , uuid = uuid
-          , created = decoded.startTime
-          , currentTestKey = uuid2
-          , tests = Dict.empty
-          }
-      , packages = decoded.packages
+    ( { currentPackage = createNewPackage uuid uuid2 decoded.startTime (initialRightTopWidth, initialRightTopHeight)
+      , packages =
+          decoded.packages |> List.map (\v -> ( Uuid.toString v.uuid, v )) |> Dict.fromList
       , mainPanelDimensions = ( decoded.width, decoded.height )
       , leftPanelOpen = False
       , selectedIcon = Nothing
@@ -208,7 +212,16 @@ type Msg
   | DeleteTest
   | SelectBottomPanel BottomPanel
   | Seconded Time.Posix
+  | CreateNewPackage
+  | SelectPackage Uuid.Uuid
+  | DeletePackage Uuid.Uuid
 
+{-| Note: EVERYWHERE that I use persistPackage, I should ALSO
+    update the `packages` dictionary!
+
+    (yes, I should one day figure out an automagic way to do this…
+     maybe. but it's in so few places right now that hey, YAGNI?)
+-}
 persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
     Ports.saveToStorage << encodeGraphPackage
@@ -220,11 +233,13 @@ update msg model =
       let
         currentPackage = model.currentPackage
         newFdModel = FDG.update (0, 0) fdMsg currentPackage.model
-        preUpdateChangeCount = List.length currentPackage.model.undoBuffer
+        preUpdateChangeCount =
+          List.length currentPackage.model.undoBuffer
+        updatedPackage =
+          { currentPackage | model = newFdModel }
       in
       ( { model
-          | currentPackage =
-              { currentPackage | model = newFdModel }
+          | currentPackage = updatedPackage
           , executionState =
               if FDG.canExecute newFdModel then
                 if model.executionState == NotReady then
@@ -233,9 +248,14 @@ update msg model =
                   model.executionState
               else
                 NotReady
+          , packages =
+              if preUpdateChangeCount > 0 && newFdModel.undoBuffer == [] then
+                Dict.insert (Uuid.toString updatedPackage.uuid) updatedPackage model.packages
+              else
+                model.packages
         }
       , if preUpdateChangeCount > 0 && newFdModel.undoBuffer == [] then
-          persistPackage currentPackage
+          persistPackage updatedPackage
         else
           Cmd.none
       )
@@ -350,7 +370,10 @@ update msg model =
         updatedPackage =
           { currentPackage | tests = updatedTests }
       in
-        ( { model | currentPackage = updatedPackage }
+        ( { model
+            | currentPackage = updatedPackage
+            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+          }
         , persistPackage updatedPackage
         )
 
@@ -366,9 +389,12 @@ update msg model =
                   Just content
           }
       in
-      ( { model | currentPackage = updatedPackage }
-      , persistPackage updatedPackage
-      )
+        ( { model
+            | currentPackage = updatedPackage
+            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+          }
+        , persistPackage updatedPackage
+        )
 
     UpdateRightTopDimensions width height ->
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
@@ -449,9 +475,36 @@ update msg model =
                 Dict.remove currentPackage.currentTestKey currentPackage.tests
           }
       in
-        ( { model | currentPackage = updatedPackage }
+        ( { model
+            | currentPackage = updatedPackage
+            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+          }
         , persistPackage updatedPackage
         )
+
+    CreateNewPackage ->
+      let
+        (uuid, newSeed) = Random.step Uuid.generator model.uuidSeed
+        (uuid2, newSeed2) = Random.step Uuid.generator newSeed
+      in
+        ( { model
+            | currentPackage = createNewPackage uuid uuid2 model.currentTime model.rightTopPanelDimensions
+            , uuidSeed = newSeed2
+          }
+        , Cmd.none
+        )
+
+    SelectPackage uuid ->
+      case Dict.get (Uuid.toString uuid) model.packages of
+        Nothing ->
+          ( model, Cmd.none )
+        Just pkg ->
+          ( { model | currentPackage = pkg }, Cmd.none )
+
+    DeletePackage uuid ->
+      ( model
+      , Ports.deleteFromStorage (Uuid.toString uuid)
+      )
 
 fdg_update : Model -> FDG.Msg -> GraphPackage
 fdg_update model updateMessage =
@@ -543,6 +596,42 @@ viewIcon icon iconText model =
     ]
     [ text iconText ]
 
+viewPackageItem : Model -> GraphPackage -> Html Msg
+viewPackageItem model package =
+  let
+    uuidString = Uuid.toString package.uuid
+    displayName = 
+      package.description 
+      |> Maybe.withDefault ("Computation " ++ String.left 8 uuidString)
+  in
+  div 
+    [ HA.class "left-panel__packageItem"
+    , HA.css
+        [ Css.display Css.flex_
+        ]
+    , onClick (SelectPackage package.uuid)
+    ]
+    [ span
+        [ HA.css
+          [ Css.flex3 Css.zero (Css.num 1) (Css.pct 100)
+          , Css.whiteSpace Css.nowrap
+          , Css.overflow Css.hidden
+          , Css.textOverflow Css.ellipsis
+          ]
+        ]
+        [ text displayName ]
+    , span
+        [ HA.css
+            [ Css.flex2 Css.zero Css.zero
+            , Css.cursor Css.pointer
+            , Css.marginRight (Css.px 8)
+            ]
+        , HA.title "Delete computation"
+        , onClick (DeletePackage package.uuid)
+        ]
+        [ text "🚮" ]
+    ]
+
 viewLeftPanel : Model -> Html Msg
 viewLeftPanel model =
   div 
@@ -552,44 +641,29 @@ viewLeftPanel model =
     [ case model.selectedIcon of
         Just ComputationsIcon ->
           div []
-            [ h3 [] [ text "Computations" ]
+            [ h3
+                []
+                [ text "Computations "
+                , button
+                    [ HA.class "button button--primary"
+                    , onClick CreateNewPackage
+                    , HA.title "Create new computation"
+                    ]
+                    [ text "➕" ]
+                ]
             -- , p [] [ text "File management functionality would go here." ]
             , ul []
-              [ li
-                [ HA.css
-                    [ Css.display Css.flex_ ]
-                ]
-                [ span
-                    [ HA.css
-                      [ Css.flex3 Css.zero (Css.num 1) (Css.pct 100)
-                      , Css.whiteSpace Css.nowrap
-                      , Css.overflow Css.hidden
-                      , Css.textOverflow Css.ellipsis
-                      ]
-                    ]
-                    [ text "Unsaved graph" ]
-                , span
-                    [ HA.css
-                        [ Css.flex2 Css.zero Css.zero
-                        , Css.cursor Css.pointer
-                        , Css.marginRight (Css.px 8)
-                        ]
-                    , HA.title "Edit graph name"
-                    ]
-                    [ text "🖋️" ]
-                , span
-                    [ HA.css
-                        [ Css.flex2 Css.zero Css.zero
-                        , Css.cursor Css.pointer
-                        ]
-                    , HA.title "Save graph"
-                    ]
-                    [ text "💾" ]
-                ]
-              -- , li [] [ text "📄 style.css" ]
-              -- , li [] [ text "📁 src/" ]
-              -- , li [] [ text "📁 tests/" ]
-              ]
+              ( model.packages
+                |> Dict.toList
+                |> List.map Tuple.second
+                |> List.sortBy (Time.posixToMillis << .created)
+                |> List.map
+                  (\pkg ->
+                    li
+                      [ HA.class "left-panel__packageItem" ]
+                      [ viewPackageItem model pkg ]
+                  )
+              )
             ]
         
         Just SearchIcon ->
@@ -974,9 +1048,9 @@ subscriptions model =
         model.currentPackage.model
       |> Sub.map ForceDirectedMsg
     , BE.onResize (\w h -> OnResize (toFloat w, toFloat h))
-    , Time.every 450 -- 'sup, homie Nyquist? All good?
+    , Time.every 25000 -- 'sup, homie Nyquist? All good?
         ( Time.posixToMillis
-          >> (\v -> (v // 1000) * 1000)
+          >> (\v -> (v // (1000 * 60)) * (1000 * 60))
           >> Time.millisToPosix
           >> Seconded
         )

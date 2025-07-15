@@ -2,6 +2,7 @@ port module Ports exposing (..)
 import Json.Encode as E
 
 port saveToStorage : E.Value -> Cmd msg
+port deleteFromStorage : String -> Cmd msg
 
 {-
 At the start of the program, load all records from the IndexedDB

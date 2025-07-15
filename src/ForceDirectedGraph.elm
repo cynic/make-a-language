@@ -807,19 +807,19 @@ update offset_amount msg model =
             viewport =
               viewportForces model_.dimensions updatedGraph.graph
           in
-          { model_
-          | currentOperation = Nothing
-          , userGraph = updatedGraph
-                   -- NOTE ⬇ WELL! This isn't a typo!
-          , undoBuffer = model.userGraph :: model_.undoBuffer
-          , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-          , basicForces = basic
-          , viewportForces = viewport
-          , simulation = Force.simulation (basic ++ viewport)
-          , disconnectedNodes =
-              identifyDisconnectedNodes updatedGraph
-          , execution = Nothing
-          }
+            { model_
+            | currentOperation = Nothing
+            , userGraph = updatedGraph
+                    -- NOTE ⬇ WELL! This isn't a typo!
+            , undoBuffer = model.userGraph :: model_.undoBuffer
+            , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+            , basicForces = basic
+            , viewportForces = viewport
+            , simulation = Force.simulation (basic ++ viewport)
+            , disconnectedNodes =
+                identifyDisconnectedNodes updatedGraph
+            , execution = Nothing
+            }
         
         createNewNode : NodeId -> Connection -> Float -> Float -> Model
         createNewNode src conn x y =

@@ -2040,7 +2040,7 @@ serializeAutomatonGraph g =
               )
           |> String.concat
         ) ++
-        String.fromInt to
+        "-" ++ String.fromInt to
     )
   |> String.join " "
 

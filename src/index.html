@@ -26,9 +26,64 @@
   <!-- <script type="module" src="index.js"></script> -->
    <script type="text/javascript" src="hot.js"></script>
    <script>
+    function startElm(db, packages) {
+      const random_seeds = new Uint32Array(5);
+      crypto.getRandomValues(random_seeds);
+
+      const flags =
+        { width : document.getElementsByTagName('html')[0].clientWidth
+        , height : document.getElementsByTagName('html')[0].clientHeight
+        , initialSeed : random_seeds[0]
+        , extendedSeeds : Array.from(random_seeds.slice(1))
+        , startTime : Date.now()
+        , packages : packages
+        };
+
+      let app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
+
+      app.ports.saveToStorage.subscribe((item) => {
+        console.log(item);
+        const put_request =
+          db.transaction(["computations"], "readwrite")
+          .objectStore("computations")
+          .put(item);
+        put_request.onsuccess = (e) => {
+          // it exists; update it.
+          console.log("Updated/Inserted " + item.uuid);
+          console.log(e.target.result);
+        };
+      });
+
+      app.ports.deleteFromStorage.subscribe((uuid) => {
+        const store = db.transaction(["computations"], "readwrite").objectStore("computations");
+        const delete_request = store.delete(uuid);
+        delete_request.onsuccess = (e) => {
+          if (e.target.result === undefined) {
+            console.log("Deletion successful " + uuid);
+          }
+        }
+      });
+    }
+
+      // Initialize the Elm app with viewport dimensions
+      // We also use 8 'extended' seeds for the PCG generator. Technically,
+      // this should give us a period of 2^(5*32) or 1.461 501 637 × 10^48.
+      // A V4 UUID has 122 bits of randomness, so 5.316 911 983 × 10^36.
+      // So I'm reasonably happy with how the period is matching up here.
+
+    function doInitialLoad(db) {
+      getAll_request = // yeccch, why is JavaScript so UGLY?! blegh
+        db.transaction(["computations"], "readonly")
+        .objectStore("computations")
+        .getAll()
+        .onsuccess = (e) => {
+          console.log(e.target.result);
+          setTimeout(startElm, 1, db, e.target.result);
+        };
+    }
+
     // right, let's create and initialize a database!
     const db_open = indexedDB.open("tahira");
-    let db;
     db_open.onerror = (err) => {
       console.error(`Database open error: ${event.target.error?.message}`);
     };
@@ -38,52 +93,11 @@
       const computations = mydb.createObjectStore("computations", { "keyPath" : "uuid" });
     };
     db_open.onsuccess = (e) => {
-      db = e.target.result;
-      db.onerror = (err) => {
-      console.error(`Database error: ${event.target.error?.message}`);
-    };
-
-      // Initialize the Elm app with viewport dimensions
-      // We also use 8 'extended' seeds for the PCG generator. Technically,
-      // this should give us a period of 2^(5*32) or 1.461 501 637 × 10^48.
-      // A V4 UUID has 122 bits of randomness, so 5.316 911 983 × 10^36.
-      // So I'm reasonably happy with how the period is matching up here.
-      const random_seeds = new Uint32Array(5);
-      crypto.getRandomValues(random_seeds);
-
-      let app;
-
-      getAll_request = // yeccch, why is JavaScript so UGLY?! blegh
-        db.transaction(["computations"], "readonly")
-        .objectStore("computations")
-        .getAll().onsuccess = (e) => {
-
-          const flags =
-            { width : document.getElementsByTagName('html')[0].clientWidth
-            , height : document.getElementsByTagName('html')[0].clientHeight
-            , initialSeed : random_seeds[0]
-            , extendedSeeds : Array.from(random_seeds.slice(1))
-            , startTime : Date.now()
-            , packages : e.target.result
-            };
-
-          app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
-
-          app.ports.saveToStorage.subscribe((item) => {
-            const store = db.transaction(["computations"], "readwrite").objectStore("computations");
-            const get_request = store.get(item.uuid);
-            get_request.onsuccess = (e) => {
-              if (e.target.result) {
-                // it exists; update it.
-                store.put(item);
-              } else {
-                // item does not exist; insert it.
-                store.add(item);
-              }
-            };
-          });
-    
-      }
+      e.target.result.onerror = (err) => {
+        // set up the error handler that every db error will bubble up to
+        console.error(`Database error: ${event.target.error?.message}`);
+      };
+      setTimeout(doInitialLoad, 1, e.target.result);
     };
 
    </script>
