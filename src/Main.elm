@@ -78,6 +78,7 @@ type alias GraphPackage =
 
 type alias Model =
   { currentPackage : GraphPackage
+  , packages : List GraphPackage
   , mainPanelDimensions : ( Float, Float )
   , leftPanelOpen : Bool
   , selectedIcon : Maybe LeftPanelIcon
@@ -100,6 +101,7 @@ type alias Flags =
   , initialSeed : Int
   , extendedSeeds : List Int
   , startTime : Time.Posix
+  , packages : List GraphPackage
   }
 
 encodeGraphPackage : GraphPackage -> E.Value
@@ -129,21 +131,26 @@ decodeGraphPackage (w, h) =
     (D.field "currentTestKey" D.string)
     (D.field "tests" <| D.dict D.string)
 
-decodeDimensions : D.Decoder Flags
-decodeDimensions =
-  D.map5 Flags
+decodeFlags : D.Decoder Flags
+decodeFlags =
+  D.map2 (\w h -> (w, h))
     (D.field "width" D.float)
     (D.field "height" D.float)
-    (D.field "initialSeed" D.int)
-    (D.field "extendedSeeds" <| D.list D.int)
-    (D.field "startTime" <| D.map Time.millisToPosix D.int)
+  |> D.andThen
+    (\(w, h) ->
+      D.map4 (Flags w h)
+        (D.field "initialSeed" D.int)
+        (D.field "extendedSeeds" <| D.list D.int)
+        (D.field "startTime" <| D.map Time.millisToPosix D.int)
+        (D.field "packages" <| D.list (decodeGraphPackage (w, h)))
+    )
 
 init : E.Value -> (Model, Cmd Msg)
 init flags =
   let
     decoded =
-      D.decodeValue decodeDimensions flags
-      |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0))
+      D.decodeValue decodeFlags flags
+      |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0) [])
     
     initialRightTopWidth = decoded.width - 60  -- 60px for icon bar
     initialRightTopHeight = decoded.height - 223  -- 30px status bar + 185px bottom panel + 8px splitter
@@ -159,6 +166,7 @@ init flags =
           , currentTestKey = uuid2
           , tests = Dict.empty
           }
+      , packages = decoded.packages
       , mainPanelDimensions = ( decoded.width, decoded.height )
       , leftPanelOpen = False
       , selectedIcon = Nothing
@@ -199,6 +207,10 @@ type Msg
   | SelectBottomPanel BottomPanel
   | Seconded Time.Posix
 
+persistPackage : GraphPackage -> Cmd Msg
+persistPackage =
+    Ports.saveToStorage << encodeGraphPackage
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg of
@@ -206,6 +218,7 @@ update msg model =
       let
         currentPackage = model.currentPackage
         newFdModel = FDG.update (0, 0) fdMsg currentPackage.model
+        preUpdateChangeCount = List.length currentPackage.model.undoBuffer
       in
       ( { model
           | currentPackage =
@@ -219,7 +232,10 @@ update msg model =
               else
                 NotReady
         }
-      , Cmd.none
+      , if preUpdateChangeCount > 0 && newFdModel.undoBuffer == [] then
+          persistPackage currentPackage
+        else
+          Cmd.none
       )
 
     OnResize (width, height) ->
@@ -329,29 +345,27 @@ update msg model =
               Dict.remove currentPackage.currentTestKey currentPackage.tests
             _ ->
               Dict.insert currentPackage.currentTestKey content currentPackage.tests
+        updatedPackage =
+          { currentPackage | tests = updatedTests }
       in
-        ( { model
-            | currentPackage =
-                { currentPackage | tests = updatedTests }
-          }
-        , Cmd.none
+        ( { model | currentPackage = updatedPackage }
+        , persistPackage updatedPackage
         )
 
     UpdateDescriptionPanelContent content ->
       let
         currentPackage = model.currentPackage
+        updatedPackage =
+          { currentPackage
+            | description =
+                if content == "" then
+                  Nothing
+                else
+                  Just content
+          }
       in
-      ( { model
-          | currentPackage =
-              { currentPackage
-                | description =
-                    if content == "" then
-                      Nothing
-                    else
-                      Just content
-              }
-        }
-      , Cmd.none
+      ( { model | currentPackage = updatedPackage }
+      , persistPackage updatedPackage
       )
 
     UpdateRightTopDimensions width height ->
@@ -427,14 +441,14 @@ update msg model =
     DeleteTest ->
       let
         currentPackage = model.currentPackage
-      in
-        ( { model
-            | currentPackage =
-                { currentPackage
-                  | tests = Dict.remove currentPackage.currentTestKey currentPackage.tests
-                }
+        updatedPackage =
+          { currentPackage
+            | tests =
+                Dict.remove currentPackage.currentTestKey currentPackage.tests
           }
-        , Cmd.none
+      in
+        ( { model | currentPackage = updatedPackage }
+        , persistPackage updatedPackage
         )
 
 fdg_update : Model -> FDG.Msg -> GraphPackage
@@ -722,10 +736,10 @@ viewTestPanelButtons model =
   , button
     [ HA.class (getActionButtonClass model.executionState DeleteTest)
     , onClick DeleteTest
-    , HA.disabled (model.executionState /= StepThrough)
+    , HA.disabled (model.executionState == StepThrough)
     , HA.title "Delete test"
     ]
-    [ text "🗑️" ]
+    [ text "🚮" ]
   ]
 
 viewDescriptionPanelButtons : Model -> List (Html Msg)
