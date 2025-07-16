@@ -26,9 +26,28 @@ import Ports
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
 import Automata.Data as Data
+import Graph exposing (NodeId, Edge)
 import Result.Extra
 import TypedSvg.Types exposing (Paint(..))
 import Css exposing (rgba)
+import TypedSvg exposing
+  (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
+import TypedSvg.Attributes exposing
+  ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
+  , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
+  , transform, noFill, strokeDasharray, strokeLinecap
+  , markerStart, pointerEvents, dy)
+import TypedSvg.Attributes.InPx exposing
+  ( cx, cy, r, strokeWidth, x, y, height, fontSize
+  , markerWidth, markerHeight, width, rx , ry)
+import TypedSvg.Core exposing (Svg)
+import TypedSvg.Types exposing
+  (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
+  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
+import Color
+import Html.Attributes
+import Force
+import Set exposing (Set)
 
 {-
 Quality / technology requirements:
@@ -628,6 +647,152 @@ viewIcon icon iconText model =
     ]
     [ text iconText ]
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+viewNode : FDG.Model -> Graph.Node FDG.Entity -> Svg msg
+viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, id } =
+  let
+    graphNode =
+      Graph.get id userGraph.graph
+    thisNodeIsTerminal =
+      Maybe.map Automata.Data.isTerminalNode graphNode
+      |> Maybe.withDefault False
+  in
+    g
+      [ class [ "state-node" ] ]
+      [ circle
+          [ r FDG.nodeRadius
+          , strokeWidth 2
+          , cx label.x
+          , cy label.y
+          , class
+              ( if id == userGraph.root then [ "start" ] else [] )
+          ]
+          []
+       ,  if thisNodeIsTerminal && id == userGraph.root then
+            text_
+              [ x <| label.x
+              , y <| (label.y + 1)
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentBaseline
+              , dominantBaseline DominantBaselineMiddle
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
+              ]
+              [ TypedSvg.Core.text "💥"
+              ]
+          else if thisNodeIsTerminal then
+            text_
+              [ x <| label.x
+              , y <| (label.y + 1)
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentBaseline
+              , dominantBaseline DominantBaselineMiddle
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
+              ]
+              [ TypedSvg.Core.text "🎯"
+              ]
+          else if id == userGraph.root then
+            text_
+              [ x <| label.x
+              , y <| (label.y + 1)
+              , fontFamily ["sans-serif"]
+              , fontSize 12
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentBaseline
+              , dominantBaseline DominantBaselineMiddle
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
+              , fill <| Paint <| Color.grey
+              ]
+              [ TypedSvg.Core.text "⭐"
+              ]
+          else
+            g [] []
+      ]
+
+viewLink : FDG.Model -> Edge Connection -> Svg Msg
+viewLink ({ userGraph } as model) edge =
+  let
+    source =
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
+
+    target =
+      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
+    cardinality = FDG.identifyCardinality model edge
+    positioning =
+      FDG.path_between source target cardinality 7 7
+    font_size = 16.0 -- this is the default, if not otherwise set
+    labelText = FDG.connectionToSvgText edge.label
+  in
+    g
+      []
+      [
+        path
+          [ d positioning.pathString
+          , noFill
+          , class [ "link", "background" ]
+          ]
+          []
+      , path
+          [ strokeWidth 3
+          , stroke <| Paint <| FDG.paletteColors.edge
+          , d positioning.pathString
+          , markerEnd "url(#arrowhead)"
+          , noFill
+          , class [ "link" ]
+          ]
+          []
+      , text_
+          [ x <| positioning.transition_coordinates.x
+          , y <| positioning.transition_coordinates.y
+          , fontFamily ["sans-serif"]
+          , fontSize font_size
+          , fontWeight FontWeightNormal
+          , textAnchor AnchorMiddle
+          , alignmentBaseline AlignmentCentral
+          , Html.Attributes.attribute "paint-order" "stroke fill markers"
+          , class [ "link" ]
+          ]
+          []
+      ]
+
+viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
+viewComputationThumbnail width ({ model } as package) =
+  -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
+  svg
+    [ viewBox 0 0 width (0.5625 * width) -- 16:9 aspect ratio
+    ]
+    [ g
+        [ transform [ Matrix 1 0 0 1 0 0 ] -- in case I need it later for some reason…
+        ]
+        [ defs [] [ FDG.arrowheadMarker, FDG.phantomArrowheadMarker ]
+        , Graph.edges model.userGraph.graph
+          |> List.filter (\edge -> not (Set.isEmpty edge.label))
+          |> List.map (viewLink model)
+          |> g [ class [ "links" ] ]
+        , Graph.nodes model.userGraph.graph
+          |> List.map (viewNode model)
+          |> g [ class [ "nodes" ] ]
+        ]
+    ]
+
 viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
   let
@@ -635,6 +800,8 @@ viewPackageItem model package =
     displayName = 
       package.description 
       |> Maybe.withDefault ("Computation " ++ String.left 8 uuidString)
+    displaySvg =
+      viewComputationThumbnail model.leftPanelWidth package
   in
   div 
     [ HA.class "left-panel__packageItem"
@@ -643,21 +810,14 @@ viewPackageItem model package =
         ]
     , onClick (SelectPackage package.uuid)
     ]
-    [ span
+    [ Html.Styled.fromUnstyled <| displaySvg
+    , div
         [ HA.css
-          [ Css.flex3 Css.zero (Css.num 1) (Css.pct 100)
-          , Css.whiteSpace Css.nowrap
-          , Css.overflow Css.hidden
-          , Css.textOverflow Css.ellipsis
-          ]
-        ]
-        [ text displayName ]
-    , span
-        [ HA.css
-            [ Css.flex2 Css.zero Css.zero
-            , Css.cursor Css.pointer
-            , Css.marginRight (Css.px 8)
+            [ Css.position Css.absolute
+            , Css.right (Css.px 5)
+            , Css.top (Css.px 0)
             ]
+        , HA.class "button"
         , HA.title "Delete computation"
         , onClick (DeletePackage package.uuid)
         ]

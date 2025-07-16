@@ -17,7 +17,6 @@ import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x, y, height, fontSize
   , markerWidth, markerHeight, width, rx , ry)
-import TypedSvg.Attributes.InEm
 import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
