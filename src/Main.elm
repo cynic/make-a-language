@@ -777,35 +777,108 @@ viewLink ({ userGraph } as model) edge =
           labelText
       ]
 
+recenterSvg : (Float, Float) -> AutomatonGraph FDG.Entity -> AutomatonGraph FDG.Entity
+recenterSvg (width, height) g =
+  let
+    -- need to recenter the x and y values, relative to
+    -- the center of the graph.  The center of the graph
+    -- should be in the new center.
+    -- How do I find this "center"? Well, I'll draw a
+    -- bounding-box around the max-min nodes and use the
+    -- center of that as my center.
+    nodes = Graph.nodes g.graph
+    ((min_x, max_x), (min_y, max_y)) =
+      List.foldl
+        (\node state ->
+          case state of
+            Nothing ->
+              Just ((node.label.x, node.label.x), (node.label.y, node.label.y))
+            Just ((minX, maxX), (minY, maxY)) ->
+              Just
+                ( ( min minX (node.label.x)
+                  , max maxX (node.label.x)
+                  )
+                , ( min minY (node.label.y)
+                  , max maxY (node.label.y)
+                  )
+                )
+        )
+        Nothing
+        nodes
+      |> Maybe.withDefault ((0.0, 0.0), (0.0, 0.0))
+      -- should just never happen; we always have at least one node!
+    center_x = (max_x + min_x) / 2
+    center_y = (max_y + min_y) / 2
+    -- now, everything is going to be recorded relative to the center.
+    -- so, for each node, we need to subtract the center.
+    nodeXYs : Dict NodeId (Int, Int)
+    nodeXYs =
+      List.foldl
+        (\node state ->
+          Dict.insert node.id
+            ( round <| node.label.x - center_x + (width / 2)
+            , round <| node.label.y - center_y + (height / 2)
+            )
+            state
+        )
+        Dict.empty
+        nodes
+  in
+    { g
+      | graph =
+          Graph.mapNodes
+            (\node ->
+              case Dict.get node.id nodeXYs of
+                Nothing ->
+                  node
+                Just (x, y) ->
+                  { node | x = toFloat x, y = toFloat y }
+            )
+            g.graph
+    }
+
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
 viewComputationThumbnail width ({ model } as package) =
   -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
-  svg
-    [ viewBox 0 0 width (width / sqrt 2) -- 16:9 aspect ratio
-    ]
-    [ g
-        [ transform [ Matrix 1 0 0 1 0 0 ] -- in case I need it later for some reason…
-        ]
-        [ defs [] [ FDG.arrowheadMarker, FDG.phantomArrowheadMarker ]
-        , Graph.edges model.userGraph.graph
-          |> List.filter (\edge -> not (Set.isEmpty edge.label))
-          |> List.map (viewLink model)
-          |> g [ class [ "links" ] ]
-        , Graph.nodes model.userGraph.graph
-          |> List.map (viewNode model)
-          |> g [ class [ "nodes" ] ]
-        ]
-    ]
+  let
+    height = width / sqrt 5 -- some kind of aspect ratio
+    g = recenterSvg (width, height) model.userGraph
+    m = { model | userGraph = g }
+  in
+    svg
+      [ viewBox 0 0 width height
+      ]
+      [ TypedSvg.g
+          [ transform [ Matrix 1 0 0 1 0 0 ] -- in case I need it later for some reason…
+          ]
+          [ defs [] [ FDG.arrowheadMarker, FDG.phantomArrowheadMarker ]
+          , Graph.edges g.graph
+            |> List.filter (\edge -> not (Set.isEmpty edge.label))
+            |> List.map (viewLink m)
+            |> TypedSvg.g [ class [ "links" ] ]
+          , Graph.nodes g.graph
+            |> List.map (viewNode m)
+            |> TypedSvg.g [ class [ "nodes" ] ]
+          ]
+      ]
 
 viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
   let
     uuidString = Uuid.toString package.uuid
-    displayName = 
-      package.description 
-      |> Maybe.withDefault ("Computation " ++ String.left 8 uuidString)
     displaySvg =
       viewComputationThumbnail model.leftPanelWidth package
+    description =
+      case package.description of
+        Nothing ->
+          text ""
+        Just desc ->
+          div
+            [ HA.css
+                [ Css.padding (Css.px 5)
+                ]
+            ]
+            [ text desc ]
   in
   div 
     [ HA.class "left-panel__packageItem"
@@ -815,10 +888,12 @@ viewPackageItem model package =
         , Css.borderWidth (Css.px 1)
         , Css.borderColor (Css.rgb 0x28 0x2a 0x36) -- --dracula-background
         , Css.borderStyle Css.solid
+        , Css.userSelect Css.none
         ]
     , onClick (SelectPackage package.uuid)
     ]
-    [ Html.Styled.fromUnstyled <| displaySvg
+    [ description
+    , Html.Styled.fromUnstyled <| displaySvg
     , div
         [ HA.css
             [ Css.position Css.absolute
