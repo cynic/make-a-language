@@ -2081,6 +2081,17 @@ viewUndoRedoVisualisation { undoBuffer, redoBuffer, dimensions } =
         )
       )
 
+panToString : (Float, Float) -> String
+panToString pan =
+  case Tuple.mapBoth round round pan of
+    ( 0, 0 ) -> "centered"
+    ( x, y) ->
+      let
+        xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
+        yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
+      in
+      ("(" ++ xString ++ ", " ++ yString ++ ")")
+
 matrixFromZoom : (Float, Float) -> (Float, Float) -> ( Float, ( Float, Float ) ) -> ( Float, Float ) -> Transform
 matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
 {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
@@ -2253,18 +2264,7 @@ view model =
             , dominantBaseline DominantBaselineCentral
             , pointerEvents "none"
             ]
-            [ text (" 🧭 " ++
-                (case Tuple.mapBoth round round model.pan of
-                  ( 0, 0 ) -> "centered"
-                  ( x, y) ->
-                    let
-                      xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
-                      yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
-                    in
-                    ("(" ++ xString ++ ", " ++ yString ++ ")")
-                )
-              )
-            ]
+            [ text (" 🧭 " ++ panToString model.pan) ]
         , case model.currentOperation of
             Just (ModifyingGraph { dest }) ->
               case dest of
