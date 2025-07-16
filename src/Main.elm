@@ -664,6 +664,7 @@ viewLeftPanel model =
                 |> Dict.toList
                 |> List.map Tuple.second
                 |> List.sortBy (Time.posixToMillis << .created)
+                |> List.reverse
                 |> List.map
                   (\pkg ->
                     li
