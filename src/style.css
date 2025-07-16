@@ -617,6 +617,17 @@ rect.redo {
   margin: 0;
   cursor: pointer;
   user-select: none;
+  padding: 2px;
+  width: 1em;
+  height: 1em;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+  border-radius: 4px;
+}
+
+:where(.button:hover) {
+  background-color: var(--dracula-comment);
+  opacity: 1;
 }
 
 .tab-button {

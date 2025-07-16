@@ -27,6 +27,8 @@ import Platform.Cmd as Cmd
 import Automata.DFA as DFA
 import Automata.Data as Data
 import Result.Extra
+import TypedSvg.Types exposing (Paint(..))
+import Css exposing (rgba)
 
 {-
 Quality / technology requirements:
@@ -209,12 +211,14 @@ type Msg
   | RunExecution
   | ResetExecution
   | StepThroughExecution
-  | DeleteTest
   | SelectBottomPanel BottomPanel
   | Seconded Time.Posix
   | CreateNewPackage
   | SelectPackage Uuid.Uuid
   | DeletePackage Uuid.Uuid
+  | SelectTest String
+  | DeleteTest String
+  | CreateNewTest
 
 {-| Note: EVERYWHERE that I use persistPackage, I should ALSO
     update the `packages` dictionary!
@@ -473,22 +477,6 @@ update msg model =
       , Cmd.none
       )
 
-    DeleteTest ->
-      let
-        currentPackage = model.currentPackage
-        updatedPackage =
-          { currentPackage
-            | tests =
-                Dict.remove currentPackage.currentTestKey currentPackage.tests
-          }
-      in
-        ( { model
-            | currentPackage = updatedPackage
-            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
-          }
-        , persistPackage updatedPackage
-        )
-
     CreateNewPackage ->
       let
         (uuid, newSeed) = Random.step Uuid.generator model.uuidSeed
@@ -512,6 +500,43 @@ update msg model =
       ( { model | packages = Dict.remove (Uuid.toString uuid) model.packages }
       , Ports.deleteFromStorage (Uuid.toString uuid)
       )
+
+    CreateNewTest ->
+      let
+        currentPackage = model.currentPackage
+        (uuid, newSeed) = Random.step Uuid.generator model.uuidSeed
+      in
+        ( { model
+            | currentPackage =
+                { currentPackage | currentTestKey = Uuid.toString uuid }
+            , uuidSeed = newSeed
+          }
+        , Cmd.none
+        )
+
+    SelectTest key ->
+      let
+        currentPackage = model.currentPackage
+      in
+        ( { model
+            | currentPackage =
+                { currentPackage | currentTestKey = key }
+          }
+        , Cmd.none
+        )
+
+    DeleteTest key ->
+      let
+        currentPackage = model.currentPackage
+        updatedPackage =
+          { currentPackage | tests = Dict.remove key currentPackage.tests }
+      in
+        ( { model
+            | currentPackage = updatedPackage
+            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+          }
+        , persistPackage updatedPackage
+        )
 
 fdg_update : Model -> FDG.Msg -> GraphPackage
 fdg_update model updateMessage =
@@ -639,6 +664,55 @@ viewPackageItem model package =
         [ text "🚮" ]
     ]
 
+viewTestItem : (String, String) -> Html Msg
+viewTestItem (key, test) =
+  div 
+    [ HA.class "left-panel__testItem"
+    , HA.css
+        [ Css.position Css.relative
+        , Css.overflow Css.hidden
+        , Css.textOverflow Css.ellipsis
+        , Css.whiteSpace Css.nowrap
+        , Css.cursor Css.pointer
+        , Css.userSelect Css.none
+          -- --dracula-background
+        , Css.backgroundColor <| Css.rgb 0x28 0x2a 0x36
+          -- --dracula-foreground
+        , Css.color <| Css.rgb 0xf8 0xf8 0xf2
+        , Css.padding (Css.px 6)
+        , Css.borderRadius (Css.px 4)
+        ]
+    , onClick (SelectTest key)
+    ]
+    [ span
+        [ HA.css
+          [ Css.width (Css.pct 100)
+          -- , Css.whiteSpace Css.nowrap
+          , Css.overflow Css.hidden
+          , Css.textOverflow Css.ellipsis
+          , Css.whiteSpace Css.pre
+          , Css.fontFamilyMany
+              [ "Fira Code", "Inconsolata", "DejaVu Sans Mono"
+              , "Liberation Mono", "Ubuntu Mono", "Cascadia Code"
+              , "Cascadia Mono", "Consolas", "Lucida Console"
+              , "Courier New" ]
+              Css.monospace
+          ]
+        ]
+        [ text test ]
+    , div
+        [ HA.css
+            [ Css.position Css.absolute
+            , Css.right (Css.px 5)
+            , Css.top (Css.px 0)
+            ]
+        , HA.class "button"
+        , HA.title "Delete test"
+        , onClick (DeleteTest key)
+        ]
+        [ text "🚮" ]
+    ]
+
 viewLeftPanel : Model -> Html Msg
 viewLeftPanel model =
   div 
@@ -697,12 +771,28 @@ viewLeftPanel model =
         
         Just TestsIcon ->
           div []
-            [ h3 [] [ text "Debug Console" ]
-            , p [] [ text "Debugging tools would go here." ]
-            , div [ HA.class "panel-content panel-content--monospace" ]
-              [ p [] [ text "> Ready to debug" ]
-              , p [] [ text "> Breakpoints: 0" ]
-              ]
+            [ h3
+                []
+                [ text "Tests "
+                , div
+                    [ HA.class "button button--primary"
+                    , onClick CreateNewTest
+                    , HA.title "Create new test"
+                    ]
+                    [ text "➕" ]
+                ]
+            -- , p [] [ text "File management functionality would go here." ]
+            , ul []
+              ( model.currentPackage.tests
+                |> Dict.toList
+                |> List.sortBy Tuple.second
+                |> List.map
+                  (\keyAndTest ->
+                    li
+                      [ HA.class "left-panel__testItem" ]
+                      [ viewTestItem keyAndTest ]
+                  )
+              )
             ]
         
         Just ExtensionsIcon ->
@@ -818,8 +908,11 @@ viewTestPanelButtons model =
     ]
     [ text "⏭️" ]
   , div
-    [ HA.class (getActionButtonClass model.executionState DeleteTest)
-    , onClick DeleteTest
+    [ HA.class (getActionButtonClass model.executionState (DeleteTest model.currentPackage.currentTestKey))
+    , HA.css
+        [ Css.marginTop (Css.px 30)
+        ]
+    , onClick <| DeleteTest model.currentPackage.currentTestKey
     , HA.disabled (model.executionState == StepThrough)
     , HA.title "Delete test"
     ]
