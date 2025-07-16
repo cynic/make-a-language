@@ -509,7 +509,7 @@ update msg model =
           ( { model | currentPackage = pkg }, Cmd.none )
 
     DeletePackage uuid ->
-      ( model
+      ( { model | packages = Dict.remove (Uuid.toString uuid) model.packages }
       , Ports.deleteFromStorage (Uuid.toString uuid)
       )
 
