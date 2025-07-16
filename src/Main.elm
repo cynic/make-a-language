@@ -651,7 +651,7 @@ viewLeftPanel model =
             [ h3
                 []
                 [ text "Computations "
-                , button
+                , div
                     [ HA.class "button button--primary"
                     , onClick CreateNewPackage
                     , HA.title "Create new computation"
@@ -796,28 +796,28 @@ viewRightBottomPanel model =
 
 viewTestPanelButtons : Model -> List (Html Msg)
 viewTestPanelButtons model =
-  [ button
+  [ div
     [ HA.class (getActionButtonClass model.executionState RunExecution)
     , onClick RunExecution
     , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
     , HA.title "Run"
     ]
     [ text "▶️" ]
-  , button
+  , div
     [ HA.class (getActionButtonClass model.executionState ResetExecution)
     , onClick ResetExecution
     , HA.disabled (model.executionState == Ready || model.executionState == NotReady)
     , HA.title "Reset"
     ]
     [ text "⏹️" ]
-  , button
+  , div
     [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
     , onClick StepThroughExecution
     , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
     , HA.title "Step-through"
     ]
     [ text "⏭️" ]
-  , button
+  , div
     [ HA.class (getActionButtonClass model.executionState DeleteTest)
     , onClick DeleteTest
     , HA.disabled (model.executionState == StepThrough)
@@ -970,18 +970,20 @@ viewBottomPanelContent model =
         [ text (getBottomPanelTitle model.selectedBottomPanel model.executionState) ]
       , div
         [ HA.class "bottom-panel__tab-buttons" ]
-        [ button
+        [ div
           [ HA.classList
-              [ ("tab-button", True)
+              [ ("button", True)
+              , ("tab-button", True)
               , ("tab-button--selected", model.selectedBottomPanel == AddTestPanel)
               ]
           , onClick <| SelectBottomPanel AddTestPanel
           , HA.title "Add test"
           ]
           [ text "🧪" ]
-        , button
+        , div
           [ HA.classList
-              [ ("tab-button", True)
+              [ ("button", True)
+              , ("tab-button", True)
               , ("tab-button--selected", model.selectedBottomPanel == EditDescriptionPanel)
               ]
           , onClick <| SelectBottomPanel EditDescriptionPanel
@@ -1012,7 +1014,7 @@ getBottomPanelTitle panel state =
 getActionButtonClass : ExecutionState -> Msg -> String
 getActionButtonClass currentState buttonAction =
   let
-    baseClass = "action-button"
+    baseClass = "button action-button"
     activeClass = case (currentState, buttonAction) of
       (ExecutionComplete, RunExecution) -> " action-button--active"
       (StepThrough, StepThroughExecution) -> " action-button--active"
@@ -1027,8 +1029,12 @@ viewStatusBar model =
     [ span [] [ text (getStatusMessage model.executionState) ]
     , div 
       [ HA.class "status-bar__section" ]
-      [ button
-        [ HA.class (if model.rightBottomPanelOpen then "status-bar__button status-bar__button--active" else "status-bar__button")
+      [ div
+        [ HA.classList
+            [ ("button", True)
+            , ("status-bar__button", True)
+            , ("status-bar__button--active", model.rightBottomPanelOpen)
+            ]
         , onClick ToggleBottomPanel
         ]
         [ text "Terminal" ]

@@ -611,6 +611,14 @@ rect.redo {
   display: flex;
 }
 
+:where(.button) { /* make v.easy to override this specificity */
+  display: inline-block;
+  box-sizing: border-box;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
 .tab-button {
   width: 34px;
   height: 34px;
