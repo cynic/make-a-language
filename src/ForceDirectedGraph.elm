@@ -223,10 +223,20 @@ automatonGraphToModel (w, h) g =
     forceGraph = toForceGraph g
     basic = basicForces forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph.graph
+    nodes = Graph.nodes forceGraph.graph
+    simulation =
+      Force.simulation (basic ++ viewport)
+    shiftedNodes =
+      Force.computeSimulation
+        simulation
+        (List.map .label nodes)
+    resultingGraph =
+      -- no changes to node-ids are made; only the spatial positions change.
+      { forceGraph | graph = updateGraphWithList forceGraph.graph shiftedNodes }
   in
     { currentOperation = Nothing
-    , userGraph = forceGraph
-    , simulation = Force.simulation (basic ++ viewport)
+    , userGraph = resultingGraph
+    , simulation = simulation
     , dimensions = (w, h)
     , basicForces = basic
     , viewportForces = viewport

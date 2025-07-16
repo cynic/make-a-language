@@ -35,7 +35,7 @@ import TypedSvg exposing
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
   , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , transform, noFill, strokeDasharray, strokeLinecap
+  , transform, noFill, strokeDasharray, strokeLinecap, cursor
   , markerStart, pointerEvents, dy)
 import TypedSvg.Attributes.InPx exposing
   ( cx, cy, r, strokeWidth, x, y, height, fontSize
@@ -48,6 +48,7 @@ import Color
 import Html.Attributes
 import Force
 import Set exposing (Set)
+import Svg.Attributes exposing (pointerEvents)
 
 {-
 Quality / technology requirements:
@@ -670,7 +671,9 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, 
       |> Maybe.withDefault False
   in
     g
-      [ class [ "state-node" ] ]
+      [ class [ "state-node" ]
+      , TypedSvg.Attributes.pointerEvents "none"
+      ]
       [ circle
           [ r FDG.nodeRadius
           , strokeWidth 2
@@ -742,7 +745,8 @@ viewLink ({ userGraph } as model) edge =
     labelText = FDG.connectionToSvgText edge.label
   in
     g
-      []
+      [ TypedSvg.Attributes.pointerEvents "none"
+      ]
       [
         path
           [ d positioning.pathString
@@ -770,14 +774,14 @@ viewLink ({ userGraph } as model) edge =
           , Html.Attributes.attribute "paint-order" "stroke fill markers"
           , class [ "link" ]
           ]
-          []
+          labelText
       ]
 
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
 viewComputationThumbnail width ({ model } as package) =
   -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
   svg
-    [ viewBox 0 0 width (0.5625 * width) -- 16:9 aspect ratio
+    [ viewBox 0 0 width (width / sqrt 2) -- 16:9 aspect ratio
     ]
     [ g
         [ transform [ Matrix 1 0 0 1 0 0 ] -- in case I need it later for some reason…
@@ -806,7 +810,11 @@ viewPackageItem model package =
   div 
     [ HA.class "left-panel__packageItem"
     , HA.css
-        [ Css.display Css.flex_
+        [ Css.position Css.relative
+        , Css.borderRadius (Css.px 5)
+        , Css.borderWidth (Css.px 1)
+        , Css.borderColor (Css.rgb 0x28 0x2a 0x36) -- --dracula-background
+        , Css.borderStyle Css.solid
         ]
     , onClick (SelectPackage package.uuid)
     ]
