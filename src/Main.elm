@@ -148,7 +148,7 @@ decodeFlags =
 
 createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> (Float, Float) -> GraphPackage
 createNewPackage uuid testUuid currentTime (w, h) = -- this is the width & height of the panel
-  { model = FDG.initializeModel ( w, h )
+  { model = FDG.init ( w, h )
   , description = Nothing
   , uuid = uuid
   , created = currentTime

@@ -242,15 +242,9 @@ automatonGraphToModel (w, h) g =
     , execution = Nothing
     }
 
-initializeModel : (Float, Float) -> Model
-initializeModel (w, h) =
-  automatonGraphToModel (w, h) (Automata.DFA.empty () |> toAutomatonGraph)
-
-init : (Float, Float) -> (Model, Cmd Msg)
+init : (Float, Float) -> Model
 init (w, h) =
-  ( initializeModel (w, h)
-  , Cmd.none
-  )
+  automatonGraphToModel (w, h) (Automata.DFA.empty () |> toAutomatonGraph)
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
