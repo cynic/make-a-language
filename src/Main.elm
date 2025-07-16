@@ -228,11 +228,18 @@ persistPackage =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-  case msg of
+  case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     ForceDirectedMsg fdMsg ->
       let
         currentPackage = model.currentPackage
-        newFdModel = FDG.update (0, 0) fdMsg currentPackage.model
+        newFdModel =
+          FDG.update (model.leftPanelWidth, 0) fdMsg currentPackage.model
+          -- |> \v ->
+          --   if fdMsg /= FDG.Tick then
+          --     Debug.log "msg" fdMsg |> \_ ->
+          --     FDG.debugModel_ "updated" v
+          --   else
+          --     v
         preUpdateChangeCount =
           List.length currentPackage.model.undoBuffer
         updatedPackage =

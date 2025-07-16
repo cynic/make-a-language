@@ -2310,3 +2310,35 @@ onMouseMove msg =
             Decode.fail "Ignoring non-SVG target"
         )
     )
+
+debugModel_ : String -> Model -> Model
+debugModel_ message model =
+  let
+    op =
+      case model.currentOperation of
+        Just o -> "(" ++ Debug.toString o ++ ")"
+        Nothing -> "(no op)"
+    graph = Automata.Debugging.printAutomatonGraph model.userGraph
+    screen =
+      "(" ++ String.fromFloat (Tuple.first model.dimensions) ++ ", " ++ String.fromFloat (Tuple.second model.dimensions) ++
+      " : " ++ panToString model.pan ++ ")"
+    buffers =
+      String.fromInt (List.length model.undoBuffer) ++ " / " ++ String.fromInt (List.length model.redoBuffer) ++ " undo/redo"
+    disconnected =
+      "{ " ++ (Set.map String.fromInt model.disconnectedNodes |> Set.toList |> String.join ", ") ++ " }"
+    pending =
+      "Undobuffer: " ++
+      ( case model.undoBuffer of
+          [] -> "nothing"
+          _ ->
+            "\n" ++
+            ( model.undoBuffer
+              |> List.map (DFA.serializeAutomatonGraph >> String.padLeft 4 ' ')
+              |> String.join "\n"
+            )
+      )
+  in
+    Debug.log (message
+      ++ "\n" ++ op ++ " " ++ screen ++ " " ++ buffers ++ " " ++ disconnected ++ "\n" ++
+      pending ++ "\n" ++ graph) ()
+    |> \_ -> model
