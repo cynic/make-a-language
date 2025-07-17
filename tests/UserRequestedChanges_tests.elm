@@ -1,10 +1,10 @@
 module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
-import Utility exposing (dfa, ag_equals, dfa_equals, mkAG_input)
+import Utility exposing (dfa, ag_equals, dfa_equals)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import Graph exposing (NodeId)
-import Automata.Data exposing (AutomatonGraph)
+import Automata.Data exposing (AutomatonGraph, mkAG_input)
 import Automata.DFA exposing (mkAutomatonGraphWithValues)
 import ForceDirectedGraph exposing (Entity)
 import Automata.Data exposing (Transition)
@@ -91,6 +91,16 @@ suite =
         \_ ->
           check_remove
             1 2 "0-a-1 1-b-2 2-c-3"
+            "0-a-1"
+      , test "Removing a recursive link works" <|
+        \_ ->
+          check_remove
+            1 1 "0-a-1 1-b-1"
+            "0-a-1"
+      , test "Removing a recursive link, identical to an input link, works" <|
+        \_ ->
+          check_remove
+            1 1 "0-a-1 1-a-1"
             "0-a-1"
       ]
     , describe "Updating" <|

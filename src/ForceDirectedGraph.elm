@@ -518,7 +518,15 @@ removeLink_graphchange src dest g =
     | graph =
         Graph.update dest
           (Maybe.map
-            (\node -> { node | incoming = IntDict.remove src node.incoming })
+            (\node ->
+              { node
+                | incoming = IntDict.remove src node.incoming
+                , outgoing =
+                    if src == dest then
+                      IntDict.remove dest node.outgoing
+                    else
+                      node.outgoing
+              })
           )
           g.graph
   }

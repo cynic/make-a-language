@@ -1,8 +1,8 @@
-module Utility exposing (ag, dfa, mkAG_input, mkDFA_input, ag_equals, dfa_equals)
+module Utility exposing (ag, dfa, mkDFA_input, ag_equals, dfa_equals)
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
-import Automata.Data exposing (AutomatonGraph, transitionsToString)
-import Automata.DFA exposing (mkAutomatonGraph, DFARecord, mkDFA, renumberAutomatonGraph)
+import Automata.Data exposing (AutomatonGraph, DFARecord, transitionsToString)
+import Automata.DFA exposing (mkAutomatonGraph, mkDFA, renumberAutomatonGraph)
 import Expect
 import Set
 import Graph exposing (NodeId)
