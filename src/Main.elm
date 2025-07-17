@@ -570,9 +570,17 @@ update msg model =
           ( { model | currentPackage = pkg }, Cmd.none )
 
     DeletePackage uuid ->
-      ( { model | packages = Dict.remove (Uuid.toString uuid) model.packages }
-      , Ports.deleteFromStorage (Uuid.toString uuid)
-      )
+      let
+        (newUuid, newSeed) = Random.step Uuid.generator model.uuidSeed
+        (newUuid2, newSeed2) = Random.step Uuid.generator newSeed
+      in
+        ( { model
+            | packages = Dict.remove (Uuid.toString uuid) model.packages
+            , currentPackage = createNewPackage newUuid newUuid2 model.currentTime model.rightTopPanelDimensions
+            , uuidSeed = newSeed2
+          }
+        , Ports.deleteFromStorage (Uuid.toString uuid)
+        )
 
     CreateNewTest ->
       let
@@ -1041,9 +1049,16 @@ viewPackageItem model package =
                 ]
             ]
             [ text desc ]
+    canSelect =
+      -- we can select this EITHER if there are no pending changes, OR
+      -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
+      model.currentPackage.model.undoBuffer == [] || package.uuid == model.currentPackage.uuid
   in
   div 
-    [ HA.class "left-panel__packageItem"
+    [ HA.classList
+        [ ("left-panel__packageItem", True)
+        , ("left-panel__packageItem--disabled", not canSelect)
+        ]
     , HA.css
         [ Css.position Css.relative
         , Css.borderRadius (Css.px 5)
@@ -1051,8 +1066,15 @@ viewPackageItem model package =
         , Css.borderColor (Css.rgb 0x28 0x2a 0x36) -- --dracula-background
         , Css.borderStyle Css.solid
         , Css.userSelect Css.none
+        , if canSelect then
+            Css.cursor Css.pointer
+          else
+            Css.cursor Css.notAllowed
         ]
-    , onClick (SelectPackage package.uuid)
+    , if canSelect then
+        onClick (SelectPackage package.uuid)
+      else
+        HA.title "Apply or cancel the pending changes before selecting another package."
     ]
     [ description
     , Html.Styled.fromUnstyled <| displaySvg
@@ -1062,9 +1084,15 @@ viewPackageItem model package =
             , Css.right (Css.px 5)
             , Css.top (Css.px 0)
             ]
-        , HA.class "button"
+        , HA.classList
+            [ ("button", canSelect)
+            , ("button--disabled", not canSelect)
+            ]
         , HA.title "Delete computation"
-        , onClick (DeletePackage package.uuid)
+        , if canSelect then
+            onClick (DeletePackage package.uuid)
+          else
+            HA.title "Apply or cancel the pending changes before deleting a package."
         ]
         [ text "🚮" ]
     ]

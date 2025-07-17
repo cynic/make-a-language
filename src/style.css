@@ -627,6 +627,12 @@ rect.redo {
   border-radius: 4px;
 }
 
+:where(.button--disabled) {
+  opacity: 0.3;
+  cursor: not-allowed;
+  filter: saturate(0%);
+}
+
 :where(.button:hover) {
   background-color: var(--dracula-comment);
   opacity: 1;
@@ -823,6 +829,10 @@ rect.redo {
   font-size: 14px;
   line-height: 1.4;
   overflow-wrap: break-word;
+}
+
+.left-panel__packageItem--disabled {
+  filter: saturate(0%);
 }
 
 .computation-progress-processed {
