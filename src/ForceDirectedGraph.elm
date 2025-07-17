@@ -520,10 +520,15 @@ removeLink_graphchange src dest g =
           (Maybe.map
             (\node ->
               { node
-                | incoming = IntDict.remove src node.incoming
+                | incoming =
+                    IntDict.update src
+                      (Maybe.map (\_ -> Set.empty))
+                      node.incoming
                 , outgoing =
                     if src == dest then
-                      IntDict.remove dest node.outgoing
+                      IntDict.update dest
+                        (Maybe.map (\_ -> Set.empty))
+                        node.outgoing
                     else
                       node.outgoing
               })
