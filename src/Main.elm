@@ -49,6 +49,8 @@ import Html.Attributes
 import Force
 import Set exposing (Set)
 import Svg.Attributes exposing (pointerEvents)
+import Html.Styled exposing (h4)
+import Html.Styled exposing (h2)
 
 {-
 Quality / technology requirements:
@@ -733,12 +735,12 @@ viewIconBar model =
           , "…"
           , "No tests exist"
           )
-        (_, 0, 0) -> -- no failures, no errors, and some passes.
+        (_, 0, 0) -> -- no failures, no errors, and only passes.
           ( Css.rgb 0x8c 0xf1 0x8c -- --dracula-green
           , "💯"
           , "All tests passed!"
           )
-        (0, _, 0) -> -- no passes, no errors, some failures.
+        (0, _, 0) -> -- no passes, no errors, only failures.
           ( Css.rgb 0xff 0x55 0x55 -- --dracula-red
           , "😵‍💫"
           , "All tests failed!"
@@ -1099,62 +1101,111 @@ viewPackageItem model package =
 
 viewTestItemInPanel : (String, Test) -> Html Msg
 viewTestItemInPanel (key, test) =
-  div 
-    [ HA.class "left-panel__testItem"
-    , HA.css
-        [ Css.position Css.relative
-        , Css.overflow Css.hidden
-        , Css.textOverflow Css.ellipsis
-        , Css.whiteSpace Css.nowrap
-        , Css.cursor Css.pointer
-        , Css.userSelect Css.none
-          -- --dracula-background
-        , Css.backgroundColor <| Css.rgb 0x28 0x2a 0x36
-          -- --dracula-foreground
-        -- , Css.color <| Css.rgb 0xf8 0xf8 0xf2
-        , Css.padding (Css.px 6)
-        , Css.borderRadius (Css.px 4)
-        , case isFailingTest test of
-            Nothing ->
-              -- --dracula-yellow
-              Css.color <| Css.rgb 0xf1 0xfa 0x8c
-            Just True ->
-              -- --dracula-red
-              Css.color <| Css.rgb 0xff 0x55 0x55
-            Just False ->
-              -- --dracula-foreground
-              Css.color <| Css.rgb 0xf8 0xf8 0xf2
-        ]
-    , onClick (SelectTest key)
-    ]
-    [ span
-        [ HA.css
-          [ Css.width (Css.pct 100)
-          -- , Css.whiteSpace Css.nowrap
-          , Css.overflow Css.hidden
-          , Css.textOverflow Css.ellipsis
-          , Css.whiteSpace Css.pre
-          , Css.fontFamilyMany
-              [ "Fira Code", "Inconsolata", "DejaVu Sans Mono"
-              , "Liberation Mono", "Ubuntu Mono", "Cascadia Code"
-              , "Cascadia Mono", "Consolas", "Lucida Console"
-              , "Courier New" ]
-              Css.monospace
+  let
+    testStatus = isFailingTest test
+  in
+    div 
+      [ HA.classList
+          [ ("left-panel__testItem", True)
+          , ("left-panel__testItem--failing", testStatus == Just True)
+          , ("left-panel__testItem--passing", testStatus == Just False)
+          , ("left-panel__testItem--error", testStatus == Nothing)
           ]
-        ]
-        [ text test.input ]
-    , div
-        [ HA.css
-            [ Css.position Css.absolute
-            , Css.right (Css.px 5)
-            , Css.top (Css.px 5)
+      , onClick (SelectTest key)
+      ]
+      [ span
+          [ HA.css
+            [ Css.width (Css.pct 100)
+            -- , Css.whiteSpace Css.nowrap
+            , Css.overflow Css.hidden
+            , Css.textOverflow Css.ellipsis
+            , Css.whiteSpace Css.pre
+            , Css.fontFamilyMany
+                [ "Fira Code", "Inconsolata", "DejaVu Sans Mono"
+                , "Liberation Mono", "Ubuntu Mono", "Cascadia Code"
+                , "Cascadia Mono", "Consolas", "Lucida Console"
+                , "Courier New" ]
+                Css.monospace
             ]
-        , HA.class "button"
-        , HA.title "Delete test"
-        , onClick (DeleteTest key)
-        ]
-        [ text "🚮" ]
-    ]
+          ]
+          [ text test.input ]
+      , div
+          [ HA.css
+              [ Css.position Css.absolute
+              , Css.right (Css.px 5)
+              , Css.top (Css.px 5)
+              ]
+          , HA.class "button"
+          , HA.title "Delete test"
+          , onClick (DeleteTest key)
+          ]
+          [ text "🚮" ]
+      ]
+
+viewLeftTestPanel : Model -> Html Msg
+viewLeftTestPanel model =
+  let
+    (expectAccept, expectReject) =
+      model.currentPackage.tests
+      |> Dict.toList
+      |> List.partition (Tuple.second >> .expectation >> (==) ExpectAccepted)
+    displayTests headingHtml tx =
+      case tx of
+        [] ->
+          text ""
+        _ ->
+          div
+            []
+            [ h4 [] headingHtml
+            , ul []
+              ( List.sortBy (Tuple.second >> .input) tx
+                |> List.map
+                  (\(key, test) ->
+                    li
+                      []
+                      [ viewTestItemInPanel (key, test) ]
+                  )
+              )
+            ]
+  in
+    div
+      [ HA.css
+          [ Css.backgroundColor <| Css.rgb 0x28 0x2a 0x36 -- --dracula-background
+          , Css.color <| Css.rgb 0xf8 0xf8 0xf2 -- --dracula-foreground
+          ]
+      ]
+      [ h2
+          []
+          [ text "Tests "
+          , div
+              [ HA.class "button button--primary"
+              , onClick CreateNewTest
+              , HA.title "Create new test"
+              ]
+              [ text "➕" ]
+          ]
+      , model.currentPackage.description
+        |> Maybe.map
+          (\desc ->
+            div
+              []
+              [ text "“"
+              , text desc
+              , text "”"
+              ]
+          )
+        |> Maybe.withDefault (text "")
+      , displayTests
+          [ span [] [ text "Should be " ]
+          , span [ HA.css [ Css.color <| Css.rgb 0x50 0xfa 0x7b ] ] [ text "accepted" ]
+          ]
+          expectAccept
+      , displayTests
+          [ span [] [ text "Should be " ]
+          , span [ HA.css [ Css.color <| Css.rgb 0xff 0x79 0xc6 ] ] [ text "rejected" ]
+          ]
+        expectReject
+      ]
 
 viewLeftPanel : Model -> Html Msg
 viewLeftPanel model =
@@ -1165,7 +1216,7 @@ viewLeftPanel model =
     [ case model.selectedIcon of
         Just ComputationsIcon ->
           div []
-            [ h3
+            [ h2
                 []
                 [ text "Computations "
                 , div
@@ -1185,7 +1236,7 @@ viewLeftPanel model =
                 |> List.map
                   (\pkg ->
                     li
-                      [ HA.class "left-panel__packageItem" ]
+                      []
                       [ viewPackageItem model pkg ]
                   )
               )
@@ -1213,30 +1264,7 @@ viewLeftPanel model =
             ]
         
         Just TestsIcon ->
-          div []
-            [ h3
-                []
-                [ text "Tests "
-                , div
-                    [ HA.class "button button--primary"
-                    , onClick CreateNewTest
-                    , HA.title "Create new test"
-                    ]
-                    [ text "➕" ]
-                ]
-            -- , p [] [ text "File management functionality would go here." ]
-            , ul []
-              ( model.currentPackage.tests
-                |> Dict.toList
-                |> List.sortBy (Tuple.second >> .input)
-                |> List.map
-                  (\keyAndTest ->
-                    li
-                      [ HA.class "left-panel__testItem" ]
-                      [ viewTestItemInPanel keyAndTest ]
-                  )
-              )
-            ]
+          viewLeftTestPanel model
         
         Just ExtensionsIcon ->
           div []

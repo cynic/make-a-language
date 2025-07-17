@@ -128,7 +128,8 @@ body {
 
 /* Left Panel */
 .left-panel {
-  background-color: var(--dracula-foreground);
+  background-color: var(--dracula-background);
+  color: var(--dracula-foreground);
   border-right: 1px solid var(--dracula-comment);
   padding: 20px;
   overflow-y: auto;
@@ -139,7 +140,7 @@ body {
   margin-top: 0;
   font-size: 16px;
   font-weight: 600;
-  color: var(--dracula-background);
+  color: var(--dracula-foreground);
 }
 
 .left-panel p {
@@ -182,6 +183,31 @@ body {
 
 .left-panel .panel-content--monospace {
   font-family: monospace;
+}
+
+.left-panel__testItem {
+  background-color: var(--dracula-current-line);
+  position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.left-panel__testItem--error {
+  color: var(--dracula-yellow);
+}
+
+.left-panel__testItem--passing {
+  color: var(--dracula-foreground);
+}
+
+.left-panel__testItem--failing {
+  color: var(--dracula-red);
 }
 
 /* Splitters */
@@ -638,6 +664,11 @@ rect.redo {
   opacity: 1;
 }
 
+:where(.button--primary) {
+  background-color: var(--dracula-purple);
+  color: var(--dracula-foreground);
+}
+
 .tab-button {
   width: 34px;
   height: 34px;
@@ -829,6 +860,15 @@ rect.redo {
   font-size: 14px;
   line-height: 1.4;
   overflow-wrap: break-word;
+}
+
+.left-panel__packageItem {
+  background-color: var(--dracula-foreground);
+  cursor: pointer;
+  user-select: none;
+  padding: 6px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
 }
 
 .left-panel__packageItem--disabled {
