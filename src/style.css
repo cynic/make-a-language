@@ -795,3 +795,100 @@ rect.redo {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+
+/* Test Panel Number Badge */
+.test-panel__number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  min-width: 1.2em;
+  min-height: 1.2em;
+  border-radius: 50%;
+  transform: translate(33%, 33%);
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* Computation Progress Visualization */
+.computation-progress {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background-color: rgba(68, 71, 90, 0.3);
+  border-radius: 6px;
+  border-left: 3px solid var(--dracula-purple);
+  font-family: 'Fira Code', 'Inconsolata', 'DejaVu Sans Mono', 'Liberation Mono', 'Ubuntu Mono', 'Cascadia Code', 'Cascadia Mono', 'Consolas', 'Lucida Console', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+.computation-progress-processed {
+  background-color: rgba(80, 250, 123, 0.2);
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-right: 2px;
+  display: inline-block;
+  border: 1px solid rgba(80, 250, 123, 0.4);
+}
+
+.computation-progress-to-do {
+  background-color: rgba(98, 114, 164, 0.2);
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-left: 2px;
+  display: inline-block;
+  border: 1px solid rgba(98, 114, 164, 0.4);
+  color: var(--dracula-comment);
+}
+
+/* Individual character states in computation progress */
+.computation-progress span.final {
+  font-weight: bold;
+  color: var(--dracula-orange);
+  background-color: rgba(255, 184, 108, 0.2);
+  border: 1px solid rgba(255, 184, 108, 0.4);
+  border-radius: 2px;
+  padding: 1px 3px;
+  margin: 0 1px;
+}
+
+.computation-progress span.non-final {
+  color: var(--dracula-foreground);
+  background-color: rgba(248, 248, 242, 0.1);
+  border: 1px solid rgba(248, 248, 242, 0.2);
+  border-radius: 2px;
+  padding: 1px 3px;
+  margin: 0 1px;
+}
+
+/* Test expectation text styling */
+.test_panel__accept-text {
+  color: var(--dracula-green);
+  font-weight: bold;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.test_panel__accept-text:hover {
+  color: var(--dracula-cyan);
+  text-shadow: 0 0 8px rgba(80, 250, 123, 0.4);
+}
+
+.test_panel__reject-text {
+  color: var(--dracula-pink);
+  font-weight: bold;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.test_panel__reject-text:hover {
+  color: var(--dracula-red);
+  text-shadow: 0 0 8px rgba(255, 121, 198, 0.4);
+}

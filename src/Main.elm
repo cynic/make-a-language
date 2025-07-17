@@ -1119,7 +1119,7 @@ viewTestItemInPanel (key, test) =
         [ HA.css
             [ Css.position Css.absolute
             , Css.right (Css.px 5)
-            , Css.top (Css.px 0)
+            , Css.top (Css.px 5)
             ]
         , HA.class "button"
         , HA.title "Delete test"
