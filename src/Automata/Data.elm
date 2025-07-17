@@ -4,6 +4,8 @@ import Set exposing (Set)
 import Graph exposing (Graph, NodeContext, NodeId)
 import Dict exposing (Dict)
 import Parser exposing (Parser, (|=), (|.))
+import Json.Encode as E
+import Json.Decode as D
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -62,16 +64,26 @@ type ExecutionState
 
 type ExecutionResult
   = EndOfInput ExecutionState
-  | EndOfComputation ExecutionState
+  | EndOfComputation ExecutionState -- no transition possible, though more input exists
   | CanContinue ExecutionState
   | InternalError
 
+type TestExpectation
+  = ExpectAccepted
+  | ExpectRejected
+
+type alias Test =
+  { input : String
+  , expectation : TestExpectation
+  , result : ExecutionResult
+  }
+
 empty : AutomatonGraph a
 empty =
-    { graph = Graph.empty
-    , maxId = 0
-    , root = 0
-    }
+  { graph = Graph.empty
+  , maxId = 0
+  , root = 0
+  }
 
 graphToAutomatonGraph : NodeId -> Graph a Connection -> AutomatonGraph a
 graphToAutomatonGraph start graph =

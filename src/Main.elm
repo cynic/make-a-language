@@ -29,7 +29,7 @@ import Automata.Data as Data
 import Graph exposing (NodeId, Edge)
 import Result.Extra
 import TypedSvg.Types exposing (Paint(..))
-import Css exposing (rgba)
+import Css exposing (defaultTextShadow)
 import TypedSvg exposing
   (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
@@ -96,7 +96,7 @@ type alias GraphPackage =
   , uuid : Uuid.Uuid
   , created : Time.Posix -- for ordering
   , currentTestKey : String
-  , tests : Dict String String
+  , tests : Dict String Test
   }
 
 type alias Model =
@@ -127,6 +127,28 @@ type alias Flags =
   , packages : List GraphPackage
   }
 
+
+encodeTest : Test -> E.Value
+encodeTest { input, expectation } =
+  E.object
+    [ ("input", E.string input)
+    , ("expectation", E.bool (expectation == ExpectAccepted))
+    -- do not store the result. It must be recalculated each time.
+    ]
+
+decodeTest : AutomatonGraph a -> D.Decoder Test
+decodeTest g =
+  D.map2
+    (\input expectation ->
+      { input = input
+      , expectation = expectation
+      , result =
+          DFA.stepThroughInitial input g
+          |> DFA.run g
+      })
+    (D.field "input" D.string)
+    (D.field "expectation" <| D.map (\b -> if b then ExpectAccepted else ExpectRejected) D.bool)
+
 encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
@@ -134,7 +156,7 @@ encodeGraphPackage pkg =
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
     , ("uuid", Uuid.encode pkg.uuid)
     , ("created", E.int (Time.posixToMillis pkg.created))
-    , ("tests", E.dict identity E.string pkg.tests)
+    , ("tests", E.dict identity encodeTest pkg.tests)
     , ("currentTestKey", E.string pkg.currentTestKey)
     ]
 
@@ -146,13 +168,16 @@ decodeGraphPackage (w, h) =
       |> DFA.mkAutomatonGraph
       |> FDG.automatonGraphToModel (w, h)
   in
-  D.map6 GraphPackage
-    (D.field "model" <| D.map initialize_fdg D.string)
-    (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
-    (D.field "uuid" Uuid.decoder)
-    (D.field "created" <| D.map Time.millisToPosix D.int)
-    (D.field "currentTestKey" D.string)
-    (D.field "tests" <| D.dict D.string)
+  D.field "model" (D.map initialize_fdg D.string)
+  |> D.andThen
+    (\fdg ->
+      D.map5 (GraphPackage fdg)
+        (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
+        (D.field "uuid" Uuid.decoder)
+        (D.field "created" <| D.map Time.millisToPosix D.int)
+        (D.field "currentTestKey" D.string)
+        (D.field "tests" <| D.dict (decodeTest fdg.userGraph))
+    )
 
 decodeFlags : D.Decoder Flags
 decodeFlags =
@@ -225,7 +250,7 @@ type Msg
   | StopDragging
   | MouseMove Float Float
   | ToggleBottomPanel
-  | UpdateTestPanelContent String
+  | UpdateTestPanelContent String TestExpectation
   | UpdateDescriptionPanelContent String
   | UpdateRightTopDimensions Float Float
   | RunExecution
@@ -266,8 +291,25 @@ update msg model =
           --     v
         preUpdateChangeCount =
           List.length currentPackage.model.undoBuffer
+        isCommitlike =
+          preUpdateChangeCount > 0 && newFdModel.undoBuffer == []
         updatedPackage =
-          { currentPackage | model = newFdModel }
+          { currentPackage
+            | model = newFdModel
+            , tests = -- re-run the tests upon "commit"
+                if isCommitlike then
+                  Dict.map
+                    (\_ entry ->
+                      { entry
+                        | result =
+                            DFA.stepThroughInitial entry.input newFdModel.userGraph
+                            |> DFA.run newFdModel.userGraph
+                      }
+                    )
+                    currentPackage.tests
+                else
+                  currentPackage.tests
+          }
       in
       ( { model
           | currentPackage = updatedPackage
@@ -280,12 +322,12 @@ update msg model =
               else
                 NotReady
           , packages =
-              if preUpdateChangeCount > 0 && newFdModel.undoBuffer == [] then
+              if isCommitlike then
                 Dict.insert (Uuid.toString updatedPackage.uuid) updatedPackage model.packages
               else
                 model.packages
         }
-      , if preUpdateChangeCount > 0 && newFdModel.undoBuffer == [] then
+      , if isCommitlike then
           persistPackage updatedPackage
         else
           Cmd.none
@@ -389,21 +431,30 @@ update msg model =
       , Cmd.none
       )
 
-    UpdateTestPanelContent content ->
+    UpdateTestPanelContent newInput expectation ->
       let
         currentPackage = model.currentPackage
         updatedTests =
-          case content of
+          case newInput of
             "" ->
               Dict.remove currentPackage.currentTestKey currentPackage.tests
             _ ->
-              Dict.insert currentPackage.currentTestKey content currentPackage.tests
+              Dict.insert
+                currentPackage.currentTestKey
+                  ( Test
+                      newInput
+                      expectation
+                      ( DFA.stepThroughInitial newInput model.currentPackage.model.userGraph
+                        |> DFA.run model.currentPackage.model.userGraph
+                      )
+                  )
+                currentPackage.tests
         updatedPackage =
           { currentPackage | tests = updatedTests }
       in
         ( { model
             | currentPackage = updatedPackage
-            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+            , packages = Dict.insert (Uuid.toString currentPackage.uuid) updatedPackage model.packages
           }
         , persistPackage updatedPackage
         )
@@ -437,11 +488,12 @@ update msg model =
       -- assume that when I get this message, the precondition of
       -- a 'Ready' state has already been met.
       ( { model 
-        | executionState = ExecutionComplete
+        | executionState = Ready
         , currentPackage =
             fdg_update model
               ( FDG.Load
                   ( Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+                    |> Maybe.map .input
                     |> Maybe.withDefault ""
                   )
               )
@@ -466,6 +518,7 @@ update msg model =
             fdg_update model
               ( FDG.Load
                   ( Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+                    |> Maybe.map .input
                     |> Maybe.withDefault ""
                   )
               )
@@ -625,19 +678,125 @@ viewLeftSection model =
         text ""
     ]
 
+isAccepted : ExecutionResult -> Maybe Bool
+isAccepted result =
+  case result of
+    InternalError -> Nothing
+    CanContinue _ -> Nothing
+    EndOfInput (Accepted _) -> Just True
+    _ -> Just False
+
+isPassingTest : Test -> Maybe Bool
+isPassingTest test =
+  isAccepted test.result
+  |> Maybe.map
+    (\v ->
+      (test.expectation == ExpectAccepted && v) || (test.expectation == Automata.Data.ExpectRejected && not v)
+    )
+
+isFailingTest : Test -> Maybe Bool
+isFailingTest = isPassingTest >> Maybe.map not
+
 viewIconBar : Model -> Html Msg
 viewIconBar model =
-  div 
-    [ HA.class "icon-bar" ]
-    [ viewIcon ComputationsIcon "📁" model
-    , viewIcon TestsIcon "🧪" model
-    , viewIcon SearchIcon "🔍" model
-    , viewIcon GitIcon "🌿" model
-    , viewIcon ExtensionsIcon "🧩" model
-    ]
+  let
+    (pass, fail, error) =
+      Dict.toList model.currentPackage.tests
+      |> List.foldl
+        (\(_, {expectation, result}) (p, f, e) ->
+          case isAccepted result of
+            Just True ->
+              if expectation == ExpectAccepted then
+                (p + 1, f, e)
+              else
+                (p, f + 1, e)
+            Just False ->
+              if expectation == ExpectRejected then
+                (p + 1, f, e)
+              else
+                (p, f + 1, e)
+            Nothing -> (p, f, e + 1)
+        )
+        (0, 0, 0)
+    (testBackgroundColor, number, testTitle) =
+      case (pass, fail, error) of
+        (0, 0, 0) ->
+          ( Css.rgb 0xf8 0xf8 0xf2 -- --dracula-foreground
+          , "…"
+          , "No tests exist"
+          )
+        (_, 0, 0) -> -- no failures, no errors, and some passes.
+          ( Css.rgb 0x8c 0xf1 0x8c -- --dracula-green
+          , "💯"
+          , "All tests passed!"
+          )
+        (0, _, 0) -> -- no passes, no errors, some failures.
+          ( Css.rgb 0xff 0x55 0x55 -- --dracula-red
+          , "😵‍💫"
+          , "All tests failed!"
+          )
+        (_, _, 0) -> -- some passes, some failures, no errors
+          ( Css.rgb 0xf1 0x8c 0x8c -- --dracula-pink
+          , String.fromInt fail
+          , if fail == 1 then
+              "1 test failed"
+            else
+              String.fromInt fail ++ " tests failed"
+          )
+        _ -> -- internal error exists!
+          ( Css.rgb 0xf1 0xfa 0x8c -- --dracula-yellow
+          , "❓"
+          , "Some tests did not complete due to an internal error! This indicates a problem with the computation system. Please report it to the developer."
+          )
+    testsExtra =
+      [ div
+          [ HA.class "test-panel__number"
+          , HA.css
+              [ Css.backgroundColor <| testBackgroundColor
+              , Css.color <| Css.rgb 0x28 0x2a 0x36 -- --dracula-background
+              , Css.borderRadius (Css.pct 50)
+              -- , Css.borderColor <| Css.rgb 0x44 0x47 0x5a -- --dracula-current-line
+              -- , Css.borderWidth (Css.px 1)
+              -- , Css.borderStyle Css.solid
+              , Css.position Css.absolute
+              , Css.left (Css.pct 50)
+              , Css.top (Css.pct 50)
+              -- , Css.fontSize (Css.pct 60)
+              , Css.padding (Css.px 2)
+              -- , Css.opacity (Css.num 0.8)
+              , Css.userSelect Css.none
+              , Css.width (Css.em 1.2)
+              , Css.height (Css.em 1.2)
+              , Css.lineHeight (Css.em 1.2)
+              , Css.textAlign Css.center
+              , Css.fontWeight Css.bold
+              -- , let
+              --     o = 0.5
+              --     blur = 1
+              --   in
+              --     Css.textShadowMany
+              --     [ { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px o, offsetY = Css.px o, color = Just <| testBackgroundColor }
+              --     , { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px -o, offsetY = Css.px -o, color = Just <| testBackgroundColor }
+              --     , { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px -o, offsetY = Css.px o, color = Just <| testBackgroundColor }
+              --     , { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px o, offsetY = Css.px -o, color = Just <| testBackgroundColor }
+              --     ]
+              ]
+          , HA.title testTitle
+          ]
+          [ text number ]
+      ]
+  in
+    div 
+      [ HA.class "icon-bar" ]
+      [ viewIcon ComputationsIcon "📁" [] model
+      , viewIcon TestsIcon "🧪" testsExtra model
+      , viewIcon SearchIcon "🔍" [] model
+      , viewIcon GitIcon "🌿" [] model
+      , viewIcon ExtensionsIcon "🧩" [] model
+      ]
 
-viewIcon : LeftPanelIcon -> String -> Model -> Html Msg
-viewIcon icon iconText model =
+viewIcon : LeftPanelIcon -> String -> List (Html Msg) -> Model -> Html Msg
+viewIcon icon iconText extra model =
   let
     isSelected = model.selectedIcon == Just icon
     iconClass = if isSelected then "icon icon--selected" else "icon"
@@ -645,8 +804,11 @@ viewIcon icon iconText model =
   div 
     [ HA.class iconClass
     , onClick (ClickIcon icon)
+    , HA.css
+        [ Css.position Css.relative
+        ]
     ]
-    [ text iconText ]
+    ( text iconText :: extra )
 
 
 
@@ -907,8 +1069,8 @@ viewPackageItem model package =
         [ text "🚮" ]
     ]
 
-viewTestItem : (String, String) -> Html Msg
-viewTestItem (key, test) =
+viewTestItemInPanel : (String, Test) -> Html Msg
+viewTestItemInPanel (key, test) =
   div 
     [ HA.class "left-panel__testItem"
     , HA.css
@@ -921,9 +1083,19 @@ viewTestItem (key, test) =
           -- --dracula-background
         , Css.backgroundColor <| Css.rgb 0x28 0x2a 0x36
           -- --dracula-foreground
-        , Css.color <| Css.rgb 0xf8 0xf8 0xf2
+        -- , Css.color <| Css.rgb 0xf8 0xf8 0xf2
         , Css.padding (Css.px 6)
         , Css.borderRadius (Css.px 4)
+        , case isFailingTest test of
+            Nothing ->
+              -- --dracula-yellow
+              Css.color <| Css.rgb 0xf1 0xfa 0x8c
+            Just True ->
+              -- --dracula-red
+              Css.color <| Css.rgb 0xff 0x55 0x55
+            Just False ->
+              -- --dracula-foreground
+              Css.color <| Css.rgb 0xf8 0xf8 0xf2
         ]
     , onClick (SelectTest key)
     ]
@@ -942,7 +1114,7 @@ viewTestItem (key, test) =
               Css.monospace
           ]
         ]
-        [ text test ]
+        [ text test.input ]
     , div
         [ HA.css
             [ Css.position Css.absolute
@@ -1028,12 +1200,12 @@ viewLeftPanel model =
             , ul []
               ( model.currentPackage.tests
                 |> Dict.toList
-                |> List.sortBy Tuple.second
+                |> List.sortBy (Tuple.second >> .input)
                 |> List.map
                   (\keyAndTest ->
                     li
                       [ HA.class "left-panel__testItem" ]
-                      [ viewTestItem keyAndTest ]
+                      [ viewTestItemInPanel keyAndTest ]
                   )
               )
             ]
@@ -1153,7 +1325,7 @@ viewTestPanelButtons model =
   , div
     [ HA.class (getActionButtonClass model.executionState (DeleteTest model.currentPackage.currentTestKey))
     , HA.css
-        [ Css.marginTop (Css.px 30)
+        [ Css.marginTop (Css.px 15)
         ]
     , onClick <| DeleteTest model.currentPackage.currentTestKey
     , HA.disabled (model.executionState == StepThrough)
@@ -1244,36 +1416,94 @@ executionText { currentPackage } =
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =
   let
-    testContent =
+    test =
       Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+    testInput =
+      Maybe.map .input test 
       |> Maybe.withDefault ""
+    testExpected =
+      Maybe.map .expectation test
+      |> Maybe.withDefault ExpectAccepted
+    testExpectationElement =
+      case testInput of
+        "" ->
+          text ""
+        _ ->
+          div
+            [ HA.css
+                [ Css.whiteSpace Css.preWrap
+                , Css.padding4 (Css.px 0) (Css.px 0) (Css.px 15) (Css.px 15)
+                , Css.userSelect Css.none
+                ]
+            ]
+            [ span
+                []
+                [ text "When this input is received, the computation should " ]
+            -- , span
+            --     [ HA.class "button"
+            --     , HA.css
+            --         [ Css.backgroundColor <| Css.rgb 0x62 0x72 0xa4 -- --dracula-comment
+            --         ]
+            --     , onClick <| UpdateTestPanelContent testInput <|
+            --         if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
+            --     ]
+            --     [ text "⇄"
+            --     ]
+            -- , text " "
+            , span
+                [ HA.classList
+                    [ ("test_panel__accept-text", testExpected == ExpectAccepted)
+                    , ("test_panel__reject-text", testExpected == ExpectRejected)
+                    ]
+                , HA.css
+                    [ Css.fontWeight Css.bold
+                    , Css.textDecorationLine Css.underline
+                    , Css.textDecorationStyle Css.dashed
+                    , Css.cursor Css.pointer
+                    , Css.color <|
+                        if testExpected == ExpectAccepted then
+                          Css.rgb 0x50 0xfa 0x7b -- --dracula-green
+                        else
+                          Css.rgb 0xff 0x79 0xc6 -- --dracula-pink
+                    ]
+                , onClick <| UpdateTestPanelContent testInput <|
+                    if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
+                ]
+                [ text
+                    ( case testExpected of
+                        ExpectAccepted -> "accept"
+                        ExpectRejected -> "reject"
+                    )
+                ]
+            , span
+                [ HA.css
+                    [ Css.whiteSpace Css.preWrap
+                    ]
+                ]
+                [ text " it." ]
+            ]
+    testContentArea =
+      textarea 
+        [ HA.class "right-bottom-panel__textarea"
+        , HA.value testInput
+        , onInput (\v -> UpdateTestPanelContent v testExpected)
+        , HA.placeholder "Enter your test input here"
+        , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
+        ]
+        []
   in
     case model.executionState of
       Ready ->
-        textarea 
-          [ HA.class "right-bottom-panel__textarea"
-          , HA.value testContent
-          , onInput UpdateTestPanelContent
-          , HA.placeholder "Enter your test input here"
-          , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
+        div
+          [ HA.class "bottom-panel__content"]
+          [ testExpectationElement
+          , testContentArea
           ]
-          []
 
       NotReady ->
-        div
-          []
-          [ div 
-              [ HA.class "notready-output" ]
-              [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
-          , textarea
-              [ HA.class "right-bottom-panel__textarea"
-              , HA.value testContent
-              , onInput UpdateTestPanelContent
-              , HA.placeholder "Enter your test input here"
-              , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
-              ]
-              []
-          ]
+        div 
+          [ HA.class "notready-output" ]
+          [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
       
       ExecutionComplete ->
         div 

@@ -300,6 +300,7 @@ body {
 
 .right-bottom-panel__textarea {
   height: 100%;
+  width: calc(100% - 30px);
   background-color: transparent;
   color: var(--dracula-foreground);
   border: none;
@@ -613,13 +614,14 @@ rect.redo {
 
 :where(.button) { /* make v.easy to override this specificity */
   display: inline-block;
-  box-sizing: border-box;
   margin: 0;
   cursor: pointer;
   user-select: none;
   padding: 2px;
-  width: 1em;
-  height: 1em;
+  width: 1.2em;
+  height: 1.2em;
+  line-height: 1.2em;
+  text-align: center;
   transition: all 0.2s ease;
   opacity: 0.7;
   border-radius: 4px;
