@@ -475,7 +475,7 @@ update msg model =
       in
         ( { model
             | currentPackage = updatedPackage
-            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+            , packages = Dict.insert (Uuid.toString currentPackage.uuid) updatedPackage model.packages
           }
         , persistPackage updatedPackage
         )
@@ -1188,7 +1188,12 @@ viewLeftTestPanel model =
         |> Maybe.map
           (\desc ->
             div
-              []
+              [ HA.css
+                  [ Css.fontStyle Css.italic
+                  , Css.fontSize (Css.rem 0.8)
+                  , Css.whiteSpace Css.preWrap
+                  ]
+              ]
               [ text "“"
               , text desc
               , text "”"
