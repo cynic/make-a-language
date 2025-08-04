@@ -1467,6 +1467,24 @@ viewLink ({ userGraph } as model) executing edge =
           ]
           ( title [] [ text "Click to modify" ] :: labelText 
           )
+      , rect
+          [ x <| positioning.transition_coordinates.x
+          , y <| positioning.transition_coordinates.y - 70
+          , width 28
+          , height 16
+          , rx 2
+          , ry 2
+          , fill <| Paint <| Color.black
+          ]
+          []
+      , rect
+          [ x <| positioning.transition_coordinates.x + 4
+          , y <| positioning.transition_coordinates.y - 70 + 4
+          , width 4
+          , height 4
+          , fill <| Paint <| Color.white
+          ]
+          []
       -- for debugging the paths.
       -- , circle
       --     [ cx <| positioning.control_point.x
