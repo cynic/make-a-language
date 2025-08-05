@@ -3,7 +3,7 @@ import IntDict exposing (IntDict(..))
 import Set exposing (Set)
 import AutoSet
 import Graph exposing (Graph, NodeContext, NodeId)
-import Dict exposing (Dict)
+import AutoDict
 import Parser exposing (Parser, (|=), (|.))
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
@@ -19,11 +19,16 @@ type NodeEffect
   = NoEffect
   | SomeEffectFigureItOutLater
 
+type alias StateData extending =
+  { extending |
+    effect : NodeEffect
+  }
+
 type alias Transition = (AcceptVia, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
 type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
-type alias Node = NodeContext NodeEffect Connection -- a Node itself does not carry any data, hence the ()
-type alias AutomatonGraph =
-  { graph : Graph NodeEffect Connection -- finally, the complete graph.
+type alias Node a = NodeContext (StateData a) Connection -- a Node itself does not carry any data, hence the ()
+type alias AutomatonGraph a =
+  { graph : Graph (StateData a) Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
   , maxId : NodeId
   , root : NodeId
@@ -40,15 +45,15 @@ And everything is connected.  And outgoing nodes have deterministic transitions.
 
 type alias DFARecord extending label =
   { extending |
-    states : IntDict label -- the () is the label.
-  , transition_function: IntDict (Dict Char NodeId) -- NodeId × Char → NodeId
+    states : IntDict (StateData label)
+  , transition_function: IntDict (AutoDict.Dict String AcceptVia NodeId) -- NodeId × Char → NodeId
   , start : NodeId
   , finals : Set NodeId
   }
 
 type alias ExtDFA label =
-  { states : IntDict label
-  , transition_function: IntDict (Dict Char NodeId)
+  { states : IntDict (StateData label)
+  , transition_function: IntDict (AutoDict.Dict String AcceptVia NodeId)
   , start : NodeId
   , finals : Set NodeId
   , register : Set NodeId
@@ -57,8 +62,8 @@ type alias ExtDFA label =
   , unusedId : NodeId
   }
 type alias ExecutionData =
-  { transitionsTaken : List (NodeId, (Char, Int)) -- (src, transition)
-  , remainingData : List Char
+  { transitionsTaken : List (NodeId, Transition) -- (src, transition)
+  , remainingData : List AcceptVia
   , currentNode : NodeId
   }
 
@@ -84,19 +89,30 @@ type alias Test =
   , result : ExecutionResult
   }
 
-empty : AutomatonGraph
+empty : AutomatonGraph a
 empty =
   { graph = Graph.empty
   , maxId = 0
   , root = 0
   }
 
-graphToAutomatonGraph : NodeId -> Graph NodeEffect Connection -> AutomatonGraph
+graphToAutomatonGraph : NodeId -> Graph (StateData a) Connection -> AutomatonGraph a
 graphToAutomatonGraph start graph =
   { graph = graph
   , maxId = Graph.nodeIdRange graph |> Maybe.map Tuple.second |> Maybe.withDefault 0
   , root = start
   }
+
+acceptConditionEq : AcceptVia -> AcceptVia -> Bool
+acceptConditionEq a b =
+  case (a, b) of
+    (Character a_, Character b_) -> a_ == b_
+
+acceptConditionToString : AcceptVia -> String
+acceptConditionToString v =
+  case v of
+    Character ch ->
+      "C" ++ String.fromChar ch
 
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : NodeContext a Connection -> Bool
@@ -142,7 +158,7 @@ connectionToString =
   >> AutoSet.toList
   >> String.join "\u{2008}" -- punctuation space. Stops terminality-marker from disappearing on subsequent characters.
 
-graphToString : Graph NodeEffect Connection -> String
+graphToString : Graph (StateData a) Connection -> String
 graphToString graph =
   Graph.toString
     (\_ -> Nothing)

@@ -1,21 +1,16 @@
 module Automata.DFA exposing (..)
 import IntDict exposing (IntDict)
 import Set exposing (Set)
+import AutoSet
 import List.Extra as List
 import Dict exposing (Dict)
+import AutoDict
 import Automata.Data exposing (..)
 import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import Dict.Extra
-import Dict exposing (update)
-import List.Extra exposing (remove)
 import Maybe.Extra
-import Html exposing (tr)
 import Tuple.Extra
-import Automata.Debugging
-import Css exposing (row)
-import Automata.Debugging exposing (debugGraph)
-import Automata.Debugging exposing (debugAutomatonGraph)
-import Svg.Attributes exposing (k)
+-- import Automata.Debugging
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -23,11 +18,9 @@ import Svg.Attributes exposing (k)
 -- This is superior to marking finality on a vertex, because
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
-type alias MTransition = Char
-type alias MConnection = Set MTransition -- a MConnection is a link between two nodes.
+type alias MConnection = AutoSet.Set String AcceptVia -- a MConnection is a link between two nodes.
 -- type alias Connections = IntDict MConnection
 type alias Node = NodeContext Bool MConnection -- a Node indicates terminality
-
 
 oneTransition : AutomatonGraph a -> ExecutionState -> ExecutionState
 oneTransition g executionState =
@@ -45,14 +38,14 @@ oneTransition g executionState =
               |> IntDict.toList
               |> List.findMap
                 (\(k, conn) ->
-                  if Set.member (h, 1) conn then
+                  if AutoSet.member (h, 1) conn then
                     Just <| Accepted
                       { data
                         | transitionsTaken = (data.currentNode, (h, 1))::data.transitionsTaken
                         , remainingData = t
                         , currentNode = k
                       }
-                  else if Set.member (h, 0) conn then
+                  else if AutoSet.member (h, 0) conn then
                     Just <| Rejected
                       { data
                         | transitionsTaken = (data.currentNode, (h, 0))::data.transitionsTaken
@@ -126,9 +119,13 @@ run g r =
 
 stepThroughInitial : String -> AutomatonGraph a -> ExecutionResult
 stepThroughInitial s g =
+  let
+    upcomingAcceptConditions =
+      String.toList >> List.map Character
+  in
   step g
     (CanContinue <| Rejected <|
-      ExecutionData [] (String.toList s) g.root
+      ExecutionData [] (upcomingAcceptConditions s) g.root
     )
 
 
@@ -138,29 +135,37 @@ mkConn s =
     helper xs acc =
       case xs of
         '!'::ch::rest ->
-          helper rest (Set.insert (ch, 1) acc |> Set.remove (ch, 0))
+          helper rest (AutoSet.insert (Character ch, 1) acc |> AutoSet.remove (Character ch, 0))
         ch::rest ->
-          helper rest (Set.insert (ch, 0) acc |> Set.remove (ch, 1))
+          helper rest (AutoSet.insert (Character ch, 0) acc |> AutoSet.remove (Character ch, 1))
         [] -> acc
   in
-    helper (String.toList s) Set.empty
+    helper (String.toList s) (AutoSet.empty transitionToString)
 
 -- for use from CLI
-mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} ()
+mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {} {}
 mkDFA transitions finals =
 
-  { states = List.concatMap (\(a, _, b) -> [(a, ()), (b, ())]) transitions |> IntDict.fromList
+  { states =
+      List.concatMap
+        (\(a, _, b) ->
+          [ (a, { effect = NoEffect })
+          , (b, { effect = NoEffect })
+          ]
+        )
+        transitions
+      |> IntDict.fromList
   , transition_function =
       List.foldl
         (\(a, ch, b) state ->
           IntDict.update a
             (\possible ->
               case possible of
-                Nothing -> Just <| Dict.singleton ch b
+                Nothing -> Just <| AutoDict.singleton acceptConditionToString (Character ch) b
                 Just existing ->
                   -- overwrite if we have a collision.
                   Debug.log "Overwriting (new, existing)" ((a, ch, b), (a, existing)) |> \_ ->
-                  Just <| Dict.insert ch b existing
+                  Just <| AutoDict.insert (Character ch) b existing
             )
             state
         )
@@ -174,7 +179,7 @@ mkDFA transitions finals =
   , finals = Set.fromList finals
   }
 
-mkAutomatonGraphWithValues : (NodeId -> a) -> List (NodeId, String, NodeId) -> AutomatonGraph a
+mkAutomatonGraphWithValues : (NodeId -> StateData a) -> List (NodeId, String, NodeId) -> AutomatonGraph a
 mkAutomatonGraphWithValues valueFunction ts =
   let
     edges =
@@ -186,7 +191,7 @@ mkAutomatonGraphWithValues valueFunction ts =
                 Nothing ->
                   Just (mkConn s)
                 Just existing ->
-                  Just <| Set.union existing (mkConn s)
+                  Just <| AutoSet.union existing (mkConn s)
             )
             acc
         )
@@ -218,9 +223,9 @@ mkAutomatonGraphWithValues valueFunction ts =
         , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
         }
 
-mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph ()
+mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph {}
 mkAutomatonGraph =
-  mkAutomatonGraphWithValues (\_ -> ())
+  mkAutomatonGraphWithValues (\_ -> { effect = NoEffect })
 
 extend : DFARecord a b -> DFARecord a b -> ExtDFA b
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
@@ -239,7 +244,7 @@ extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
           IntDict.toList w_dfa_orig.transition_function
           |> List.map
               (\(a, d) ->
-                (a + max_dfa, Dict.map (\_ b -> b + max_dfa) d)
+                (a + max_dfa, AutoDict.map (\_ b -> b + max_dfa) d)
               )
           |> IntDict.fromList
       , start = w_dfa_orig.start + max_dfa
@@ -275,14 +280,17 @@ retract extDFA =
   }
 
 {-| Create a DFA that accepts exactly one string. -}
-add_string_to_dfa : String -> Maybe (DFARecord {} ())
+add_string_to_dfa : String -> Maybe (DFARecord {} {})
 add_string_to_dfa string =
   if String.isEmpty string then
     Nothing
   else
     Just -- <| debugDFA_ ("Creating single-string DFA for '" ++ string ++ "'") <|
       -- If this is a n-character string, then we will want n+1 states
-      { states = IntDict.fromList (List.range 0 (String.length string) |> List.map (\i -> (i, ())))
+      { states =
+          List.range 0 (String.length string)
+          |> List.map (\i -> (i, { effect = NoEffect }))
+          |> IntDict.fromList
       , start = 0
       , finals = Set.singleton (String.length string)
       , transition_function =
@@ -291,10 +299,15 @@ add_string_to_dfa string =
                 [] ->
                   []
                 [ch] ->
-                  [(0, Dict.singleton ch 1)]
+                  List.singleton
+                    ( 0
+                    , AutoDict.singleton acceptConditionToString (Character ch) 1
+                    )
                 xs ->
                   List.foldl
-                    (\ch (acc, nodeId) -> ( (nodeId, Dict.singleton ch (nodeId + 1)) :: acc, nodeId + 1 ))
+                    (\ch (acc, nodeId) ->
+                      ( (nodeId, AutoDict.singleton acceptConditionToString (Character ch) (nodeId + 1)) :: acc
+                      , nodeId + 1 ))
                     ( [], 0 )
                     xs
                   |> Tuple.first
@@ -302,14 +315,14 @@ add_string_to_dfa string =
       }
 
 {-| Create a DFA that accepts exactly one string. -}
-remove_string_from_dfa : String -> Maybe (DFARecord {} ())
+remove_string_from_dfa : String -> Maybe (DFARecord {} {})
 remove_string_from_dfa string =
   if String.isEmpty string then
     Nothing
   else
     Just -- <| debugDFA_ ("Creating single-string DFA for '" ++ string ++ "'") <|
       -- If this is a n-character string, then we will want n+1 states
-      { states = IntDict.fromList (List.range 0 (String.length string) |> List.map (\i -> (i, ())))
+      { states = IntDict.fromList (List.range 0 (String.length string) |> List.map (\i -> (i, { effect = NoEffect })))
       , start = 0
       , finals = Set.empty -- this is quite literally the only difference between add/remove!
       , transition_function =
@@ -318,10 +331,15 @@ remove_string_from_dfa string =
                 [] ->
                   []
                 [ch] ->
-                  [(0, Dict.singleton ch 1)]
+                  [(0, AutoDict.singleton acceptConditionToString (Character ch) 1)]
                 xs ->
                   List.foldl
-                    (\ch (acc, nodeId) -> ( (nodeId, Dict.singleton ch (nodeId + 1)) :: acc, nodeId + 1 ))
+                    (\ch (acc, nodeId) ->
+                      ( ( nodeId
+                        , AutoDict.singleton acceptConditionToString (Character ch) (nodeId + 1)
+                        ) :: acc
+                      , nodeId + 1 )
+                      )
                     ( [], 0 )
                     xs
                   |> Tuple.first
@@ -353,7 +371,7 @@ a tree structure.
 -}
 -- Tree structure for all possible forward transition paths
 
-type ForwardTree = PathEnd | ForwardNode (Dict Char ForwardTree)
+type ForwardTree = PathEnd | ForwardNode (AutoDict.Dict String AcceptVia ForwardTree)
 
 {-| Return the nodes of the forwardtree, in-order.
 -}
@@ -371,12 +389,12 @@ forwardtree_nodes start extDFA_orig tree_ =
           acc
         ( h::_, ForwardNode dict ) ->
           -- follow all the possible forward-paths from this node.
-          Dict.foldl
-            (\ch nextTree state ->
+          AutoDict.foldl
+            (\acceptCondition nextTree state ->
               IntDict.get h extDFA_orig.transition_function
               |> Maybe.andThen
                 (\destinations ->
-                  Dict.get ch destinations
+                  AutoDict.get acceptCondition destinations
                   |> Maybe.map (\q -> nodes_of_forwardtree nextTree (q::state))
                 )
               -- if there are no outgoing transitions, there is no path to follow; we are done.
@@ -398,16 +416,16 @@ all_forward_transitions start extDFA =
         Just dict ->
           let
             filtered =
-              Dict.filter
+              AutoDict.filter
                 (\_ state ->
                   not (Set.member state seen)
                   && current /= state
                 )
                 dict
             children =
-              Dict.map (\_ state -> helper state (Set.insert state seen)) filtered
+              AutoDict.map (\_ state -> helper state (Set.insert state seen)) filtered
           in
-            if Dict.isEmpty children then PathEnd else ForwardNode children
+            if AutoDict.isEmpty children then PathEnd else ForwardNode children
   in
     helper start Set.empty
     -- |> Debug.log "[all_forward_transitions] result"
@@ -422,7 +440,7 @@ w_forward_transitions extDFA =
         Just dict ->
           let
             filtered =
-              Dict.filter
+              AutoDict.filter
                 (\_ state ->
                   not (Set.member state seen)
                   && current /= state
@@ -430,26 +448,26 @@ w_forward_transitions extDFA =
                 )
                 dict
             children =
-              Dict.map (\_ state -> helper state (Set.insert state seen)) filtered
+              AutoDict.map (\_ state -> helper state (Set.insert state seen)) filtered
           in
-            if Dict.isEmpty children then PathEnd else ForwardNode children
+            if AutoDict.isEmpty children then PathEnd else ForwardNode children
   in
     helper extDFA.clone_start Set.empty
     -- |> Debug.log "[w_forward_transitions] result"
 
-delta : NodeId -> Char -> DFARecord a b -> Maybe NodeId
+delta : NodeId -> AcceptVia -> DFARecord a b -> Maybe NodeId
 delta q x dfa =
   IntDict.get q dfa.transition_function
-  |> Maybe.andThen (Dict.get x)
+  |> Maybe.andThen (AutoDict.get x)
 
 -- delta_star : NodeId -> List Char -> DFARecord a -> Maybe NodeId
 -- delta_star q xs dfa =
 --   List.foldl (\x -> Maybe.andThen (\q_ -> delta q_ x dfa)) (Just q) xs
 
-transitions_from_source : NodeId -> DFARecord a b -> List (NodeId, Char)
+transitions_from_source : NodeId -> DFARecord a b -> List (NodeId, AcceptVia)
 transitions_from_source q dfa =
   IntDict.get q dfa.transition_function
-  |> Maybe.map (Dict.toList >> List.map Tuple.Extra.flip)
+  |> Maybe.map (AutoDict.toList >> List.map Tuple.Extra.flip)
   |> Maybe.withDefault []
 
 {-| Returns a list of (NodeId, Char) pairs representing all transitions in the given DFA that lead to the specified node.
@@ -461,11 +479,11 @@ transitions_from_source q dfa =
 
 Each pair consists of the source NodeId and the character label of the transition.
 -}
-transitions_to_dest : NodeId -> DFARecord a b -> List (NodeId, Char)
+transitions_to_dest : NodeId -> DFARecord a b -> List (NodeId, AcceptVia)
 transitions_to_dest q dfa =
   IntDict.foldl
     (\source dict acc ->
-      Dict.foldl
+      AutoDict.foldl
         (\ch target acc_ ->
           if target == q then
             (source, ch) :: acc_
@@ -490,13 +508,13 @@ clone_or_queue q_m q_w extDFA =
           ( Nothing, Nothing) ->
             extDFA.transition_function
           ( Just a, Just b ) ->
-            IntDict.insert q_w (Dict.union a b) extDFA.transition_function
+            IntDict.insert q_w (AutoDict.union a b) extDFA.transition_function
     , finals =
         if Set.member q_m extDFA.finals then
           Set.insert q_w extDFA.finals
         else
           extDFA.finals
-  }
+   }
 
 clone_or_queue_many : NodeId -> NodeId -> ForwardTree -> ExtDFA a -> ExtDFA a
 clone_or_queue_many q_m q_w tree extDFA =
@@ -505,7 +523,7 @@ clone_or_queue_many q_m q_w tree extDFA =
       -- we're at the end of the transitions.
       clone_or_queue q_m q_w extDFA
     ForwardNode dict ->
-      Dict.foldl
+      AutoDict.foldl
         (\ch subtree acc ->
           case (delta q_m ch acc, delta q_w ch acc) of
             (_, Nothing) ->
@@ -586,7 +604,7 @@ remove_unreachable old_w_path extDFA_orig =
         ([], [])
     -- Step 3
     -- make the final partition
-    (with_external_edges, without_external_edges) =
+    (_, without_external_edges) =
       -- TODO: …this can probably be made less expensive by going the other way
       -- and looking at the destinations of with_external_edges. Oh well!
       let
@@ -648,12 +666,12 @@ replace_or_register extDFA =
             ( Just _, Nothing ) -> False
             ( Nothing, Just _ ) -> False
             _ -> p_outgoing == q_outgoing
-    redirectInto : NodeId -> NodeId -> IntDict (Dict Char NodeId)
+    redirectInto : NodeId -> NodeId -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source =
       -- redirect everything that goes to source, into target
       IntDict.map
         (\_ dict ->
-          Dict.map
+          AutoDict.map
             (\_ candidate ->
               if candidate == source then
                 target
@@ -790,7 +808,7 @@ modifyConnection source target newConn =
               (Maybe.map (\sourceContext ->
                 { sourceContext
                   | outgoing =
-                      if Set.isEmpty newConn then
+                      if AutoSet.isEmpty newConn then
                         IntDict.remove target sourceContext.outgoing
                       else
                         IntDict.insert target newConn sourceContext.outgoing
@@ -868,7 +886,7 @@ removeConnection source target =
     >> retract
     >> toAutomatonGraph
 
-addString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
+addString : String -> Maybe (DFARecord {} {}) -> Maybe (DFARecord {} {})
 addString string maybe_dfa =
   let
     string_dfa = add_string_to_dfa string
@@ -881,7 +899,7 @@ addString string maybe_dfa =
       ( Just dfa, Just s ) ->
         Just (union s dfa {- |> debugDFA_ ("after adding '" ++ string ++ "'") -})
 
-removeString : String -> Maybe (DFARecord {} ()) -> Maybe (DFARecord {} ())
+removeString : String -> Maybe (DFARecord {} {}) -> Maybe (DFARecord {} {})
 removeString string maybe_dfa =
   let
     string_dfa = remove_string_from_dfa string
@@ -894,7 +912,7 @@ removeString string maybe_dfa =
       ( Just dfa, Just s ) ->
         Just (union s dfa {- |> debugDFA_ ("after removing '" ++ string ++ "'") -})
 
-wordsToDFA : List String -> DFARecord {} ()
+wordsToDFA : List String -> DFARecord {} {}
 wordsToDFA strings =
   List.foldl addString Nothing strings
   |> Maybe.withDefault
@@ -904,7 +922,7 @@ wordsToDFA strings =
     , finals = Set.empty
     }
 
-empty : a -> DFARecord {} a
+empty : StateData a -> DFARecord {} a
 empty defaultValue =
   { states = IntDict.singleton 0 defaultValue
   , transition_function = IntDict.empty
@@ -912,17 +930,17 @@ empty defaultValue =
   , finals = Set.empty
   }
 
-fromWords : List String -> DFARecord {} ()
+fromWords : List String -> DFARecord {} {}
 fromWords =
   List.foldl addString Nothing
-  >> Maybe.withDefault (empty ())
+  >> Maybe.withDefault (empty { effect = NoEffect })
   -- >> Maybe.map toGraph
   -- >> Maybe.withDefault Automata.Data.empty
 
 debugFan_ : String -> IntDict Connection -> IntDict Connection
 debugFan_ s fan =
   IntDict.toList fan
-  |> List.map (\(id, conn) -> (id, Set.toList conn))
+  |> List.map (\(id, conn) -> (id, AutoSet.toList conn))
   |> Debug.log s
   |> \_ -> fan
 
@@ -935,7 +953,7 @@ minimisation_merge head other g =
         Just conn ->
           case IntDict.get to fan of
             Just conn2 ->
-              IntDict.insert to (Set.union conn conn2) fan
+              IntDict.insert to (AutoSet.union conn conn2) fan
               |> IntDict.remove from
             Nothing ->
               IntDict.insert to conn fan
@@ -948,13 +966,13 @@ minimisation_merge head other g =
         let
           updatedIncoming =
             IntDict.uniteWith
-              (\_ -> Set.union)
+              (\_ -> AutoSet.union)
               (redirectFan other head headNode.incoming {- |> debugFan_ "[minimisation_merge] headNode.incoming (redir)" -})
               (redirectFan other head otherNode.incoming {- |> debugFan_ "[minimisation_merge] otherNode.incoming (redir)"-})
             -- |> debugFan_ "[minimisation_merge] merged incoming"
           updatedOutgoing =
             IntDict.uniteWith
-              (\_ -> Set.union)
+              (\_ -> AutoSet.union)
               (redirectFan other head headNode.outgoing {- |> debugFan_ "[minimisation_merge] headNode.outgoing (redir)" -})
               (redirectFan other head otherNode.outgoing {- |> debugFan_ "[minimisation_merge] otherNode.outgoing (redir)" -})
             -- |> debugFan_ "[minimisation_merge] merged outgoing"
@@ -986,7 +1004,7 @@ hopcroft dawg =
       Graph.edges dawg.graph
       |> List.concatMap
         (\{from, to, label} ->
-          Set.toList label
+          AutoSet.toList label
           |> List.map (\t -> (from, to, t))
         )
     (finals, nonFinals) = -- the initial partition.
@@ -1156,7 +1174,7 @@ minimiseNodesByCombiningTransitions g_ =
               (\_ conn ((czech, state) as acc_) ->
                 if czech then
                   acc_
-                else if Set.foldl (\(_, f) acc -> acc || f == 1) False conn then
+                else if AutoSet.foldl (\(_, f) acc -> acc || f == 1) False conn then
                   (True, Set.insert ctx.node.id state)
                 else
                   acc_
@@ -1168,16 +1186,16 @@ minimiseNodesByCombiningTransitions g_ =
         Set.empty
         g_.graph
       -- |> Debug.log "[minimiseNodes] Terminal nodes (i.e. starting points)"
-    fanOutEquals : NodeContext a Connection -> NodeContext a Connection -> Bool
+    fanOutEquals : NodeContext (StateData a) Connection -> NodeContext (StateData a) Connection -> Bool
     fanOutEquals a b =
       let
-        redirected o id =
+        redirected o _ =
           IntDict.toList o
           -- |> Debug.log ("[minimiseNodes→fanOutEquals] outgoing of #" ++ String.fromInt id)
       in
       redirected a.outgoing a.node.id == redirected b.outgoing b.node.id
       -- |> Debug.log "[minimiseNodes→fanOutEquals] Are these equal?"
-    classify : NodeContext a Connection -> AutomatonGraph a -> Maybe (AutomatonGraph a)
+    classify : NodeContext (StateData a) Connection -> AutomatonGraph a -> Maybe (AutomatonGraph a)
     classify terminal g =
       -- classify the terminal node into one of the four classes
       if IntDict.isEmpty terminal.outgoing then
@@ -1295,7 +1313,7 @@ toAutomatonGraph dfa =
         (IntDict.toList (dfa {- |> debugDFA_ "[toAutomatonGraph] DFA as received" -}).transition_function
         |> List.foldl
           (\(from, dict) state ->
-            Dict.toList dict
+            AutoDict.toList dict
             |> List.foldl
               (\(transition, to) state_ ->
                 let
@@ -1303,9 +1321,9 @@ toAutomatonGraph dfa =
                 in
                 case Dict.get (from, to) state_ of
                   Nothing ->
-                    Dict.insert (from, to) (Set.singleton t) state_
+                    Dict.insert (from, to) (AutoSet.singleton transitionToString t) state_
                   Just conn ->
-                    Dict.insert (from, to) (Set.insert t conn) state_
+                    Dict.insert (from, to) (AutoSet.insert t conn) state_
               )
               state
           )
@@ -1326,7 +1344,7 @@ toAutomatonGraph dfa =
         -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
         |> minimiseNodesByCombiningTransitions
 
-fromGraph : NodeId -> Graph n Connection -> DFARecord {} n
+fromGraph : NodeId -> Graph (StateData n) Connection -> DFARecord {} n
 fromGraph start graph =
   { graph = graph
   , root = start
@@ -1338,7 +1356,12 @@ renumberAutomatonGraph : AutomatonGraph a -> AutomatonGraph a
 renumberAutomatonGraph g =
   let
     fanMapper =
-      IntDict.toList >> List.map (\(k, conn) -> (k, Set.toList conn)) 
+      IntDict.toList
+      >> List.map
+        (\(k, conn) ->
+          (k, AutoSet.toList conn
+          |> List.map (Tuple.mapFirst acceptConditionToString))
+        )
     nodeMap =
       Graph.nodeIds g.graph
       |> List.filterMap (\id -> Graph.get id g.graph)
@@ -1401,11 +1424,11 @@ splitTerminalAndNonTerminal g =
   -}
   let
         -- Helper to classify a transition as terminal or non-terminal
-    isTerminal : (MTransition, Int) -> Bool
+    isTerminal : Transition -> Bool
     isTerminal (_, isFinal) =
       isFinal == 1
 
-    isNonTerminal : (MTransition, Int) -> Bool
+    isNonTerminal : Transition -> Bool
     isNonTerminal (_, isFinal) =
       isFinal == 0
 
@@ -1423,10 +1446,12 @@ splitTerminalAndNonTerminal g =
           incomingTransitions =
             node.incoming
             |> IntDict.values
-            |> List.concatMap Set.toList
+            |> List.concatMap AutoSet.toList
           -- hmm.  For recursion, outgoing is authoritative, and incoming does not show the incoming recursive edge.
           outgoingRecursive =
-            (node.outgoing |> IntDict.get node.node.id |> Maybe.map Set.toList |> Maybe.withDefault [])
+            IntDict.get node.node.id node.outgoing
+            |> Maybe.map AutoSet.toList
+            |> Maybe.withDefault []
           allIncoming =
             outgoingRecursive ++ incomingTransitions
             -- |> Debug.log ("[splitTerminalAndNonTerminal] Incoming transitions to " ++ String.fromInt node.node.id)
@@ -1446,7 +1471,7 @@ splitTerminalAndNonTerminal g =
     newMaxId = Dict.keys splitMap |> List.maximum |> Maybe.withDefault g.maxId
 
     -- Helper to update incoming edges for all nodes
-    updateIncoming : List (NodeContext a Connection) -> List (NodeContext a Connection)
+    updateIncoming : List (NodeContext (StateData a) Connection) -> List (NodeContext (StateData a) Connection)
     updateIncoming nodes =
         nodes
         |> List.concatMap
@@ -1465,10 +1490,10 @@ splitTerminalAndNonTerminal g =
                     |> List.foldl
                         (\(src, conns) (tAcc, ntAcc) ->
                           let
-                            (tSet, ntSet) = Set.partition isTerminal conns
+                            (tSet, ntSet) = AutoSet.partition isTerminal conns
                           in
-                            ( if Set.isEmpty tSet then tAcc else IntDict.insert src tSet tAcc
-                            , if Set.isEmpty ntSet then ntAcc else IntDict.insert src ntSet ntAcc
+                            ( if AutoSet.isEmpty tSet then tAcc else IntDict.insert src tSet tAcc
+                            , if AutoSet.isEmpty ntSet then ntAcc else IntDict.insert src ntSet ntAcc
                             )
                         )
                         (IntDict.empty, IntDict.empty)
@@ -1497,7 +1522,7 @@ splitTerminalAndNonTerminal g =
           )
 
     -- Helper to update outgoing edges for all nodes
-    updateOutgoing : List (NodeContext a Connection) -> List (NodeContext a Connection)
+    updateOutgoing : List (NodeContext (StateData a) Connection) -> List (NodeContext (StateData a) Connection)
     updateOutgoing nodes =
       nodes
       |> List.map (\node ->
@@ -1513,14 +1538,14 @@ splitTerminalAndNonTerminal g =
                       -- Partition outgoing transitions
                       let
                         (tSet, ntSet) =
-                          Set.partition isTerminal conns
+                          AutoSet.partition isTerminal conns
                         acc1 =
-                          if not (Set.isEmpty tSet) then
+                          if not (AutoSet.isEmpty tSet) then
                             IntDict.insert dest tSet acc
                           else
                             acc
                         acc2 =
-                          if not (Set.isEmpty ntSet) then
+                          if not (AutoSet.isEmpty ntSet) then
                             IntDict.insert newId ntSet acc1
                           else
                             acc1
@@ -1585,10 +1610,10 @@ tableToString table =
   Dict.toList table
   |> List.map
     (\(sourceIdentifier, columnDict) ->
-      Dict.foldl
+      AutoDict.foldl
         (\ch (destIdentifier, v) acc ->
           acc
-          ++ (String.fromChar ch) ++ "→"
+          ++ (acceptConditionToString ch) ++ "→"
           ++ String.padRight 18 ' ' (stateIdentifierToString destIdentifier ++ ":" ++ ellipsis 11 (Debug.toString v))
         )
         (String.padRight 10 ' ' (stateIdentifierToString sourceIdentifier))
@@ -1601,7 +1626,7 @@ debugTable_ s t =
   Debug.log (s ++ ":\n" ++ tableToString t) () |> \_ -> t
 
 type alias Table a = Dict StateIdentifier (Column a)
-type alias Column a = Dict Char (StateIdentifier, a)
+type alias Column a = AutoDict.Dict String AcceptVia (StateIdentifier, StateData a)
 type alias StateIdentifier = (Int, List NodeId)
 nfaToDFA : AutomatonGraph a -> AutomatonGraph a
 nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
@@ -1666,24 +1691,27 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
   let
     -- Helper to normalize a list of NodeIds (sort and remove duplicates)
     normalizeSet : List NodeId -> List NodeId
-    normalizeSet = List.sort >> List.Extra.unique
+    normalizeSet = List.sort >> List.unique
 
     populateColumnData : IntDict Connection -> Column a -> Column a
     populateColumnData outgoing columnDict =
       IntDict.foldl
         (\destId conn columnDict_ ->
-          Set.foldl
+          AutoSet.foldl
             (\(ch, f) d ->
-              case Dict.get ch d of
+              case AutoDict.get ch d of
                 Nothing ->
                   -- Debug.log ("Inserting first " ++ String.fromChar ch ++ "-transition (" ++ (if f == 0 then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   Graph.get destId g.graph
-                  |> Maybe.map (\{node} -> Dict.insert ch ((f, [destId]), node.label) d)
+                  |> Maybe.map
+                    (\{node} ->
+                      AutoDict.insert ch ((f, [destId]), node.label) d
+                    )
                   |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
                 Just ((f2, list), v) ->
                   -- Debug.log ("Inserting another " ++ String.fromChar ch ++ "-transition (" ++ (if f == 0 then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   -- if any of the transitions is final, then the created state will be final
-                  Dict.insert ch ((max f f2, normalizeSet (destId::list)), v) d
+                  AutoDict.insert ch ((max f f2, normalizeSet (destId::list)), v) d
             )
             columnDict_
             conn
@@ -1693,11 +1721,11 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
 
     -- this is plausible here only because I have split terminal & non-terminal
     -- BEFORE this function is called.  Otherwise, it is probably nonsense…
-    terminalityOf : Graph.NodeContext n Connection -> Int
+    terminalityOf : Graph.NodeContext (StateData n) Connection -> Int
     terminalityOf node =
       IntDict.values node.incoming
       -- has at least one incoming terminal transition.
-      |> List.any (\conn -> Set.filter (\(_, f) -> f == 1) conn |> (not << Set.isEmpty))
+      |> List.any (\conn -> AutoSet.filter (\(_, f) -> f == 1) conn |> (not << AutoSet.isEmpty))
       |> \b -> if b then 1 else 0
 
     -- Get all transitions from the original NFA and organize them
@@ -1705,7 +1733,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     initialTable =
       Graph.fold
         (\node rowDict ->
-          populateColumnData node.outgoing Dict.empty
+          populateColumnData node.outgoing (AutoDict.empty acceptConditionToString)
           |> \d ->
             Dict.insert (terminalityOf node, [node.node.id]) d rowDict
         )
@@ -1721,11 +1749,11 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         newSourceSets =
           table
             |> Dict.values
-            |> List.concatMap Dict.values
+            |> List.concatMap AutoDict.values
             |> List.map (\(identifier, _) -> identifier)
             |> List.filter (\(_, destSet) -> List.length destSet > 1)
             -- |> List.map normalizeSet
-            |> List.Extra.unique
+            |> List.unique
             |> List.filter (\identifier -> not (Dict.member identifier table))
 
         -- Create new rows for these source-sets
@@ -1734,7 +1762,9 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             (\(finality, sourceSet) rowDict ->
               sourceSet
               |> List.filterMap (\id -> Graph.get id g.graph)
-              |> List.foldl (\{outgoing} -> populateColumnData outgoing) Dict.empty
+              |> List.foldl
+                  (\{outgoing} -> populateColumnData outgoing)
+                  (AutoDict.empty acceptConditionToString)
               |> \d -> Dict.insert (finality, sourceSet) d rowDict
             )
             table
@@ -1757,7 +1787,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
           Dict.map
             (\_ columnDict ->
               columnDict
-              |> Dict.map (\_ (identifier, v) ->
+              |> AutoDict.map (\_ (identifier, v) ->
                 if Set.member identifier old_names then
                   (new_name, v)
                 else
@@ -1809,7 +1839,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         groupedByTransitions =
           completeTable
           |> Dict.toList
-          |> List.Extra.gatherEqualsBy
+          |> List.gatherEqualsBy
               (\((finality, _), transitionsDict) ->
                 -- considered equivalent, and thus mergeable, on the basis of:
                 -- 1. Finality status
@@ -1817,7 +1847,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                 -- 3. Destination state-set
                 ( finality
                 , transitionsDict
-                  |> Dict.toList
+                  |> AutoDict.toList
                   |> List.map (\(ch, (st, _)) -> (ch, st))
                 )
               )
@@ -1869,10 +1899,10 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   destinations : List StateIdentifier
                   destinations =
                     Dict.get currentSet table
-                    |> Maybe.withDefault Dict.empty
-                    |> Dict.values
+                    |> Maybe.withDefault (AutoDict.empty acceptConditionToString)
+                    |> AutoDict.values
                     |> List.map Tuple.first
-                    |> List.filter (\destIdentifier -> not (Set.member destIdentifier newVisited))                  
+                    |> List.filter (\destIdentifier -> not (Set.member destIdentifier newVisited))
                 in
                 findReachable (rest ++ destinations) newVisited
 
@@ -1921,6 +1951,8 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   Just (id, node.node.label)
                 Nothing -> -- was not in the original graph
                   Dict.values finalTable
+                  |> List.map -- this is to maintain exact parity, at the cost of performance, during the swich to AutoDict + actual typing
+                    (AutoDict.toList >> List.map (Tuple.mapFirst acceptConditionToString) >> Dict.fromList)
                   |> List.findMap
                     ( Dict.Extra.find (\_ ((_, v), _) -> v == idList)
                       >> Maybe.map (\(_, (_, label)) -> (id, label))
@@ -1934,17 +1966,17 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         (\(_, sourceSet) columnDict acc ->
           case sourceSet of
             [src] ->
-              Dict.foldl
-                (\ch ((f, destSet), _) acc_ ->
+              AutoDict.foldl
+                (\acceptCondition ((f, destSet), _) acc_ ->
                   case destSet of
                     [dest] ->
                       Dict.update (src, dest)
                         (\item ->
                           case item of
                             Nothing ->
-                              Just <| Set.singleton (ch, f)
+                              Just <| AutoSet.singleton transitionToString (acceptCondition, f)
                             Just conn ->
-                              Just <| Set.insert (ch, f) conn
+                              Just <| AutoSet.insert (acceptCondition, f) conn
                         ) acc_
                     _ ->
                       acc_
@@ -1997,9 +2029,9 @@ fromAutomatonGraphHelper g =
           else
             IntDict.foldl
               (\dest conn dict ->
-                Set.foldl (\(char,_) -> Dict.insert char dest) dict conn
+                AutoSet.foldl (\(char,_) -> AutoDict.insert char dest) dict conn
               )
-              Dict.empty
+              (AutoDict.empty acceptConditionToString)
               ctx.outgoing
             |> \dict -> IntDict.insert ctx.node.id dict transitions
         )
@@ -2030,13 +2062,10 @@ serializeAutomatonGraph g =
   |> List.map
     (\{from, to, label} ->
       String.fromInt from ++ "-" ++
-        ( Set.toList label
+        ( AutoSet.toList label
           |> List.map
-              (\(ch, f) ->
-                  if f == 0 then
-                    String.fromChar ch
-                  else
-                    "!" ++ String.fromChar ch
+              (\(acceptCondition, f) ->
+                (if f == 0 then "" else "!") ++ acceptConditionToString acceptCondition
               )
           |> String.concat
         ) ++
@@ -2044,22 +2073,19 @@ serializeAutomatonGraph g =
     )
   |> String.join " "
 
-connectionToString : MConnection -> String
-connectionToString =
-  Set.map String.fromChar
-  >> Set.toList
-  >> String.concat
-
 -----------------
 -- DEBUGGING
 -----------------
 
-printTransitions : IntDict (Dict Char NodeId) -> String
+printTransitions : IntDict (AutoDict.Dict String AcceptVia NodeId) -> String
 printTransitions transitions =
   (IntDict.foldl
     (\k dict acc ->
-      Dict.toList dict
-      |> List.map (\(transition, to) -> String.fromInt k ++ "→" ++ String.fromInt to ++ " (" ++ String.fromChar transition ++ ")")
+      AutoDict.toList dict
+      |> List.map
+          (\(transition, to) ->
+            String.fromInt k ++ "→" ++ String.fromInt to ++ " (" ++ acceptConditionToString transition ++ ")"
+          )
       |> (++) acc
     )
     []
