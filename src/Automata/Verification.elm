@@ -16,7 +16,7 @@ numEdges dawg =
 
 {-| Explores incrementally in a breadth-first manner, returning a
     LIST of (node-found, new-string, is-final) -}
-explore : Node a -> String -> Graph a Connection -> List (Node a, String, Bool)
+explore : Node a -> String -> Graph NodeEffect Connection -> List (Node a, String, Bool)
 explore node s graph =
   node.outgoing
   |> IntDict.map
@@ -35,7 +35,7 @@ explore node s graph =
   |> List.filterMap identity
   |> List.concat
 
-processStack : List (Node a, String, Bool) -> List String -> Graph a Connection -> List String
+processStack : List (Node a, String, Bool) -> List String -> Graph NodeEffect Connection -> List String
 processStack stack acc graph =
   case stack of
     [] -> acc
@@ -62,7 +62,7 @@ recognizedWords dawg =
   |> Maybe.withDefault (Err "Couldn't find the root in the DAWG…!  What on earth is going on?!")
   |> Result.Extra.extract (\e -> [e])
 
-exploreDeterministic : Node a -> Graph a Connection -> Result String (List (Node a))
+exploreDeterministic : Node a -> Graph NodeEffect Connection -> Result String (List (Node a))
 exploreDeterministic node graph =
   let
     foundNonDeterminism =
@@ -101,7 +101,7 @@ exploreDeterministic node graph =
       Just found ->
         Err ("Transition(s) «" ++ String.fromList found ++ "» from node #" ++ String.fromInt node.node.id ++ " are not deterministic.")
 
-findNonDeterministic : List (Node a) -> Graph a Connection -> Maybe String
+findNonDeterministic : List (Node a) -> Graph NodeEffect Connection -> Maybe String
 findNonDeterministic stack graph =
   case stack of
     [] -> Nothing

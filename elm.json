@@ -40,7 +40,8 @@
             "mpizenberg/elm-pointer-events": "5.0.0",
             "rtfeldman/elm-hex": "1.0.0",
             "rtfeldman/elm-iso8601-date-strings": "1.1.4",
-            "ryan-haskell/date-format": "1.0.0"
+            "ryan-haskell/date-format": "1.0.0",
+            "timo-weike/generic-collections": "1.0.0"
         },
         "indirect": {
             "BrianHicks/elm-trend": "2.1.3",

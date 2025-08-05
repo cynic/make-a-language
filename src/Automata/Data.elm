@@ -1,11 +1,10 @@
 module Automata.Data exposing (..)
 import IntDict exposing (IntDict(..))
 import Set exposing (Set)
+import AutoSet
 import Graph exposing (Graph, NodeContext, NodeId)
 import Dict exposing (Dict)
 import Parser exposing (Parser, (|=), (|.))
-import Json.Encode as E
-import Json.Decode as D
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -13,11 +12,18 @@ import Json.Decode as D
 -- This is superior to marking finality on a vertex, because
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
-type alias Transition = (Char, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
-type alias Connection = Set Transition -- a Connection is a link between two nodes.
-type alias Node a = NodeContext a Connection -- a Node itself does not carry any data, hence the ()
-type alias AutomatonGraph a =
-  { graph : Graph a Connection -- finally, the complete graph.
+type AcceptVia
+  = Character Char
+
+type NodeEffect
+  = NoEffect
+  | SomeEffectFigureItOutLater
+
+type alias Transition = (AcceptVia, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
+type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
+type alias Node = NodeContext NodeEffect Connection -- a Node itself does not carry any data, hence the ()
+type alias AutomatonGraph =
+  { graph : Graph NodeEffect Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
   , maxId : NodeId
   , root : NodeId
@@ -78,14 +84,14 @@ type alias Test =
   , result : ExecutionResult
   }
 
-empty : AutomatonGraph a
+empty : AutomatonGraph
 empty =
   { graph = Graph.empty
   , maxId = 0
   , root = 0
   }
 
-graphToAutomatonGraph : NodeId -> Graph a Connection -> AutomatonGraph a
+graphToAutomatonGraph : NodeId -> Graph NodeEffect Connection -> AutomatonGraph
 graphToAutomatonGraph start graph =
   { graph = graph
   , maxId = Graph.nodeIdRange graph |> Maybe.map Tuple.second |> Maybe.withDefault 0
@@ -99,7 +105,7 @@ isTerminalNode node =
   ( IntDict.foldl
     (\_ conn state ->
       state ||
-        Set.foldl
+        AutoSet.foldl
           (\(_, isFinal) state_ -> state_ || isFinal == 1)
           False
           conn
@@ -125,18 +131,18 @@ transitionsToString transitions =
 transitionToString : Transition -> String
 transitionToString transition =
   case transition of
-    (ch, 0) ->
+    (Character ch, 0) ->
       String.fromChar ch
-    (ch, _) ->
+    (Character ch, _) ->
       "\u{0307}" ++ String.fromChar ch
 
 connectionToString : Connection -> String
 connectionToString =
-  Set.map transitionToString
-  >> Set.toList
+  AutoSet.map identity transitionToString
+  >> AutoSet.toList
   >> String.join "\u{2008}" -- punctuation space. Stops terminality-marker from disappearing on subsequent characters.
 
-graphToString : Graph a Connection -> String
+graphToString : Graph NodeEffect Connection -> String
 graphToString graph =
   Graph.toString
     (\_ -> Nothing)

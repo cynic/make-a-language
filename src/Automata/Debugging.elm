@@ -1,23 +1,22 @@
 module Automata.Debugging exposing (..)
 import Automata.Data exposing (..)
 import Graph exposing (Graph)
-import IntDict
 
 debug_log : String -> a -> a
 debug_log s x =
   Debug.log s x
   -- x
 
-debugGraph : String -> Graph a Connection -> Graph a Connection
+debugGraph : String -> Graph NodeEffect Connection -> Graph NodeEffect Connection
 debugGraph txt graph =
   debug_log txt (graphToString graph)
   |> \_ -> graph
 
-printAutomatonGraph : AutomatonGraph a -> String
+printAutomatonGraph : AutomatonGraph -> String
 printAutomatonGraph g =
     ("📍" ++ String.fromInt g.root ++ " " ++ graphToString g.graph)
 
-debugAutomatonGraph : String -> AutomatonGraph a -> AutomatonGraph a
+debugAutomatonGraph : String -> AutomatonGraph -> AutomatonGraph
 debugAutomatonGraph txt g =
   debug_log txt (printAutomatonGraph g)
   |> \_ -> g
