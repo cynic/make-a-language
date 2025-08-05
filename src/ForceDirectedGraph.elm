@@ -21,32 +21,20 @@ import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
-import Automata.Data exposing (Node, Connection, AutomatonGraph)
 import TypedSvg.Attributes.InPx as Px
 import Html
 import Html.Attributes
 import Set exposing (Set)
+import AutoSet
 import IntDict
 import Time
 import Dict
 import List.Extra as List
-import Automata.DFA exposing (modifyConnection, removeConnection, fromAutomatonGraph)
-import Automata.Data exposing (isTerminal)
-import Automata.DFA exposing (toAutomatonGraph)
-import Automata.DFA exposing (union)
-import Automata.Debugging exposing (debugGraph)
-import Maybe.Extra as Maybe exposing (withDefaultLazy)
-import Automata.DFA exposing (debugDFA_)
-import TypedSvg exposing (use)
-import Tuple.Extra exposing (apply)
-import Automata.Data exposing (graphToAutomatonGraph)
-import Automata.Debugging exposing (debugAutomatonGraph)
-import Automata.DFA exposing (partial_union)
-import Automata.DFA exposing (transitions_from_source)
+import Automata.DFA as DFA exposing (fromAutomatonGraph, toAutomatonGraph)
 import Automata.Data exposing (..)
-import Automata.DFA as DFA
 import Dict exposing (Dict)
-import Svg.Attributes exposing (mode)
+import Maybe.Extra as Maybe
+import Automata.Debugging
 
 type Msg
   = DragStart NodeId ( Float, Float )
@@ -58,7 +46,7 @@ type Msg
   | Zoom Float (Float, Float)
   | ResetView
   | SelectNode NodeId
-  | ToggleSelectedTransition Char
+  | ToggleSelectedTransition AcceptVia
   | SetMouseOver
   | SetMouseOut
   | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
@@ -129,17 +117,55 @@ type alias Split =
   }
 
 type alias Entity =
-  Force.Entity NodeId { value : { } }
+  -- fits into the mould of Force.Entity AND Automata.Data.StateData.
+  -- I've annotated the fields to make it blindingly obvious what's
+  -- from where…
+  { x : Float -- F.E
+  , y : Float -- F.E
+  , vx : Float -- F.E
+  , vy : Float -- F.E
+  , id : NodeId -- F.E
+  , effect : NodeEffect -- A.D.SD
+  }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
 panBuffer = 40
 
+------------------------------------
+-- BEGIN :: Copied & adapted from Force.elm
+------------------------------------
+{-| This is a convenience function for wrapping data up as Entities. The initial position of entities is arranged
+in a [phylotaxic pattern](https://elm-visualization.netlify.app/Petals/). Goes well with `List.indexedMap`.
+-}
+entity : Int -> NodeEffect -> Entity
+entity index v =
+  let
+    initialRadius = 10
+    initialAngle =
+        pi * (3 - sqrt 5)
+    radius =
+        sqrt (0.5 + toFloat index) * initialRadius
+
+    angle =
+        toFloat index * initialAngle
+  in
+    { x = radius * cos angle
+    , y = radius * sin angle
+    , vx = 0.0
+    , vy = 0.0
+    , id = index
+    , effect = v
+    }
+------------------------------------
+-- END :: Copied & adapted from Force.elm
+------------------------------------
+
 initializeNode : Node a -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
-        Force.entity ctx.node.id { }
+        entity ctx.node.id NoEffect
     , id = ctx.node.id
     }
   , incoming = ctx.incoming
@@ -171,7 +197,7 @@ makeLinkForces graph =
           (\(k, v) forces ->
             { source = ctx.node.id
             , target = k
-            , distance = 10 + 25.0 * toFloat (Set.size v) -- 35-40 seems like a good distance
+            , distance = 10 + 25.0 * toFloat (AutoSet.size v) -- 35-40 seems like a good distance
             , strength = Just 0.7 -- * (toFloat <| Set.size v)
             } :: forces
           )
@@ -253,7 +279,7 @@ automatonGraphToModel (w, h) g =
 
 init : (Float, Float) -> Model
 init (w, h) =
-  automatonGraphToModel (w, h) (Automata.DFA.empty () |> toAutomatonGraph)
+  automatonGraphToModel (w, h) (DFA.empty { effect = NoEffect } |> toAutomatonGraph)
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
@@ -305,8 +331,8 @@ identifyDisconnectedNodes g =
   Graph.mapContexts
     (\ctx ->
       { ctx
-        | incoming = IntDict.filter (\_ -> not << Set.isEmpty) ctx.incoming
-        , outgoing = IntDict.filter (\_ -> not << Set.isEmpty) ctx.outgoing
+        | incoming = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.incoming
+        , outgoing = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.outgoing
       }
     )
     g.graph
@@ -360,7 +386,7 @@ createPathTo target waypoints accept graph start =
                 |> List.filterMap
                   (\(k, v) ->
                     if current /= k then
-                      Set.toList v
+                      AutoSet.toList v
                       |> List.head
                       |> Maybe.andThen
                         (\t ->
@@ -395,7 +421,7 @@ followPathTo path g =
           |> Maybe.andThen
             (\node ->
               IntDict.toList node.outgoing
-              |> List.filter (\(_, conn) -> Set.member h conn)
+              |> List.filter (\(_, conn) -> AutoSet.member h conn)
               -- here, I am treating the graph as if it is an NFA.
               -- And that is because indeed, a user may well just treat it as an NFA
               -- and randomly create two or more paths!!  So, we need to explore each
@@ -432,7 +458,7 @@ path_for_removal graph start source destination =
                 h::_ ->
                   IntDict.get source dest.incoming
                   -- |> Debug.log "Is there a 1-hop link?"
-                  |> Maybe.map (Set.member ({- Debug.log "Checking for transition" -} h))
+                  |> Maybe.map (AutoSet.member ({- Debug.log "Checking for transition" -} h))
                   |> Maybe.withDefault False
                   -- |> Debug.log ("Is there a 1-link hop from #" ++ String.fromInt destination ++ " to #" ++ String.fromInt source)
         path =
@@ -481,7 +507,7 @@ newnode_graphchange src x y conn g =
           { node =
             { label =
                 let
-                  initial = Force.entity (g.maxId + 1) { }
+                  initial = entity (g.maxId + 1) NoEffect
                 in
                   { initial | x = x, y = y }
             , id = g.maxId + 1
@@ -522,12 +548,12 @@ removeLink_graphchange src dest g =
               { node
                 | incoming =
                     IntDict.update src
-                      (Maybe.map (\_ -> Set.empty))
+                      (Maybe.map (\_ -> AutoSet.empty transitionToString))
                       node.incoming
                 , outgoing =
                     if src == dest then
                       IntDict.update dest
-                        (Maybe.map (\_ -> Set.empty))
+                        (Maybe.map (\_ -> AutoSet.empty transitionToString))
                         node.outgoing
                     else
                       node.outgoing
@@ -538,7 +564,7 @@ removeLink_graphchange src dest g =
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
 splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> AutomatonGraph Entity
-splitNode node left right model =
+splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
   let
     (recursive, nonRecursive) =
       node.incoming
@@ -546,18 +572,18 @@ splitNode node left right model =
     recursive_connection =
       recursive
       |> IntDict.values
-      |> List.foldl Set.union Set.empty
+      |> List.foldl AutoSet.union (AutoSet.empty transitionToString)
     ( leftConnections, rightConnections ) =
       nonRecursive
       |> IntDict.foldl
           (\k conn (l, r) ->
             -- classify each transition into 'left' or 'right'.
-            Set.foldl
+            AutoSet.foldl
               (\transition (l_, r_) ->
-                if Set.member transition left then
+                if AutoSet.member transition left then
                   ( IntDict.update k
-                      ( Maybe.map (Set.insert transition)
-                        >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
+                      ( Maybe.map (AutoSet.insert transition)
+                        >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
                       )
                       l_
                   , r_
@@ -565,8 +591,8 @@ splitNode node left right model =
                 else
                   ( l_
                   , IntDict.update k
-                    ( Maybe.map (Set.insert transition)
-                      >> Maybe.orElseLazy (\() -> Just <| Set.singleton transition)
+                    ( Maybe.map (AutoSet.insert transition)
+                      >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
                     )
                     r_
                   )
@@ -582,7 +608,7 @@ splitNode node left right model =
             ag.graph
             |> Graph.insert
               { node =
-                  { label = Force.entity (ag.maxId + 1) { }
+                  { label = entity (ag.maxId + 1) NoEffect
                   , id = ag.maxId + 1
                   }
               , incoming =
@@ -746,7 +772,7 @@ update offset_amount msg model =
       }
 
     SelectNode index ->
-      { model | currentOperation = Just <| ModifyingGraph <| Modify index NoDestination Set.empty }
+      { model | currentOperation = Just <| ModifyingGraph <| Modify index NoDestination (AutoSet.empty transitionToString) }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
@@ -765,9 +791,9 @@ update offset_amount msg model =
                   Just conn ->
                     conn
                   Nothing -> -- no link to this node, at present.
-                    Set.empty
+                    AutoSet.empty transitionToString
               )
-              |> Maybe.withDefault Set.empty
+              |> Maybe.withDefault (AutoSet.empty transitionToString)
           in
             { model
               | currentOperation =
@@ -859,12 +885,12 @@ update offset_amount msg model =
                 -- create a totally new node, never before seen!
                 createNewNode source transitions x y
               ( ExistingNode destination ) ->
-                if Set.isEmpty transitions then
+                if AutoSet.isEmpty transitions then
                   removeLink source destination
                 else
                   updateExistingNode source destination transitions
               ( EditingTransitionTo destination ) ->
-                if Set.isEmpty transitions then
+                if AutoSet.isEmpty transitions then
                   removeLink source destination
                 else
                   updateExistingNode source destination transitions
@@ -872,7 +898,7 @@ update offset_amount msg model =
                 -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
                 model
           Just (Splitting { to_split, left, right }) ->
-            if Set.isEmpty left || Set.isEmpty right then
+            if AutoSet.isEmpty left || AutoSet.isEmpty right then
               { model | currentOperation = Nothing }
             else
               Graph.get to_split model.userGraph.graph
@@ -891,7 +917,7 @@ update offset_amount msg model =
             -- no idea what I'm confirming.
             model
 
-    ToggleSelectedTransition ch ->
+    ToggleSelectedTransition acceptCondition ->
       case model.currentOperation of
         Just (ModifyingGraph ({ transitions } as mod)) ->
           { model
@@ -899,41 +925,41 @@ update offset_amount msg model =
                 Just <| ModifyingGraph <|
                   { mod
                     | transitions =
-                        if Set.member (ch, 0) transitions then
-                          Set.remove (ch, 0) transitions
-                          |> Set.insert (ch, 1)
-                        else if Set.member (ch, 1) transitions then
-                          Set.remove (ch, 1) transitions
+                        if AutoSet.member (acceptCondition, 0) transitions then
+                          AutoSet.remove (acceptCondition, 0) transitions
+                          |> AutoSet.insert (acceptCondition, 1)
+                        else if AutoSet.member (acceptCondition, 1) transitions then
+                          AutoSet.remove (acceptCondition, 1) transitions
                         else
-                          Set.insert (ch, 0) transitions
+                          AutoSet.insert (acceptCondition, 0) transitions
                   }
           }
         Just (Splitting { to_split, left, right }) ->
           let
-            onLeft_0 = Set.member (ch, 0) left
-            onLeft_1 = Set.member (ch, 1) left
-            onRight_0 = Set.member (ch, 0) right
-            onRight_1 = Set.member (ch, 1) right
+            onLeft_0 = AutoSet.member (acceptCondition, 0) left
+            onLeft_1 = AutoSet.member (acceptCondition, 1) left
+            onRight_0 = AutoSet.member (acceptCondition, 0) right
+            onRight_1 = AutoSet.member (acceptCondition, 1) right
             pushToRight t =
-              ( Set.remove t left, Set.insert t right )
+              ( AutoSet.remove t left, AutoSet.insert t right )
             pushToLeft t =
-              ( Set.insert t left, Set.remove t right )
+              ( AutoSet.insert t left, AutoSet.remove t right )
             ( newLeft, newRight ) =
               if onLeft_0 && onLeft_1 then
                 -- push the non-terminal to the right.
-                pushToRight (ch, 0)
+                pushToRight (acceptCondition, 0)
               else if onLeft_1 then
                 -- push the terminal to the right
-                pushToRight (ch, 1)
+                pushToRight (acceptCondition, 1)
               else if onRight_0 && onRight_1 then
                 -- push the non-terminal to the left
-                pushToLeft (ch, 0)
+                pushToLeft (acceptCondition, 0)
               else if onRight_1 then
-                pushToLeft (ch, 1)
+                pushToLeft (acceptCondition, 1)
               else if onLeft_0 then
-                pushToRight (ch, 0)
+                pushToRight (acceptCondition, 0)
               else if onRight_0 then
-                pushToLeft (ch, 0)
+                pushToLeft (acceptCondition, 0)
               else
                 ( left, right )
           in
@@ -979,14 +1005,14 @@ update offset_amount msg model =
                     ( IntDict.foldl
                         (\k v acc ->
                             if k /= node.node.id then
-                              Set.union v acc
+                              AutoSet.union v acc
                             else
                               acc
                         )
-                        Set.empty
+                        (AutoSet.empty transitionToString)
                         node.incoming
                     )
-                    Set.empty
+                    (AutoSet.empty transitionToString)
           }
         )
       |> Maybe.withDefault model
@@ -1089,13 +1115,13 @@ subscriptions offset_amount model =
                           _ ->
                             case String.toList ch of
                               [char] ->
-                                Decode.succeed (ToggleSelectedTransition char)
+                                Decode.succeed (ToggleSelectedTransition <| Character char)
                               _ ->
                                 Decode.fail "Not a character key"
                       Just (Splitting _) ->
                         case String.toList ch of
                           [char] ->
-                            Decode.succeed (ToggleSelectedTransition char)
+                            Decode.succeed (ToggleSelectedTransition <| Character char)
                           _ ->
                             Decode.fail "Not a character key"
                       _ ->
@@ -1162,26 +1188,26 @@ textChar ch =
     _ ->
       String.fromChar ch
 
-transitionToTextSpan : (Char, Int) -> (Char -> List String) -> Svg msg
+transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
 transitionToTextSpan transition otherClasses =
   case transition of
-    (ch, 0) ->
+    (Character ch, 0) ->
       tspan
-        [ class <| "nonfinal" :: otherClasses ch ]
+        [ class <| "nonfinal" :: otherClasses (Character ch) ]
         [ text <| textChar ch ]
-    (ch, _) ->
+    (Character ch, _) ->
       tspan
-        [ class <| "final" :: otherClasses ch ]
+        [ class <| "final" :: otherClasses (Character ch) ]
         [ text <| textChar ch ]
 
 connectionToSvgText : Connection -> List (Svg msg)
 connectionToSvgText =
-  Set.toList
+  AutoSet.toList
   >> List.map (\t -> transitionToTextSpan t (\_ -> []))
 
-connectionToSvgTextHighlightingChars : Connection -> (Char -> List String) -> List (Svg msg)
+connectionToSvgTextHighlightingChars : Connection -> (AcceptVia -> List String) -> List (Svg msg)
 connectionToSvgTextHighlightingChars conn highlightFunction =
-  Set.toList conn
+  AutoSet.toList conn
   |> List.map (\t -> transitionToTextSpan t highlightFunction)
 
 paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
@@ -1382,19 +1408,19 @@ executionData r =
     EndOfComputation s -> Just <| getData s
     CanContinue s -> Just <| getData s
 
-executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (Set Char)
+executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia)
 executing_edges result =
   let
     trace data acc =
       case data.transitionsTaken of
         [] ->
           acc
-        (src, (ch, _))::tail ->
+        (src, (acceptanceCondition, _))::tail ->
           trace
             { data | transitionsTaken = tail, currentNode = src }
             (Dict.update (src, data.currentNode)
-              ( Maybe.map (Set.insert ch)
-                >> Maybe.orElse (Just <| Set.singleton ch)
+              ( Maybe.map (AutoSet.insert acceptanceCondition)
+                >> Maybe.orElse (Just <| AutoSet.singleton acceptConditionToString acceptanceCondition)
               )
               acc
             )
@@ -1403,14 +1429,14 @@ executing_edges result =
     |> Maybe.map (\data -> trace data Dict.empty)
     |> Maybe.withDefault Dict.empty
 
-viewLink : Model -> Dict (NodeId, NodeId) (Set Char) -> Edge Connection -> Svg Msg
+viewLink : Model -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia) -> Edge Connection -> Svg Msg
 viewLink ({ userGraph } as model) executing edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
+      Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
 
     target =
-      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
+      Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
     cardinality = identifyCardinality model edge
     positioning =
       path_between source target cardinality 7 7
@@ -1423,7 +1449,7 @@ viewLink ({ userGraph } as model) executing edge =
           connectionToSvgTextHighlightingChars
             edge.label
             (\c ->
-              if Set.member c to_highlight then
+              if AutoSet.member c to_highlight then
                 [ "executed" ]
               else
                 []
@@ -1546,7 +1572,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, 
           in
           IntDict.size nonRecursive > 1 ||
           ( IntDict.findMin nonRecursive
-            |> Maybe.map (\(_, conn) -> Set.size conn > 1)
+            |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
             |> Maybe.withDefault False
           )
         )
@@ -1598,7 +1624,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, 
         "")
       ++ "Shift-drag to reposition" ++
       (Maybe.map
-        (\node ->
+        (\_ ->
           if splittable then
             "\nCtrl-click to split transitions"
           else
@@ -1856,9 +1882,9 @@ viewSingleKey ch conn (gridX, gridY) =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
-    isThisNodeTerminal = Set.member (ch, 1) conn
+    isThisNodeTerminal = AutoSet.member (Character ch, 1) conn
     keyClass =
-      if Set.member (ch, 0) conn then
+      if AutoSet.member (Character ch, 0) conn then
         [ "transition-chooser-key", "selected" ]
       else if isThisNodeTerminal then
         [ "transition-chooser-key", "selected", "terminal" ]
@@ -1877,7 +1903,7 @@ viewSingleKey ch conn (gridX, gridY) =
         , strokeWidth 2
         , stroke <| Paint <| Color.white
         , class keyClass
-        , onClick <| ToggleSelectedTransition ch
+        , onClick <| ToggleSelectedTransition (Character ch)
         ]
         ( if isThisNodeTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
     , text_
@@ -1917,7 +1943,7 @@ viewSvgTransitionChooser model =
         Just (ModifyingGraph { transitions }) ->
           transitions
         _ ->
-          Set.empty
+          (AutoSet.empty transitionToString)
           |> Debug.log "CXO<DPO(*EU I should not be here!"
   in
   g
@@ -1939,7 +1965,7 @@ viewSvgTransitionChooser model =
             , class [ "link" ]
             ]
             ( tspan [] [ text "Selected transitions: " ] ::
-              ( if Set.isEmpty conn then
+              ( if AutoSet.isEmpty conn then
                   [ tspan [] [ text "None" ] ]
                 else
                   connectionToSvgText conn
@@ -1958,7 +1984,7 @@ viewSvgTransitionChooser model =
             , stroke <| Paint <| paletteColors.background
             , strokeWidth 4
             ]
-            ( if Set.isEmpty conn then
+            ( if AutoSet.isEmpty conn then
                 [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
               else
                 [ tspan [] [ text "Press «Enter» to confirm these transitions." ] ]
@@ -1967,8 +1993,8 @@ viewSvgTransitionChooser model =
     :: List.map (\(item, col, row) -> viewSingleKey item conn (col, row)) gridItemsAndCoordinates
     )
 
-viewSvgTransitionSplitter : NodeContext Entity Connection -> Connection -> Connection -> Model -> Svg Msg
-viewSvgTransitionSplitter to_split left right model =
+viewSvgTransitionSplitter : Connection -> Connection -> Model -> Svg Msg
+viewSvgTransitionSplitter left right model =
   let
     ( w, _ ) = model.dimensions
     paddingLeftRight = 15
@@ -1978,15 +2004,15 @@ viewSvgTransitionSplitter to_split left right model =
         toFloat n -- multiplied by number of characters
       )
     max_box_width =
-      calc_width (Set.size left + Set.size right)
+      calc_width (AutoSet.size left + AutoSet.size right)
     leftCenter = w / 2 - max_box_width
     rightCenter = w / 2 + max_box_width
     font_size = 24
     box centerPosition set color =
       rect
-        [ x <| centerPosition - calc_width (Set.size set) / 2
+        [ x <| centerPosition - calc_width (AutoSet.size set) / 2
         , y <| 100 - font_size
-        , width <| calc_width (Set.size set) 
+        , width <| calc_width (AutoSet.size set) 
         , height <| font_size * 2
         , fill <| Paint <| color
         , rx 10
@@ -2042,7 +2068,7 @@ viewSvgTransitionSplitter to_split left right model =
           , stroke <| Paint <| paletteColors.background
           , strokeWidth 4
           ]
-          ( if Set.isEmpty left || Set.isEmpty right then
+          ( if AutoSet.isEmpty left || AutoSet.isEmpty right then
               [ tspan [] [ text "If either side has no transitions, then no changes will be made." ] ]
             else
               [ tspan [] [ text "Press «Enter» to confirm this split, or «Esc» to cancel." ] ]
@@ -2215,7 +2241,7 @@ view model =
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.userGraph.graph
-        |> List.filter (\edge -> not (Set.isEmpty edge.label))
+        |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
         |> List.map
           (viewLink
             model
@@ -2246,8 +2272,8 @@ view model =
               viewSvgTransitionChooser model
         Just (Splitting { to_split, left, right }) ->
           Graph.get to_split model.userGraph.graph
-          |> Maybe.map (\node ->
-            viewSvgTransitionSplitter node left right model
+          |> Maybe.map (\_ -> -- ignore node, we have all the info already
+            viewSvgTransitionSplitter left right model
           )
           |> Maybe.withDefault (g [] [])
         _ ->

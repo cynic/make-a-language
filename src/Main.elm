@@ -2,18 +2,15 @@ module Main exposing (..)
 
 import Browser
 import Browser.Events as BE
-import Html.Styled exposing (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button, strong)
+import Html.Styled exposing
+  (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text)
 import Html.Styled.Events exposing (onClick, onInput, onMouseDown)
 import Json.Encode as E
 import Json.Decode as D
 import ForceDirectedGraph as FDG
 import Automata.Data exposing (..)
-import Browser.Dom
-import Task
 import Platform.Cmd as Cmd
 import Html.Styled.Attributes as HA
-import List.Extra
-import Automata.DFA
 import Html
 import Maybe.Extra
 import Css
@@ -27,30 +24,21 @@ import Platform.Cmd as Cmd
 import Automata.DFA as DFA
 import Automata.Data as Data
 import Graph exposing (NodeId, Edge)
-import Result.Extra
-import TypedSvg.Types exposing (Paint(..))
-import Css exposing (defaultTextShadow)
 import TypedSvg exposing
-  (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
+  (circle, g, svg, text_, path, defs)
 import TypedSvg.Attributes exposing
   ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
-  , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , transform, noFill, strokeDasharray, strokeLinecap, cursor
-  , markerStart, pointerEvents, dy)
+  , textAnchor, id, d, markerEnd, dominantBaseline, transform, noFill)
 import TypedSvg.Attributes.InPx exposing
-  ( cx, cy, r, strokeWidth, x, y, height, fontSize
-  , markerWidth, markerHeight, width, rx , ry)
+  ( cx, cy, r, strokeWidth, x, y, height, fontSize, width)
 import TypedSvg.Core exposing (Svg)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
 import Color
 import Html.Attributes
-import Force
-import Set exposing (Set)
-import Svg.Attributes exposing (pointerEvents)
-import Html.Styled exposing (h4)
-import Html.Styled exposing (h2)
+import Html.Styled exposing (h2, h4)
+import AutoSet
 
 {-
 Quality / technology requirements:
@@ -834,7 +822,7 @@ viewIcon icon iconText extra model =
 
 
 viewNode : FDG.Model -> Graph.Node FDG.Entity -> Svg msg
-viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, id } =
+viewNode { userGraph } { label, id } =
   let
     graphNode =
       Graph.get id userGraph.graph
@@ -906,10 +894,10 @@ viewLink : FDG.Model -> Edge Connection -> Svg Msg
 viewLink ({ userGraph } as model) edge =
   let
     source =
-      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
+      Maybe.withDefault (FDG.entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
 
     target =
-      Maybe.withDefault (Force.entity 0 { }) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
+      Maybe.withDefault (FDG.entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
     cardinality = FDG.identifyCardinality model edge
     positioning =
       FDG.path_between source target cardinality 7 7
@@ -1010,7 +998,7 @@ recenterSvg (width, height) g =
     }
 
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
-viewComputationThumbnail width ({ model } as package) =
+viewComputationThumbnail width { model } =
   -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
   let
     height = width / sqrt 5 -- some kind of aspect ratio
@@ -1025,7 +1013,7 @@ viewComputationThumbnail width ({ model } as package) =
           ]
           [ defs [] [ FDG.arrowheadMarker, FDG.phantomArrowheadMarker ]
           , Graph.edges g.graph
-            |> List.filter (\edge -> not (Set.isEmpty edge.label))
+            |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
             |> List.map (viewLink m)
             |> TypedSvg.g [ class [ "links" ] ]
           , Graph.nodes g.graph
@@ -1037,7 +1025,6 @@ viewComputationThumbnail width ({ model } as package) =
 viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
   let
-    uuidString = Uuid.toString package.uuid
     displaySvg =
       viewComputationThumbnail model.leftPanelWidth package
     description =
@@ -1311,9 +1298,6 @@ viewRightSection model =
 
 viewRightTopPanel : Model -> Html Msg
 viewRightTopPanel model =
-  let
-    (width, height) = model.rightTopPanelDimensions
-  in
   div 
     [ HA.class "right-top-panel" ]
     [ -- For now, display dimensions as requested in comments
@@ -1396,7 +1380,7 @@ viewTestPanelButtons model =
   ]
 
 viewDescriptionPanelButtons : Model -> List (Html Msg)
-viewDescriptionPanelButtons model =
+viewDescriptionPanelButtons _ =
   []
 
 viewBottomPanelHeader : Model -> Html Msg
@@ -1456,23 +1440,32 @@ executionText { currentPackage } =
                             |> List.reverse
                             |> List.map 
                               (\(_, (ch, isFinal)) ->
-                                span
-                                  [ HA.class <| if isFinal == 1 then "final" else "non-final" ]
-                                  [ text <| FDG.textChar ch ]
+                                viewTransition ch
+                                  [ ("final", isFinal == 1)
+                                  , ("non-final", isFinal == 0)
+                                  ]
                               )
                           )
                       , span
                           [ HA.class "computation-progress-to-do" ]
-                          [ List.map (\ch -> FDG.textChar ch) datum.remainingData
-                            |> String.concat
-                            |> text
-                          ]
+                          ( List.map
+                              (\ch -> viewTransition ch [])
+                              datum.remainingData
+                          )
                       ]
                   )
                   maybeDatum
                 |> Maybe.withDefault (text "")
               ]
     ]
+
+viewTransition : AcceptVia -> List (String, Bool) -> Html msg
+viewTransition transition classList =
+  case transition of
+    Character ch ->
+      span
+        [ HA.classList classList ]
+        [ text <| String.fromChar ch ]
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =
