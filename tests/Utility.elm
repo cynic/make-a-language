@@ -1,21 +1,24 @@
 module Utility exposing (ag, dfa, mkDFA_input, ag_equals, dfa_equals)
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
-import Automata.Data exposing (AutomatonGraph, DFARecord, transitionsToString)
-import Automata.DFA exposing (mkAutomatonGraph, mkDFA, renumberAutomatonGraph)
+import Automata.Data exposing (AutomatonGraph, DFARecord)
+import Automata.DFA exposing (mkAutomatonGraph, mkDFA)
 import Expect
 import Set
 import Graph exposing (NodeId)
 import IntDict
 import List
 import Dict
-import Automata.Data exposing (Connection, DFARecord, mkAG_input)
+import Automata.Data exposing (DFARecord, mkAG_input)
 import Automata.Debugging exposing (debugAutomatonGraph)
-import Automata.Debugging exposing (printAutomatonGraph)
 import List.Extra
 import IntDict exposing (IntDict)
 import Set exposing (Set)
+import AutoSet
+import AutoDict
 import Maybe.Extra
+import Automata.Data exposing (transitionToString)
+import Automata.Data exposing (acceptConditionToString)
 
 -- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))
@@ -65,10 +68,10 @@ mkDFA_input input =
     Err _ ->
       []
 
-ag : String -> AutomatonGraph ()
+ag : String -> AutomatonGraph {}
 ag = mkAutomatonGraph << Automata.Data.mkAG_input
 
-dfa : String -> List Int -> Automata.Data.DFARecord {} ()
+dfa : String -> List Int -> Automata.Data.DFARecord {} {}
 dfa s f = mkDFA_input s |> \xs -> mkDFA xs f
 
 type PairResult a
@@ -79,7 +82,14 @@ ag_equals g_expected g_actual =
   let
     getEdges g =
       Graph.edges g.graph
-      |> List.map (\{ from, to, label } -> ( from, to, Set.toList label ))
+      |> List.map
+        (\{ from, to, label } ->
+          ( from
+          , to
+          , AutoSet.toList label
+            |> List.map (Tuple.mapFirst Automata.Data.acceptConditionToString)
+          )
+        )
       |> List.sortBy (\(_, _, v) -> v)
     edges1 = getEdges g_expected
     edges2 = getEdges g_actual
@@ -270,7 +280,7 @@ dfa_equals dfa1 dfa2 =
                     -- Get all destination states from current state
                     destinations =
                       IntDict.get currentState dfaRecord.transition_function
-                      |> Maybe.map (Dict.values >> List.filter (\dest -> not (IntDict.member dest newMapping)))
+                      |> Maybe.map (AutoDict.values >> List.filter (\dest -> not (IntDict.member dest newMapping)))
                       |> Maybe.withDefault []
                     
                     newQueue = restQueue ++ destinations
@@ -280,7 +290,7 @@ dfa_equals dfa1 dfa2 =
       traverse [dfaRecord.start] IntDict.empty 0
     
     -- Convert DFA to canonical form using the mapping
-    toCanonicalForm : DFARecord a b -> Result String (List (Int, Char, Int), Int, Set Int)
+    toCanonicalForm : DFARecord a b -> Result String (List (Int, String, Int), Int, Set Int)
     toCanonicalForm dfaRecord =
       buildCanonicalMapping dfaRecord
       |> Result.andThen (\(mapping, canonicalFinals) ->
@@ -295,11 +305,15 @@ dfa_equals dfa1 dfa2 =
                   case IntDict.get src mapping of
                     Nothing -> []
                     Just canonicalSrc ->
-                      Dict.toList transitions
-                      |> List.filterMap (\(ch, dest) ->
-                          case IntDict.get dest mapping of
-                            Nothing -> Nothing
-                            Just canonicalDest -> Just (canonicalSrc, ch, canonicalDest)
+                      AutoDict.toList transitions
+                      |> List.filterMap (\(acceptanceCondition, dest) ->
+                          IntDict.get dest mapping
+                          |> Maybe.map
+                            (\canonicalDest ->
+                              ( canonicalSrc
+                              , acceptConditionToString acceptanceCondition
+                              , canonicalDest)
+                              )
                         )
                 )
               |> List.sort

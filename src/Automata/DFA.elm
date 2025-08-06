@@ -199,17 +199,18 @@ mkAutomatonGraphWithValues valueFunction ts =
         ts
       |> Dict.toList
       |> List.map (\((src, dest), conn) -> Edge src dest conn)
+    nodes : List (Graph.Node (StateData a))
     nodes =
       List.foldl
         (\(src, _, dest) acc -> Set.insert src acc |> Set.insert dest)
         Set.empty
         ts
       |> Set.toList
-      |> List.map (\x -> Node x (valueFunction x))
+      |> List.map (\x -> { id = x, label = valueFunction x })
   in
     case nodes of
       [] ->
-        { graph = Graph.fromNodesAndEdges [Node 0 (valueFunction 0)] []
+        { graph = Graph.fromNodesAndEdges [{ id = 0, label = valueFunction 0}] []
         , root = 0
         , maxId = 0
         }

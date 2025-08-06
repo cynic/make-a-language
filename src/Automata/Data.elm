@@ -108,11 +108,24 @@ acceptConditionEq a b =
   case (a, b) of
     (Character a_, Character b_) -> a_ == b_
 
+{-| Convert an AcceptVia to a round-trip string.
+
+*NOTE*: This is NOT to be used for printable output!
+
+Use `printableAcceptCondition` for that.
+-}
 acceptConditionToString : AcceptVia -> String
 acceptConditionToString v =
   case v of
     Character ch ->
       "C" ++ String.fromChar ch
+
+{-| Convert an AcceptVia to a printable-for-output string. -}
+printableAcceptCondition : AcceptVia -> String
+printableAcceptCondition v =
+  case v of
+    Character ch ->
+      String.fromChar ch
 
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : NodeContext a Connection -> Bool

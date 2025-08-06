@@ -4,23 +4,87 @@ import Test exposing (..)
 import Utility exposing (dfa, ag_equals, dfa_equals)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import Graph exposing (NodeId)
-import Automata.Data exposing (AutomatonGraph, mkAG_input)
+import Automata.Data exposing (AutomatonGraph, StateData, mkAG_input)
 import Automata.DFA exposing (mkAutomatonGraphWithValues)
 import ForceDirectedGraph exposing (Entity)
 import Automata.Data exposing (Transition)
 import Set
 import ForceDirectedGraph exposing (Msg(..))
 import Automata.DFA exposing (mkConn)
-import Automata.Data exposing (Connection)
+import Automata.Data exposing (Connection, NodeEffect(..))
 import Automata.Debugging exposing (debugAutomatonGraph)
 import ForceDirectedGraph exposing (updateLink_graphchange)
 import ForceDirectedGraph exposing (removeLink_graphchange)
 import Automata.DFA exposing (renumberAutomatonGraph)
+import Dict
+import AutoSet
+import List.Extra as List
 
 ag : String -> AutomatonGraph Entity
-ag =
-  mkAG_input
-  >> mkAutomatonGraphWithValues (\id -> { x = 0, y = 0, vx = 0, vy = 0, id = id, value = {} })
+ag s_ =
+{- So after struggling with the types for a while—they look 100%
+   correct to me and I'm pretyt sure they ARE correct!—I discovered
+   that I'd run into a compiler bug.
+
+elm: You ran into a compiler bug. Here are some details for the developers:
+
+    a [rank = 2]
+
+Please create an <http://sscce.org/> and then report it
+at <https://github.com/elm/compiler/issues>
+
+
+CallStack (from HasCallStack):
+  error, called at compiler/src/Type/Solve.hs:206:15 in main:Type.Solve
+
+   … and this has been an open bug since 2018 😱!
+
+   So, I'm basically going to try to work around that by expanding
+   things inline until I get something that works.
+-}
+  let
+    ts = mkAG_input s_
+    edges =
+      List.foldl
+        (\(src, s, dest) acc ->
+          Dict.update (src, dest)
+            (\item ->
+              case item of
+                Nothing ->
+                  Just (mkConn s)
+                Just existing ->
+                  Just <| AutoSet.union existing (mkConn s)
+            )
+            acc
+        )
+        Dict.empty
+        ts
+      |> Dict.toList
+      |> List.map (\((src, dest), conn) -> Graph.Edge src dest conn)
+    nodes : List (Graph.Node Entity)
+    nodes =
+      List.foldl
+        (\(src, _, dest) acc -> Set.insert src acc |> Set.insert dest)
+        Set.empty
+        ts
+      |> Set.toList
+      |> List.map (\id -> { id = id, label = { id = id, x = 0, y = 0, vx = 0, vy = 0, effect = NoEffect } })
+  in
+    case nodes of
+      [] ->
+        { graph = Graph.fromNodesAndEdges [{ id = 0, label = { id = 0, x = 0, y = 0, vx = 0, vy = 0, effect = NoEffect } }] []
+        , root = 0
+        , maxId = 0
+        }
+      _ ->
+        { graph =
+            Graph.fromNodesAndEdges nodes edges
+        , root =
+            case ts of
+              (src, _, _)::_ -> src
+              _ -> 0
+        , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
+        }
 
 -- very thin convenience wrapper to get rid of the "x" and "y" components
 newnode_change : NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
