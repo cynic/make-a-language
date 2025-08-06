@@ -19,6 +19,7 @@ import AutoDict
 import Maybe.Extra
 import Automata.Data exposing (transitionToString)
 import Automata.Data exposing (acceptConditionToString)
+import Automata.Data exposing (printableAcceptCondition)
 
 -- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))
@@ -87,7 +88,7 @@ ag_equals g_expected g_actual =
           ( from
           , to
           , AutoSet.toList label
-            |> List.map (Tuple.mapFirst Automata.Data.acceptConditionToString)
+            |> List.map (Tuple.mapFirst Automata.Data.printableAcceptCondition)
           )
         )
       |> List.sortBy (\(_, _, v) -> v)
@@ -311,7 +312,7 @@ dfa_equals dfa1 dfa2 =
                           |> Maybe.map
                             (\canonicalDest ->
                               ( canonicalSrc
-                              , acceptConditionToString acceptanceCondition
+                              , printableAcceptCondition acceptanceCondition
                               , canonicalDest)
                               )
                         )

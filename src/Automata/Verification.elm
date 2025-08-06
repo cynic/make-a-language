@@ -28,7 +28,7 @@ explore node s graph =
                   AutoSet.toList conn
                   |> List.map
                     (\(acceptCondition, isFinal) ->
-                        (outnode, s ++ acceptConditionToString acceptCondition, isFinal == 1)
+                        (outnode, s ++ printableAcceptCondition acceptCondition, isFinal == 1)
                     )
               )
       )
@@ -101,7 +101,7 @@ exploreDeterministic node graph =
         |> Ok
       Just found ->
         Err ("Transition(s) «"
-        ++ String.join ", " (List.map acceptConditionToString found)
+        ++ String.join ", " (List.map printableAcceptCondition found)
         ++ "» on node #"
         ++ String.fromInt node.node.id
         ++ " are not deterministic.")

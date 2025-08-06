@@ -1614,7 +1614,7 @@ tableToString table =
       AutoDict.foldl
         (\ch (destIdentifier, v) acc ->
           acc
-          ++ (acceptConditionToString ch) ++ "→"
+          ++ (printableAcceptCondition ch) ++ "→"
           ++ String.padRight 18 ' ' (stateIdentifierToString destIdentifier ++ ":" ++ ellipsis 11 (Debug.toString v))
         )
         (String.padRight 10 ' ' (stateIdentifierToString sourceIdentifier))
@@ -2085,7 +2085,7 @@ printTransitions transitions =
       AutoDict.toList dict
       |> List.map
           (\(transition, to) ->
-            String.fromInt k ++ "→" ++ String.fromInt to ++ " (" ++ acceptConditionToString transition ++ ")"
+            String.fromInt k ++ "→" ++ String.fromInt to ++ " (" ++ printableAcceptCondition transition ++ ")"
           )
       |> (++) acc
     )
