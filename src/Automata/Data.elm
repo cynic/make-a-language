@@ -8,6 +8,38 @@ import Parser exposing (Parser, (|=), (|.))
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
+type alias RequestedChangePath = List Transition -- transitions going from the start to the node.
+
+type LinkDestination
+  = NoDestination
+  | ExistingNode NodeId
+  | EditingTransitionTo NodeId
+  | NewNode ( Float, Float ) -- with X and Y coordinates
+
+type alias Modify =
+  { source : NodeId
+  , dest : LinkDestination
+  , transitions : Connection
+  }
+
+type alias Split =
+  { to_split : NodeId
+  , left : Connection
+  , right : Connection
+  }
+
+type alias Entity =
+  -- fits into the mould of Force.Entity AND Automata.Data.StateData.
+  -- I've annotated the fields to make it blindingly obvious what's
+  -- from where…
+  { x : Float -- F.E
+  , y : Float -- F.E
+  , vx : Float -- F.E
+  , vy : Float -- F.E
+  , id : NodeId -- F.E
+  , effect : NodeEffect -- A.D.SD
+  }
+
 -- the Bool indicates whether it is a Final position or not.
 -- This is superior to marking finality on a vertex, because
 -- multiple transitions—some final, some not—could end on a

@@ -821,7 +821,7 @@ viewIcon icon iconText extra model =
 
 
 
-viewNode : FDG.Model -> Graph.Node FDG.Entity -> Svg msg
+viewNode : FDG.Model -> Graph.Node Entity -> Svg msg
 viewNode { userGraph } { label, id } =
   let
     graphNode =
@@ -937,7 +937,7 @@ viewLink ({ userGraph } as model) edge =
           labelText
       ]
 
-recenterSvg : (Float, Float) -> AutomatonGraph FDG.Entity -> AutomatonGraph FDG.Entity
+recenterSvg : (Float, Float) -> AutomatonGraph Entity -> AutomatonGraph Entity
 recenterSvg (width, height) g =
   let
     -- need to recenter the x and y values, relative to

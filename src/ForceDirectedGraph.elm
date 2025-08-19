@@ -67,12 +67,6 @@ type Msg
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
-type LinkDestination
-  = NoDestination
-  | ExistingNode NodeId
-  | EditingTransitionTo NodeId
-  | NewNode ( Float, Float ) -- with X and Y coordinates
-
 type UserOperation
   = Splitting Split
   | Dragging Drag
@@ -96,37 +90,12 @@ type alias Model =
   , execution : Maybe ExecutionResult
   }
 
-type alias RequestedChangePath = List Automata.Data.Transition -- transitions going from the start to the node.
-
 type alias Drag =
   { start : ( Float, Float )
   , current : ( Float, Float )
   , index : NodeId
   }
 
-type alias Modify =
-  { source : NodeId
-  , dest : LinkDestination
-  , transitions : Connection
-  }
-
-type alias Split =
-  { to_split : NodeId
-  , left : Connection
-  , right : Connection
-  }
-
-type alias Entity =
-  -- fits into the mould of Force.Entity AND Automata.Data.StateData.
-  -- I've annotated the fields to make it blindingly obvious what's
-  -- from where…
-  { x : Float -- F.E
-  , y : Float -- F.E
-  , vx : Float -- F.E
-  , vy : Float -- F.E
-  , id : NodeId -- F.E
-  , effect : NodeEffect -- A.D.SD
-  }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
