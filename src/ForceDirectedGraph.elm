@@ -40,7 +40,7 @@ type Msg
   = DragStart NodeId
   | DragEnd
   | Tick
-  | ViewportUpdated (Float, Float) (Float, Float)
+  | ViewportUpdated (Float, Float)
   | MouseMove Float Float
   | Pan Float Float
   | Zoom Float (Float, Float)
@@ -77,7 +77,6 @@ type alias Model =
   , userGraph : AutomatonGraph Entity
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
-  , frameOffset : (Float, Float) -- (x,y) of the offset of this frame
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
@@ -206,8 +205,8 @@ toForceGraph g =
   , maxId = g.maxId
   }
 
-automatonGraphToModel : (Float, Float) -> (Float, Float) -> AutomatonGraph a -> Model
-automatonGraphToModel frameOffset (w, h) g =
+automatonGraphToModel : (Float, Float) -> AutomatonGraph a -> Model
+automatonGraphToModel (w, h) g =
   let
     forceGraph = toForceGraph g
     basic = basicForces forceGraph (round h)
@@ -227,7 +226,6 @@ automatonGraphToModel frameOffset (w, h) g =
     , userGraph = resultingGraph
     , simulation = simulation
     , dimensions = (w, h)
-    , frameOffset = frameOffset
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
@@ -241,9 +239,9 @@ automatonGraphToModel frameOffset (w, h) g =
     , execution = Nothing
     }
 
-init : (Float, Float) -> (Float, Float) -> Model
-init frameOffset (w, h) =
-  automatonGraphToModel frameOffset (w, h) (DFA.empty { effect = NoEffect } |> toAutomatonGraph)
+init : (Float, Float) -> Model
+init (w, h) =
+  automatonGraphToModel (w, h) (DFA.empty { effect = NoEffect } |> toAutomatonGraph)
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode (offsetX, offsetY) (x, y) nodeCtx =
@@ -621,15 +619,22 @@ update msg model =
           , simulation = newState
         }
 
-    ViewportUpdated frameOffset dim ->
-      -- let
-      --   viewport = viewportForces dim model.userGraph.graph
-      -- in
+    ViewportUpdated dim ->
+      let
+        -- the center of the viewport may change.
+        viewport = viewportForces dim model.userGraph.graph
+        basic = basicForces model.userGraph (round <| Tuple.second dim)
+      in
       { model
         | dimensions = dim
-        , frameOffset = frameOffset
-        -- , viewportForces = viewport
-        -- , simulation = Force.simulation (model.basicForces ++ model.viewportForces)
+        , viewportForces = viewport
+        , basicForces = basic
+        , simulation =
+            Force.simulation
+              ( basic ++
+                viewport ++
+                List.concat (IntDict.values model.specificForces)
+              )
       }
 
     DragStart nodeId ->
@@ -1547,7 +1552,7 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffset, mouseCoords } { label, id } =
+viewNode { userGraph, currentOperation, disconnectedNodes, execution, mouseCoords } { label, id } =
   let
     selectableClass =
       case currentOperation of

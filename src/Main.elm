@@ -156,7 +156,7 @@ decodeGraphPackage (w, h) =
     initialize_fdg serialized =
       Data.mkAG_input serialized
       |> DFA.mkAutomatonGraph
-      |> FDG.automatonGraphToModel (0, 0) (w, h)
+      |> FDG.automatonGraphToModel (w, h)
   in
   D.field "model" (D.map initialize_fdg D.string)
   |> D.andThen
@@ -183,9 +183,9 @@ decodeFlags =
         (D.field "packages" <| D.list (decodeGraphPackage (w, h)))
     )
 
-createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> (Float, Float) -> (Float, Float) -> GraphPackage
-createNewPackage uuid testUuid currentTime frameOffset dimensions = -- this is the width & height of the panel
-  { model = FDG.init frameOffset dimensions
+createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> (Float, Float) -> GraphPackage
+createNewPackage uuid testUuid currentTime dimensions = -- this is the width & height of the panel
+  { model = FDG.init dimensions
   , description = Nothing
   , uuid = uuid
   , created = currentTime
@@ -212,7 +212,6 @@ init flags =
             uuid
             uuid2
             decoded.startTime
-            (60, 0)
             (initialRightTopWidth, initialRightTopHeight)
       , packages =
           decoded.packages |> List.map (\v -> ( Uuid.toString v.uuid, v )) |> Dict.fromList
@@ -334,7 +333,11 @@ update msg model =
 
     OnResize (width, height) ->
       let
-        newModel = { model | mainPanelDimensions = (width, height) }
+        newModel =
+          { model
+            -- account for borders
+            | mainPanelDimensions = (width - 4, height - 4)
+          }
         (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions newModel
       in
       ( { newModel
@@ -560,9 +563,6 @@ update msg model =
                   uuid
                   uuid2
                   model.currentTime
-                  ( 60 + if model.leftPanelOpen then model.leftPanelWidth else 0
-                  , 0
-                  )
                   model.rightTopPanelDimensions
             , uuidSeed = newSeed2
           }
@@ -588,9 +588,6 @@ update msg model =
                   newUuid
                   newUuid2
                   model.currentTime
-                  ( 60 + if model.leftPanelOpen then model.leftPanelWidth else 0
-                  , 0
-                  )
                   model.rightTopPanelDimensions
             , uuidSeed = newSeed2
           }
@@ -651,18 +648,18 @@ calculateRightTopDimensions model =
   let
     (viewportWidth, viewportHeight) = model.mainPanelDimensions
     iconBarWidth = 60 + 1 -- 1px border
-    leftPanelWidth = iconBarWidth + if model.leftPanelOpen then model.leftPanelWidth else 0
+    leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth else 0
     statusBarHeight = 30
     bottomPanelHeight = if model.rightBottomPanelOpen then model.rightBottomPanelHeight else 0
     -- Always account for some splitter height (either full splitter or collapsed splitter)
     splitterHeight = if model.rightBottomPanelOpen then 8 else 4
     
-    rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth
-    rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - splitterHeight
+    rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth - 4 - 2 -- 2px borders & 1px borders
+    rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - splitterHeight - 4 - 1 -- borders
     newGraph =
       fdg_update
         model
-        (FDG.ViewportUpdated (leftPanelWidth, 0) (rightTopWidth, rightTopHeight))
+        (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
   in
   ( rightTopWidth, rightTopHeight, newGraph )
 
