@@ -41,7 +41,7 @@ type Msg
   | DragAt ( Float, Float )
   | DragEnd ( Float, Float )
   | Tick
-  | ViewportUpdated (Float, Float)
+  | ViewportUpdated (Float, Float) (Float, Float)
   | MouseMove Float Float
   | Pan Float Float
   | Zoom Float (Float, Float)
@@ -78,6 +78,7 @@ type alias Model =
   , userGraph : AutomatonGraph Entity
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
+  , frameOffset : (Float, Float) -- (x,y) of the offset of this frame
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
@@ -92,8 +93,7 @@ type alias Model =
   }
 
 type alias Drag =
-  { start : ( Float, Float )
-  , current : ( Float, Float )
+  { current : ( Float, Float )
   , index : NodeId
   }
 
@@ -213,8 +213,8 @@ toForceGraph g =
   , maxId = g.maxId
   }
 
-automatonGraphToModel : (Float, Float) -> AutomatonGraph a -> Model
-automatonGraphToModel (w, h) g =
+automatonGraphToModel : (Float, Float) -> (Float, Float) -> AutomatonGraph a -> Model
+automatonGraphToModel frameOffset (w, h) g =
   let
     forceGraph = toForceGraph g
     basic = basicForces forceGraph (round h)
@@ -234,6 +234,7 @@ automatonGraphToModel (w, h) g =
     , userGraph = resultingGraph
     , simulation = simulation
     , dimensions = (w, h)
+    , frameOffset = frameOffset
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
@@ -247,17 +248,24 @@ automatonGraphToModel (w, h) g =
     , execution = Nothing
     }
 
-init : (Float, Float) -> Model
-init (w, h) =
-  automatonGraphToModel (w, h) (DFA.empty { effect = NoEffect } |> toAutomatonGraph)
+init : (Float, Float) -> (Float, Float) -> Model
+init frameOffset (w, h) =
+  automatonGraphToModel frameOffset (w, h) (DFA.empty { effect = NoEffect } |> toAutomatonGraph)
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
-updateNode ( x, y ) (offsetX, offsetY) nodeCtx =
+updateNode (offsetX, offsetY) (x, y) nodeCtx =
   let
     nodeValue =
       nodeCtx.node.label
+    new_x = x + offsetX
+    new_y = y + offsetY
   in
-    updateContextWithValue nodeCtx { nodeValue | x = x + offsetX, y = y + offsetY }
+    updateContextWithValue
+      nodeCtx
+      { nodeValue
+        | x = if isNaN new_x then nodeCtx.node.label.x + offsetX else new_x
+        , y = if isNaN new_y then nodeCtx.node.label.y + offsetY else new_y
+      }
 
 
 updateContextWithValue : NodeContext Entity Connection -> Entity -> NodeContext Entity Connection
@@ -602,8 +610,8 @@ splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
   in
     newUserGraph
 
-update : (Float, Float) -> Msg -> Model -> Model
-update offset_amount msg model =
+update : Msg -> Model -> Model
+update msg model =
   case msg of
     Tick ->
       let
@@ -630,19 +638,20 @@ update offset_amount msg model =
               , simulation = newState
             }
 
-    ViewportUpdated dim ->
+    ViewportUpdated frameOffset dim ->
       let
         viewport = viewportForces dim model.userGraph.graph
       in
       { model
         | dimensions = dim
+        , frameOffset = frameOffset
         , viewportForces = viewport
         , simulation = Force.simulation (model.basicForces ++ model.viewportForces)
       }
 
     DragStart index xy ->
       { model
-      | currentOperation = Just <| Dragging <| Drag (offset offset_amount xy) (offset offset_amount xy) index
+      | currentOperation = Just <| Dragging <| Drag (offset model.frameOffset xy) index
       -- , simulation = Force.reheat model.simulation
       }
 
@@ -651,14 +660,18 @@ update offset_amount msg model =
         g = model.userGraph
       in
         case model.currentOperation of
-          Just (Dragging { start, index }) ->
+          Just (Dragging { index }) ->
             { model
-              | currentOperation = Just <| Dragging <| Drag start xy index
+              | currentOperation =
+                  Just <|
+                    Dragging <|
+                      Debug.log "Dragging at" <|
+                      Drag xy index
               , userGraph =
                   { g
                     | graph =
                         Graph.update index
-                          (Maybe.map (updateNode xy model.pan))
+                          (Maybe.map (updateNode (offset model.frameOffset xy) model.pan))
                           g.graph
                   }
               -- , simulation = Force.reheat model.simulation
@@ -701,7 +714,7 @@ update offset_amount msg model =
               , userGraph =
                   { g
                     | graph =
-                        Graph.update index (Maybe.map (updateNode (x,y) model.pan)) g.graph
+                        Graph.update index (Maybe.map (updateNode (x,y) model.pan >> Debug.log "Dragging ended with updated node")) g.graph
                   }
               , specificForces = sf
               , simulation = Force.simulation (List.concat (IntDict.values sf))
@@ -725,7 +738,7 @@ update offset_amount msg model =
 
     MouseMove x y ->
       { model
-        | mouseCoords = (x, y) |> Debug.log "Set mouse-coords"
+        | mouseCoords = (x, y) -- |> Debug.log "Set mouse-coords"
       }
     
     Pan xAmount yAmount ->
@@ -1077,10 +1090,10 @@ offset : (Float, Float) -> (Float, Float) -> (Float, Float)
 offset (offset_x, offset_y) (x, y) =
   (x - offset_x, y - offset_y)
 
-subscriptions : (Float, Float) -> Model -> Sub Msg
-subscriptions offset_amount model =
+subscriptions : Model -> Sub Msg
+subscriptions model =
   let
-    ( xCoord, yCoord ) = model.mouseCoords |> Debug.log "Mouse coords"
+    ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
     panSubscription =
       let
         xPan = xPanAt model xCoord
@@ -1147,8 +1160,26 @@ subscriptions offset_amount model =
     case model.currentOperation of
       Just (Dragging _) ->
         Sub.batch
-          [ Browser.Events.onMouseMove (Decode.map (.clientPos >> (offset offset_amount) >> DragAt) Mouse.eventDecoder)
-          , Browser.Events.onMouseUp (Decode.map (.clientPos >> (offset offset_amount) >> DragEnd) Mouse.eventDecoder)
+          [ Browser.Events.onMouseMove
+              (Decode.map
+                ( .clientPos
+                  >> Debug.log "Drag-at client-pos"
+                  >> (offset model.frameOffset)
+                  >> Debug.log "Drag-at after offset"
+                  >> DragAt
+                )
+                Mouse.eventDecoder
+              )
+          , Browser.Events.onMouseUp
+              (Decode.map
+                ( .clientPos
+                  >> Debug.log "Drag-end client-pos"
+                  >> (offset model.frameOffset)
+                  >> Debug.log "Drag-end after offset"
+                  >> DragEnd
+                )
+                Mouse.eventDecoder
+              )
           , Browser.Events.onAnimationFrame (always Tick)
           , panSubscription
           , keyboardSubscription
@@ -1552,7 +1583,7 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, id } =
+viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffset } { label, id } =
   let
     selectableClass =
       case currentOperation of
