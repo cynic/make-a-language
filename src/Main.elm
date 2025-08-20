@@ -201,8 +201,8 @@ init flags =
       |> Result.mapError (\err -> Debug.log "OH NO! FLAGS WAS NOT PARSED CORRECTLY!!" err)
       |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0) [])
     
-    initialRightTopWidth = decoded.width - 60  -- 60px for icon bar
-    initialRightTopHeight = decoded.height - 223  -- 30px status bar + 185px bottom panel + 8px splitter
+    initialRightTopWidth = decoded.width - 60 - 4 - 1 - 2  -- 60px for icon bar, 2px border each side, 1px icon-bar border + 1px each side top-right border
+    initialRightTopHeight = decoded.height - 218  -- 185px bottom panel + 1px border each side + 8px splitter + 30px status bar + 1px status-bar border
     initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
     (uuid, newSeed) = Random.step Uuid.generator initialSeed
     (uuid2, newSeed2) = Random.step Uuid.generator newSeed
@@ -216,7 +216,10 @@ init flags =
             (initialRightTopWidth, initialRightTopHeight)
       , packages =
           decoded.packages |> List.map (\v -> ( Uuid.toString v.uuid, v )) |> Dict.fromList
-      , mainPanelDimensions = ( decoded.width, decoded.height )
+      , mainPanelDimensions =
+          ( decoded.width - 4 -- 2px border all around main-container
+          , decoded.height - 4 -- same border as above
+          )
       , leftPanelOpen = False
       , selectedIcon = Nothing
       , leftPanelWidth = 250
@@ -647,7 +650,7 @@ calculateRightTopDimensions : Model -> ( Float, Float, GraphPackage )
 calculateRightTopDimensions model =
   let
     (viewportWidth, viewportHeight) = model.mainPanelDimensions
-    iconBarWidth = 60
+    iconBarWidth = 60 + 1 -- 1px border
     leftPanelWidth = iconBarWidth + if model.leftPanelOpen then model.leftPanelWidth else 0
     statusBarHeight = 30
     bottomPanelHeight = if model.rightBottomPanelOpen then model.rightBottomPanelHeight else 0

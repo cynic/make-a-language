@@ -622,14 +622,14 @@ update msg model =
         }
 
     ViewportUpdated frameOffset dim ->
-      let
-        viewport = viewportForces dim model.userGraph.graph
-      in
+      -- let
+      --   viewport = viewportForces dim model.userGraph.graph
+      -- in
       { model
         | dimensions = dim
         , frameOffset = frameOffset
-        , viewportForces = viewport
-        , simulation = Force.simulation (model.basicForces ++ model.viewportForces)
+        -- , viewportForces = viewport
+        -- , simulation = Force.simulation (model.basicForces ++ model.viewportForces)
       }
 
     DragStart nodeId ->
@@ -642,17 +642,15 @@ update msg model =
       case model.currentOperation of
         Just (Dragging nodeId) ->
           let
-            ( offsetX, offsetY ) =
-              mapCorrespondingPair (+) model.pan model.frameOffset
             ( x, y ) =
-              model.mouseCoords
+              mapCorrespondingPair (+) model.pan model.mouseCoords
             nearby =
               nearby_nodes nearby_node_repulsionDistance model
               -- |> Debug.log "Nearby nodes at end of drag"
             sf =
               IntDict.insert nodeId
-                [ Force.towardsX [{ node = nodeId, strength = 2, target = x + offsetX }]
-                , Force.towardsY [{ node = nodeId, strength = 2, target = y + offsetY }]
+                [ Force.towardsX [{ node = nodeId, strength = 2, target = x }]
+                , Force.towardsY [{ node = nodeId, strength = 2, target = y }]
                 , Force.customLinks 2
                     ( List.map
                         (\node ->
@@ -702,7 +700,7 @@ update msg model =
         ug = model.userGraph
       in
         { model
-          | mouseCoords = (x, y) |> Debug.log "Set mouse-coords"
+          | mouseCoords = (x, y) -- |> Debug.log "Set mouse-coords"
           , userGraph =
               case model.currentOperation of
                 Just (Dragging nodeId) ->
@@ -715,8 +713,7 @@ update msg model =
                               node = ctx.node
                               l = node.label
                               ( node_x, node_y ) =
-                                --mapCorrespondingPair (+) model.pan ( x, y )
-                                ( x, y )
+                                mapCorrespondingPair (+) model.pan ( x, y )
                             in
                               { ctx
                               | node =
@@ -736,24 +733,24 @@ update msg model =
       let
         ( xPan, yPan ) = model.pan
       in
-      { model
-      | pan =
-          case model.currentOperation of
-            Just (ModifyingGraph {dest}) ->
-              case dest of
-                NoDestination ->
-                  ( xPan + xAmount, yPan + yAmount )
-                _ ->
-                  model.pan
-            Nothing ->
-              ( xPan + xAmount, yPan + yAmount )
-            Just (Dragging _) ->
-              ( xPan + xAmount, yPan + yAmount )
-            Just (AlteringConnection _) ->
-              model.pan
-            Just (Splitting _) ->
-              model.pan
-      }
+        { model
+        | pan =
+            case model.currentOperation of
+              Just (ModifyingGraph {dest}) ->
+                case dest of
+                  NoDestination ->
+                    ( xPan + xAmount, yPan + yAmount )
+                  _ ->
+                    model.pan
+              Nothing ->
+                ( xPan + xAmount, yPan + yAmount )
+              Just (Dragging _) ->
+                ( xPan + xAmount, yPan + yAmount )
+              Just (AlteringConnection _) ->
+                model.pan
+              Just (Splitting _) ->
+                model.pan
+        }
 
     SelectNode index ->
       { model | currentOperation = Just <| ModifyingGraph <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
@@ -1654,7 +1651,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffse
       case currentOperation of
         Just (Dragging nodeId) ->
           if nodeId == id then
-            mapCorrespondingPair (-) mouseCoords frameOffset            
+            mouseCoords            
           else
             nodeCoords
         _ ->
@@ -2365,6 +2362,14 @@ view model =
             class []
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
+      , rect
+          [ x 0
+          , y 0
+          , width 5
+          , height 5
+          , fill <| Paint <| Color.orange
+          ]
+          []
       , Graph.edges model.userGraph.graph
         |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
         |> List.map
