@@ -37,9 +37,8 @@ import Maybe.Extra as Maybe
 import Automata.Debugging
 
 type Msg
-  = DragStart NodeId ( Float, Float )
-  | DragAt ( Float, Float )
-  | DragEnd ( Float, Float )
+  = DragStart NodeId
+  | DragEnd
   | Tick
   | ViewportUpdated (Float, Float) (Float, Float)
   | MouseMove Float Float
@@ -70,7 +69,7 @@ type Msg
 
 type UserOperation
   = Splitting Split -- split a node into two, so I can work on the parts separately
-  | Dragging Drag -- move a node around (visually)
+  | Dragging NodeId -- move a node around (visually)
   | ModifyingGraph GraphModification
   | AlteringConnection ConnectionAlteration 
 type alias Model =
@@ -91,12 +90,6 @@ type alias Model =
   , disconnectedNodes : Set NodeId
   , execution : Maybe ExecutionResult
   }
-
-type alias Drag =
-  { current : ( Float, Float )
-  , index : NodeId
-  }
-
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
@@ -610,6 +603,10 @@ splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
   in
     newUserGraph
 
+mapCorrespondingPair : (a -> b -> c) -> (a, a) -> (b, b) -> (c, c)
+mapCorrespondingPair f (a1, a2) (b1, b2) =
+  (f a1 b1, f a2 b2)
+
 update : Msg -> Model -> Model
 update msg model =
   case msg of
@@ -619,24 +616,10 @@ update msg model =
         ( newState, list ) =
           Force.tick model.simulation <| List.map .label <| Graph.nodes g.graph
       in
-        case model.currentOperation of
-          Just (Dragging { current, index }) ->
-            { model
-              | userGraph =
-                  { g
-                    | graph =
-                        Graph.update index
-                        (Maybe.map (updateNode current model.pan))
-                        (updateGraphWithList g.graph list)
-                  }
-              , simulation = newState
-            }
-
-          _ ->
-            { model
-              | userGraph = { g | graph = updateGraphWithList model.userGraph.graph list }
-              , simulation = newState
-            }
+        { model
+          | userGraph = { g | graph = updateGraphWithList model.userGraph.graph list }
+          , simulation = newState
+        }
 
     ViewportUpdated frameOffset dim ->
       let
@@ -649,53 +632,31 @@ update msg model =
         , simulation = Force.simulation (model.basicForces ++ model.viewportForces)
       }
 
-    DragStart index xy ->
+    DragStart nodeId ->
       { model
-      | currentOperation = Just <| Dragging <| Drag (offset model.frameOffset xy) index
+      | currentOperation = Just <| Dragging nodeId
       -- , simulation = Force.reheat model.simulation
       }
 
-    DragAt xy ->
-      let
-        g = model.userGraph
-      in
-        case model.currentOperation of
-          Just (Dragging { index }) ->
-            { model
-              | currentOperation =
-                  Just <|
-                    Dragging <|
-                      Debug.log "Dragging at" <|
-                      Drag xy index
-              , userGraph =
-                  { g
-                    | graph =
-                        Graph.update index
-                          (Maybe.map (updateNode (offset model.frameOffset xy) model.pan))
-                          g.graph
-                  }
-              -- , simulation = Force.reheat model.simulation
-            }
-
-          _ ->
-            model
-
-    DragEnd (x,y) ->
+    DragEnd ->
       case model.currentOperation of
-        Just (Dragging { index }) ->
+        Just (Dragging nodeId) ->
           let
-            ( offsetX, offsetY ) = model.pan
+            ( offsetX, offsetY ) =
+              mapCorrespondingPair (+) model.pan model.frameOffset
+            ( x, y ) =
+              model.mouseCoords
             nearby =
               nearby_nodes nearby_node_repulsionDistance model
               -- |> Debug.log "Nearby nodes at end of drag"
             sf =
-              IntDict.insert index
-                [ Force.towardsX [{ node = index, strength = 2, target = x + offsetX }]
-                , Force.towardsY [{ node = index, strength = 2, target = y + offsetY }]
+              IntDict.insert nodeId
+                [ Force.towardsX [{ node = nodeId, strength = 2, target = x + offsetX }]
+                , Force.towardsY [{ node = nodeId, strength = 2, target = y + offsetY }]
                 , Force.customLinks 2
                     ( List.map
                         (\node ->
-                            { source = index
+                            { source = nodeId
                             , target = node.id
                             -- in other words, 8 radii will separate the centers.
                             -- This should be sufficient for directional arrows to show up correctly.
@@ -714,7 +675,7 @@ update msg model =
               , userGraph =
                   { g
                     | graph =
-                        Graph.update index (Maybe.map (updateNode (x,y) model.pan >> Debug.log "Dragging ended with updated node")) g.graph
+                        Graph.update nodeId (Maybe.map (updateNode (x,y) model.pan >> Debug.log "Dragging ended with updated node")) g.graph
                   }
               , specificForces = sf
               , simulation = Force.simulation (List.concat (IntDict.values sf))
@@ -737,9 +698,39 @@ update msg model =
       { model | zoom = ( 1.0, Tuple.mapBoth (\x -> x/2) (\y -> y/2) model.dimensions ), pan = ( 0, 0 ) }
 
     MouseMove x y ->
-      { model
-        | mouseCoords = (x, y) -- |> Debug.log "Set mouse-coords"
-      }
+      let
+        ug = model.userGraph
+      in
+        { model
+          | mouseCoords = (x, y) |> Debug.log "Set mouse-coords"
+          , userGraph =
+              case model.currentOperation of
+                Just (Dragging nodeId) ->
+                  { ug
+                  | graph =
+                      Graph.update nodeId
+                        (Maybe.map
+                          (\ctx ->
+                            let
+                              node = ctx.node
+                              l = node.label
+                              ( node_x, node_y ) =
+                                --mapCorrespondingPair (+) model.pan ( x, y )
+                                ( x, y )
+                            in
+                              { ctx
+                              | node =
+                                { node
+                                | label = { l | x = node_x, y = node_y }
+                                }
+                              }
+                          )
+                        )
+                        model.userGraph.graph
+                  }
+                _ ->
+                  model.userGraph
+        }
     
     Pan xAmount yAmount ->
       let
@@ -1157,41 +1148,17 @@ subscriptions model =
       else
         Sub.none
   in
-    case model.currentOperation of
-      Just (Dragging _) ->
-        Sub.batch
-          [ Browser.Events.onMouseMove
-              (Decode.map
-                ( .clientPos
-                  >> Debug.log "Drag-at client-pos"
-                  >> (offset model.frameOffset)
-                  >> Debug.log "Drag-at after offset"
-                  >> DragAt
-                )
-                Mouse.eventDecoder
-              )
-          , Browser.Events.onMouseUp
-              (Decode.map
-                ( .clientPos
-                  >> Debug.log "Drag-end client-pos"
-                  >> (offset model.frameOffset)
-                  >> Debug.log "Drag-end after offset"
-                  >> DragEnd
-                )
-                Mouse.eventDecoder
-              )
-          , Browser.Events.onAnimationFrame (always Tick)
-          , panSubscription
-          , keyboardSubscription
-          ]
-      _ ->
-        -- This allows us to save resources, as if the simulation is done, there is no point in subscribing
-        -- to the rAF.
-        if Force.isCompleted model.simulation then
-          Sub.batch [ keyboardSubscription, panSubscription ]
-
-        else
-          Sub.batch [ keyboardSubscription, panSubscription, Browser.Events.onAnimationFrame (always Tick) ]
+    if Force.isCompleted model.simulation then
+      Sub.batch
+        [ keyboardSubscription
+        , panSubscription
+        ]
+    else
+      Sub.batch
+        [ keyboardSubscription
+        , panSubscription
+        , Browser.Events.onAnimationFrame (always Tick)
+        ]
 
 applyChangesToGraph : AutomatonGraph Entity -> AutomatonGraph Entity
 applyChangesToGraph g =
@@ -1583,7 +1550,7 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffset } { label, id } =
+viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffset, mouseCoords } { label, id } =
   let
     selectableClass =
       case currentOperation of
@@ -1631,9 +1598,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffse
         { stopPropagation = True, preventDefault = True }
         (\e ->
           if e.keys.shift then
-            e.clientPos
-            |> Debug.log "Starting drag with client-position"
-            |> DragStart id
+            DragStart id
           else if e.keys.ctrl && splittable then
             StartSplit id
           else
@@ -1679,6 +1644,21 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffse
       |> Maybe.withDefault "")
       ++ "\nClick to create or link a new transition"
       ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
+    ( node_x, node_y ) =
+      let
+        nodeCoords =
+          Maybe.map (\ctx -> ( ctx.node.label.x, ctx.node.label.y )) graphNode
+          |> Maybe.withDefaultLazy
+              (\() -> ( 0, 0 ) |> Debug.log "MWXCGUOEI") -- should never reach here
+      in
+      case currentOperation of
+        Just (Dragging nodeId) ->
+          if nodeId == id then
+            mapCorrespondingPair (-) mouseCoords frameOffset            
+          else
+            nodeCoords
+        _ ->
+          nodeCoords
   in
     g
       ( class ["state-node", selectableClass]
@@ -1687,16 +1667,16 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffse
       [ circle
           [ r nodeRadius
           , strokeWidth 2
-          , cx label.x
-          , cy label.y
+          , cx node_x
+          , cy node_y
           , class
               ( if id == userGraph.root then [ "start" ] else [] )
           ]
           []
        ,  if thisNodeIsTerminal && id == userGraph.root then
             text_
-              [ x <| label.x
-              , y <| (label.y + 1)
+              [ x <| node_x
+              , y <| (node_y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 14
               , fontWeight FontWeightNormal
@@ -1710,8 +1690,8 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffse
               ]
           else if thisNodeIsTerminal then
             text_
-              [ x <| label.x
-              , y <| (label.y + 1)
+              [ x <| node_x
+              , y <| (node_y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 14
               , fontWeight FontWeightNormal
@@ -1725,8 +1705,8 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, frameOffse
               ]
           else if id == userGraph.root then
             text_
-              [ x <| label.x
-              , y <| (label.y + 1)
+              [ x <| node_x
+              , y <| (node_y + 1)
               , fontFamily ["sans-serif"]
               , fontSize 12
               , fontWeight FontWeightNormal
@@ -1753,18 +1733,12 @@ nearby_node_repulsionDistance =
 
 {-| Used by nearby_node and nearby_nodes. Not for other use. -}
 nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Model -> b
-nearby_node_func f distance { userGraph, pan, mouseCoords, currentOperation } =
+nearby_node_func f distance { userGraph, pan, mouseCoords } =
   -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
   let
     ( xPan, yPan ) = pan
     ( mouse_x, mouse_y ) =
-      case currentOperation of
-        Just (Dragging { current }) ->
-          -- we are dragging! Use this for preference.
-          current -- |> Debug.log "Dragcoords"
-        _ ->
-          -- not dragging; rely on less accurate mouse-coords.
-          mouseCoords -- |> Debug.log "Mousecoords"
+      mouseCoords -- |> Debug.log "Mousecoords"
     adjustment_x = xPan + mouse_x
     adjustment_y = yPan + mouse_y
     square_dist = distance * distance
@@ -2333,6 +2307,8 @@ view model =
             _ ->
               Escape
         )
+    permit_stopdrag =
+      Mouse.onUp (\_ -> DragEnd)
     interactivity =
       -- don't permit panning if:
       -- 1. I'm splitting a node
@@ -2363,7 +2339,10 @@ view model =
         Just (AlteringConnection _) ->
           [ permit_click ]
         Just (Dragging _) ->
-          permit_click :: permit_zoom :: permit_pan
+          -- must have permit_pan (for mouse-movement)
+          -- must have permit_stopdrag
+          -- ignore click (we only care about stop-drag right now)
+          permit_stopdrag :: permit_zoom :: permit_pan
         Nothing ->
           permit_click :: permit_zoom :: permit_pan
   in
@@ -2376,6 +2355,14 @@ view model =
       viewUndoRedoVisualisation model
     , g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
       [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ]
+      , case model.currentOperation of
+          Just (Dragging _) ->
+            -- disable pointer-events.
+            -- This is to stop elements from getting in the way of
+            -- mouse-movement.
+            pointerEvents "none"
+          _ ->
+            class []
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
       , Graph.edges model.userGraph.graph
@@ -2514,6 +2501,8 @@ onMouseMove msg =
         (\tagName ->
           if String.toUpper tagName == "SVG" then
             Decode.map2 msg
+              -- offset relative to the parent
+              -- …which is the SVG element.
               (Decode.field "offsetX" Decode.float)
               (Decode.field "offsetY" Decode.float)
           else
