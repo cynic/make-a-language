@@ -16,9 +16,15 @@ type LinkDestination
   | EditingTransitionTo NodeId
   | NewNode ( Float, Float ) -- with X and Y coordinates
 
-type alias Modify =
+type alias GraphModification =
   { source : NodeId
   , dest : LinkDestination
+  , transitions : Connection
+  }
+
+type alias ConnectionAlteration =
+  { source : NodeId
+  , dest : NodeId
   , transitions : Connection
   }
 

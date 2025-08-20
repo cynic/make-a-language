@@ -43,6 +43,7 @@ type Msg
   | Tick
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
+  | Pan Float Float
   | Zoom Float (Float, Float)
   | ResetView
   | SelectNode NodeId
@@ -68,10 +69,10 @@ type Msg
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
 type UserOperation
-  = Splitting Split
-  | Dragging Drag
-  | ModifyingGraph Modify
- 
+  = Splitting Split -- split a node into two, so I can work on the parts separately
+  | Dragging Drag -- move a node around (visually)
+  | ModifyingGraph GraphModification
+  | AlteringConnection ConnectionAlteration 
 type alias Model =
   { currentOperation : Maybe UserOperation
   , userGraph : AutomatonGraph Entity
@@ -288,7 +289,7 @@ xPanAt model x =
 
 yPanAt : Model -> Float -> Float
 yPanAt model y =
-  if y >= ( Tuple.second model.dimensions - panBuffer ) then
+  if y >= ( Tuple.second (model.dimensions) - (panBuffer) ) then
     1
   else if y <= panBuffer then
     -1
@@ -723,25 +724,35 @@ update offset_amount msg model =
       { model | zoom = ( 1.0, Tuple.mapBoth (\x -> x/2) (\y -> y/2) model.dimensions ), pan = ( 0, 0 ) }
 
     MouseMove x y ->
+      { model
+        | mouseCoords = (x, y) |> Debug.log "Set mouse-coords"
+      }
+    
+    Pan xAmount yAmount ->
       let
         ( xPan, yPan ) = model.pan
       in
       { model
-      | mouseCoords = (x, y)
-      , pan =
+      | pan =
           case model.currentOperation of
             Just (ModifyingGraph {dest}) ->
               case dest of
                 NoDestination ->
-                  ( xPan + xPanAt model x, yPan + yPanAt model y )
+                  ( xPan + xAmount, yPan + yAmount )
                 _ ->
                   model.pan
-            _ ->
+            Nothing ->
+              ( xPan + xAmount, yPan + yAmount )
+            Just (Dragging _) ->
+              ( xPan + xAmount, yPan + yAmount )
+            Just (AlteringConnection _) ->
+              model.pan
+            Just (Splitting _) ->
               model.pan
       }
 
     SelectNode index ->
-      { model | currentOperation = Just <| ModifyingGraph <| Modify index NoDestination (AutoSet.empty transitionToString) }
+      { model | currentOperation = Just <| ModifyingGraph <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
@@ -766,7 +777,7 @@ update offset_amount msg model =
           in
             { model
               | currentOperation =
-                  Just <| ModifyingGraph <| Modify source (ExistingNode dest) transitions
+                  Just <| ModifyingGraph <| GraphModification source (ExistingNode dest) transitions
             }
         _ ->
           model
@@ -776,7 +787,7 @@ update offset_amount msg model =
         Just (ModifyingGraph { source, transitions }) ->
           { model
             | currentOperation =
-                Just <| ModifyingGraph <| Modify source (NewNode ( x, y )) transitions
+                Just <| ModifyingGraph <| GraphModification source (NewNode ( x, y )) transitions
           }
         _ ->
           model
@@ -791,18 +802,30 @@ update offset_amount msg model =
                   -- I must be escaping from something earlier.
                   { model | currentOperation = Nothing }
                 EditingTransitionTo _ ->
-                  -- back of ALL the way
-                  { model | currentOperation = Nothing }
+                  -- back off by one level
+                  { model
+                    | currentOperation =
+                        Just <|
+                          ModifyingGraph
+                            { source = source
+                            , dest = NoDestination
+                            , transitions = AutoSet.empty transitionToString
+                            }
+                  }
                 _ ->
                   { model
                     | currentOperation =
-                        Just <| ModifyingGraph <| Modify source NoDestination transitions
+                        Just <| ModifyingGraph <| GraphModification source NoDestination transitions
                   }
             Just (Splitting _) ->
               { model | currentOperation = Nothing }
-            _ ->
-              -- ??? I guess I'm escaping from nothing.
+            Just (AlteringConnection { source, dest, transitions }) ->
+              { model | currentOperation = Nothing }
+            Nothing ->
               model
+            Just (Dragging _) ->
+              -- stop dragging.
+              { model | currentOperation = Nothing }
       in
       -- ooh!  What are we "escaping" from, though?
         escapery
@@ -866,6 +889,11 @@ update offset_amount msg model =
               ( NoDestination ) ->
                 -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
                 model
+          Just (AlteringConnection { source, dest, transitions }) ->
+                if AutoSet.isEmpty transitions then
+                  removeLink source dest
+                else
+                  updateExistingNode source dest transitions
           Just (Splitting { to_split, left, right }) ->
             if AutoSet.isEmpty left || AutoSet.isEmpty right then
               { model | currentOperation = Nothing }
@@ -882,62 +910,72 @@ update offset_amount msg model =
                 model -- …there is nothing for me to do!
               _ ->
                 confirmChanges model
-          _ ->
-            -- no idea what I'm confirming.
-            model
+          Just (Dragging _) ->
+            model -- confirmation does nothing for this (visual) operation.
 
     ToggleSelectedTransition acceptCondition ->
-      case model.currentOperation of
-        Just (ModifyingGraph ({ transitions } as mod)) ->
-          { model
-            | currentOperation =
-                Just <| ModifyingGraph <|
-                  { mod
-                    | transitions =
-                        if AutoSet.member (acceptCondition, 0) transitions then
-                          AutoSet.remove (acceptCondition, 0) transitions
-                          |> AutoSet.insert (acceptCondition, 1)
-                        else if AutoSet.member (acceptCondition, 1) transitions then
-                          AutoSet.remove (acceptCondition, 1) transitions
-                        else
-                          AutoSet.insert (acceptCondition, 0) transitions
-                  }
-          }
-        Just (Splitting { to_split, left, right }) ->
-          let
-            onLeft_0 = AutoSet.member (acceptCondition, 0) left
-            onLeft_1 = AutoSet.member (acceptCondition, 1) left
-            onRight_0 = AutoSet.member (acceptCondition, 0) right
-            onRight_1 = AutoSet.member (acceptCondition, 1) right
-            pushToRight t =
-              ( AutoSet.remove t left, AutoSet.insert t right )
-            pushToLeft t =
-              ( AutoSet.insert t left, AutoSet.remove t right )
-            ( newLeft, newRight ) =
-              if onLeft_0 && onLeft_1 then
-                -- push the non-terminal to the right.
-                pushToRight (acceptCondition, 0)
-              else if onLeft_1 then
-                -- push the terminal to the right
-                pushToRight (acceptCondition, 1)
-              else if onRight_0 && onRight_1 then
-                -- push the non-terminal to the left
-                pushToLeft (acceptCondition, 0)
-              else if onRight_1 then
-                pushToLeft (acceptCondition, 1)
-              else if onLeft_0 then
-                pushToRight (acceptCondition, 0)
-              else if onRight_0 then
-                pushToLeft (acceptCondition, 0)
-              else
-                ( left, right )
-          in
+      let
+        alterTransitions transitions =
+          if AutoSet.member (acceptCondition, 0) transitions then
+            AutoSet.remove (acceptCondition, 0) transitions
+            |> AutoSet.insert (acceptCondition, 1)
+          else if AutoSet.member (acceptCondition, 1) transitions then
+            AutoSet.remove (acceptCondition, 1) transitions
+          else
+            AutoSet.insert (acceptCondition, 0) transitions
+      in
+        case model.currentOperation of
+          Just (ModifyingGraph ({ transitions } as mod)) ->
             { model
               | currentOperation =
-                  Just <| Splitting <| Split to_split newLeft newRight
+                  Just <| ModifyingGraph <|
+                    { mod
+                      | transitions = alterTransitions transitions
+                    }
             }
-        _ ->
-          model
+          Just (AlteringConnection ({ transitions } as mod)) ->
+            { model
+              | currentOperation =
+                  Just <| AlteringConnection <|
+                    { mod
+                      | transitions = alterTransitions transitions
+                    }
+            }
+          Just (Splitting { to_split, left, right }) ->
+            let
+              onLeft_0 = AutoSet.member (acceptCondition, 0) left
+              onLeft_1 = AutoSet.member (acceptCondition, 1) left
+              onRight_0 = AutoSet.member (acceptCondition, 0) right
+              onRight_1 = AutoSet.member (acceptCondition, 1) right
+              pushToRight t =
+                ( AutoSet.remove t left, AutoSet.insert t right )
+              pushToLeft t =
+                ( AutoSet.insert t left, AutoSet.remove t right )
+              ( newLeft, newRight ) =
+                if onLeft_0 && onLeft_1 then
+                  -- push the non-terminal to the right.
+                  pushToRight (acceptCondition, 0)
+                else if onLeft_1 then
+                  -- push the terminal to the right
+                  pushToRight (acceptCondition, 1)
+                else if onRight_0 && onRight_1 then
+                  -- push the non-terminal to the left
+                  pushToLeft (acceptCondition, 0)
+                else if onRight_1 then
+                  pushToLeft (acceptCondition, 1)
+                else if onLeft_0 then
+                  pushToRight (acceptCondition, 0)
+                else if onRight_0 then
+                  pushToLeft (acceptCondition, 0)
+                else
+                  ( left, right )
+            in
+              { model
+                | currentOperation =
+                    Just <| Splitting <| Split to_split newLeft newRight
+              }
+          _ ->
+            model
 
     EditTransition src dest conn ->
       -- … and this will take us to much same place that
@@ -948,7 +986,7 @@ update offset_amount msg model =
       -- all at once.
       { model
         | currentOperation =
-            Just <| ModifyingGraph <| Modify src (EditingTransitionTo dest) conn
+            Just <| AlteringConnection <| ConnectionAlteration src dest conn
       }
 
     Reheat ->
@@ -1042,12 +1080,16 @@ offset (offset_x, offset_y) (x, y) =
 subscriptions : (Float, Float) -> Model -> Sub Msg
 subscriptions offset_amount model =
   let
-    ( xCoord, yCoord ) = model.mouseCoords
+    ( xCoord, yCoord ) = model.mouseCoords |> Debug.log "Mouse coords"
     panSubscription =
-      if model.mouseIsHere && (xPanAt model xCoord /= 0 || yPanAt model yCoord /= 0) then
-        Time.every 10 (\_ -> MouseMove xCoord yCoord)
-      else
-        Sub.none
+      let
+        xPan = xPanAt model xCoord
+        yPan = yPanAt model yCoord
+      in
+        if model.mouseIsHere && (xPan /= 0 || yPan /= 0) then
+          Time.every 20 (\_ -> Pan xPan yPan |> Debug.log "Pan request")
+        else
+          Sub.none
     keyboardSubscription =
       if model.mouseIsHere then
         Browser.Events.onKeyDown
@@ -1076,23 +1118,25 @@ subscriptions offset_amount model =
                   ( "Y", True) ->
                     Decode.succeed Redo
                   ( ch, _ ) ->
+                    let
+                      decodeChar =
+                        case String.toList ch of
+                          [char] ->
+                            Decode.succeed (ToggleSelectedTransition <| Character char)
+                          _ ->
+                            Decode.fail "Not a character key"
+                    in
                     case model.currentOperation of
                       Just (ModifyingGraph { dest }) ->
                         case dest of
                           NoDestination ->
                             Decode.fail "Not a recognized key combination"
                           _ ->
-                            case String.toList ch of
-                              [char] ->
-                                Decode.succeed (ToggleSelectedTransition <| Character char)
-                              _ ->
-                                Decode.fail "Not a character key"
+                            decodeChar
+                      Just (AlteringConnection _) ->
+                        decodeChar
                       Just (Splitting _) ->
-                        case String.toList ch of
-                          [char] ->
-                            Decode.succeed (ToggleSelectedTransition <| Character char)
-                          _ ->
-                            Decode.fail "Not a character key"
+                        decodeChar
                       _ ->
                         Decode.fail "Not a recognized key combination"
               )
@@ -1556,7 +1600,9 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution } { label, 
         { stopPropagation = True, preventDefault = True }
         (\e ->
           if e.keys.shift then
-            e.clientPos |> DragStart id
+            e.clientPos
+            |> Debug.log "Starting drag with client-position"
+            |> DragStart id
           else if e.keys.ctrl && splittable then
             StartSplit id
           else
@@ -1711,38 +1757,10 @@ nearby_nodes : Float -> Model -> List (Graph.Node Entity)
 nearby_nodes =
   nearby_node_func List.filter
 
-{-| A "phantom move" that the user MIGHT make, or might not -}
-viewPhantom : Model -> NodeContext Entity Connection -> Svg Msg
-viewPhantom model sourceNode =
+viewPhantomSvg : { x : Float, y : Float } -> PathBetweenReturn -> Svg Msg
+viewPhantomSvg target positioning =
   let
-    radius = 9    
-    ( xPan, yPan ) = model.pan
-    nearby = nearby_node nearby_node_lockOnDistance model
-    ( center_x, center_y) =
-      -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
-      -- But if the mouse is anywhere else, just use the mouse coordinates.
-      nearby
-      |> Maybe.map (\node -> (node.label.x - xPan, node.label.y - yPan))
-      |> Maybe.withDefault model.mouseCoords
-    target =
-      { x = center_x + xPan
-      , y = center_y + yPan
-      }
-    cardinality =
-      case nearby of
-        Nothing ->
-          Unidirectional
-        Just some_node ->
-          if some_node.id == sourceNode.node.id then
-            Recursive
-          else
-            case IntDict.get some_node.id sourceNode.incoming of
-              Just _ ->
-                Bidirectional
-              Nothing ->
-                Unidirectional
-    positioning =
-      path_between sourceNode.node.label target cardinality 7 9
+    radius = 9
   in
     g
       []
@@ -1800,6 +1818,100 @@ viewPhantom model sourceNode =
       --     []
       ]
 
+{-| A "phantom move" that the user MIGHT make, or might not.
+    This function is called when the user is still choosing.
+    `viewPhantomChosen` is called when the user has chosen.
+-}
+viewPhantomChoosing : Model -> NodeContext Entity Connection -> Svg Msg
+viewPhantomChoosing model sourceNode =
+  let
+    ( xPan, yPan ) =
+      model.pan
+    nearby = nearby_node nearby_node_lockOnDistance model
+    ( center_x, center_y) =
+      -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
+      -- But if the mouse is anywhere else, just use the mouse coordinates.
+      nearby
+      |> Maybe.map (\node -> (node.label.x - xPan, node.label.y - yPan))
+      |> Maybe.withDefault model.mouseCoords
+    target =
+      { x = center_x + xPan
+      , y = center_y + yPan
+      }
+    cardinality =
+      case nearby of
+        Nothing ->
+          Unidirectional
+        Just some_node ->
+          if some_node.id == sourceNode.node.id then
+            Recursive
+          else
+            case IntDict.get some_node.id sourceNode.incoming of
+              Just _ ->
+                Bidirectional
+              Nothing ->
+                Unidirectional
+    positioning =
+      path_between sourceNode.node.label target cardinality 7 9
+  in
+    viewPhantomSvg target positioning
+
+{-| A "phantom move" that the user MIGHT make, or might not.
+    This function is called when the user has chosen their
+    phantom move.
+-}
+viewPhantomChosen : Model -> NodeContext Entity Connection -> (Float, Float) -> Cardinality -> Svg Msg
+viewPhantomChosen model sourceNode (dest_x, dest_y) cardinality =
+  let
+    ( xPan, yPan ) =
+      model.pan
+    target =
+      { x = dest_x + xPan
+      , y = dest_y + yPan
+      }
+    positioning =
+      path_between sourceNode.node.label target cardinality 7 9
+  in
+    viewPhantomSvg target positioning
+
+{-| A "phantom move" that the user MIGHT make, or might not.
+-}
+viewPhantom : Model -> NodeContext Entity Connection -> Svg Msg
+viewPhantom model sourceNode =
+  let
+    cardinalityOf nodeId =
+      if nodeId == sourceNode.node.id then
+        Recursive
+      else
+        case IntDict.get nodeId sourceNode.incoming of
+          Just _ ->
+            Bidirectional
+          Nothing ->
+            Unidirectional
+    nodeCoordinates id =
+      Graph.get id model.userGraph.graph
+      |> Maybe.map
+          (\ctx -> ( ctx.node.label.x, ctx.node.label.y ))
+      |> Maybe.withDefaultLazy
+          (\() -> ( 0, 0 ) |> Debug.log "Error K<UFOUDFI8") -- should never get here!
+  in
+    case model.currentOperation of
+      Just (ModifyingGraph { dest }) ->
+        case dest of
+          NoDestination ->
+            viewPhantomChoosing model sourceNode
+          ExistingNode id ->
+            viewPhantomChosen model sourceNode
+              (nodeCoordinates id)
+              (cardinalityOf id)
+          NewNode coords ->
+            viewPhantomChosen model sourceNode coords Unidirectional
+          EditingTransitionTo id ->
+            viewPhantomChosen model sourceNode
+              (nodeCoordinates id)
+              (cardinalityOf id)
+      _ ->
+        g [] []
 
 arrowheadMarker : Svg msg
 arrowheadMarker =
@@ -1910,6 +2022,8 @@ viewSvgTransitionChooser model =
     conn =
       case model.currentOperation of
         Just (ModifyingGraph { transitions }) ->
+          transitions
+        Just (AlteringConnection { transitions }) ->
           transitions
         _ ->
           (AutoSet.empty transitionToString)
@@ -2170,9 +2284,10 @@ view model =
             _ ->
               case model.currentOperation of
                 Just (ModifyingGraph _) -> Cursor "none"
+                Just (AlteringConnection _) -> Cursor "none"
                 _ -> CursorDefault
       ]
-    permit_node_selection =
+    permit_click =
       Mouse.onWithOptions
         "mousedown"
         { stopPropagation = True, preventDefault = True }
@@ -2188,15 +2303,38 @@ view model =
               Escape
         )
     interactivity =
+      -- don't permit panning if:
+      -- 1. I'm splitting a node
+      -- 2. I'm editing a transition/connection
+      --
+      -- don't permit zooming under the same circumstances as above.
+      --
+      -- don't permit clicking if:
+      -- 1. I'm modifying the graph, and have already selected/created a node
+      --
+      -- but clicking has a default of Escape, so we can usually allow it.
+      -- CHECK THIS!
+      -- Usability: should a "mis-click" result in Escape??
+      -- Let's see.
       case model.currentOperation of
+        Just (Splitting _) ->
+          [ permit_click ]
         Just (ModifyingGraph { dest }) ->
           case dest of
-            NoDestination ->
-              permit_node_selection :: permit_zoom :: permit_pan
-            _ ->
+            EditingTransitionTo _ ->
               []
-        _ ->
-          []
+            NewNode _ ->
+              []
+            ExistingNode _ ->
+              []
+            _ ->
+              permit_click :: permit_zoom :: permit_pan
+        Just (AlteringConnection _) ->
+          [ permit_click ]
+        Just (Dragging _) ->
+          permit_click :: permit_zoom :: permit_pan
+        Nothing ->
+          permit_click :: permit_zoom :: permit_pan
   in
   svg
     ([ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
@@ -2239,13 +2377,17 @@ view model =
               g [] []
             _ ->
               viewSvgTransitionChooser model
+        Just (AlteringConnection _) ->
+          viewSvgTransitionChooser model
         Just (Splitting { to_split, left, right }) ->
           Graph.get to_split model.userGraph.graph
           |> Maybe.map (\_ -> -- ignore node, we have all the info already
             viewSvgTransitionSplitter left right model
           )
           |> Maybe.withDefault (g [] [])
-        _ ->
+        Nothing ->
+          g [] []
+        Just (Dragging _) ->
           g [] []
     ,
       let
@@ -2311,6 +2453,8 @@ view model =
                   bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
                 EditingTransitionTo _ ->
                   bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+            Just (AlteringConnection _) ->
+              bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
             Just (Splitting _) ->
               g [] []
             _ ->
