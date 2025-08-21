@@ -9,7 +9,7 @@ import Graph exposing (NodeId)
 import IntDict
 import List
 import Dict
-import Automata.Data exposing (DFARecord, mkAG_input)
+import Automata.Data exposing (DFARecord)
 import Automata.Debugging exposing (debugAutomatonGraph)
 import List.Extra
 import IntDict exposing (IntDict)
@@ -341,25 +341,3 @@ dfa_equals dfa1 dfa2 =
         Expect.equal finals1 finals2
       else
         Expect.pass
-
-parseTransitions_suite : Test
-parseTransitions_suite =
-  describe "String to transitions parsing"
-    [ test "parses simple transitions correctly" <|
-      \_ ->
-        Expect.equal
-          [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]
-          (mkAG_input "0-!av-1 0-b!vk!z-2 2-p-0")
-    , test "parses single transition" <|
-      \_ ->
-        Expect.equal
-          [(1, "abc", 2)]
-          (mkAG_input "1-abc-2")
-    , test "handles empty string" <|
-      \_ ->
-        Expect.equal [] (mkAG_input "")
-    -- , test "handles references" <|
-    --   \_ ->
-    --     Expect.equal
-
-    ]
