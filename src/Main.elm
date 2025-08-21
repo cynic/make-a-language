@@ -101,7 +101,6 @@ type alias Model =
   , rightTopPanelDimensions : ( Float, Float )
   , isDraggingHorizontalSplitter : Bool
   , isDraggingVerticalSplitter : Bool
-  , mousePosition : ( Float, Float )
   , executionState : ExecutionState
   , selectedBottomPanel : BottomPanel
   , uuidSeed : Random.Seed
@@ -227,7 +226,6 @@ init flags =
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
       , isDraggingHorizontalSplitter = False
       , isDraggingVerticalSplitter = False
-      , mousePosition = ( 0, 0 )
       , executionState = Ready
       , selectedBottomPanel = AddTestPanel
       , uuidSeed = newSeed2
@@ -387,18 +385,23 @@ update msg model =
       )
 
     MouseMove x y ->
-      let
-        newModel = { model | mousePosition = (x, y) }
-      in
       if model.isDraggingHorizontalSplitter then
         let
           (viewportWidth, _) = model.mainPanelDimensions
-          minWidth = 100
+          leftOffset =
+            60 -- icon-bar width
+            + 1 -- icon-bar right-border
+            + 20 -- left-panel left-padding
+            + 20 -- left-panel right-padding
+            + 1 -- left-panel right-border
+            + 4 -- half the splitter-width
+            + 2 -- …it looks visually nicer, because the cursor takes up some area
+          minWidth = 100 + leftOffset
           maxWidth = viewportWidth / 2
-          newLeftPanelWidth = clamp minWidth maxWidth x
-          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { newModel | leftPanelWidth = newLeftPanelWidth }
+          newLeftPanelWidth = clamp minWidth maxWidth (x - leftOffset)
+          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | leftPanelWidth = newLeftPanelWidth }
         in
-        ( { newModel 
+        ( { model
           | leftPanelWidth = newLeftPanelWidth
           , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
           , currentPackage = newGraphPackage
@@ -412,9 +415,9 @@ update msg model =
           maxHeight = viewportHeight / 2
           statusBarHeight = 30
           newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
-          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { newModel | rightBottomPanelHeight = newBottomHeight }
+          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | rightBottomPanelHeight = newBottomHeight }
         in
-        ( { newModel
+        ( { model
           | rightBottomPanelHeight = newBottomHeight
           , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
           , currentPackage = newGraphPackage
@@ -422,7 +425,7 @@ update msg model =
         , Cmd.none
         )
       else
-        ( newModel, Cmd.none )
+        ( model, Cmd.none )
 
     ToggleBottomPanel ->
       let
@@ -655,7 +658,8 @@ calculateRightTopDimensions model =
     -- the icon bar is 60px wide. Not included: a 1px right-border.
     iconBarWidth = 60
     -- the left-panel also includes its right-border size here, for convenience.
-    leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth + 1 else 0
+    -- and it also includes 20px of padding on either side, if it's open.
+    leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth + 1 + 20 + 20 else 0
     -- the status bar is 30px tall.  Not included: a 1px top border.
     statusBarHeight = 30
     -- the bottom-right panel is a particular height. Included: a 1px border on all sides.
@@ -679,7 +683,7 @@ calculateRightTopDimensions model =
     ++"\nApplication area width & height: " ++ Debug.toString (viewportWidth, viewportHeight)
     ++"\nWidth calculation:"
     ++"\n   Icon-bar width (excl. 1px right-border): " ++ String.fromFloat iconBarWidth
-    ++"\n   Left-panel width (INCL. 1px right-border): " ++ String.fromFloat leftPanelWidth
+    ++"\n   Left-panel width (INCL. 1px right-border + 20px padding on each side): " ++ String.fromFloat leftPanelWidth
     ++"\n   Left-right splitter width: " ++ String.fromFloat leftRightSplitterWidth
     ++"\n   Calculation: " ++ String.fromFloat viewportWidth ++ " [total width] "
     ++" - " ++ String.fromFloat iconBarWidth ++ " [icon-bar width] "
