@@ -141,7 +141,7 @@ decodeTest g =
 encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
-    [ ("model", DFA.serializeAutomatonGraph pkg.model.userGraph |> E.string)
+    [ ("model", DFA.serializeAutomatonGraph pkg.model.userGraph)
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
     , ("uuid", Uuid.encode pkg.uuid)
     , ("created", E.int (Time.posixToMillis pkg.created))

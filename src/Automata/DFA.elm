@@ -10,6 +10,8 @@ import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import Dict.Extra
 import Maybe.Extra
 import Tuple.Extra
+import Json.Encode as E
+import Json.Decode as D
 -- import Automata.Debugging
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
@@ -2050,29 +2052,109 @@ fromAutomatonGraph =
     >> fromAutomatonGraphHelper
     -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
-serializeAutomatonGraph : AutomatonGraph a -> String
+serializeTransition : Transition -> E.Value
+serializeTransition t =
+  case t of
+    (Character c, f) ->
+      E.object
+        [ ("c", E.string <| String.fromChar c)
+        , ("_", E.bool <| f == 1)
+        ]
+
+serializeEdge : Edge Connection -> E.Value
+serializeEdge e =
+  E.object
+    [ ("src", E.int e.from)
+    , ("dst", E.int e.to)
+    , ("via", E.list serializeTransition <| AutoSet.toList e.label)
+    ]
+
+serializeEffect : NodeEffect -> E.Value
+serializeEffect effect =
+  case effect of
+    NoEffect ->
+      E.object [ ("none", E.null) ]
+    SomeEffectFigureItOutLater ->
+      E.object [ ("?", E.null) ]
+
+serializeNode : Graph.Node Entity -> E.Value
+serializeNode n =
+  E.object
+    [ ("x", E.float n.label.x)
+    , ("y", E.float n.label.y)
+    , ("i", E.int n.id)
+    , ("e", serializeEffect n.label.effect)
+    ]
+
+-- serializeAutomatonGraph : AutomatonGraph Entity -> E.Value
 serializeAutomatonGraph g =
-  Graph.edges g.graph
-  |> List.sortWith
-    (\a b ->
-      if a.from == g.root && b.from == g.root then EQ
-      else if a.from == g.root then LT
-      else if b.from == g.root then GT
-      else compare a.from b.from
+  E.object
+    [ ("e", E.list serializeEdge <| Graph.edges g.graph)
+    , ("n", E.list serializeNode <| Graph.nodes g.graph)
+    , ("r", E.int g.root)
+    , ("m", E.int g.maxId)
+    ]
+
+deserializeEffect : D.Decoder NodeEffect
+deserializeEffect =
+  D.oneOf
+    [ D.field "none" (D.null ()) |> D.map (\_ -> NoEffect)
+    , D.field "?" (D.null ()) |> D.map (\_ -> SomeEffectFigureItOutLater)
+    ]
+
+-- deserializeNode : D.Decoder (Graph.Node Entity)
+deserializeNode =
+  D.map4
+    (\x y i e ->
+        { id = i
+        , label =
+            { id = i
+            , x = x
+            , y = y
+            , vx = 0.0
+            , vy = 0.0
+            , effect = e
+            }
+        }
     )
-  |> List.map
-    (\{from, to, label} ->
-      String.fromInt from ++ "-" ++
-        ( AutoSet.toList label
-          |> List.map
-              (\(acceptCondition, f) ->
-                (if f == 0 then "" else "!") ++ acceptConditionToString acceptCondition
-              )
-          |> String.concat
-        ) ++
-        "-" ++ String.fromInt to
-    )
-  |> String.join " "
+    (D.field "x" <| D.float)
+    (D.field "y" <| D.float)
+    (D.field "i" <| D.int)
+    (D.field "e" <| deserializeEffect)
+
+deserializeTransition : D.Decoder Transition
+deserializeTransition =
+  D.oneOf
+    [ D.map2
+        (\c f -> (c, if f then 1 else 0))
+        ( D.field "c" D.string
+          |> D.andThen
+            (\s ->
+              case String.toList s of
+                [] -> D.fail "Char field cannot be empty."
+                [c] -> D.map Character (D.succeed c)
+                _ -> D.fail "Char field cannot be more than one character."
+            )
+        )
+        (D.field "_" D.bool)
+    ]
+
+deserializeEdge : D.Decoder (Edge Connection)
+deserializeEdge =
+  D.map3
+    (\f t l -> Edge f t (AutoSet.fromList transitionToString l))
+    (D.field "src" <| D.int)
+    (D.field "dst" <| D.int)
+    (D.field "via" <| D.list deserializeTransition)
+
+-- CANNOT include the type annotation; if I do, I hit a compiler bug!
+-- deserializeAutomatonGraph : D.Decoder (AutomatonGraph Entity)
+deserializeAutomatonGraph =
+  D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e))
+    (D.field "n" <| D.list deserializeNode)
+    (D.field "e" <| D.list deserializeEdge)
+    (D.field "m" <| D.int)
+    (D.field "r" <| D.int)
 
 -----------------
 -- DEBUGGING

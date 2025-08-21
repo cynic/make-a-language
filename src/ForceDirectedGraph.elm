@@ -5,7 +5,8 @@ import Force
 import Graph exposing (Edge, Graph, NodeContext, NodeId)
 import Html.Events as HE
 import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
-import Json.Decode as Decode
+import Json.Decode as D
+import Json.Encode as E
 import TypedSvg exposing
   (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
@@ -1099,44 +1100,44 @@ subscriptions model =
     keyboardSubscription =
       if model.mouseIsHere then
         Browser.Events.onKeyDown
-          ( Decode.map2
+          ( D.map2
               (\key ctrlPressed -> ( key, ctrlPressed ))
-              (Decode.field "key" Decode.string)
-              (Decode.field "ctrlKey" Decode.bool)
-            |> Decode.andThen
+              (D.field "key" D.string)
+              (D.field "ctrlKey" D.bool)
+            |> D.andThen
               (\v ->
                 case v of
                   ( "1", True ) ->
                     -- Debug.log "yup" v |> \_ ->
-                    Decode.succeed ResetView
+                    D.succeed ResetView
                   ( "Enter", False ) ->
-                    Decode.succeed Confirm
+                    D.succeed Confirm
                   ( "Escape", False ) ->
-                    Decode.succeed Escape
+                    D.succeed Escape
                   ( "Tab", False) ->
-                    Decode.succeed Reheat
+                    D.succeed Reheat
                   ( "z", True) ->
-                    Decode.succeed Undo
+                    D.succeed Undo
                   ( "Z", True) ->
-                    Decode.succeed Undo
+                    D.succeed Undo
                   ( "y", True) ->
-                    Decode.succeed Redo
+                    D.succeed Redo
                   ( "Y", True) ->
-                    Decode.succeed Redo
+                    D.succeed Redo
                   ( ch, _ ) ->
                     let
                       decodeChar =
                         case String.toList ch of
                           [char] ->
-                            Decode.succeed (ToggleSelectedTransition <| Character char)
+                            D.succeed (ToggleSelectedTransition <| Character char)
                           _ ->
-                            Decode.fail "Not a character key"
+                            D.fail "Not a character key"
                     in
                     case model.currentOperation of
                       Just (ModifyingGraph { dest }) ->
                         case dest of
                           NoDestination ->
-                            Decode.fail "Not a recognized key combination"
+                            D.fail "Not a recognized key combination"
                           _ ->
                             decodeChar
                       Just (AlteringConnection _) ->
@@ -1144,7 +1145,7 @@ subscriptions model =
                       Just (Splitting _) ->
                         decodeChar
                       _ ->
-                        Decode.fail "Not a recognized key combination"
+                        D.fail "Not a recognized key combination"
               )
           )
       else
@@ -2497,26 +2498,26 @@ view model =
 onMouseScroll : (Float -> (Float, Float) -> msg) -> Html.Attribute msg
 onMouseScroll msg =
   HE.on "wheel" <|
-    Decode.map3
+    D.map3
       (\x y deltaY -> msg deltaY (x, y))
-      (Decode.field "offsetX" Decode.float)
-      (Decode.field "offsetY" Decode.float)
-      (Decode.field "deltaY" Decode.float)
+      (D.field "offsetX" D.float)
+      (D.field "offsetY" D.float)
+      (D.field "deltaY" D.float)
 
 onMouseMove : (Float -> Float -> msg) -> Html.Attribute msg
 onMouseMove msg =
   HE.on "mousemove"
-    ( Decode.at ["target", "tagName"] Decode.string
-      |> Decode.andThen
+    ( D.at ["target", "tagName"] D.string
+      |> D.andThen
         (\tagName ->
           if String.toUpper tagName == "SVG" then
-            Decode.map2 msg
+            D.map2 msg
               -- offset relative to the parent
               -- …which is the SVG element.
-              (Decode.field "offsetX" Decode.float)
-              (Decode.field "offsetY" Decode.float)
+              (D.field "offsetX" D.float)
+              (D.field "offsetY" D.float)
           else
-            Decode.fail "Ignoring non-SVG target"
+            D.fail "Ignoring non-SVG target"
         )
     )
 
@@ -2542,7 +2543,7 @@ debugModel_ message model =
           _ ->
             "\n" ++
             ( model.undoBuffer
-              |> List.map (DFA.serializeAutomatonGraph >> String.padLeft 4 ' ')
+              |> List.map (DFA.serializeAutomatonGraph >> Debug.toString >> String.padLeft 4 ' ')
               |> String.join "\n"
             )
       )
