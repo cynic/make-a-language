@@ -19,29 +19,31 @@ import Dict
 import AutoSet
 import List.Extra as List
 
+{- REGARDING THE ag FUNCTION
+
+So after struggling with the types for a while—they look 100% correct
+to me and I'm pretyt sure they ARE correct!—I discovered that I'd run
+into a compiler bug https://github.com/elm/compiler/issues/1839 .
+
+  elm: You ran into a compiler bug. Here are some details for the developers:
+
+      a [rank = 2]
+
+  Please create an <http://sscce.org/> and then report it
+  at <https://github.com/elm/compiler/issues>
+
+
+  CallStack (from HasCallStack):
+    error, called at compiler/src/Type/Solve.hs:206:15 in main:Type.Solve
+
+    … and this has been an open bug since 2018 😱!
+
+So, I'm basically going to try to work around that by expanding
+things inline until I get something that works.
+-}
+
 ag : String -> AutomatonGraph Entity
 ag s_ =
-{- So after struggling with the types for a while—they look 100%
-   correct to me and I'm pretyt sure they ARE correct!—I discovered
-   that I'd run into a compiler bug
-   https://github.com/elm/compiler/issues/1839 .
-
-elm: You ran into a compiler bug. Here are some details for the developers:
-
-    a [rank = 2]
-
-Please create an <http://sscce.org/> and then report it
-at <https://github.com/elm/compiler/issues>
-
-
-CallStack (from HasCallStack):
-  error, called at compiler/src/Type/Solve.hs:206:15 in main:Type.Solve
-
-   … and this has been an open bug since 2018 😱!
-
-   So, I'm basically going to try to work around that by expanding
-   things inline until I get something that works.
--}
   let
     ts = mkAG_input s_
     edges =
