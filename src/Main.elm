@@ -335,8 +335,12 @@ update msg model =
       let
         newModel =
           { model
-            -- account for borders
-            | mainPanelDimensions = (width - 4, height - 4)
+            -- When I receive this, it is the size of the Application in the
+            -- x-direction EXCLUDING external borders, but it is the size of
+            -- the Application in the y-direction INCLUDING external borders.
+            -- No; I don't understand that at all.  But it's what I have to
+            -- work with, I guess.
+            | mainPanelDimensions = (width - 4, height)
           }
         (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions newModel
       in
@@ -646,21 +650,52 @@ fdg_update model updateMessage =
 calculateRightTopDimensions : Model -> ( Float, Float, GraphPackage )
 calculateRightTopDimensions model =
   let
+    -- the main panel dimensions are the size of the application area.
     (viewportWidth, viewportHeight) = model.mainPanelDimensions
-    iconBarWidth = 60 + 1 -- 1px border
-    leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth else 0
+    -- the icon bar is 60px wide. Not included: a 1px right-border.
+    iconBarWidth = 60
+    -- the left-panel also includes its right-border size here, for convenience.
+    leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth + 1 else 0
+    -- the status bar is 30px tall.  Not included: a 1px top border.
     statusBarHeight = 30
-    bottomPanelHeight = if model.rightBottomPanelOpen then model.rightBottomPanelHeight else 0
+    -- the bottom-right panel is a particular height. Included: a 1px border on all sides.
+    bottomPanelHeight = if model.rightBottomPanelOpen then model.rightBottomPanelHeight + 2 else 0
     -- Always account for some splitter height (either full splitter or collapsed splitter)
-    splitterHeight = if model.rightBottomPanelOpen then 8 else 4
-    
-    rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth - 4 - 2 -- 2px borders & 1px borders
-    rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - splitterHeight - 4 - 1 -- borders
+    leftRightSplitterWidth = if model.leftPanelOpen then 8 else 0
+    rightTopBottomSplitterHeight = if model.rightBottomPanelOpen then 8 else 4
+    -- add in: the 1px border from iconBar
+    -- Also, the right-panel has a 1px border all around; add it in.
+    rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth - leftRightSplitterWidth - 1 - 2
+    -- add in: the 1px statusBar  border
+    -- Also, the right-panel has a 1px border all around; add it in.
+    rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - rightTopBottomSplitterHeight - 1 - 2
     newGraph =
       fdg_update
         model
         (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
   in
+  Debug.log
+    ( "Dimension calculation"
+    ++"\nApplication area width & height: " ++ Debug.toString (viewportWidth, viewportHeight)
+    ++"\nWidth calculation:"
+    ++"\n   Icon-bar width (excl. 1px right-border): " ++ String.fromFloat iconBarWidth
+    ++"\n   Left-panel width (INCL. 1px right-border): " ++ String.fromFloat leftPanelWidth
+    ++"\n   Left-right splitter width: " ++ String.fromFloat leftRightSplitterWidth
+    ++"\n   Calculation: " ++ String.fromFloat viewportWidth ++ " [total width] "
+    ++" - " ++ String.fromFloat iconBarWidth ++ " [icon-bar width] "
+    ++" - " ++ String.fromFloat leftPanelWidth ++ " [left-panel width] "
+    ++" - " ++ String.fromFloat leftRightSplitterWidth ++ " [left-right splitter width] "
+    ++" - 1 [icon-bar border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopWidth
+    ++"\nHeight calculation:"
+    ++"\n   Status-bar height (excl. 1px top-border): " ++ String.fromFloat statusBarHeight
+    ++"\n   Bottom-panel height (INCL. 1px border on each side): " ++ String.fromFloat bottomPanelHeight
+    ++"\n   Right-top-bottom splitter height: " ++ String.fromFloat rightTopBottomSplitterHeight
+    ++"\n   Calculation: " ++ String.fromFloat viewportHeight ++ " [total height] "
+    ++" - " ++ String.fromFloat statusBarHeight ++ " [status-bar height] "
+    ++" - " ++ String.fromFloat bottomPanelHeight ++ " [bottom-panel height] "
+    ++" - " ++ String.fromFloat rightTopBottomSplitterHeight ++ " [right-top-bottom splitter height] "
+    ++" - 1 [status-bar border] - 1 [bottom-panel border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopHeight
+    ) () |> \_ ->
   ( rightTopWidth, rightTopHeight, newGraph )
 
 -- VIEW
@@ -1696,7 +1731,7 @@ subscriptions model =
     [ FDG.subscriptions
         model.currentPackage.model
       |> Sub.map ForceDirectedMsg
-    , BE.onResize (\w h -> OnResize (toFloat w, toFloat h))
+    , BE.onResize (\w h -> OnResize (toFloat w, toFloat h) |> Debug.log "Raw resize values")
     , Time.every 25000 -- 'sup, homie Nyquist? All good?
         ( Time.posixToMillis
           >> (\v -> (v // (1000 * 60)) * (1000 * 60))

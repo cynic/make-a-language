@@ -71,7 +71,7 @@ oneTransition g executionState =
 
 step : AutomatonGraph a -> ExecutionResult -> ExecutionResult
 step g executionResult =
-  case executionResult |> Debug.log "Step with" of
+  case executionResult {- |> Debug.log "Step with" -} of
     CanContinue executionState ->
       case oneTransition g executionState of
         Accepted ({ remainingData } as d) ->
