@@ -35,6 +35,7 @@ import Automata.Data exposing (..)
 import Dict exposing (Dict)
 import Maybe.Extra as Maybe
 import Automata.Debugging
+import Uuid
 
 type Msg
   = DragStart NodeId
@@ -1444,6 +1445,49 @@ executing_edges result =
     |> Maybe.map (\data -> trace data Dict.empty)
     |> Maybe.withDefault Dict.empty
 
+viewGraphReference : Uuid.Uuid -> Float -> Float -> Svg a
+viewGraphReference uuid x_ y_ =
+  let
+    pixels = getPalette uuid
+    pixelSize = 5
+  in
+    g
+      []
+      ( rect
+          [ x <| x_
+          , y <| y_
+          , width <| (7 * pixelSize) + 2
+          , height <| (4 * pixelSize) + 2
+          , rx 2
+          , ry 2
+          , fill <| Paint <| Color.black
+          ]
+          []
+      -- each one is a 4px square
+      :: Tuple.second
+          (List.foldl
+            (\color (i, acc) ->
+              ( i + 1
+              , rect
+                  [ x <| x_ + 1 + pixelSize * (modBy 7 i |> toFloat)
+                  , y <| y_ + 1 + pixelSize * (modBy 4 i |> toFloat)
+                  , width pixelSize
+                  , height pixelSize
+                  , fill <| Paint color
+                  -- , stroke <| Paint <| Color.black
+                  -- , strokeWidth 1
+                  , rx (pixelSize * 0.15)
+                  , ry (pixelSize * 0.15)
+                  ]
+                  []
+                :: acc
+              )
+            )
+            (0, [])
+            pixels
+          )
+      )
+
 viewLink : Model -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia) -> Edge Connection -> Svg Msg
 viewLink ({ userGraph } as model) executing edge =
   let
@@ -1508,24 +1552,25 @@ viewLink ({ userGraph } as model) executing edge =
           ]
           ( title [] [ text "Click to modify" ] :: labelText 
           )
-      , rect
-          [ x <| positioning.transition_coordinates.x
-          , y <| positioning.transition_coordinates.y - 70
-          , width 28
-          , height 16
-          , rx 2
-          , ry 2
-          , fill <| Paint <| Color.black
-          ]
-          []
-      , rect
-          [ x <| positioning.transition_coordinates.x + 4
-          , y <| positioning.transition_coordinates.y - 70 + 4
-          , width 4
-          , height 4
-          , fill <| Paint <| Color.white
-          ]
-          []
+      -- , rect
+      --     [ x <| positioning.transition_coordinates.x
+      --     , y <| positioning.transition_coordinates.y - 70
+      --     , width 28
+      --     , height 16
+      --     , rx 2
+      --     , ry 2
+      --     , fill <| Paint <| Color.black
+      --     ]
+      --     []
+      -- , rect
+      --     [ x <| positioning.transition_coordinates.x + 4
+      --     , y <| positioning.transition_coordinates.y - 70 + 4
+      --     , width 4
+      --     , height 4
+      --     , fill <| Paint <| Color.white
+      --     ]
+      --     []
+
       -- for debugging the paths.
       -- , circle
       --     [ cx <| positioning.control_point.x
@@ -2360,20 +2405,12 @@ view model =
           Just (Dragging _) ->
             -- disable pointer-events.
             -- This is to stop elements from getting in the way of
-            -- mouse-movement.
+            -- registering mouse-movement.
             pointerEvents "none"
           _ ->
             class []
       ]
       [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
-      , rect
-          [ x 0
-          , y 0
-          , width 5
-          , height 5
-          , fill <| Paint <| Color.orange
-          ]
-          []
       , Graph.edges model.userGraph.graph
         |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
         |> List.map

@@ -1053,7 +1053,7 @@ recenterSvg (width, height) g =
     }
 
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
-viewComputationThumbnail width { model } =
+viewComputationThumbnail width { model, uuid, description } =
   -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
   let
     height = width / sqrt 5 -- some kind of aspect ratio
@@ -1074,6 +1074,12 @@ viewComputationThumbnail width { model } =
           , Graph.nodes g.graph
             |> List.map (viewNode m)
             |> TypedSvg.g [ class [ "nodes" ] ]
+          , TypedSvg.g
+              []
+              [ FDG.viewGraphReference uuid 0 0
+              , Maybe.map (\d -> TypedSvg.title [] [ TypedSvg.Core.text d ]) description
+                |> Maybe.withDefault (TypedSvg.g [] [])
+              ]
           ]
       ]
 

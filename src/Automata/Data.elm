@@ -6,6 +6,8 @@ import Graph exposing (Graph, NodeContext, NodeId)
 import AutoDict
 import Parser exposing (Parser, (|=), (|.))
 import Uuid exposing (Uuid)
+import List.Extra
+import Color
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -281,6 +283,111 @@ mkAG_input input =
     Err _ ->
       []
 
+-- https://en.wikipedia.org/wiki/Factorial_number_system
+-- …which also, conveniently, gives me indices to pull out
+-- for the /n/th permutation ^_^!
+factorialRepresentation : Int -> List Int
+factorialRepresentation n_ =
+  let
+    helper n base acc =
+      if n == 0 then
+        acc
+      else
+        helper (n // base) (base + 1) ((n |> modBy base) :: acc)
+  in
+    helper n_ 2 [0]
+
+-- r = number of choices that we are making
+-- l = the list that we are choosing from
+-- k = index of the choice that we are interested in
+-- Thanks go to:
+-- - https://stackoverflow.com/a/1776884
+-- - https://www.geeksforgeeks.org/dsa/program-calculate-value-ncr/
+kthCombination : Int -> List a -> Int -> List a
+kthCombination k l r =
+  let
+    -- nCr = exp( log(n!) - log(r!) - log((n-r)!))
+    nCr : Int -> Int -> Int
+    nCr n r_ =
+      List.range 1 r_
+      |> List.foldl (\i acc -> acc * (toFloat n - toFloat r_ + toFloat i) / toFloat i) 1.0
+      |> floor
+  in
+    if r == 0 then
+      []
+    else if List.length l == r then
+      l
+    else
+      let
+        i = nCr (List.length l - 1) (r - 1)
+      in
+        case l of
+          [] -> []
+          h::t ->
+            if k < i then
+              h :: kthCombination k t (r - 1)
+            else
+              kthCombination (k - i) t r
+
+hexCharToInt : Char -> Maybe Int
+hexCharToInt ch =
+  case ch of
+    '0' -> Just 0
+    '1' -> Just 1
+    '2' -> Just 2
+    '3' -> Just 3
+    '4' -> Just 4
+    '5' -> Just 5
+    '6' -> Just 6
+    '7' -> Just 7
+    '8' -> Just 8
+    '9' -> Just 9
+    'a' -> Just 10
+    'b' -> Just 11
+    'c' -> Just 12
+    'd' -> Just 13
+    'e' -> Just 14
+    'f' -> Just 15
+    _ -> Nothing
+
+base16ToInt : String -> Maybe Int
+base16ToInt s =
+  let
+    helper remaining multiplier acc =
+      case remaining of
+        [] -> Just acc
+        ch::rest ->
+          hexCharToInt ch
+          |> Maybe.andThen (\d -> helper rest (multiplier * 16) (acc + multiplier * d))
+  in
+    helper (String.toList s |> List.reverse) 1 0
+
+getPalette : Uuid -> List Color.Color
+getPalette uuid =
+  let
+    hexChars =
+      Uuid.toString uuid
+      |> String.replace "-" ""
+      |> String.toList
+      |> List.filterMap hexCharToInt
+  in
+    case hexChars of
+      a::b::c::rest ->
+        let
+          paletteChoices =
+            kthCombination (a * 16 * 16 + b * 16 + c) distinctHexColors 16
+          pixels =
+            List.filterMap
+              (\idx -> List.Extra.getAt idx paletteChoices)
+              (List.take 9 rest ++ List.drop 10 rest)
+        in
+          if List.length pixels /= 28 then
+            Debug.log ("ERROR XK<()IDHI>* " ++ String.fromInt (List.length pixels)) [] -- Failed, somehow, to obtain colors!
+          else
+            pixels
+      _ ->
+        Debug.log "MBXF*G><DI" []
+
 {-
 Sasha Trubetskoy is AWESOME!
 
@@ -294,35 +401,45 @@ way back in 2017.  I'm so glad that I found it, so long ago…
 -- black & white.  That gives us 20 colours in total.
 -- The ones I've marked with a * should have black writing on them.
 -- The others look good with white writing.
-distinctHexColors : List String
+distinctHexColors : List Color.Color
 distinctHexColors =
   [ -- the first of these are bold, bright colours
-    "#e6194B" -- Red
-  , "#3cb44b" -- Green
-  , "#ffe119" -- *Yellow
-  , "#4363d8" -- Blue
-  , "#f58231" -- Orange
-  , "#911eb4" -- Purple
-  , "#42d4f4" -- *Cyan
-  , "#f032e6" -- Magenta
-  , "#bfef45" -- *Lime
-  , "#a9a9a9" -- Grey
+    "e6194B" -- Red
+  , "3cb44b" -- Green
+  , "ffe119" -- *Yellow
+  , "4363d8" -- Blue
+  , "f58231" -- Orange
+  , "911eb4" -- Purple
+  , "42d4f4" -- *Cyan
+  , "f032e6" -- Magenta
+  , "bfef45" -- *Lime
+  , "a9a9a9" -- Grey
   -- Now we have more pale subtle colours
-  , "#fabed4" -- *Pink
-  , "#dcbeff" -- *Lavender
-  , "#fffac8" -- *Beige
-  , "#aaffc3" -- *Mint
-  , "#ffd8b1" -- *Apricot
+  , "fabed4" -- *Pink
+  , "dcbeff" -- *Lavender
+  , "fffac8" -- *Beige
+  , "aaffc3" -- *Mint
+  , "ffd8b1" -- *Apricot
   -- These are the darker colours next
-  , "#000075" -- Navy
-  , "#9A6324" -- Brown
-  , "#808000" -- Olive
-  , "#800000" -- Maroon
-  , "#469990" -- Teal
+  , "000075" -- Navy
+  , "9A6324" -- Brown
+  , "808000" -- Olive
+  , "800000" -- Maroon
+  , "469990" -- Teal
   -- Lastly, pure black and white
   -- , "#ffffff" -- *White
   -- , "#000000" -- Black
   ]
+  |> List.filterMap
+    (\s ->
+      case String.toList s of
+        r0::r1::g0::g1::b0::b1::[] ->
+          Maybe.map3 Color.rgb255
+            (base16ToInt (String.fromList [r0, r1]))
+            (base16ToInt (String.fromList [g0, g1]))
+            (base16ToInt (String.fromList [b0, b1]))
+        _ -> Nothing
+    )
 
 -- A UUID has the format
 -- xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
