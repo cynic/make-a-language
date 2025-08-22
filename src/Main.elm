@@ -151,13 +151,11 @@ encodeGraphPackage pkg =
 
 decodeGraphPackage : (Float, Float) -> D.Decoder GraphPackage
 decodeGraphPackage (w, h) =
-  let
-    initialize_fdg serialized =
-      Data.mkAG_input serialized
-      |> DFA.mkAutomatonGraph
-      |> FDG.automatonGraphToModel (w, h)
-  in
-  D.field "model" (D.map initialize_fdg D.string)
+  D.field "model"
+    (D.map
+      (FDG.automatonGraphToModel (w, h))
+      DFA.deserializeAutomatonGraph
+    )
   |> D.andThen
     (\fdg ->
       D.map5 (GraphPackage fdg)
