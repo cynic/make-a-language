@@ -1,4 +1,4 @@
-module Encoding exposing (..)
+module Encoding_tests exposing (..)
 import Test exposing (..)
 import Utility exposing (..)
 import Expect
