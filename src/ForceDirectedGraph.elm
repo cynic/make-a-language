@@ -1599,7 +1599,7 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { userGraph, currentOperation, disconnectedNodes, execution, mouseCoords } { label, id } =
+viewNode { userGraph, currentOperation, disconnectedNodes, execution, pan, mouseCoords } { label, id } =
   let
     selectableClass =
       case currentOperation of
@@ -1700,7 +1700,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, mouseCoord
       case currentOperation of
         Just (Dragging nodeId) ->
           if nodeId == id then
-            mouseCoords            
+            mapCorrespondingPair (+) pan mouseCoords
           else
             nodeCoords
         _ ->

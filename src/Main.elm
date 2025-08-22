@@ -359,7 +359,8 @@ update msg model =
             (False, Nothing)  -- Close panel if same icon clicked
           else
             (True, Just icon)  -- Open panel with new icon
-        (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
+        (newRightTopWidth, newRightTopHeight, newGraphPackage) =
+          calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
       in
       ( { model 
         | leftPanelOpen = newLeftPanelOpen
