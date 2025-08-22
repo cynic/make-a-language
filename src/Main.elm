@@ -1517,10 +1517,14 @@ executionText { currentPackage } =
 viewTransition : AcceptVia -> List (String, Bool) -> Html msg
 viewTransition transition classList =
   case transition of
-    Character ch ->
+    ViaCharacter ch ->
       span
         [ HA.classList classList ]
         [ text <| String.fromChar ch ]
+    ViaGraphReference ref ->
+      span
+        [ HA.classList classList ]
+        [ text "🔗" ]
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =

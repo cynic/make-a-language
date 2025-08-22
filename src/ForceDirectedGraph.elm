@@ -1128,7 +1128,7 @@ subscriptions model =
                       decodeChar =
                         case String.toList ch of
                           [char] ->
-                            D.succeed (ToggleSelectedTransition <| Character char)
+                            D.succeed (ToggleSelectedTransition <| ViaCharacter char)
                           _ ->
                             D.fail "Not a character key"
                     in
@@ -1202,16 +1202,18 @@ textChar ch =
       String.fromChar ch
 
 transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
-transitionToTextSpan transition otherClasses =
-  case transition of
-    (Character ch, 0) ->
-      tspan
-        [ class <| "nonfinal" :: otherClasses (Character ch) ]
-        [ text <| textChar ch ]
-    (Character ch, _) ->
-      tspan
-        [ class <| "final" :: otherClasses (Character ch) ]
-        [ text <| textChar ch ]
+transitionToTextSpan (via, finality) otherClasses =
+  tspan
+    [ class <|
+        (if finality == 0 then "nonfinal" else "final")
+        :: otherClasses via
+    ]
+    [ case via of
+        ViaCharacter ch ->
+          text <| textChar ch
+        ViaGraphReference ref ->
+          text "🔗"
+    ]
 
 connectionToSvgText : Connection -> List (Svg msg)
 connectionToSvgText =
@@ -1967,9 +1969,9 @@ viewSingleKey ch conn (gridX, gridY) =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
-    isThisNodeTerminal = AutoSet.member (Character ch, 1) conn
+    isThisNodeTerminal = AutoSet.member (ViaCharacter ch, 1) conn
     keyClass =
-      if AutoSet.member (Character ch, 0) conn then
+      if AutoSet.member (ViaCharacter ch, 0) conn then
         [ "transition-chooser-key", "selected" ]
       else if isThisNodeTerminal then
         [ "transition-chooser-key", "selected", "terminal" ]
@@ -1988,7 +1990,7 @@ viewSingleKey ch conn (gridX, gridY) =
         , strokeWidth 2
         , stroke <| Paint <| Color.white
         , class keyClass
-        , onClick <| ToggleSelectedTransition (Character ch)
+        , onClick <| ToggleSelectedTransition (ViaCharacter ch)
         ]
         ( if isThisNodeTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
     , text_

@@ -12,6 +12,7 @@ import Maybe.Extra
 import Tuple.Extra
 import Json.Encode as E
 import Json.Decode as D
+import Uuid
 -- import Automata.Debugging
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
@@ -123,7 +124,7 @@ stepThroughInitial : String -> AutomatonGraph a -> ExecutionResult
 stepThroughInitial s g =
   let
     upcomingAcceptConditions =
-      String.toList >> List.map Character
+      String.toList >> List.map ViaCharacter
   in
   step g
     (CanContinue <| Rejected <|
@@ -134,12 +135,32 @@ stepThroughInitial s g =
 mkConn : String -> Connection
 mkConn s =
   let
+    uuid_helper list finality acc =
+      case List.splitAt 36 list of
+        (uuidChars, rest) ->
+          if List.length uuidChars /= 36 then
+            acc -- just end it here.
+          else
+            case Uuid.fromString (String.fromList uuidChars) of
+              Just uuid ->
+                helper rest (AutoSet.insert (ViaGraphReference uuid, finality) acc)
+              Nothing ->
+                acc -- not a valid UUIDv4; end it here.
+    
     helper xs acc =
       case xs of
+        '+'::'+'::rest ->
+          helper rest (AutoSet.insert (ViaCharacter '+', 0) acc |> AutoSet.remove (ViaCharacter '+', 1))
+        '+'::rest ->
+          uuid_helper rest 0 acc
+        '!'::'+'::'+'::rest ->
+          helper rest (AutoSet.insert (ViaCharacter '+', 1) acc |> AutoSet.remove (ViaCharacter '+', 0))
+        '!'::'+'::rest ->
+          uuid_helper rest 1 acc
         '!'::ch::rest ->
-          helper rest (AutoSet.insert (Character ch, 1) acc |> AutoSet.remove (Character ch, 0))
+          helper rest (AutoSet.insert (ViaCharacter ch, 1) acc |> AutoSet.remove (ViaCharacter ch, 0))
         ch::rest ->
-          helper rest (AutoSet.insert (Character ch, 0) acc |> AutoSet.remove (Character ch, 1))
+          helper rest (AutoSet.insert (ViaCharacter ch, 0) acc |> AutoSet.remove (ViaCharacter ch, 1))
         [] -> acc
   in
     helper (String.toList s) (AutoSet.empty transitionToString)
@@ -163,11 +184,11 @@ mkDFA transitions finals =
           IntDict.update a
             (\possible ->
               case possible of
-                Nothing -> Just <| AutoDict.singleton acceptConditionToString (Character ch) b
+                Nothing -> Just <| AutoDict.singleton acceptConditionToString (ViaCharacter ch) b
                 Just existing ->
                   -- overwrite if we have a collision.
                   Debug.log "Overwriting (new, existing)" ((a, ch, b), (a, existing)) |> \_ ->
-                  Just <| AutoDict.insert (Character ch) b existing
+                  Just <| AutoDict.insert (ViaCharacter ch) b existing
             )
             state
         )
@@ -304,12 +325,12 @@ add_string_to_dfa string =
                 [ch] ->
                   List.singleton
                     ( 0
-                    , AutoDict.singleton acceptConditionToString (Character ch) 1
+                    , AutoDict.singleton acceptConditionToString (ViaCharacter ch) 1
                     )
                 xs ->
                   List.foldl
                     (\ch (acc, nodeId) ->
-                      ( (nodeId, AutoDict.singleton acceptConditionToString (Character ch) (nodeId + 1)) :: acc
+                      ( (nodeId, AutoDict.singleton acceptConditionToString (ViaCharacter ch) (nodeId + 1)) :: acc
                       , nodeId + 1 ))
                     ( [], 0 )
                     xs
@@ -334,12 +355,12 @@ remove_string_from_dfa string =
                 [] ->
                   []
                 [ch] ->
-                  [(0, AutoDict.singleton acceptConditionToString (Character ch) 1)]
+                  [(0, AutoDict.singleton acceptConditionToString (ViaCharacter ch) 1)]
                 xs ->
                   List.foldl
                     (\ch (acc, nodeId) ->
                       ( ( nodeId
-                        , AutoDict.singleton acceptConditionToString (Character ch) (nodeId + 1)
+                        , AutoDict.singleton acceptConditionToString (ViaCharacter ch) (nodeId + 1)
                         ) :: acc
                       , nodeId + 1 )
                       )
@@ -2055,9 +2076,14 @@ fromAutomatonGraph =
 serializeTransition : Transition -> E.Value
 serializeTransition t =
   case t of
-    (Character c, f) ->
+    (ViaCharacter c, f) ->
       E.object
         [ ("c", E.string <| String.fromChar c)
+        , ("_", E.bool <| f == 1)
+        ]
+    (ViaGraphReference uuid, f) ->
+      E.object
+        [ ("ref", E.string <| Uuid.toString uuid)
         , ("_", E.bool <| f == 1)
         ]
 
@@ -2132,8 +2158,19 @@ deserializeTransition =
             (\s ->
               case String.toList s of
                 [] -> D.fail "Char field cannot be empty."
-                [c] -> D.map Character (D.succeed c)
+                [c] -> D.map ViaCharacter (D.succeed c)
                 _ -> D.fail "Char field cannot be more than one character."
+            )
+        )
+        (D.field "_" D.bool)
+    , D.map2
+        (\c f -> (c, if f then 1 else 0))
+        ( D.field "ref" D.string
+          |> D.andThen
+            (\s ->
+              case Uuid.fromString s of
+                Just uuid -> D.map ViaGraphReference (D.succeed uuid)
+                Nothing -> D.fail <| "'" ++ s ++ "' is not a valid UUIDv4."
             )
         )
         (D.field "_" D.bool)

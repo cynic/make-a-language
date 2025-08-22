@@ -5,6 +5,7 @@ import AutoSet
 import Graph exposing (Graph, NodeContext, NodeId)
 import AutoDict
 import Parser exposing (Parser, (|=), (|.))
+import Uuid exposing (Uuid)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -51,7 +52,8 @@ type alias Entity =
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
 type AcceptVia
-  = Character Char
+  = ViaCharacter Char
+  | ViaGraphReference Uuid
 
 type NodeEffect
   = NoEffect
@@ -141,11 +143,6 @@ graphToAutomatonGraph start graph =
   , root = start
   }
 
-acceptConditionEq : AcceptVia -> AcceptVia -> Bool
-acceptConditionEq a b =
-  case (a, b) of
-    (Character a_, Character b_) -> a_ == b_
-
 {-| Convert an AcceptVia to a round-trip string.
 
 *NOTE*: This is NOT to be used for printable output!
@@ -155,15 +152,21 @@ Use `printableAcceptCondition` for that.
 acceptConditionToString : AcceptVia -> String
 acceptConditionToString v =
   case v of
-    Character ch ->
-      "C" ++ String.fromChar ch
+    ViaCharacter ch ->
+      String.fromChar ch
+    ViaGraphReference uuid ->
+      Uuid.toString uuid
 
 {-| Convert an AcceptVia to a printable-for-output string. -}
 printableAcceptCondition : AcceptVia -> String
 printableAcceptCondition v =
   case v of
-    Character ch ->
+    ViaCharacter ch ->
       String.fromChar ch
+    ViaGraphReference uuid ->
+      Uuid.toString uuid
+      |> String.left 8
+      |> \s -> s ++ "..."
 
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : NodeContext a Connection -> Bool
@@ -198,10 +201,14 @@ transitionsToString transitions =
 transitionToString : Transition -> String
 transitionToString transition =
   case transition of
-    (Character ch, 0) ->
+    (ViaCharacter ch, 0) ->
       String.fromChar ch
-    (Character ch, _) ->
+    (ViaCharacter ch, _) ->
       "\u{0307}" ++ String.fromChar ch
+    (ViaGraphReference uuid, 0) ->
+      Uuid.toString uuid
+    (ViaGraphReference uuid, _) ->
+      "!" ++ Uuid.toString uuid
 
 connectionToString : Connection -> String
 connectionToString =

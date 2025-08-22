@@ -6,6 +6,7 @@ import Automata.Data exposing (mkAG_input, NodeEffect(..), AcceptVia(..), Entity
 import Automata.DFA exposing (serializeAutomatonGraph, mkConn, deserializeAutomatonGraph)
 import Graph exposing (Node, Edge)
 import Json.Decode as D
+import Automata.Debugging exposing (debugAutomatonGraph)
 
 -- mkNode : Int -> Graph.Node Entity
 mkNode id =
@@ -25,7 +26,9 @@ mkAutomatonGraph nodeIds edges root =
 
 czech root nodes edges =
   let
-    v = mkAutomatonGraph nodes edges root
+    v =
+      mkAutomatonGraph nodes edges root
+      |> debugAutomatonGraph "[czech] AutomatonGraph under test"
   in
     case serializeAutomatonGraph v |> D.decodeValue deserializeAutomatonGraph of
       Ok v_ -> Expect.equal v v_
@@ -35,12 +38,7 @@ czech root nodes edges =
 suite : Test
 suite =
   describe "Encoding & Decoding serialized automata"
-    [ describe "Decoding: serialized string to AutomatonGraph"
-      [ test "handles a + character" <|
-        \_ ->
-          Expect.equal [(1, "+", 2)] (mkAG_input "1-++-2")
-      ]
-    , describe "Round-tripping"
+    [ describe "Round-tripping"
       [ test "handles simple transitions correctly" <|
         \_ ->
           czech 0
@@ -55,8 +53,14 @@ suite =
             [0, 1, 2, 3]
             [ (0, 1, "! "), (1, 2, " "), (2, 3, "p ") ]
       ]
-    -- , test "handles references" <|
-    --   \_ ->
-    --     Expect.equal
-
+      , test "handles graph references" <|
+        \_ ->
+          czech 0
+            [0, 1, 2, 3]
+            [ (0, 1, "!+ab9d1082-73ef-4541-958e-ec84498ee37a") -- 1 uuid
+              -- 2 uuids, one final and the other nonfinal
+            , (1, 2, "+13c922a2-91e9-43e5-9f6b-6c05967c846d!+ab9d1082-73ef-4541-958e-ec84498ee37a")
+              -- 1 uuid and 2 characters
+            , (2, 3, "+5b83a297-30f7-4708-bc78-2868e830250aab")
+            ]
     ]
