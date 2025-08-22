@@ -7,9 +7,6 @@ import Automata.Data as D
 import Automata.Verification as D
 import List.Extra as List
 import Automata.DFA
-import Automata.DFA exposing (mkAutomatonGraph)
-import Automata.DFA exposing (fromAutomatonGraph)
-import Automata.DFA exposing (mkDFA)
 import Automata.DFA exposing (toAutomatonGraph)
 
 -- nodesAndWords : D.AutomatonGraph -> (Int, List String)

@@ -6,7 +6,6 @@ import Graph exposing (Edge, Graph, NodeContext, NodeId)
 import Html.Events as HE
 import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
 import Json.Decode as D
-import Json.Encode as E
 import TypedSvg exposing
   (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
@@ -826,7 +825,7 @@ update msg model =
                   }
             Just (Splitting _) ->
               { model | currentOperation = Nothing }
-            Just (AlteringConnection { source, dest, transitions }) ->
+            Just (AlteringConnection _) ->
               { model | currentOperation = Nothing }
             Nothing ->
               model
@@ -1649,10 +1648,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, mouseCoord
       ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
     ( node_x, node_y ) =
       let
-        nodeCoords =
-          Maybe.map (\ctx -> ( ctx.node.label.x, ctx.node.label.y )) graphNode
-          |> Maybe.withDefaultLazy
-              (\() -> ( 0, 0 ) |> Debug.log "MWXCGUOEI") -- should never reach here
+        nodeCoords = ( label.x, label.y )
       in
       case currentOperation of
         Just (Dragging nodeId) ->

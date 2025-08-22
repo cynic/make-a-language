@@ -1,14 +1,13 @@
 module Utility exposing (ag, dfa, mkDFA_input, ag_equals, dfa_equals)
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
-import Automata.Data exposing (AutomatonGraph, DFARecord)
+import Automata.Data exposing (AutomatonGraph, DFARecord, printableAcceptCondition)
 import Automata.DFA exposing (mkAutomatonGraph, mkDFA)
 import Expect
 import Set
 import Graph exposing (NodeId)
 import IntDict
 import List
-import Dict
 import Automata.Data exposing (DFARecord)
 import Automata.Debugging exposing (debugAutomatonGraph)
 import List.Extra
@@ -17,9 +16,6 @@ import Set exposing (Set)
 import AutoSet
 import AutoDict
 import Maybe.Extra
-import Automata.Data exposing (transitionToString)
-import Automata.Data exposing (acceptConditionToString)
-import Automata.Data exposing (printableAcceptCondition)
 
 -- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))

@@ -1,12 +1,10 @@
 module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
-import Utility exposing (dfa, ag_equals, dfa_equals)
+import Utility exposing (ag_equals)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import Graph exposing (NodeId)
 import Automata.Data exposing (AutomatonGraph, Entity, mkAG_input)
-import Automata.DFA exposing (mkAutomatonGraphWithValues)
-import Automata.Data exposing (Transition)
 import Set
 import ForceDirectedGraph exposing (Msg(..))
 import Automata.DFA exposing (mkConn)
