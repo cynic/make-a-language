@@ -16,7 +16,6 @@ type alias RequestedChangePath = List Transition -- transitions going from the s
 type LinkDestination
   = NoDestination
   | ExistingNode NodeId
-  | EditingTransitionTo NodeId
   | NewNode ( Float, Float ) -- with X and Y coordinates
 
 type alias GraphModification =

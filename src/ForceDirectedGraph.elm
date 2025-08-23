@@ -72,7 +72,8 @@ type UserOperation
   = Splitting Split -- split a node into two, so I can work on the parts separately
   | Dragging NodeId -- move a node around (visually)
   | ModifyingGraph GraphModification
-  | AlteringConnection ConnectionAlteration 
+  | AlteringConnection ConnectionAlteration
+
 type alias Model =
   { currentOperation : Maybe UserOperation
   , userGraph : AutomatonGraph Entity
@@ -808,17 +809,6 @@ update msg model =
                 NoDestination ->
                   -- I must be escaping from something earlier.
                   { model | currentOperation = Nothing }
-                EditingTransitionTo _ ->
-                  -- back off by one level
-                  { model
-                    | currentOperation =
-                        Just <|
-                          ModifyingGraph
-                            { source = source
-                            , dest = NoDestination
-                            , transitions = AutoSet.empty transitionToString
-                            }
-                  }
                 _ ->
                   { model
                     | currentOperation =
@@ -884,11 +874,6 @@ update msg model =
                 -- create a totally new node, never before seen!
                 createNewNode source transitions x y
               ( ExistingNode destination ) ->
-                if AutoSet.isEmpty transitions then
-                  removeLink source destination
-                else
-                  updateExistingNode source destination transitions
-              ( EditingTransitionTo destination ) ->
                 if AutoSet.isEmpty transitions then
                   removeLink source destination
                 else
@@ -1957,10 +1942,6 @@ viewPhantom model sourceNode =
               (cardinalityOf id)
           NewNode coords ->
             viewPhantomChosen model sourceNode coords Unidirectional
-          EditingTransitionTo id ->
-            viewPhantomChosen model sourceNode
-              (nodeCoordinates id)
-              (cardinalityOf id)
       _ ->
         g [] []
 
@@ -2374,8 +2355,6 @@ view model =
           [ permit_click ]
         Just (ModifyingGraph { dest }) ->
           case dest of
-            EditingTransitionTo _ ->
-              []
             NewNode _ ->
               []
             ExistingNode _ ->
@@ -2383,7 +2362,7 @@ view model =
             _ ->
               permit_click :: permit_zoom :: permit_pan
         Just (AlteringConnection _) ->
-          [ permit_click ]
+          []
         Just (Dragging _) ->
           -- must have permit_pan (for mouse-movement)
           -- must have permit_stopdrag
@@ -2423,14 +2402,10 @@ view model =
         |> List.map (viewNode model)
         |> g [ class [ "nodes" ] ]
       , case model.currentOperation of
-          Just (ModifyingGraph { source, dest }) ->
-            case ( source, dest ) of
-              ( _, EditingTransitionTo _ ) ->
-                g [] []
-              ( id, _ ) ->
-                Graph.get id model.userGraph.graph
-                |> Maybe.map (viewPhantom model)
-                |> Maybe.withDefault (g [] [])
+          Just (ModifyingGraph { source }) ->
+            Graph.get source model.userGraph.graph
+            |> Maybe.map (viewPhantom model)
+            |> Maybe.withDefault (g [] [])
           _ ->
             g [] []
       ]
@@ -2514,8 +2489,6 @@ view model =
                 ExistingNode _ ->
                   bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
                 NewNode _ ->
-                  bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-                EditingTransitionTo _ ->
                   bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
             Just (AlteringConnection _) ->
               bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
