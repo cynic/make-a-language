@@ -56,6 +56,7 @@ type Msg
   | Confirm -- the universal "Yeah! Let's Go!" key & command
   | EditTransition NodeId NodeId Connection
   | Reheat
+  | SwitchVia AcceptChoice
   | Undo
   | Redo
   | StartSplit NodeId
@@ -71,8 +72,12 @@ type Msg
 type UserOperation
   = Splitting Split -- split a node into two, so I can work on the parts separately
   | Dragging NodeId -- move a node around (visually)
-  | ModifyingGraph GraphModification
-  | AlteringConnection ConnectionAlteration
+  | ModifyingGraph AcceptChoice GraphModification -- add a new link + node / new link between existing nodes
+  | AlteringConnection AcceptChoice ConnectionAlteration
+
+type AcceptChoice
+  = ChooseCharacter
+  | ChooseGraphReference
 
 type alias Model =
   { currentOperation : Maybe UserOperation
@@ -743,7 +748,7 @@ update msg model =
         { model
         | pan =
             case model.currentOperation of
-              Just (ModifyingGraph {dest}) ->
+              Just (ModifyingGraph _ { dest }) ->
                 case dest of
                   NoDestination ->
                     ( xPan + xAmount, yPan + yAmount )
@@ -753,14 +758,14 @@ update msg model =
                 ( xPan + xAmount, yPan + yAmount )
               Just (Dragging _) ->
                 ( xPan + xAmount, yPan + yAmount )
-              Just (AlteringConnection _) ->
+              Just (AlteringConnection _ _) ->
                 model.pan
               Just (Splitting _) ->
                 model.pan
         }
 
     SelectNode index ->
-      { model | currentOperation = Just <| ModifyingGraph <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
+      { model | currentOperation = Just <| ModifyingGraph ChooseCharacter <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
@@ -770,7 +775,7 @@ update msg model =
 
     CreateOrUpdateLinkTo dest ->
       case model.currentOperation of
-        Just (ModifyingGraph { source }) ->
+        Just (ModifyingGraph _ { source }) ->
           let
             transitions =
               Graph.get dest model.userGraph.graph
@@ -785,17 +790,17 @@ update msg model =
           in
             { model
               | currentOperation =
-                  Just <| ModifyingGraph <| GraphModification source (ExistingNode dest) transitions
+                  Just <| ModifyingGraph ChooseCharacter <| GraphModification source (ExistingNode dest) transitions
             }
         _ ->
           model
 
     CreateNewNodeAt ( x, y ) ->
       case model.currentOperation of
-        Just (ModifyingGraph { source, transitions }) ->
+        Just (ModifyingGraph _ { source, transitions }) ->
           { model
             | currentOperation =
-                Just <| ModifyingGraph <| GraphModification source (NewNode ( x, y )) transitions
+                Just <| ModifyingGraph ChooseCharacter <| GraphModification source (NewNode ( x, y )) transitions
           }
         _ ->
           model
@@ -804,7 +809,7 @@ update msg model =
       let
         escapery =
           case model.currentOperation of
-            Just (ModifyingGraph { source, dest, transitions }) ->
+            Just (ModifyingGraph via { source, dest, transitions }) ->
               case dest of
                 NoDestination ->
                   -- I must be escaping from something earlier.
@@ -812,11 +817,11 @@ update msg model =
                 _ ->
                   { model
                     | currentOperation =
-                        Just <| ModifyingGraph <| GraphModification source NoDestination transitions
+                        Just <| ModifyingGraph via <| GraphModification source NoDestination transitions
                   }
             Just (Splitting _) ->
               { model | currentOperation = Nothing }
-            Just (AlteringConnection _) ->
+            Just (AlteringConnection _ _) ->
               { model | currentOperation = Nothing }
             Nothing ->
               model
@@ -868,7 +873,7 @@ update msg model =
 
       in
         case model.currentOperation of
-          Just (ModifyingGraph { source, dest, transitions }) ->
+          Just (ModifyingGraph _ { source, dest, transitions }) ->
             case dest of
               ( NewNode ( x, y ) ) ->
                 -- create a totally new node, never before seen!
@@ -881,7 +886,7 @@ update msg model =
               ( NoDestination ) ->
                 -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
                 model
-          Just (AlteringConnection { source, dest, transitions }) ->
+          Just (AlteringConnection _ { source, dest, transitions }) ->
                 if AutoSet.isEmpty transitions then
                   removeLink source dest
                 else
@@ -917,18 +922,19 @@ update msg model =
             AutoSet.insert (acceptCondition, 0) transitions
       in
         case model.currentOperation of
-          Just (ModifyingGraph ({ transitions } as mod)) ->
+          Just (ModifyingGraph via ({ transitions } as mod)) ->
             { model
               | currentOperation =
-                  Just <| ModifyingGraph <|
+                  Just <| ModifyingGraph via <|
                     { mod
                       | transitions = alterTransitions transitions
                     }
             }
-          Just (AlteringConnection ({ transitions } as mod)) ->
+          Just (AlteringConnection via ({ transitions } as mod)) ->
             { model
               | currentOperation =
-                  Just <| AlteringConnection <|
+                  Just <| AlteringConnection
+                    via
                     { mod
                       | transitions = alterTransitions transitions
                     }
@@ -970,15 +976,9 @@ update msg model =
             model
 
     EditTransition src dest conn ->
-      -- … and this will take us to much same place that
-      -- UpdateOrCreateLinkTo took us.  But the difference
-      -- is that we indicate an edit via EditingTransitionTo,
-      -- rather than ExistingNode.  This indicates that if we
-      -- escape out of it, we clear source & dest & transitions
-      -- all at once.
       { model
         | currentOperation =
-            Just <| AlteringConnection <| ConnectionAlteration src dest conn
+            Just <| AlteringConnection ChooseCharacter (ConnectionAlteration src dest conn)
       }
 
     Reheat ->
@@ -991,6 +991,14 @@ update msg model =
           }
         _ ->
           model
+
+    SwitchVia newChosen ->
+      case model.currentOperation of
+        Just (ModifyingGraph _ d) ->
+          { model | currentOperation = Just <| ModifyingGraph newChosen d }
+        Just (AlteringConnection _ d) ->
+          { model | currentOperation = Just <| AlteringConnection newChosen d }
+        _ -> model
 
     StartSplit nodeId ->
       Graph.get nodeId model.userGraph.graph
@@ -1119,14 +1127,18 @@ subscriptions model =
                             D.fail "Not a character key"
                     in
                     case model.currentOperation of
-                      Just (ModifyingGraph { dest }) ->
+                      Just (ModifyingGraph ChooseCharacter { dest }) ->
                         case dest of
                           NoDestination ->
                             D.fail "Not a recognized key combination"
                           _ ->
                             decodeChar
-                      Just (AlteringConnection _) ->
+                      Just (ModifyingGraph ChooseGraphReference _) ->
+                        D.fail "Not choosing characters"
+                      Just (AlteringConnection ChooseCharacter _) ->
                         decodeChar
+                      Just (AlteringConnection ChooseGraphReference _) ->
+                        D.fail "Not choosing characters"
                       Just (Splitting _) ->
                         decodeChar
                       _ ->
@@ -1588,7 +1600,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, pan, mouse
   let
     selectableClass =
       case currentOperation of
-        Just (ModifyingGraph { source }) ->
+        Just (ModifyingGraph _ { source }) ->
           if source == id then
             "selected"
           else
@@ -1637,7 +1649,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, pan, mouse
             StartSplit id
           else
             case currentOperation of
-              Just (ModifyingGraph _) ->
+              Just (ModifyingGraph _ _) ->
                 -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
                 CreateOrUpdateLinkTo id
               _ ->
@@ -1646,7 +1658,7 @@ viewNode { userGraph, currentOperation, disconnectedNodes, execution, pan, mouse
 
     interactivity =
       case currentOperation of
-        Just (ModifyingGraph { dest }) ->
+        Just (ModifyingGraph _ { dest }) ->
           case dest of
             NoDestination ->
               [ permit_node_reselection ]
@@ -1932,7 +1944,7 @@ viewPhantom model sourceNode =
           (\() -> ( 0, 0 ) |> Debug.log "Error K<UFOUDFI8") -- should never get here!
   in
     case model.currentOperation of
-      Just (ModifyingGraph { dest }) ->
+      Just (ModifyingGraph _ { dest }) ->
         case dest of
           NoDestination ->
             viewPhantomChoosing model sourceNode
@@ -1990,11 +2002,11 @@ transition_spacing : Float
 transition_spacing = 15
 
 -- https://ishadeed.com/article/target-size/
-viewSingleKey : Char -> Connection -> (Int, Int) -> Svg Msg
-viewSingleKey ch conn (gridX, gridY) =
+viewSingleKey : Char -> Connection -> (Int, Int) -> Float -> Svg Msg
+viewSingleKey ch conn (gridX, gridY) y_offset =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
-    buttonY = transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
+    buttonY = y_offset + transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
     isThisNodeTerminal = AutoSet.member (ViaCharacter ch, 1) conn
     keyClass =
       if AutoSet.member (ViaCharacter ch, 0) conn then
@@ -2028,18 +2040,18 @@ viewSingleKey ch conn (gridX, gridY) =
         , alignmentBaseline AlignmentCentral
         , dominantBaseline DominantBaselineMiddle
         , pointerEvents "none"
+        , fontFamily ["sans-serif"]
         ]
         [ text <| String.fromChar ch ]
     ]
 
-
-viewSvgTransitionChooser : Model -> Svg Msg
-viewSvgTransitionChooser model =
+viewSvgCharacterChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
+viewSvgCharacterChooser conn y_offset w =
   let
-    ( w, _ ) = model.dimensions
     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
     alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
     numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
+    my_height = transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing
     gridItemsAndCoordinates =
       List.foldl
         (\item (acc, ( col, row )) ->
@@ -2051,62 +2063,234 @@ viewSvgTransitionChooser model =
         ([], (0, 0))
         alphabet
       |> Tuple.first
+    chooser_svg =
+      g
+        []
+        ( List.map
+            (\(item, col, row) ->
+              viewSingleKey
+                item
+                conn
+                (col, row)
+                y_offset
+            )
+            gridItemsAndCoordinates
+        )
+  in
+    ( chooser_svg, my_height )
+
+viewSvgComputationChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
+viewSvgComputationChooser conn y_offset w =
+  let
+    items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
+    alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
+    numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
+    my_height = transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing
+    gridItemsAndCoordinates =
+      List.foldl
+        (\item (acc, ( col, row )) ->
+          if col + 1 >= items_per_row then
+            ((item, col, row) :: acc, (0, row + 1))
+          else
+            ((item, col, row) :: acc, (col + 1, row))
+        )
+        ([], (0, 0))
+        alphabet
+      |> Tuple.first
+    chooser_svg =
+      g
+        []
+        ( List.map
+            (\(item, col, row) ->
+              viewSingleKey
+                item
+                conn
+                (col, row)
+                y_offset
+            )
+            gridItemsAndCoordinates
+        )
+  in
+    ( chooser_svg, my_height )
+
+viewSvgTransitionChooser : AcceptChoice -> Model -> Svg Msg
+viewSvgTransitionChooser via model =
+  let
+    ( w, _ ) = model.dimensions
+    category_chooser_space = 80
     conn =
       case model.currentOperation of
-        Just (ModifyingGraph { transitions }) ->
+        Just (ModifyingGraph _ { transitions }) ->
           transitions
-        Just (AlteringConnection { transitions }) ->
+        Just (AlteringConnection _ { transitions }) ->
           transitions
         _ ->
           (AutoSet.empty transitionToString)
           |> Debug.log "CXO<DPO(*EU I should not be here!"
+    ( chooser_svg, chooser_height) =
+      case via of
+        ChooseCharacter ->
+          viewSvgCharacterChooser conn category_chooser_space w
+        ChooseGraphReference ->
+          viewSvgComputationChooser conn category_chooser_space w
+          -- viewSvgGraphRefChooser conn
+    chooserButtonSize = 30
   in
   g
     []
-    ( g
-        []
-        [ text_
-            [ x <| w / 2
-            , y <| transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing
-            , fill <| Paint <| Color.black
-            , textAnchor AnchorMiddle
-            , alignmentBaseline AlignmentCentral
-            , dominantBaseline DominantBaselineMiddle
-            , pointerEvents "none"
-            , fontSize 24
-            , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
-            , stroke <| Paint <| paletteColors.background
-            , strokeWidth 5
-            , class [ "link" ]
-            ]
-            ( tspan [] [ text "Selected transitions: " ] ::
-              ( if AutoSet.isEmpty conn then
-                  [ tspan [] [ text "None" ] ]
-                else
-                  connectionToSvgText conn
-              )
-            )
-        , text_
-            [ x <| w / 2
-            , y <| transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing + 30
-            , fill <| Paint <| Color.darkCharcoal
-            , textAnchor AnchorMiddle
-            , alignmentBaseline AlignmentCentral
-            , dominantBaseline DominantBaselineMiddle
-            , pointerEvents "none"
-            , fontSize 16
-            , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
-            , stroke <| Paint <| paletteColors.background
-            , strokeWidth 4
-            ]
-            ( if AutoSet.isEmpty conn then
-                [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
-              else
-                [ tspan [] [ text "Press «Enter» to confirm these transitions." ] ]
-            )
+    [ -- this is above the "keyboard"
+      text_
+        [ x <| w / 2
+        , y <| 16 + 8
+        , fill <| Paint <| Color.black
+        , textAnchor AnchorMiddle
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        , fontFamily ["Serif"]
+        , fontSize 16
+        , stroke <| Paint <| paletteColors.background
+        , strokeWidth 2
+        , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
         ]
-    :: List.map (\(item, col, row) -> viewSingleKey item conn (col, row)) gridItemsAndCoordinates
-    )
+        [ tspan
+          []
+          [ text <| "To make this jump, I should match…"
+          ]
+        ]
+    , text_
+        [ x <| w / 2
+        , y <| 32 + 23
+        , fill <| Paint <| Color.black
+        , textAnchor AnchorMiddle
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        , fontSize 16
+        , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+        , fontFamily ["Serif"]
+        , stroke <| Paint <| paletteColors.background
+        , strokeWidth 2
+        ]
+        [ tspan
+          []
+          [ text <|
+              case via of
+                ChooseCharacter -> "Single characters"
+                ChooseGraphReference -> "Computations"
+          ]
+        ]
+      -- choose-next button
+    , g
+        []
+        [ rect
+            [ x <| (w / 2) + 100
+            , y <| 16 + 23
+            , Px.width chooserButtonSize
+            , Px.height chooserButtonSize
+            , Px.rx 5
+            , Px.ry 5
+            , class [ "transition-chooser-key" ]
+            , strokeWidth 2
+            , stroke <| Paint <| Color.white
+            , onClick <| SwitchVia <|
+                case via of
+                  ChooseCharacter -> ChooseGraphReference
+                  ChooseGraphReference -> ChooseCharacter
+            ]
+            []
+        , text_
+            [ x <| (w / 2) + 100 + (chooserButtonSize / 2)
+            , y <| 39 + (chooserButtonSize / 2)
+            , fontSize 20
+            , strokeWidth 0
+            , textAnchor AnchorMiddle
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineMiddle
+            , pointerEvents "none"
+            ]
+            [ text <| "→" ]
+        ]
+      -- chose-prev button
+    , g
+        []
+        [ rect
+            [ x <| (w / 2) - 100 - chooserButtonSize
+            , y <| 16 + 23
+            , Px.width chooserButtonSize
+            , Px.height chooserButtonSize
+            , Px.rx 5
+            , Px.ry 5
+            , class [ "transition-chooser-key" ]
+            , strokeWidth 2
+            , stroke <| Paint <| Color.white
+            , onClick <| SwitchVia <|
+                case via of
+                  ChooseCharacter -> ChooseGraphReference
+                  ChooseGraphReference -> ChooseCharacter
+            ]
+            []
+        , text_
+            [ x <| (w / 2) - 100 - (chooserButtonSize / 2)
+            , y <| 39 + (chooserButtonSize / 2)
+            , fontSize 20
+            , strokeWidth 0
+            , textAnchor AnchorMiddle
+            , alignmentBaseline AlignmentCentral
+            , dominantBaseline DominantBaselineMiddle
+            , pointerEvents "none"
+            ]
+            [ text <| "←" ]
+        ]
+      -- this is below the "keyboard"
+    , text_
+        [ x <| w / 2
+        , y <| category_chooser_space + chooser_height
+        , fill <| Paint <| Color.black
+        , textAnchor AnchorMiddle
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        , fontSize 24
+        , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+        , stroke <| Paint <| paletteColors.background
+        , strokeWidth 3
+        , class [ "link" ]
+        ]
+        ( tspan
+            [ fontFamily ["Serif"] ]
+            [ text "Selected transitions: " ] ::
+          ( if AutoSet.isEmpty conn then
+              [ tspan
+                  [ fontFamily ["sans-serif"] ]
+                  [ text "None" ]
+              ]
+            else
+              connectionToSvgText conn
+          )
+        )
+    , text_
+        [ x <| w / 2
+        , y <| category_chooser_space + chooser_height + 30
+        , fill <| Paint <| Color.darkCharcoal
+        , textAnchor AnchorMiddle
+        , alignmentBaseline AlignmentCentral
+        , dominantBaseline DominantBaselineMiddle
+        , pointerEvents "none"
+        , fontSize 16
+        , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
+        , stroke <| Paint <| paletteColors.background
+        , strokeWidth 3
+        , fontFamily ["Serif"]
+        ]
+        ( if AutoSet.isEmpty conn then
+            [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
+          else
+            [ tspan [] [ text "Press «Enter» to confirm these transitions." ] ]
+        )
+      -- and lastly, this is the "keyboard"
+    , chooser_svg
+    ]
 
 viewSvgTransitionSplitter : Connection -> Connection -> Model -> Svg Msg
 viewSvgTransitionSplitter left right model =
@@ -2313,11 +2497,7 @@ view model =
             ( 0, 1 ) -> CursorWResize
             ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
             ( 2, 1 ) -> CursorEResize
-            _ ->
-              case model.currentOperation of
-                Just (ModifyingGraph _) -> Cursor "none"
-                Just (AlteringConnection _) -> Cursor "none"
-                _ -> CursorDefault
+            _ -> CursorDefault
       ]
     permit_click =
       Mouse.onWithOptions
@@ -2325,7 +2505,7 @@ view model =
         { stopPropagation = True, preventDefault = True }
         (\_ ->
           case model.currentOperation of
-            Just (ModifyingGraph _) ->
+            Just (ModifyingGraph _ _) ->
               case nearby_node nearby_node_lockOnDistance model of
                 Just node -> -- in this case, the UI would show it being "locked-on"
                   CreateOrUpdateLinkTo node.id
@@ -2353,7 +2533,7 @@ view model =
       case model.currentOperation of
         Just (Splitting _) ->
           [ permit_click ]
-        Just (ModifyingGraph { dest }) ->
+        Just (ModifyingGraph _ { dest }) ->
           case dest of
             NewNode _ ->
               []
@@ -2361,7 +2541,7 @@ view model =
               []
             _ ->
               permit_click :: permit_zoom :: permit_pan
-        Just (AlteringConnection _) ->
+        Just (AlteringConnection _ _) ->
           []
         Just (Dragging _) ->
           -- must have permit_pan (for mouse-movement)
@@ -2402,7 +2582,7 @@ view model =
         |> List.map (viewNode model)
         |> g [ class [ "nodes" ] ]
       , case model.currentOperation of
-          Just (ModifyingGraph { source }) ->
+          Just (ModifyingGraph _ { source }) ->
             Graph.get source model.userGraph.graph
             |> Maybe.map (viewPhantom model)
             |> Maybe.withDefault (g [] [])
@@ -2410,14 +2590,14 @@ view model =
             g [] []
       ]
     , case model.currentOperation of
-        Just (ModifyingGraph { dest }) ->
+        Just (ModifyingGraph via { dest }) ->
           case dest of
             NoDestination ->
               g [] []
             _ ->
-              viewSvgTransitionChooser model
-        Just (AlteringConnection _) ->
-          viewSvgTransitionChooser model
+              viewSvgTransitionChooser via model
+        Just (AlteringConnection via _) ->
+          viewSvgTransitionChooser via model
         Just (Splitting { to_split, left, right }) ->
           Graph.get to_split model.userGraph.graph
           |> Maybe.map (\_ -> -- ignore node, we have all the info already
@@ -2482,7 +2662,7 @@ view model =
             ]
             [ text (" 🧭 " ++ panToString model.pan) ]
         , case model.currentOperation of
-            Just (ModifyingGraph { dest }) ->
+            Just (ModifyingGraph _ { dest }) ->
               case dest of
                 NoDestination ->
                   bottomMsg "Press «Esc» to cancel link creation"
@@ -2490,7 +2670,7 @@ view model =
                   bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
                 NewNode _ ->
                   bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            Just (AlteringConnection _) ->
+            Just (AlteringConnection _ _) ->
               bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
             Just (Splitting _) ->
               g [] []

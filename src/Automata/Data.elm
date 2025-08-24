@@ -52,6 +52,10 @@ type alias Entity =
 -- This is superior to marking finality on a vertex, because
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
+
+-- **NOTE**
+-- If AcceptVia is modified, also modify the corresponding AcceptChoice
+-- data structure in ForceDirectedGraph.
 type AcceptVia
   = ViaCharacter Char
   | ViaGraphReference Uuid
