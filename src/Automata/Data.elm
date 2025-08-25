@@ -199,10 +199,6 @@ graphEdgeToString : Graph.Edge Connection -> String
 graphEdgeToString {from, to, label} =
   "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
 
-transitionsToString : List Transition -> String
-transitionsToString transitions =
-  String.join "," (List.map transitionToString transitions)
-
 transitionToString : Transition -> String
 transitionToString transition =
   case transition of
@@ -221,10 +217,10 @@ connectionToString =
   >> AutoSet.toList
   >> String.join "\u{2008}" -- punctuation space. Stops terminality-marker from disappearing on subsequent characters.
 
-graphToString : Graph (StateData a) Connection -> String
-graphToString graph =
+graphToString : (a -> Maybe String) -> Graph a Connection -> String
+graphToString printer graph =
   Graph.toString
-    (\_ -> Nothing)
+    printer
     (Just << connectionToString)
     graph
 

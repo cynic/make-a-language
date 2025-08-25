@@ -44,7 +44,7 @@ type Msg
   | ViewportUpdated (Float, Float)
   | MouseMove Float Float
   | Pan Float Float
-  | Zoom Float (Float, Float)
+  | Zoom Float
   | ResetView
   | SelectNode NodeId
   | ToggleSelectedTransition AcceptVia
@@ -87,7 +87,7 @@ type alias Model =
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
   , viewportForces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
-  , zoom : ( Float, ( Float, Float ) ) -- ( zoom-factor, zoom-center-coordinates )
+  , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
   , mouseIsHere : Bool
@@ -212,10 +212,11 @@ toForceGraph g =
   , maxId = g.maxId
   }
 
-automatonGraphToModel : (Float, Float) -> AutomatonGraph a -> Model
+automatonGraphToModel : (Float, Float) -> AutomatonGraph Entity -> Model
 automatonGraphToModel (w, h) g =
   let
-    forceGraph = toForceGraph g
+    forceGraph =
+      toForceGraph (g |> Automata.Debugging.debugEntityGraph "Graph as received")
     basic = basicForces forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph.graph
     nodes = Graph.nodes forceGraph.graph
@@ -236,7 +237,7 @@ automatonGraphToModel (w, h) g =
     , basicForces = basic
     , viewportForces = viewport
     , specificForces = IntDict.empty
-    , zoom = ( 1.0, ( w/2, h/2 ) )
+    , zoom = 1.0
     , mouseCoords = ( w/2, h/2 )
     , pan = ( 0, 0)
     , mouseIsHere = False
@@ -248,7 +249,18 @@ automatonGraphToModel (w, h) g =
 
 init : (Float, Float) -> Model
 init (w, h) =
-  automatonGraphToModel (w, h) (DFA.empty { effect = NoEffect } |> toAutomatonGraph)
+  automatonGraphToModel
+    (w, h)
+    (DFA.empty
+      { effect = NoEffect
+      , x = 0
+      , y = 0
+      , vx = 0
+      , vy = 0
+      , id = 0
+      }
+      |> toAutomatonGraph
+    )
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode (offsetX, offsetY) (x, y) nodeCtx =
@@ -284,18 +296,18 @@ updateGraphWithList =
     List.foldr (\node graph -> Graph.update node.id (graphUpdater node) graph)
 
 {-| What is the amount to pan by, given the x-coordinate of the mouse? -}
-xPanAt : Model -> Float -> Float
-xPanAt model x =
-  if x >= ( Tuple.first model.dimensions - panBuffer ) then
+xPanAt : Float -> Float -> Float
+xPanAt width x =
+  if x >= ( width - panBuffer ) then
     1
   else if x <= panBuffer then
     -1
   else
     0
 
-yPanAt : Model -> Float -> Float
-yPanAt model y =
-  if y >= ( Tuple.second (model.dimensions) - (panBuffer) ) then
+yPanAt : Float -> Float -> Float
+yPanAt height y =
+  if y >= ( height - panBuffer ) then
     1
   else if y <= panBuffer then
     -1
@@ -694,18 +706,18 @@ update msg model =
         _ ->
           model
 
-    Zoom amount ( x, y ) ->
+    Zoom amount ->
       let
         zoomAmount = if amount < 0 then 0.05 else -0.05
-        newZoom = clamp 0.5 2.5 (Tuple.first model.zoom + zoomAmount)
+        newZoom = clamp 0.5 2.5 (model.zoom + zoomAmount)
       in
-        if newZoom == Tuple.first model.zoom then
+        if newZoom == model.zoom then
           model
         else
-          { model | zoom = ( newZoom, ( x, y ) ) }
+          { model | zoom = newZoom }
 
     ResetView ->
-      { model | zoom = ( 1.0, Tuple.mapBoth (\x -> x/2) (\y -> y/2) model.dimensions ), pan = ( 0, 0 ) }
+      { model | zoom = 1.0, pan = ( 0, 0 ) }
 
     MouseMove x y ->
       let
@@ -1081,13 +1093,14 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
   let
     ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
+    ( width, height ) = model.dimensions
     panSubscription =
       let
-        xPan = xPanAt model xCoord
-        yPan = yPanAt model yCoord
+        xPan = xPanAt width xCoord
+        yPan = yPanAt height yCoord
       in
         if model.mouseIsHere && (xPan /= 0 || yPan /= 0) then
-          Time.every 20 (\_ -> Pan xPan yPan |> Debug.log "Pan request")
+          Time.every 20 (\_ -> Pan xPan yPan {- |> Debug.log "Pan request" -})
         else
           Sub.none
     keyboardSubscription =
@@ -2457,8 +2470,8 @@ panToString pan =
       in
       ("(" ++ xString ++ ", " ++ yString ++ ")")
 
-matrixFromZoom : (Float, Float) -> (Float, Float) -> ( Float, ( Float, Float ) ) -> ( Float, Float ) -> Transform
-matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
+matrixFromZoom : (Float, Float) -> Float -> ( Float, Float ) -> Transform
+matrixFromZoom (panX, panY) factor (pointerX, pointerY) =
 {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
   The matrix is the "usual":
@@ -2480,15 +2493,51 @@ matrixFromZoom (w, h) (panX, panY) ( factor, _ ) (pointerX, pointerY) =
     ( (1 - factor) * pointerY - panY )
   -- |> Debug.log "matrix transform applied"
 
+viewMainSvgContent : Model -> Svg Msg
+viewMainSvgContent model =
+  g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
+  [ transform [ matrixFromZoom model.pan model.zoom model.mouseCoords ]
+  , case model.currentOperation of
+      Just (Dragging _) ->
+        -- disable pointer-events.
+        -- This is to stop elements from getting in the way of
+        -- registering mouse-movement.
+        pointerEvents "none"
+      _ ->
+        class []
+  ]
+  [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
+  , Graph.edges model.userGraph.graph
+    |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
+    |> List.map
+      (viewLink
+        model
+        ( Maybe.map executing_edges model.execution
+          |> Maybe.withDefault Dict.empty))
+    |> g [ class [ "links" ] ]
+  , Graph.nodes model.userGraph.graph
+    |> List.map (viewNode model)
+    |> g [ class [ "nodes" ] ]
+  , case model.currentOperation of
+      Just (ModifyingGraph _ { source }) ->
+        Graph.get source model.userGraph.graph
+        |> Maybe.map (viewPhantom model)
+        |> Maybe.withDefault (g [] [])
+      _ ->
+        g [] []
+  ]
+
 view : Model -> Svg Msg
 view model =
   let
+    ( width, height ) = model.dimensions
+    ( mouse_x, mouse_y ) = model.mouseCoords
     permit_zoom = onMouseScroll Zoom
     permit_pan =
       [ onMouseMove MouseMove
       , cursor <|
           -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
-          case ( 1 + round (xPanAt model (Tuple.first model.mouseCoords)), 1 + round (yPanAt model (Tuple.second model.mouseCoords)) ) of
+          case ( 1 + round (xPanAt width mouse_x), 1 + round (yPanAt height mouse_y) ) of
             ( 2, 2 ) -> CursorSEResize
             ( 0, 2 ) -> CursorSWResize
             ( 2, 0 ) -> CursorNEResize
@@ -2551,146 +2600,111 @@ view model =
         Nothing ->
           permit_click :: permit_zoom :: permit_pan
   in
-  svg
-    ([ viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
-    , Mouse.onOver (\_ -> SetMouseOver)
-    , Mouse.onOut (\_ -> SetMouseOut)
-    ] ++ interactivity)
-    [ -- this stuff is in the background.
-      viewUndoRedoVisualisation model
-    , g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-      [ transform [ matrixFromZoom model.dimensions model.pan model.zoom model.mouseCoords ]
+    svg
+      ([ viewBox 0 0 width height
+      , Mouse.onOver (\_ -> SetMouseOver)
+      , Mouse.onOut (\_ -> SetMouseOut)
+      ] ++ interactivity)
+      [ -- this stuff is in the background.
+        viewUndoRedoVisualisation model
+      , viewMainSvgContent model -- this is the "main" interactive frame, which will be zoomed, panned, etc.
       , case model.currentOperation of
-          Just (Dragging _) ->
-            -- disable pointer-events.
-            -- This is to stop elements from getting in the way of
-            -- registering mouse-movement.
-            pointerEvents "none"
-          _ ->
-            class []
-      ]
-      [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
-      , Graph.edges model.userGraph.graph
-        |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
-        |> List.map
-          (viewLink
-            model
-            ( Maybe.map executing_edges model.execution
-              |> Maybe.withDefault Dict.empty))
-        |> g [ class [ "links" ] ]
-      , Graph.nodes model.userGraph.graph
-        |> List.map (viewNode model)
-        |> g [ class [ "nodes" ] ]
-      , case model.currentOperation of
-          Just (ModifyingGraph _ { source }) ->
-            Graph.get source model.userGraph.graph
-            |> Maybe.map (viewPhantom model)
+          Just (ModifyingGraph via { dest }) ->
+            case dest of
+              NoDestination ->
+                g [] []
+              _ ->
+                viewSvgTransitionChooser via model
+          Just (AlteringConnection via _) ->
+            viewSvgTransitionChooser via model
+          Just (Splitting { to_split, left, right }) ->
+            Graph.get to_split model.userGraph.graph
+            |> Maybe.map (\_ -> -- ignore node, we have all the info already
+              viewSvgTransitionSplitter left right model
+            )
             |> Maybe.withDefault (g [] [])
-          _ ->
+          Nothing ->
             g [] []
+          Just (Dragging _) ->
+            g [] []
+      ,
+        let
+          bottomMsg message =
+            text_
+              [ Px.x 15
+              , Px.y <| height - 15
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorStart
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text message ]
+        in
+        g
+          [ ]
+          [ --rect
+              -- [ x (Tuple.first model.dimensions - 121)
+              -- , y (Tuple.second model.dimensions - 30)
+              -- , Px.width 120
+              -- , Px.height 30
+              -- , stroke <| Paint <| Color.black
+              -- , strokeWidth 1
+              -- , Px.rx 5
+              -- , Px.ry 5
+              -- ]
+              -- []
+            text_
+              [ x <| width - 15
+              , y <| height - 15
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorEnd
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text (" 🔍 " ++ String.fromInt (round <| model.zoom * 100) ++ "%") ]
+          , text_
+              [ x <| width - 90
+              , y <| height - 15
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorEnd
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text (" 🧭 " ++ panToString model.pan) ]
+          , case model.currentOperation of
+              Just (ModifyingGraph _ { dest }) ->
+                case dest of
+                  NoDestination ->
+                    bottomMsg "Press «Esc» to cancel link creation"
+                  ExistingNode _ ->
+                    bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
+                  NewNode _ ->
+                    bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+              Just (AlteringConnection _ _) ->
+                bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+              Just (Splitting _) ->
+                g [] []
+              _ ->
+                case model.undoBuffer of
+                  [] ->
+                    g [] []
+                  _ ->
+                    bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
+          ]
       ]
-    , case model.currentOperation of
-        Just (ModifyingGraph via { dest }) ->
-          case dest of
-            NoDestination ->
-              g [] []
-            _ ->
-              viewSvgTransitionChooser via model
-        Just (AlteringConnection via _) ->
-          viewSvgTransitionChooser via model
-        Just (Splitting { to_split, left, right }) ->
-          Graph.get to_split model.userGraph.graph
-          |> Maybe.map (\_ -> -- ignore node, we have all the info already
-            viewSvgTransitionSplitter left right model
-          )
-          |> Maybe.withDefault (g [] [])
-        Nothing ->
-          g [] []
-        Just (Dragging _) ->
-          g [] []
-    ,
-      let
-        bottomMsg message =
-          text_
-            [ Px.x 15
-            , Px.y (Tuple.second model.dimensions - 15)
-            , fill <| Paint <| Color.black
-            , fontFamily ["sans-serif"]
-            , fontSize 14
-            , textAnchor AnchorStart
-            , alignmentBaseline AlignmentCentral
-            , dominantBaseline DominantBaselineCentral
-            , pointerEvents "none"
-            ]
-            [ text message ]
-      in
-      g
-        [ ]
-        [ --rect
-            -- [ x (Tuple.first model.dimensions - 121)
-            -- , y (Tuple.second model.dimensions - 30)
-            -- , Px.width 120
-            -- , Px.height 30
-            -- , stroke <| Paint <| Color.black
-            -- , strokeWidth 1
-            -- , Px.rx 5
-            -- , Px.ry 5
-            -- ]
-            -- []
-          text_
-            [ x (Tuple.first model.dimensions - 15)
-            , y (Tuple.second model.dimensions - 15)
-            , fill <| Paint <| Color.black
-            , fontFamily ["sans-serif"]
-            , fontSize 14
-            , textAnchor AnchorEnd
-            , alignmentBaseline AlignmentCentral
-            , dominantBaseline DominantBaselineCentral
-            , pointerEvents "none"
-            ]
-            [ text (" 🔍 " ++ String.fromInt (round <| Tuple.first model.zoom * 100) ++ "%") ]
-        , text_
-            [ x (Tuple.first model.dimensions - 90)
-            , y (Tuple.second model.dimensions - 15)
-            , fill <| Paint <| Color.black
-            , fontFamily ["sans-serif"]
-            , fontSize 14
-            , textAnchor AnchorEnd
-            , alignmentBaseline AlignmentCentral
-            , dominantBaseline DominantBaselineCentral
-            , pointerEvents "none"
-            ]
-            [ text (" 🧭 " ++ panToString model.pan) ]
-        , case model.currentOperation of
-            Just (ModifyingGraph _ { dest }) ->
-              case dest of
-                NoDestination ->
-                  bottomMsg "Press «Esc» to cancel link creation"
-                ExistingNode _ ->
-                  bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
-                NewNode _ ->
-                  bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            Just (AlteringConnection _ _) ->
-              bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            Just (Splitting _) ->
-              g [] []
-            _ ->
-              case model.undoBuffer of
-                [] ->
-                  g [] []
-                _ ->
-                  bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
-        ]
-    ]
 
-onMouseScroll : (Float -> (Float, Float) -> msg) -> Html.Attribute msg
+onMouseScroll : (Float -> msg) -> Html.Attribute msg
 onMouseScroll msg =
-  HE.on "wheel" <|
-    D.map3
-      (\x y deltaY -> msg deltaY (x, y))
-      (D.field "offsetX" D.float)
-      (D.field "offsetY" D.float)
-      (D.field "deltaY" D.float)
+  HE.on "wheel" <| D.map msg (D.field "deltaY" D.float)
 
 onMouseMove : (Float -> Float -> msg) -> Html.Attribute msg
 onMouseMove msg =
@@ -2716,7 +2730,9 @@ debugModel_ message model =
       case model.currentOperation of
         Just o -> "(" ++ Debug.toString o ++ ")"
         Nothing -> "(no op)"
-    graph = Automata.Debugging.printAutomatonGraph model.userGraph
+    graph =
+      Automata.Debugging.printAutomatonGraph
+        model.userGraph
     screen =
       "(" ++ String.fromFloat (Tuple.first model.dimensions) ++ ", " ++ String.fromFloat (Tuple.second model.dimensions) ++
       " : " ++ panToString model.pan ++ ")"

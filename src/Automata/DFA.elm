@@ -1327,7 +1327,7 @@ minimiseNodesByCombiningTransitions g_ =
     -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
 
-toAutomatonGraph : DFARecord a b -> AutomatonGraph b
+-- toAutomatonGraph : DFARecord a b -> AutomatonGraph b
 toAutomatonGraph dfa =
   let
     stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toAutomatonGraph] State-list"

@@ -22,6 +22,7 @@ import Dict exposing (Dict)
 import Ports
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
+import Automata.Debugging
 import Automata.Data as Data
 import Graph exposing (NodeId, Edge)
 import TypedSvg exposing
@@ -82,6 +83,7 @@ type BottomPanel
 
 type alias GraphPackage =
   { model : FDG.Model
+  , dimensions : ( Float, Float )
   , description : Maybe String
   , uuid : Uuid.Uuid
   , created : Time.Posix -- for ordering
@@ -142,6 +144,12 @@ encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
     [ ("model", DFA.serializeAutomatonGraph pkg.model.userGraph)
+    , ("dimensions",
+        E.object
+          [ ("w", E.float <| Tuple.first pkg.model.dimensions)
+          , ("h", E.float <| Tuple.second pkg.model.dimensions)
+          ]
+      )
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
     , ("uuid", Uuid.encode pkg.uuid)
     , ("created", E.int (Time.posixToMillis pkg.created))
@@ -149,21 +157,28 @@ encodeGraphPackage pkg =
     , ("currentTestKey", E.string pkg.currentTestKey)
     ]
 
-decodeGraphPackage : (Float, Float) -> D.Decoder GraphPackage
-decodeGraphPackage (w, h) =
-  D.field "model"
-    (D.map
-      (FDG.automatonGraphToModel (w, h))
-      DFA.deserializeAutomatonGraph
-    )
+decodeGraphPackage : D.Decoder GraphPackage
+decodeGraphPackage =
+  D.map2
+    (\w h -> (w, h))
+    (D.at ["dimensions", "w"] D.float)
+    (D.at ["dimensions", "h"] D.float)
   |> D.andThen
-    (\fdg ->
-      D.map5 (GraphPackage fdg)
-        (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
-        (D.field "uuid" Uuid.decoder)
-        (D.field "created" <| D.map Time.millisToPosix D.int)
-        (D.field "currentTestKey" D.string)
-        (D.field "tests" <| D.dict (decodeTest fdg.userGraph))
+    (\dimensions ->
+      D.field "model"
+        (D.map
+          (FDG.automatonGraphToModel dimensions)
+          DFA.deserializeAutomatonGraph
+        )
+      |> D.andThen
+        (\fdg ->
+          D.map5 (GraphPackage fdg dimensions)
+            (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
+            (D.field "uuid" Uuid.decoder)
+            (D.field "created" <| D.map Time.millisToPosix D.int)
+            (D.field "currentTestKey" D.string)
+            (D.field "tests" <| D.dict (decodeTest fdg.userGraph))
+        )
     )
 
 decodeFlags : D.Decoder Flags
@@ -177,12 +192,13 @@ decodeFlags =
         (D.field "initialSeed" D.int)
         (D.field "extendedSeeds" <| D.list D.int)
         (D.field "startTime" <| D.map Time.millisToPosix D.int)
-        (D.field "packages" <| D.list (decodeGraphPackage (w, h)))
+        (D.field "packages" <| D.list decodeGraphPackage)
     )
 
 createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> (Float, Float) -> GraphPackage
 createNewPackage uuid testUuid currentTime dimensions = -- this is the width & height of the panel
   { model = FDG.init dimensions
+  , dimensions = dimensions
   , description = Nothing
   , uuid = uuid
   , created = currentTime
@@ -211,7 +227,10 @@ init flags =
             decoded.startTime
             (initialRightTopWidth, initialRightTopHeight)
       , packages =
-          decoded.packages |> List.map (\v -> ( Uuid.toString v.uuid, v )) |> Dict.fromList
+          decoded.packages
+          |> List.map (\v -> Automata.Debugging.debugEntityGraph "Loaded" v.model.userGraph |> \_ -> v)
+          |> List.map (\v -> ( Uuid.toString v.uuid, v ))
+          |> Dict.fromList
       , mainPanelDimensions =
           ( decoded.width - 4 -- 2px border all around main-container
           , decoded.height - 4 -- same border as above
@@ -580,7 +599,22 @@ update msg model =
         Nothing ->
           ( model, Cmd.none )
         Just pkg ->
-          ( { model | currentPackage = pkg }, Cmd.none )
+          let
+            -- the packaged graphs are stored with their original
+            -- coordinates. This lets me faithfully recreate what
+            -- they looked like, at a zoomed scale.
+            -- However, when I put them up for editing, I need to
+            -- resize for the ACTUAL dimensions that are currently
+            -- prevailing on-screen.
+            -- And that is what this next bit of code is for.
+            (_, _, newGraphPackage) =
+              calculateRightTopDimensions
+                { model | currentPackage = pkg }
+          in
+            ( { model | currentPackage = newGraphPackage
+              }
+            , Cmd.none
+            )
 
     DeletePackage uuid ->
       let
@@ -868,219 +902,35 @@ viewIcon icon iconText extra model =
 
 
 
-
-
-
-
-
-
-
-viewNode : FDG.Model -> Graph.Node Entity -> Svg msg
-viewNode { userGraph } { label, id } =
-  let
-    graphNode =
-      Graph.get id userGraph.graph
-    thisNodeIsTerminal =
-      Maybe.map Automata.Data.isTerminalNode graphNode
-      |> Maybe.withDefault False
-  in
-    g
-      [ class [ "state-node" ]
-      , TypedSvg.Attributes.pointerEvents "none"
-      ]
-      [ circle
-          [ r FDG.nodeRadius
-          , strokeWidth 2
-          , cx label.x
-          , cy label.y
-          , class
-              ( if id == userGraph.root then [ "start" ] else [] )
-          ]
-          []
-       ,  if thisNodeIsTerminal && id == userGraph.root then
-            text_
-              [ x <| label.x
-              , y <| (label.y + 1)
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , fontWeight FontWeightNormal
-              , textAnchor AnchorMiddle
-              , alignmentBaseline AlignmentBaseline
-              , dominantBaseline DominantBaselineMiddle
-              , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              ]
-              [ TypedSvg.Core.text "💥"
-              ]
-          else if thisNodeIsTerminal then
-            text_
-              [ x <| label.x
-              , y <| (label.y + 1)
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , fontWeight FontWeightNormal
-              , textAnchor AnchorMiddle
-              , alignmentBaseline AlignmentBaseline
-              , dominantBaseline DominantBaselineMiddle
-              , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              ]
-              [ TypedSvg.Core.text "🎯"
-              ]
-          else if id == userGraph.root then
-            text_
-              [ x <| label.x
-              , y <| (label.y + 1)
-              , fontFamily ["sans-serif"]
-              , fontSize 12
-              , fontWeight FontWeightNormal
-              , textAnchor AnchorMiddle
-              , alignmentBaseline AlignmentBaseline
-              , dominantBaseline DominantBaselineMiddle
-              , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              , fill <| Paint <| Color.grey
-              ]
-              [ TypedSvg.Core.text "⭐"
-              ]
-          else
-            g [] []
-      ]
-
-viewLink : FDG.Model -> Edge Connection -> Svg Msg
-viewLink ({ userGraph } as model) edge =
-  let
-    source =
-      Maybe.withDefault (FDG.entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
-
-    target =
-      Maybe.withDefault (FDG.entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
-    cardinality = FDG.identifyCardinality model edge
-    positioning =
-      FDG.path_between source target cardinality 7 7
-    font_size = 16.0 -- this is the default, if not otherwise set
-    labelText = FDG.connectionToSvgText edge.label
-  in
-    g
-      [ TypedSvg.Attributes.pointerEvents "none"
-      ]
-      [
-        path
-          [ d positioning.pathString
-          , noFill
-          , class [ "link", "background" ]
-          ]
-          []
-      , path
-          [ strokeWidth 3
-          , stroke <| Paint <| FDG.paletteColors.edge
-          , d positioning.pathString
-          , markerEnd "url(#arrowhead)"
-          , noFill
-          , class [ "link" ]
-          ]
-          []
-      , text_
-          [ x <| positioning.transition_coordinates.x
-          , y <| positioning.transition_coordinates.y
-          , fontFamily ["sans-serif"]
-          , fontSize font_size
-          , fontWeight FontWeightNormal
-          , textAnchor AnchorMiddle
-          , alignmentBaseline AlignmentCentral
-          , Html.Attributes.attribute "paint-order" "stroke fill markers"
-          , class [ "link" ]
-          ]
-          labelText
-      ]
-
-recenterSvg : (Float, Float) -> AutomatonGraph Entity -> AutomatonGraph Entity
-recenterSvg (width, height) g =
-  let
-    -- need to recenter the x and y values, relative to
-    -- the center of the graph.  The center of the graph
-    -- should be in the new center.
-    -- How do I find this "center"? Well, I'll draw a
-    -- bounding-box around the max-min nodes and use the
-    -- center of that as my center.
-    nodes = Graph.nodes g.graph
-    ((min_x, max_x), (min_y, max_y)) =
-      List.foldl
-        (\node state ->
-          case state of
-            Nothing ->
-              Just ((node.label.x, node.label.x), (node.label.y, node.label.y))
-            Just ((minX, maxX), (minY, maxY)) ->
-              Just
-                ( ( min minX (node.label.x)
-                  , max maxX (node.label.x)
-                  )
-                , ( min minY (node.label.y)
-                  , max maxY (node.label.y)
-                  )
-                )
-        )
-        Nothing
-        nodes
-      |> Maybe.withDefault ((0.0, 0.0), (0.0, 0.0))
-      -- should just never happen; we always have at least one node!
-    center_x = (max_x + min_x) / 2
-    center_y = (max_y + min_y) / 2
-    -- now, everything is going to be recorded relative to the center.
-    -- so, for each node, we need to subtract the center.
-    nodeXYs : Dict NodeId (Int, Int)
-    nodeXYs =
-      List.foldl
-        (\node state ->
-          Dict.insert node.id
-            ( round <| node.label.x - center_x + (width / 2)
-            , round <| node.label.y - center_y + (height / 2)
-            )
-            state
-        )
-        Dict.empty
-        nodes
-  in
-    { g
-      | graph =
-          Graph.mapNodes
-            (\node ->
-              case Dict.get node.id nodeXYs of
-                Nothing ->
-                  node
-                Just (x, y) ->
-                  { node | x = toFloat x, y = toFloat y }
-            )
-            g.graph
-    }
-
-viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
+viewComputationThumbnail : Float -> GraphPackage -> Svg FDG.Msg
 viewComputationThumbnail width { model, uuid, description } =
   -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
   let
     height = width / sqrt 5 -- some kind of aspect ratio
-    g = recenterSvg (width, height) model.userGraph
-    m = { model | userGraph = g }
   in
     svg
-      [ viewBox 0 0 width height
+      [ TypedSvg.Attributes.viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
+        --TypedSvg.Attributes.viewBox 0 0 width height
+      , TypedSvg.Attributes.pointerEvents "none"
       ]
-      [ TypedSvg.g
-          [ transform [ Matrix 1 0 0 1 0 0 ] -- in case I need it later for some reason…
+      [ Automata.Debugging.debugEntityGraph "Thumbnail" model.userGraph |> \_ ->
+        FDG.viewMainSvgContent
+          { model
+            | dimensions = (width, height)
+            , zoom = 3.0
+            , pan = model.dimensions
+            , mouseCoords = (0, 0)
+            , currentOperation = Nothing
+          }
+      , TypedSvg.g
+          [ TypedSvg.Attributes.transform [ TypedSvg.Types.Matrix 9 0 0 9 0 0 ]
           ]
-          [ defs [] [ FDG.arrowheadMarker, FDG.phantomArrowheadMarker ]
-          , Graph.edges g.graph
-            |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
-            |> List.map (viewLink m)
-            |> TypedSvg.g [ class [ "links" ] ]
-          , Graph.nodes g.graph
-            |> List.map (viewNode m)
-            |> TypedSvg.g [ class [ "nodes" ] ]
-          , TypedSvg.g
-              []
-              [ FDG.viewGraphReference uuid 0 0
-              , Maybe.map (\d -> TypedSvg.title [] [ TypedSvg.Core.text d ]) description
-                |> Maybe.withDefault (TypedSvg.g [] [])
-              ]
+          [ FDG.viewGraphReference uuid 0 0
+          , Maybe.map (\d -> TypedSvg.title [] [ TypedSvg.Core.text d ]) description
+            |> Maybe.withDefault (TypedSvg.g [] [])
           ]
       ]
+    
 
 viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
@@ -1126,7 +976,7 @@ viewPackageItem model package =
         HA.title "Apply or cancel the pending changes before selecting another package."
     ]
     [ description
-    , Html.Styled.fromUnstyled <| displaySvg
+    , Html.Styled.fromUnstyled <| Html.map ForceDirectedMsg displaySvg
     , div
         [ HA.css
             [ Css.position Css.absolute

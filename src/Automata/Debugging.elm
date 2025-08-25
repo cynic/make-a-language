@@ -7,14 +7,32 @@ debug_log s x =
   Debug.log s x
   -- x
 
-debugGraph : String -> Graph (StateData a) Connection -> Graph (StateData a) Connection
+debugGraph : String -> Graph a Connection -> Graph a Connection
 debugGraph txt graph =
-  debug_log txt (graphToString graph)
+  debug_log txt (graphToString (\_ -> Nothing) graph)
   |> \_ -> graph
 
 printAutomatonGraph : AutomatonGraph a -> String
 printAutomatonGraph g =
-    ("📍" ++ String.fromInt g.root ++ " " ++ graphToString g.graph)
+  ("📍" ++ String.fromInt g.root ++ " " ++ graphToString (\_ -> Nothing) g.graph)
+
+printEntityGraph : AutomatonGraph Entity -> String
+printEntityGraph g =
+  let
+    roundABit x = toFloat (round (x * 100.0)) / 100.0 
+    printNode : Entity -> Maybe String
+    printNode n =
+      Just <|
+        "#" ++ String.fromInt n.id ++
+        "@" ++ String.fromFloat (roundABit n.x) ++
+        "," ++ String.fromFloat (roundABit n.y)
+  in
+    ("📍" ++ String.fromInt g.root ++ " " ++ graphToString printNode g.graph)
+
+debugEntityGraph : String -> AutomatonGraph Entity -> AutomatonGraph Entity
+debugEntityGraph txt g =
+  debug_log txt (printEntityGraph g)
+  |> \_ -> g
 
 debugAutomatonGraph : String -> AutomatonGraph a -> AutomatonGraph a
 debugAutomatonGraph txt g =
