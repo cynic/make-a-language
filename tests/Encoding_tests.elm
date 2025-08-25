@@ -2,8 +2,8 @@ module Encoding_tests exposing (..)
 import Test exposing (..)
 import Utility exposing (..)
 import Expect
-import Automata.Data exposing (mkAG_input, NodeEffect(..), AcceptVia(..), Entity)
-import Automata.DFA exposing (serializeAutomatonGraph, mkConn, deserializeAutomatonGraph)
+import Automata.Data exposing (NodeEffect(..), AcceptVia(..), Entity)
+import Automata.DFA exposing (serializeAutomatonGraph, deserializeAutomatonGraph)
 import Graph exposing (Node, Edge)
 import Json.Decode as D
 import Automata.Debugging exposing (debugAutomatonGraph)
@@ -28,7 +28,7 @@ czech root nodes edges =
   let
     v =
       mkAutomatonGraph nodes edges root
-      |> debugAutomatonGraph "[czech] AutomatonGraph under test"
+      |> debugAutomatonGraph "[czech] AutomatonGraph test"
   in
     case serializeAutomatonGraph v |> D.decodeValue deserializeAutomatonGraph of
       Ok v_ -> Expect.equal v v_

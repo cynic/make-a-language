@@ -7,17 +7,17 @@ import Result.Extra
 import List.Extra as List
 import AutoSet
 
-numNodes : AutomatonGraph a -> Int
+numNodes : AutomatonGraph -> Int
 numNodes dawg =
   Graph.size dawg.graph
 
-numEdges : AutomatonGraph a -> Int
+numEdges : AutomatonGraph -> Int
 numEdges dawg =
   List.length <| Graph.edges dawg.graph
 
 {-| Explores incrementally in a breadth-first manner, returning a
     LIST of (node-found, new-string, is-final) -}
-explore : Node a -> String -> Graph (StateData a) Connection -> List (Node a, String, Bool)
+explore : Node -> String -> Graph Entity Connection -> List (Node, String, Bool)
 explore node s graph =
   node.outgoing
   |> IntDict.map
@@ -36,7 +36,7 @@ explore node s graph =
   |> List.filterMap identity
   |> List.concat
 
-processStack : List (Node a, String, Bool) -> List String -> Graph (StateData a) Connection -> List String
+processStack : List (Node, String, Bool) -> List String -> Graph Entity Connection -> List String
 processStack stack acc graph =
   case stack of
     [] -> acc
@@ -46,7 +46,7 @@ processStack stack acc graph =
         (if f then s::acc else acc)
         graph
 
-recognizedWordsFrom : AutomatonGraph a -> Node a -> Result String (List String)
+recognizedWordsFrom : AutomatonGraph -> Node -> Result String (List String)
 recognizedWordsFrom dawg root =
   case Graph.checkAcyclic dawg.graph of
     Err edge ->
@@ -55,7 +55,7 @@ recognizedWordsFrom dawg root =
       Ok <| processStack [(root, "", False)] [] dawg.graph
 
 -- Entry point function
-recognizedWords : AutomatonGraph a -> List String
+recognizedWords : AutomatonGraph -> List String
 recognizedWords dawg =
   Maybe.map
     (recognizedWordsFrom dawg >> Result.map List.sort >> Result.mapError identity)
@@ -63,7 +63,7 @@ recognizedWords dawg =
   |> Maybe.withDefault (Err "Couldn't find the root in the DAWG…!  What on earth is going on?!")
   |> Result.Extra.extract (\e -> [e])
 
-exploreDeterministic : Node a -> Graph (StateData a) Connection -> Result String (List (Node a))
+exploreDeterministic : Node -> Graph Entity Connection -> Result String (List Node)
 exploreDeterministic node graph =
   let
     foundNonDeterminism =
@@ -106,7 +106,7 @@ exploreDeterministic node graph =
         ++ String.fromInt node.node.id
         ++ " are not deterministic.")
 
-findNonDeterministic : List (Node a) -> Graph (StateData a) Connection -> Maybe String
+findNonDeterministic : List Node -> Graph Entity Connection -> Maybe String
 findNonDeterministic stack graph =
   case stack of
     [] -> Nothing
@@ -119,7 +119,7 @@ findNonDeterministic stack graph =
             graph
 
 {-| Same as recognizedWords, but also verifies that the graph is deterministic. -}
-verifiedRecognizedWords : AutomatonGraph a -> List String
+verifiedRecognizedWords : AutomatonGraph -> List String
 verifiedRecognizedWords dfa =
   let
     nonDeterministic =
@@ -144,7 +144,7 @@ type alias HopcroftRecord =
   , p : List Partition -- partitions
   }
 
-minimality : AutomatonGraph a -> List (List Int)
+minimality : AutomatonGraph -> List (List Int)
 minimality dawg =
   -- This is Hopcroft's Algorithm
   let

@@ -1,21 +1,156 @@
-module Utility exposing (ag, dfa, mkDFA_input, ag_equals, dfa_equals)
+module Utility exposing
+  ( ag, dfa, mkDFA_input, ag_equals, dfa_equals, dummyEntity
+  , mkConn
+  )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
-import Automata.Data exposing (AutomatonGraph, DFARecord, printableAcceptCondition)
-import Automata.DFA exposing (mkAutomatonGraph, mkDFA)
+import Automata.Data exposing
+  ( AutomatonGraph, DFARecord, printableAcceptCondition, Entity
+  , Connection, AcceptVia(..), transitionToString, NodeEffect(..)
+  )
+import Uuid
 import Expect
 import Set
-import Graph exposing (NodeId)
+import Graph exposing (NodeId, Edge)
 import IntDict
 import List
-import Automata.Data exposing (DFARecord)
+import Automata.Data exposing (DFARecord, acceptConditionToString)
 import Automata.Debugging exposing (debugAutomatonGraph)
-import List.Extra
+import List.Extra as List
 import IntDict exposing (IntDict)
 import Set exposing (Set)
 import AutoSet
 import AutoDict
 import Maybe.Extra
+import Dict
+
+dummyEntity : Int -> Entity
+dummyEntity id =
+  { effect = NoEffect
+  , x = 0
+  , y = 0
+  , vx = 0
+  , vy = 0
+  , id = id
+  }
+
+-- for use from CLI
+mkDFA : List (NodeId, Char, NodeId) -> List NodeId -> DFARecord {}
+mkDFA transitions finals =
+  { states =
+      List.concatMap
+        (\(a, _, b) ->
+          [ (a, dummyEntity a)
+          , (b, dummyEntity b)
+          ]
+        )
+        transitions
+      |> IntDict.fromList
+  , transition_function =
+      List.foldl
+        (\(a, ch, b) state ->
+          IntDict.update a
+            (\possible ->
+              case possible of
+                Nothing -> Just <| AutoDict.singleton acceptConditionToString (ViaCharacter ch) b
+                Just existing ->
+                  -- overwrite if we have a collision.
+                  Debug.log "Overwriting (new, existing)" ((a, ch, b), (a, existing)) |> \_ ->
+                  Just <| AutoDict.insert (ViaCharacter ch) b existing
+            )
+            state
+        )
+        IntDict.empty
+        transitions
+  , start =
+      -- the start is taken as the very first state encountered
+      case transitions of
+        (s, _, _)::_ -> s
+        _ -> 0
+  , finals = Set.fromList finals
+  }
+
+mkConn : String -> Connection
+mkConn s =
+  let
+    uuid_helper list finality acc =
+      case List.splitAt 36 list of
+        (uuidChars, rest) ->
+          if List.length uuidChars /= 36 then
+            acc -- just end it here.
+          else
+            case Uuid.fromString (String.fromList uuidChars) of
+              Just uuid ->
+                helper rest (AutoSet.insert (ViaGraphReference uuid, finality) acc)
+              Nothing ->
+                acc -- not a valid UUIDv4; end it here.
+    
+    helper xs acc =
+      case xs of
+        '+'::'+'::rest ->
+          helper rest (AutoSet.insert (ViaCharacter '+', 0) acc |> AutoSet.remove (ViaCharacter '+', 1))
+        '+'::rest ->
+          uuid_helper rest 0 acc
+        '!'::'+'::'+'::rest ->
+          helper rest (AutoSet.insert (ViaCharacter '+', 1) acc |> AutoSet.remove (ViaCharacter '+', 0))
+        '!'::'+'::rest ->
+          uuid_helper rest 1 acc
+        '!'::ch::rest ->
+          helper rest (AutoSet.insert (ViaCharacter ch, 1) acc |> AutoSet.remove (ViaCharacter ch, 0))
+        ch::rest ->
+          helper rest (AutoSet.insert (ViaCharacter ch, 0) acc |> AutoSet.remove (ViaCharacter ch, 1))
+        [] -> acc
+  in
+    helper (String.toList s) (AutoSet.empty transitionToString)
+
+mkAutomatonGraphWithValues : (NodeId -> Entity) -> List (NodeId, String, NodeId) -> AutomatonGraph
+mkAutomatonGraphWithValues valueFunction ts =
+  let
+    edges =
+      List.foldl
+        (\(src, s, dest) acc ->
+          Dict.update (src, dest)
+            (\item ->
+              case item of
+                Nothing ->
+                  Just (mkConn s)
+                Just existing ->
+                  Just <| AutoSet.union existing (mkConn s)
+            )
+            acc
+        )
+        Dict.empty
+        ts
+      |> Dict.toList
+      |> List.map (\((src, dest), conn) -> Edge src dest conn)
+    nodes : List (Graph.Node Entity)
+    nodes =
+      List.foldl
+        (\(src, _, dest) acc -> Set.insert src acc |> Set.insert dest)
+        Set.empty
+        ts
+      |> Set.toList
+      |> List.map (\x -> { id = x, label = valueFunction x })
+  in
+    case nodes of
+      [] ->
+        { graph = Graph.fromNodesAndEdges [{ id = 0, label = valueFunction 0}] []
+        , root = 0
+        , maxId = 0
+        }
+      _ ->
+        { graph =
+            Graph.fromNodesAndEdges nodes edges
+        , root =
+            case ts of
+              (src, _, _)::_ -> src
+              _ -> 0
+        , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
+        }
+
+mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph
+mkAutomatonGraph =
+  mkAutomatonGraphWithValues (dummyEntity)
 
 -- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))
@@ -65,16 +200,16 @@ mkDFA_input input =
     Err _ ->
       []
 
-ag : String -> AutomatonGraph {}
+ag : String -> AutomatonGraph
 ag = mkAutomatonGraph << Automata.Data.mkAG_input
 
-dfa : String -> List Int -> Automata.Data.DFARecord {} {}
+dfa : String -> List Int -> Automata.Data.DFARecord {}
 dfa s f = mkDFA_input s |> \xs -> mkDFA xs f
 
 type PairResult a
   = One a
   | Many (List a)
-ag_equals : AutomatonGraph a -> AutomatonGraph a -> Expect.Expectation
+ag_equals : AutomatonGraph -> AutomatonGraph -> Expect.Expectation
 ag_equals g_expected g_actual =
   let
     getEdges g =
@@ -121,7 +256,7 @@ ag_equals g_expected g_actual =
             (ys_edges, ys_rest) =
               List.partition (\(from, _, _) -> from == checking_a) ys
             gather vs =
-              List.Extra.gatherEqualsBy (\(_, _, c) -> c) vs
+              List.gatherEqualsBy (\(_, _, c) -> c) vs
               |> List.map
                 (\(a, a_s) ->
                   case a_s of
@@ -186,7 +321,7 @@ ag_equals g_expected g_actual =
                   else
                     let
                       allCombinations =
-                        List.Extra.cartesianProduct [ List.Extra.permutations es, List.Extra.permutations a_s ]
+                        List.cartesianProduct [ List.permutations es, List.permutations a_s ]
                         |> List.filterMap
                           (\l ->
                             case l of
@@ -202,7 +337,7 @@ ag_equals g_expected g_actual =
                             List.foldl
                               (\(eDatum, aDatum) -> update_mapping eDatum aDatum)
                               (Ok m)
-                              (List.Extra.zip ex ax)
+                              (List.zip ex ax)
                             -- now we have an "Ok updated" if this worked, or an Err if it didn't.
                             |> Result.toMaybe
                             -- If it worked, we'll now have a Just.
@@ -237,12 +372,12 @@ ag_equals g_expected g_actual =
       Nothing ->
         Expect.pass
 
-dfa_equals : DFARecord a b -> DFARecord a b -> Expect.Expectation
+dfa_equals : DFARecord a -> DFARecord a -> Expect.Expectation
 dfa_equals dfa1 dfa2 =
   let
     -- Build a canonical representation of the DFA structure starting from the start state
     -- This creates a mapping from original state IDs to canonical state IDs based on structure
-    buildCanonicalMapping : DFARecord a b -> Result String (IntDict Int, Set Int)
+    buildCanonicalMapping : DFARecord a -> Result String (IntDict Int, Set Int)
     buildCanonicalMapping dfaRecord =
       let
         -- BFS traversal to assign canonical state IDs based on reachability from start
@@ -287,7 +422,7 @@ dfa_equals dfa1 dfa2 =
       traverse [dfaRecord.start] IntDict.empty 0
     
     -- Convert DFA to canonical form using the mapping
-    toCanonicalForm : DFARecord a b -> Result String (List (Int, String, Int), Int, Set Int)
+    toCanonicalForm : DFARecord a -> Result String (List (Int, String, Int), Int, Set Int)
     toCanonicalForm dfaRecord =
       buildCanonicalMapping dfaRecord
       |> Result.andThen (\(mapping, canonicalFinals) ->

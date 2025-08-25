@@ -64,16 +64,11 @@ type NodeEffect
   = NoEffect
   | SomeEffectFigureItOutLater
 
-type alias StateData extending =
-  { extending |
-    effect : NodeEffect
-  }
-
 type alias Transition = (AcceptVia, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
 type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
-type alias Node a = NodeContext (StateData a) Connection -- a Node itself does not carry any data, hence the ()
-type alias AutomatonGraph a =
-  { graph : Graph (StateData a) Connection -- finally, the complete graph.
+type alias Node = NodeContext Entity Connection -- a Node itself does not carry any data, hence the ()
+type alias AutomatonGraph =
+  { graph : Graph Entity Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
   , maxId : NodeId
   , root : NodeId
@@ -88,16 +83,16 @@ Now with that said, nodes without outgoing edges SHOULD be terminal nodes.
 And everything is connected.  And outgoing nodes have deterministic transitions.
 -}
 
-type alias DFARecord extending label =
+type alias DFARecord extending =
   { extending |
-    states : IntDict (StateData label)
+    states : IntDict Entity
   , transition_function: IntDict (AutoDict.Dict String AcceptVia NodeId) -- NodeId × Char → NodeId
   , start : NodeId
   , finals : Set NodeId
   }
 
-type alias ExtDFA label =
-  { states : IntDict (StateData label)
+type alias ExtDFA =
+  { states : IntDict Entity
   , transition_function: IntDict (AutoDict.Dict String AcceptVia NodeId)
   , start : NodeId
   , finals : Set NodeId
@@ -134,14 +129,14 @@ type alias Test =
   , result : ExecutionResult
   }
 
-empty : AutomatonGraph a
+empty : AutomatonGraph
 empty =
   { graph = Graph.empty
   , maxId = 0
   , root = 0
   }
 
-graphToAutomatonGraph : NodeId -> Graph (StateData a) Connection -> AutomatonGraph a
+graphToAutomatonGraph : NodeId -> Graph Entity Connection -> AutomatonGraph
 graphToAutomatonGraph start graph =
   { graph = graph
   , maxId = Graph.nodeIdRange graph |> Maybe.map Tuple.second |> Maybe.withDefault 0
@@ -229,7 +224,7 @@ graphToString printer graph =
 
 
 
--- Parser for converting string representation to AutomatonGraph transitions
+-- Parser for converting string representation to AutomatonGraph
 -- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]
 transitionsParser : Parser (List (Int, String, Int))
 transitionsParser =

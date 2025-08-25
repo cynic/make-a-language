@@ -22,24 +22,14 @@ import Dict exposing (Dict)
 import Ports
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
-import Automata.Debugging
-import Automata.Data as Data
-import Graph exposing (NodeId, Edge)
-import TypedSvg exposing
-  (circle, g, svg, text_, path, defs)
-import TypedSvg.Attributes exposing
-  ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
-  , textAnchor, id, d, markerEnd, dominantBaseline, transform, noFill)
-import TypedSvg.Attributes.InPx exposing
-  ( cx, cy, r, strokeWidth, x, y, height, fontSize, width)
+import TypedSvg exposing (g, svg)
+import TypedSvg.Attributes
+import TypedSvg.Attributes.InPx exposing (x, y, height, width)
 import TypedSvg.Core exposing (Svg)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
-import Color
-import Html.Attributes
 import Html.Styled exposing (h2, h4)
-import AutoSet
 
 {-
 Quality / technology requirements:
@@ -127,7 +117,7 @@ encodeTest { input, expectation } =
     -- do not store the result. It must be recalculated each time.
     ]
 
-decodeTest : AutomatonGraph a -> D.Decoder Test
+decodeTest : AutomatonGraph -> D.Decoder Test
 decodeTest g =
   D.map2
     (\input expectation ->
@@ -228,7 +218,7 @@ init flags =
             (initialRightTopWidth, initialRightTopHeight)
       , packages =
           decoded.packages
-          |> List.map (\v -> Automata.Debugging.debugEntityGraph "Loaded" v.model.userGraph |> \_ -> v)
+          -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
           |> List.map (\v -> ( Uuid.toString v.uuid, v ))
           |> Dict.fromList
       , mainPanelDimensions =
@@ -286,7 +276,7 @@ type Msg
 -}
 persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
-    Ports.saveToStorage << encodeGraphPackage
+  Ports.saveToStorage << encodeGraphPackage
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -336,7 +326,12 @@ update msg model =
                 NotReady
           , packages =
               if isCommitlike then
-                Dict.insert (Uuid.toString updatedPackage.uuid) updatedPackage model.packages
+                -- we call automatonGraphToModel because it runs the simulation to completion,
+                -- which in turn organizes our nodes properly on the screen.
+                { updatedPackage
+                  | model = FDG.automatonGraphToModel model.rightTopPanelDimensions newFdModel.userGraph
+                }
+                |> \pkg -> Dict.insert (Uuid.toString pkg.uuid) pkg model.packages
               else
                 model.packages
         }
@@ -913,7 +908,7 @@ viewComputationThumbnail width { model, uuid, description } =
         --TypedSvg.Attributes.viewBox 0 0 width height
       , TypedSvg.Attributes.pointerEvents "none"
       ]
-      [ Automata.Debugging.debugEntityGraph "Thumbnail" model.userGraph |> \_ ->
+      [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
         FDG.viewMainSvgContent
           { model
             | dimensions = (width, height)
@@ -1376,7 +1371,7 @@ viewTransition transition classList =
       span
         [ HA.classList classList ]
         [ text <| String.fromChar ch ]
-    ViaGraphReference ref ->
+    ViaGraphReference _ ->
       span
         [ HA.classList classList ]
         [ text "🔗" ]

@@ -1,16 +1,14 @@
 module AutomatonGraph_tests exposing (..)
-import Expect
 import Test exposing (..)
-import Automata.DFA exposing (fromAutomatonGraph)
-import Automata.DFA exposing (splitTerminalAndNonTerminal)
-import Automata.DFA exposing (nfaToDFA)
-import Automata.DFA exposing (fromAutomatonGraphHelper)
-import Automata.DFA exposing (minimiseNodesByCombiningTransitions)
+import Automata.DFA exposing
+  ( fromAutomatonGraph, splitTerminalAndNonTerminal, nfaToDFA
+  , fromAutomatonGraphHelper, minimiseNodesByCombiningTransitions
+  )
 import Utility exposing (ag, dfa, ag_equals, dfa_equals)
 
 toAG_suite : Test
 toAG_suite =
-  describe "DFA→AutomatonGraph conversion"
+  describe "DFA→AutomatonGraph"
     [ let
         mk s =
           minimiseNodesByCombiningTransitions (ag s)
@@ -249,9 +247,9 @@ fromAG_suite =
       [ describe "edge cases"
         [ test "with one node" <|
           \_ ->
-            Expect.equal
+            dfa_equals
               (dfa "0-a-5 2-c-3 4-a-5 4-b-2 4-k-4 5-b-2 5-c-3 5-k-4" [3])
-              (fromAutomatonGraph <| ag "0-a-1 0-a-2 1-b-2 1-k-1 1-k-0 2-!c-3")
+              (fromAutomatonGraph (ag "0-a-1 0-a-2 1-b-2 1-k-1 1-k-0 2-!c-3"))
         ]
       ]
     ]

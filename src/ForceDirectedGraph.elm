@@ -81,7 +81,7 @@ type AcceptChoice
 
 type alias Model =
   { currentOperation : Maybe UserOperation
-  , userGraph : AutomatonGraph Entity
+  , userGraph : AutomatonGraph
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
@@ -91,8 +91,8 @@ type alias Model =
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
   , mouseIsHere : Bool
-  , undoBuffer : List (AutomatonGraph Entity)
-  , redoBuffer : List (AutomatonGraph Entity)
+  , undoBuffer : List (AutomatonGraph)
+  , redoBuffer : List (AutomatonGraph)
   , disconnectedNodes : Set NodeId
   , execution : Maybe ExecutionResult
   }
@@ -130,7 +130,7 @@ entity index v =
 -- END :: Copied & adapted from Force.elm
 ------------------------------------
 
-initializeNode : Node a -> NodeContext Entity Connection
+initializeNode : Node -> NodeContext Entity Connection
 initializeNode ctx =
   { node =
     { label =
@@ -176,7 +176,7 @@ makeLinkForces graph =
     graph
   |> Force.customLinks 3
 
-basicForces : AutomatonGraph Entity -> Int -> List (Force.Force NodeId)
+basicForces : AutomatonGraph -> Int -> List (Force.Force NodeId)
 basicForces g height =
   [ makeLinkForces g.graph -- the springs
   , Force.manyBodyStrength -2000.0 (List.map .id <| Graph.nodes g.graph) -- the repulsion
@@ -200,23 +200,24 @@ basicForces g height =
         (Graph.nodes g.graph)
   ]  
 
-makeSimulation : (Float, Float) -> AutomatonGraph Entity -> Force.State NodeId
+makeSimulation : (Float, Float) -> AutomatonGraph -> Force.State NodeId
 makeSimulation (w, h) g =
   Force.simulation
     (basicForces g (round h) ++ viewportForces (w, h) g.graph)
 
-toForceGraph : AutomatonGraph a -> AutomatonGraph Entity
+toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
   { graph = Graph.mapContexts initializeNode g.graph
   , root = g.root
   , maxId = g.maxId
   }
 
-automatonGraphToModel : (Float, Float) -> AutomatonGraph Entity -> Model
+automatonGraphToModel : (Float, Float) -> AutomatonGraph -> Model
 automatonGraphToModel (w, h) g =
   let
     forceGraph =
-      toForceGraph (g |> Automata.Debugging.debugEntityGraph "Graph as received")
+      toForceGraph (g {- |> Automata.Debugging.debugAutomatonGraph "Graph as received" -})
+      -- |> Automata.Debugging.debugAutomatonGraph "After toForceGraph"
     basic = basicForces forceGraph (round h)
     viewport = viewportForces (w, h) forceGraph.graph
     nodes = Graph.nodes forceGraph.graph
@@ -229,6 +230,7 @@ automatonGraphToModel (w, h) g =
     resultingGraph =
       -- no changes to node-ids are made; only the spatial positions change.
       { forceGraph | graph = updateGraphWithList forceGraph.graph shiftedNodes }
+      -- |> Automata.Debugging.debugAutomatonGraph "After sim"
   in
     { currentOperation = Nothing
     , userGraph = resultingGraph
@@ -314,7 +316,7 @@ yPanAt height y =
   else
     0
 
-identifyDisconnectedNodes : AutomatonGraph a -> Set NodeId
+identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
 identifyDisconnectedNodes g =
   Graph.mapContexts
     (\ctx ->
@@ -396,7 +398,7 @@ createPathTo target waypoints accept graph start =
 
 If the path is invalid for the graph context, then return Nothing.
 -}
-followPathTo : RequestedChangePath -> AutomatonGraph a -> Maybe NodeId
+followPathTo : RequestedChangePath -> AutomatonGraph -> Maybe NodeId
 followPathTo path g =
   let
     followPath : NodeId -> RequestedChangePath -> Maybe NodeId
@@ -469,7 +471,7 @@ path_for_removal graph start source destination =
 
 {-| Create a DFA consisting of all paths ending at the specified transition.
 -}
-wordsEndingAt : NodeId -> AutomatonGraph a -> AutomatonGraph a
+wordsEndingAt : NodeId -> AutomatonGraph -> AutomatonGraph
 wordsEndingAt nodeId g =
   let
     nodes =
@@ -487,7 +489,7 @@ wordsEndingAt nodeId g =
   in
     graphToAutomatonGraph g.root induced
 
-newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_graphchange src x y conn g =
   { g
     | graph =
@@ -508,7 +510,7 @@ newnode_graphchange src x y conn g =
   }
   -- |> debugAutomatonGraph "[create_union_graphchange] updated graph"
 
-updateLink_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+updateLink_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph -> AutomatonGraph
 updateLink_graphchange src dest conn g =
   { g
     | graph =
@@ -526,7 +528,7 @@ updateLink_graphchange src dest conn g =
   }
   -- |> debugAutomatonGraph "[create_update_graphchange] updated graph"
 
-removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph Entity -> AutomatonGraph Entity
+removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
 removeLink_graphchange src dest g =
   { g
     | graph =
@@ -551,7 +553,7 @@ removeLink_graphchange src dest g =
   }
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
-splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> AutomatonGraph Entity
+splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> AutomatonGraph
 splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
   let
     (recursive, nonRecursive) =
@@ -847,7 +849,7 @@ update msg model =
     Confirm ->
       -- What am I confirming?
       let
-        commit_change : AutomatonGraph Entity -> Model -> Model
+        commit_change : AutomatonGraph -> Model -> Model
         commit_change updatedGraph model_ =
           let
             basic =
@@ -1173,7 +1175,7 @@ subscriptions model =
         , Browser.Events.onAnimationFrame (always Tick)
         ]
 
-applyChangesToGraph : AutomatonGraph Entity -> AutomatonGraph Entity
+applyChangesToGraph : AutomatonGraph -> AutomatonGraph
 applyChangesToGraph g =
     { g
       | graph =

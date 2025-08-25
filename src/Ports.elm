@@ -18,7 +18,7 @@ of these computations must be the current one.  Initially, that is
 a "newly created" computation and the code for this is already in
 the `init` function of Main.elm.  All the remaining computations
 should be displayed in the "Computations" panel panel as a column
-of SVG images; one can see how to convert an `AutomatonGraph a`
+of SVG images; one can see how to convert an `AutomatonGraph`
 into an SVG value by studying the `view` function in
 ForceDirectedGraph.elm.
 

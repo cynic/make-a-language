@@ -8,10 +8,69 @@ import Automata.Verification as D
 import List.Extra as List
 import Automata.DFA
 import Automata.DFA exposing (toAutomatonGraph)
+import IntDict
+import Set
+import AutoDict
+import Utility
 
 -- nodesAndWords : D.AutomatonGraph -> (Int, List String)
 -- nodesAndWords d =
 --   (D.numNodes d, D.verifiedRecognizedWords d)
+
+{-| Create a DFA that accepts exactly one string. -}
+add_string_to_dfa : String -> Maybe (D.DFARecord {})
+add_string_to_dfa string =
+  if String.isEmpty string then
+    Nothing
+  else
+    Just -- <| debugDFA_ ("Creating single-string DFA for '" ++ string ++ "'") <|
+      -- If this is a n-character string, then we will want n+1 states
+      { states =
+          List.range 0 (String.length string)
+          |> List.map (\i -> (i, Utility.dummyEntity i))
+          |> IntDict.fromList
+      , start = 0
+      , finals = Set.singleton (String.length string)
+      , transition_function =
+          IntDict.fromList
+            ( case String.toList string of
+                [] ->
+                  []
+                [ch] ->
+                  List.singleton
+                    ( 0
+                    , AutoDict.singleton D.acceptConditionToString (D.ViaCharacter ch) 1
+                    )
+                xs ->
+                  List.foldl
+                    (\ch (acc, nodeId) ->
+                      ( (nodeId, AutoDict.singleton D.acceptConditionToString (D.ViaCharacter ch) (nodeId + 1)) :: acc
+                      , nodeId + 1 ))
+                    ( [], 0 )
+                    xs
+                  |> Tuple.first
+            )
+      }
+
+addString : String -> Maybe (D.DFARecord {}) -> Maybe (D.DFARecord {})
+addString string maybe_dfa =
+  let
+    string_dfa = add_string_to_dfa string
+  in
+    case ( maybe_dfa, string_dfa ) of
+      ( Nothing, _ ) ->
+        string_dfa
+      ( _, Nothing ) ->
+        maybe_dfa
+      ( Just dfa, Just s ) ->
+        Just (Automata.DFA.union s dfa {- |> debugDFA_ ("after adding '" ++ string ++ "'") -})
+
+fromWords : List String -> D.DFARecord {}
+fromWords =
+  List.foldl addString Nothing
+  >> Maybe.withDefault (Automata.DFA.empty (Utility.dummyEntity 0))
+  -- >> Maybe.map toGraph
+  -- >> Maybe.withDefault Automata.Data.empty
 
 czech : List (List String) -> List String -> Expect.Expectation
 czech l expectedRecognized =
@@ -22,7 +81,7 @@ czech l expectedRecognized =
       let
         dfa =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
-          Automata.DFA.fromWords x
+          fromWords x
         minimality = D.minimality (toAutomatonGraph dfa)
         recognized = D.verifiedRecognizedWords (toAutomatonGraph dfa)
       in

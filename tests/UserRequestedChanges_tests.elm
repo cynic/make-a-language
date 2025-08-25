@@ -1,13 +1,12 @@
 module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
-import Utility exposing (ag_equals)
+import Utility exposing (ag_equals, mkConn)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import Graph exposing (NodeId)
 import Automata.Data exposing (AutomatonGraph, Entity, mkAG_input)
 import Set
 import ForceDirectedGraph exposing (Msg(..))
-import Automata.DFA exposing (mkConn)
 import Automata.Data exposing (Connection, NodeEffect(..))
 import Automata.Debugging exposing (debugAutomatonGraph)
 import ForceDirectedGraph exposing (updateLink_graphchange)
@@ -40,7 +39,7 @@ So, I'm basically going to try to work around that by expanding
 things inline until I get something that works.
 -}
 
-ag : String -> AutomatonGraph Entity
+ag : String -> AutomatonGraph
 ag s_ =
   let
     ts = mkAG_input s_
@@ -87,7 +86,7 @@ ag s_ =
         }
 
 -- very thin convenience wrapper to get rid of the "x" and "y" components
-newnode_change : NodeId -> Connection -> AutomatonGraph Entity -> AutomatonGraph Entity
+newnode_change : NodeId -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_change src conn g =
   ForceDirectedGraph.newnode_graphchange src 0 0 conn g
 
@@ -115,12 +114,12 @@ backend for processing at the **END** of the whole process (i.e. during applyCha
 Before that, we are working exclusively and only on the user-graph, where any changes
 that we make are simply accepted verbatim and no node-ids are changed at any point.
 -}
-check_multi : String -> List (AutomatonGraph Entity -> AutomatonGraph Entity) -> String -> Expect.Expectation
+check_multi : String -> List (AutomatonGraph -> AutomatonGraph) -> String -> Expect.Expectation
 check_multi s_start changes s_expected =
   let
     start = ag s_start
     expected = ag s_expected
-    check_multi_helper : List (AutomatonGraph Entity -> AutomatonGraph Entity) -> Int -> AutomatonGraph Entity -> Expect.Expectation
+    check_multi_helper : List (AutomatonGraph -> AutomatonGraph) -> Int -> AutomatonGraph -> Expect.Expectation
     check_multi_helper remaining idx acc =
       case remaining of
         [] -> Expect.fail "No changes were specified in the test."

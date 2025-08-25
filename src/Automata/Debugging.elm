@@ -12,29 +12,19 @@ debugGraph txt graph =
   debug_log txt (graphToString (\_ -> Nothing) graph)
   |> \_ -> graph
 
-printAutomatonGraph : AutomatonGraph a -> String
+printAutomatonGraph : AutomatonGraph -> String
 printAutomatonGraph g =
-  ("📍" ++ String.fromInt g.root ++ " " ++ graphToString (\_ -> Nothing) g.graph)
-
-printEntityGraph : AutomatonGraph Entity -> String
-printEntityGraph g =
   let
     roundABit x = toFloat (round (x * 100.0)) / 100.0 
     printNode : Entity -> Maybe String
     printNode n =
       Just <|
-        "#" ++ String.fromInt n.id ++
         "@" ++ String.fromFloat (roundABit n.x) ++
         "," ++ String.fromFloat (roundABit n.y)
   in
     ("📍" ++ String.fromInt g.root ++ " " ++ graphToString printNode g.graph)
 
-debugEntityGraph : String -> AutomatonGraph Entity -> AutomatonGraph Entity
-debugEntityGraph txt g =
-  debug_log txt (printEntityGraph g)
-  |> \_ -> g
-
-debugAutomatonGraph : String -> AutomatonGraph a -> AutomatonGraph a
+debugAutomatonGraph : String -> AutomatonGraph -> AutomatonGraph
 debugAutomatonGraph txt g =
   debug_log txt (printAutomatonGraph g)
   |> \_ -> g
