@@ -37,6 +37,8 @@ import Maybe.Extra as Maybe
 import Automata.Debugging
 import Uuid
 
+type alias Model = FDG_Model
+
 type Msg
   = DragStart NodeId
   | DragEnd
@@ -69,33 +71,6 @@ type Msg
 
 -- For zooming, I take the approach set out at https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
-type UserOperation
-  = Splitting Split -- split a node into two, so I can work on the parts separately
-  | Dragging NodeId -- move a node around (visually)
-  | ModifyingGraph AcceptChoice GraphModification -- add a new link + node / new link between existing nodes
-  | AlteringConnection AcceptChoice ConnectionAlteration
-
-type AcceptChoice
-  = ChooseCharacter
-  | ChooseGraphReference
-
-type alias Model =
-  { currentOperation : Maybe UserOperation
-  , userGraph : AutomatonGraph
-  , simulation : Force.State NodeId
-  , dimensions : (Float, Float) -- (w,h) of svg element
-  , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
-  , viewportForces : List (Force.Force NodeId)
-  , specificForces : IntDict.IntDict (List (Force.Force NodeId))
-  , zoom : Float -- zoom-factor
-  , pan : (Float, Float) -- panning offset, x and y
-  , mouseCoords : ( Float, Float )
-  , mouseIsHere : Bool
-  , undoBuffer : List (AutomatonGraph)
-  , redoBuffer : List (AutomatonGraph)
-  , disconnectedNodes : Set NodeId
-  , execution : Maybe ExecutionResult
-  }
 
 {-| The buffer from the edges within which panning occurs -}
 panBuffer : Float
@@ -1216,17 +1191,23 @@ textChar ch =
 
 transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
 transitionToTextSpan (via, finality) otherClasses =
-  tspan
-    [ class <|
-        (if finality == 0 then "nonfinal" else "final")
-        :: otherClasses via
-    ]
-    [ case via of
-        ViaCharacter ch ->
-          text <| textChar ch
-        ViaGraphReference ref ->
-          text "🔗"
-    ]
+  case via of
+    ViaCharacter ch ->
+      tspan
+        [ class <|
+            (if finality == 0 then "nonfinal" else "final")
+            :: otherClasses via
+        ]
+        [ text <| textChar ch ]
+    ViaGraphReference ref ->
+      tspan
+        [ class <|
+            (if finality == 0 then "nonfinal" else "final")
+            :: otherClasses via
+        ]
+        [ text "🔗"
+        , title [] [ text <| Uuid.toString ref ]
+        ]
 
 connectionToSvgText : Connection -> List (Svg msg)
 connectionToSvgText =
@@ -2528,6 +2509,35 @@ viewMainSvgContent model =
       _ ->
         g [] []
   ]
+
+viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
+viewComputationThumbnail width { model, uuid, description } =
+  -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
+  let
+    height = width / sqrt 5 -- some kind of aspect ratio
+  in
+    svg
+      [ TypedSvg.Attributes.viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
+        --TypedSvg.Attributes.viewBox 0 0 width height
+      , TypedSvg.Attributes.pointerEvents "none"
+      ]
+      [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
+        viewMainSvgContent
+          { model
+            | dimensions = (width, height)
+            , zoom = 3.0
+            , pan = model.dimensions
+            , mouseCoords = (0, 0)
+            , currentOperation = Nothing
+          }
+      , TypedSvg.g
+          [ TypedSvg.Attributes.transform [ TypedSvg.Types.Matrix 9 0 0 9 0 0 ]
+          ]
+          [ viewGraphReference uuid 0 0
+          , Maybe.map (\d -> TypedSvg.title [] [ TypedSvg.Core.text d ]) description
+            |> Maybe.withDefault (TypedSvg.g [] [])
+          ]
+      ]
 
 view : Model -> Svg Msg
 view model =

@@ -1,5 +1,4 @@
 module Main exposing (..)
-
 import Browser
 import Browser.Events as BE
 import Html.Styled exposing
@@ -18,14 +17,12 @@ import Platform.Cmd as Cmd
 import Uuid
 import Random.Pcg.Extended as Random
 import Time
-import Dict exposing (Dict)
+import Dict
 import Ports
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
-import TypedSvg exposing (g, svg)
-import TypedSvg.Attributes
+import TypedSvg exposing (g)
 import TypedSvg.Attributes.InPx exposing (x, y, height, width)
-import TypedSvg.Core exposing (Svg)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
@@ -41,6 +38,33 @@ Quality / technology requirements:
    explain why that is the case.
 -}
 
+type Msg
+  = ForceDirectedMsg FDG.Msg
+  | OnResize (Float, Float)
+  | SetMouseOver Bool
+  | ClickIcon LeftPanelIcon
+  | StartDraggingHorizontalSplitter
+  | StartDraggingVerticalSplitter
+  | StopDragging
+  | MouseMove Float Float
+  | ToggleBottomPanel
+  | UpdateTestPanelContent String TestExpectation
+  | UpdateDescriptionPanelContent String
+  | UpdateRightTopDimensions Float Float
+  | RunExecution
+  | ResetExecution
+  | StepThroughExecution
+  | SelectBottomPanel BottomPanel
+  | Seconded Time.Posix
+  | CreateNewPackage
+  | SelectPackage Uuid.Uuid
+  | DeletePackage Uuid.Uuid
+  | SelectTest String
+  | DeleteTest String
+  | CreateNewTest
+
+type alias Model = Main_Model
+
 -- MAIN
 
 main : Program E.Value Model Msg
@@ -51,63 +75,6 @@ main =
     , update = update
     , subscriptions = subscriptions
     }
-
--- MODEL
-
-type LeftPanelIcon
-  = ComputationsIcon
-  | SearchIcon
-  | GitIcon
-  | TestsIcon
-  | ExtensionsIcon
-
-type ExecutionState
-  = Ready
-  | NotReady
-  | ExecutionComplete
-  | StepThrough
-
-type BottomPanel
-  = AddTestPanel
-  | EditDescriptionPanel
-
-type alias GraphPackage =
-  { model : FDG.Model
-  , dimensions : ( Float, Float )
-  , description : Maybe String
-  , uuid : Uuid.Uuid
-  , created : Time.Posix -- for ordering
-  , currentTestKey : String
-  , tests : Dict String Test
-  }
-
-type alias Model =
-  { currentPackage : GraphPackage
-  , packages : Dict String GraphPackage
-  , mainPanelDimensions : ( Float, Float )
-  , leftPanelOpen : Bool
-  , selectedIcon : Maybe LeftPanelIcon
-  , leftPanelWidth : Float
-  , rightBottomPanelOpen : Bool
-  , rightBottomPanelHeight : Float
-  , rightTopPanelDimensions : ( Float, Float )
-  , isDraggingHorizontalSplitter : Bool
-  , isDraggingVerticalSplitter : Bool
-  , executionState : ExecutionState
-  , selectedBottomPanel : BottomPanel
-  , uuidSeed : Random.Seed
-  , currentTime : Time.Posix
-  }
-
-type alias Flags =
-  { width : Float
-  , height : Float
-  , initialSeed : Int
-  , extendedSeeds : List Int
-  , startTime : Time.Posix
-  , packages : List GraphPackage
-  }
-
 
 encodeTest : Test -> E.Value
 encodeTest { input, expectation } =
@@ -233,7 +200,7 @@ init flags =
       , rightTopPanelDimensions = ( initialRightTopWidth, initialRightTopHeight )
       , isDraggingHorizontalSplitter = False
       , isDraggingVerticalSplitter = False
-      , executionState = Ready
+      , executionStage = Ready
       , selectedBottomPanel = AddTestPanel
       , uuidSeed = newSeed2
       , currentTime = decoded.startTime
@@ -242,31 +209,6 @@ init flags =
     )
 
 -- UPDATE
-
-type Msg
-  = ForceDirectedMsg FDG.Msg
-  | OnResize (Float, Float)
-  | SetMouseOver Bool
-  | ClickIcon LeftPanelIcon
-  | StartDraggingHorizontalSplitter
-  | StartDraggingVerticalSplitter
-  | StopDragging
-  | MouseMove Float Float
-  | ToggleBottomPanel
-  | UpdateTestPanelContent String TestExpectation
-  | UpdateDescriptionPanelContent String
-  | UpdateRightTopDimensions Float Float
-  | RunExecution
-  | ResetExecution
-  | StepThroughExecution
-  | SelectBottomPanel BottomPanel
-  | Seconded Time.Posix
-  | CreateNewPackage
-  | SelectPackage Uuid.Uuid
-  | DeletePackage Uuid.Uuid
-  | SelectTest String
-  | DeleteTest String
-  | CreateNewTest
 
 {-| Note: EVERYWHERE that I use persistPackage, I should ALSO
     update the `packages` dictionary!
@@ -316,12 +258,12 @@ update msg model =
       in
       ( { model
           | currentPackage = updatedPackage
-          , executionState =
+          , executionStage =
               if FDG.canExecute newFdModel then
-                if model.executionState == NotReady then
+                if model.executionStage == NotReady then
                   Ready
                 else
-                  model.executionState
+                  model.executionStage
               else
                 NotReady
           , packages =
@@ -510,7 +452,7 @@ update msg model =
       -- assume that when I get this message, the precondition of
       -- a 'Ready' state has already been met.
       ( { model 
-        | executionState = Ready
+        | executionStage = Ready
         , currentPackage =
             fdg_update model
               ( FDG.Load
@@ -526,7 +468,7 @@ update msg model =
 
     ResetExecution ->
       ( { model 
-        | executionState = Ready
+        | executionStage = Ready
         , currentPackage = fdg_update model FDG.Stop
         }
       , Cmd.none
@@ -535,7 +477,7 @@ update msg model =
     StepThroughExecution ->
       let
         newFdModel =
-          if model.executionState /= StepThrough then
+          if model.executionStage /= StepThrough then
             -- this is the first click of stepping, so do a load first.
             fdg_update model
               ( FDG.Load
@@ -548,10 +490,10 @@ update msg model =
             fdg_update model FDG.Step
       in
       ( { model 
-        | executionState =
+        | executionStage =
             case newFdModel.model.execution of
               Nothing ->
-                model.executionState
+                model.executionStage
               Just (CanContinue _) ->
                 StepThrough
               _ ->
@@ -896,42 +838,13 @@ viewIcon icon iconText extra model =
 
 
 
-
-viewComputationThumbnail : Float -> GraphPackage -> Svg FDG.Msg
-viewComputationThumbnail width { model, uuid, description } =
-  -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
-  let
-    height = width / sqrt 5 -- some kind of aspect ratio
-  in
-    svg
-      [ TypedSvg.Attributes.viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
-        --TypedSvg.Attributes.viewBox 0 0 width height
-      , TypedSvg.Attributes.pointerEvents "none"
-      ]
-      [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
-        FDG.viewMainSvgContent
-          { model
-            | dimensions = (width, height)
-            , zoom = 3.0
-            , pan = model.dimensions
-            , mouseCoords = (0, 0)
-            , currentOperation = Nothing
-          }
-      , TypedSvg.g
-          [ TypedSvg.Attributes.transform [ TypedSvg.Types.Matrix 9 0 0 9 0 0 ]
-          ]
-          [ FDG.viewGraphReference uuid 0 0
-          , Maybe.map (\d -> TypedSvg.title [] [ TypedSvg.Core.text d ]) description
-            |> Maybe.withDefault (TypedSvg.g [] [])
-          ]
-      ]
     
 
 viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
   let
     displaySvg =
-      viewComputationThumbnail model.leftPanelWidth package
+      FDG.viewComputationThumbnail model.leftPanelWidth package
     description =
       case package.description of
         Nothing ->
@@ -1252,33 +1165,33 @@ viewRightBottomPanel model =
 viewTestPanelButtons : Model -> List (Html Msg)
 viewTestPanelButtons model =
   [ div
-    [ HA.class (getActionButtonClass model.executionState RunExecution)
+    [ HA.class (getActionButtonClass model.executionStage RunExecution)
     , onClick RunExecution
-    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
+    , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
     , HA.title "Run"
     ]
     [ text "▶️" ]
   , div
-    [ HA.class (getActionButtonClass model.executionState ResetExecution)
+    [ HA.class (getActionButtonClass model.executionStage ResetExecution)
     , onClick ResetExecution
-    , HA.disabled (model.executionState == Ready || model.executionState == NotReady)
+    , HA.disabled (model.executionStage == Ready || model.executionStage == NotReady)
     , HA.title "Reset"
     ]
     [ text "⏹️" ]
   , div
-    [ HA.class (getActionButtonClass model.executionState StepThroughExecution)
+    [ HA.class (getActionButtonClass model.executionStage StepThroughExecution)
     , onClick StepThroughExecution
-    , HA.disabled (model.executionState == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
+    , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
     , HA.title "Step-through"
     ]
     [ text "⏭️" ]
   , div
-    [ HA.class (getActionButtonClass model.executionState (DeleteTest model.currentPackage.currentTestKey))
+    [ HA.class (getActionButtonClass model.executionStage (DeleteTest model.currentPackage.currentTestKey))
     , HA.css
         [ Css.marginTop (Css.px 15)
         ]
     , onClick <| DeleteTest model.currentPackage.currentTestKey
-    , HA.disabled (model.executionState == StepThrough)
+    , HA.disabled (model.executionStage == StepThrough)
     , HA.title "Delete test"
     ]
     [ text "🚮" ]
@@ -1455,7 +1368,7 @@ viewAddTestPanelContent model =
         ]
         []
   in
-    case model.executionState of
+    case model.executionStage of
       Ready ->
         div
           [ HA.class "bottom-panel__content"]
@@ -1496,7 +1409,7 @@ viewBottomPanelContent model =
       [ HA.class "bottom-panel__titlebar" ]
       [ div
         [ HA.class "bottom-panel__title" ]
-        [ text (getBottomPanelTitle model.selectedBottomPanel model.executionState) ]
+        [ text (getBottomPanelTitle model.selectedBottomPanel model.executionStage) ]
       , div
         [ HA.class "bottom-panel__tab-buttons" ]
         [ div
@@ -1528,7 +1441,7 @@ viewBottomPanelContent model =
           viewEditDescriptionPanelContent model
     ]
 
-getBottomPanelTitle : BottomPanel -> ExecutionState -> String
+getBottomPanelTitle : BottomPanel -> ExecutionStage -> String
 getBottomPanelTitle panel state =
   case panel of
     AddTestPanel ->
@@ -1540,7 +1453,7 @@ getBottomPanelTitle panel state =
     EditDescriptionPanel ->
       "Describe computation"
 
-getActionButtonClass : ExecutionState -> Msg -> String
+getActionButtonClass : ExecutionStage -> Msg -> String
 getActionButtonClass currentState buttonAction =
   let
     baseClass = "button action-button"
@@ -1555,7 +1468,7 @@ viewStatusBar : Model -> Html Msg
 viewStatusBar model =
   div 
     [ HA.class "status-bar" ]
-    [ span [] [ text (getStatusMessage model.executionState) ]
+    [ span [] [ text (getStatusMessage model.executionStage) ]
     , div 
       [ HA.class "status-bar__section" ]
       [ div
@@ -1573,7 +1486,7 @@ viewStatusBar model =
       [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions)) ]
     ]
 
-getStatusMessage : ExecutionState -> String
+getStatusMessage : ExecutionStage -> String
 getStatusMessage state =
   case state of
     Ready -> "Ready"

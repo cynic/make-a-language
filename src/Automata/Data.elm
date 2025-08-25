@@ -8,9 +8,107 @@ import Parser exposing (Parser, (|=), (|.))
 import Uuid exposing (Uuid)
 import List.Extra
 import Color
+import Dict exposing (Dict)
+import Time
+import Random.Pcg.Extended as Random
+import Force
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
+{-------------------------------------------------------
+  Main.elm
+--------------------------------------------------------}
+
+type LeftPanelIcon
+  = ComputationsIcon
+  | SearchIcon
+  | GitIcon
+  | TestsIcon
+  | ExtensionsIcon
+
+type ExecutionStage
+  = Ready
+  | NotReady
+  | ExecutionComplete
+  | StepThrough
+
+type BottomPanel
+  = AddTestPanel
+  | EditDescriptionPanel
+
+type alias GraphPackage =
+  { model : FDG_Model
+  , dimensions : ( Float, Float )
+  , description : Maybe String
+  , uuid : Uuid.Uuid
+  , created : Time.Posix -- for ordering
+  , currentTestKey : String
+  , tests : Dict String Test
+  }
+
+type alias Main_Model =
+  { currentPackage : GraphPackage
+  , packages : Dict String GraphPackage
+  , mainPanelDimensions : ( Float, Float )
+  , leftPanelOpen : Bool
+  , selectedIcon : Maybe LeftPanelIcon
+  , leftPanelWidth : Float
+  , rightBottomPanelOpen : Bool
+  , rightBottomPanelHeight : Float
+  , rightTopPanelDimensions : ( Float, Float )
+  , isDraggingHorizontalSplitter : Bool
+  , isDraggingVerticalSplitter : Bool
+  , executionStage : ExecutionStage
+  , selectedBottomPanel : BottomPanel
+  , uuidSeed : Random.Seed
+  , currentTime : Time.Posix
+  }
+
+type alias Flags =
+  { width : Float
+  , height : Float
+  , initialSeed : Int
+  , extendedSeeds : List Int
+  , startTime : Time.Posix
+  , packages : List GraphPackage
+  }
+
+
+{-------------------------------------------------------
+  ForceDirectedGraph.elm
+--------------------------------------------------------}
+
+type UserOperation
+  = Splitting Split -- split a node into two, so I can work on the parts separately
+  | Dragging NodeId -- move a node around (visually)
+  | ModifyingGraph AcceptChoice GraphModification -- add a new link + node / new link between existing nodes
+  | AlteringConnection AcceptChoice ConnectionAlteration
+
+type AcceptChoice
+  = ChooseCharacter
+  | ChooseGraphReference
+
+type alias FDG_Model =
+  { currentOperation : Maybe UserOperation
+  , userGraph : AutomatonGraph
+  , simulation : Force.State NodeId
+  , dimensions : (Float, Float) -- (w,h) of svg element
+  , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
+  , viewportForces : List (Force.Force NodeId)
+  , specificForces : IntDict.IntDict (List (Force.Force NodeId))
+  , zoom : Float -- zoom-factor
+  , pan : (Float, Float) -- panning offset, x and y
+  , mouseCoords : ( Float, Float )
+  , mouseIsHere : Bool
+  , undoBuffer : List (AutomatonGraph)
+  , redoBuffer : List (AutomatonGraph)
+  , disconnectedNodes : Set NodeId
+  , execution : Maybe ExecutionResult
+  }
+
+{-------------------------------------------------------
+  Other
+--------------------------------------------------------}
 type alias RequestedChangePath = List Transition -- transitions going from the start to the node.
 
 type LinkDestination
