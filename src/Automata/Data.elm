@@ -12,6 +12,7 @@ import Dict exposing (Dict)
 import Time
 import Random.Pcg.Extended as Random
 import Force
+import TypedSvg.Core exposing (Svg)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -86,11 +87,13 @@ type UserOperation
 
 type AcceptChoice
   = ChooseCharacter
-  | ChooseGraphReference
+  -- the parameter is the thumbnail index to focus on
+  | ChooseGraphReference Int
 
 type alias FDG_Model =
   { currentOperation : Maybe UserOperation
   , userGraph : AutomatonGraph
+  , graphThumbnails : Dict String (Svg ())
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.

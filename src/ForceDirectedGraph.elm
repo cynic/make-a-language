@@ -36,6 +36,9 @@ import Dict exposing (Dict)
 import Maybe.Extra as Maybe
 import Automata.Debugging
 import Uuid
+import Math.Matrix4 exposing (translate)
+import Svg.Attributes
+import Svg
 
 type alias Model = FDG_Model
 
@@ -66,6 +69,8 @@ type Msg
   | Run
   | Step
   | Stop
+  | SwitchToNextComputation
+  | SwitchToPreviousComputation
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
 
@@ -187,8 +192,8 @@ toForceGraph g =
   , maxId = g.maxId
   }
 
-automatonGraphToModel : (Float, Float) -> AutomatonGraph -> Model
-automatonGraphToModel (w, h) g =
+automatonGraphToModel : (Float, Float) -> Dict String (Svg ()) -> AutomatonGraph -> Model
+automatonGraphToModel (w, h) thumbs g =
   let
     forceGraph =
       toForceGraph (g {- |> Automata.Debugging.debugAutomatonGraph "Graph as received" -})
@@ -221,13 +226,15 @@ automatonGraphToModel (w, h) g =
     , undoBuffer = []
     , redoBuffer = []
     , disconnectedNodes = Set.empty
+    , graphThumbnails = thumbs
     , execution = Nothing
     }
 
-init : (Float, Float) -> Model
-init (w, h) =
+init : (Float, Float) -> Dict String (Svg ()) -> Model
+init (w, h) thumbs =
   automatonGraphToModel
     (w, h)
+    thumbs
     (DFA.empty
       { effect = NoEffect
       , x = 0
@@ -989,6 +996,24 @@ update msg model =
           { model | currentOperation = Just <| AlteringConnection newChosen d }
         _ -> model
 
+    SwitchToNextComputation ->
+      case model.currentOperation of
+        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| idx + 1) d }
+        Just (AlteringConnection (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| idx + 1) d }
+        _ ->
+          model
+
+    SwitchToPreviousComputation ->
+      case model.currentOperation of
+        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| idx - 1) d }
+        Just (AlteringConnection (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| idx - 1) d }
+        _ ->
+          model
+
     StartSplit nodeId ->
       Graph.get nodeId model.userGraph.graph
       |> Maybe.map
@@ -1123,11 +1148,11 @@ subscriptions model =
                             D.fail "Not a recognized key combination"
                           _ ->
                             decodeChar
-                      Just (ModifyingGraph ChooseGraphReference _) ->
+                      Just (ModifyingGraph (ChooseGraphReference _) _) ->
                         D.fail "Not choosing characters"
                       Just (AlteringConnection ChooseCharacter _) ->
                         decodeChar
-                      Just (AlteringConnection ChooseGraphReference _) ->
+                      Just (AlteringConnection (ChooseGraphReference _) _) ->
                         D.fail "Not choosing characters"
                       Just (Splitting _) ->
                         decodeChar
@@ -1442,7 +1467,7 @@ viewGraphReference : Uuid.Uuid -> Float -> Float -> Svg a
 viewGraphReference uuid x_ y_ =
   let
     pixels = getPalette uuid
-    pixelSize = 5
+    pixelSize = 4
   in
     g
       []
@@ -2075,39 +2100,171 @@ viewSvgCharacterChooser conn y_offset w =
   in
     ( chooser_svg, my_height )
 
-viewSvgComputationChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
-viewSvgComputationChooser conn y_offset w =
+viewSvgComputationChooser : Int -> AutoSet.Set String Transition -> Float -> Float -> Dict String (Svg ()) -> (Svg Msg, Float)
+viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
   let
-    items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
-    alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
-    numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
-    my_height = transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing
-    gridItemsAndCoordinates =
-      List.foldl
-        (\item (acc, ( col, row )) ->
-          if col + 1 >= items_per_row then
-            ((item, col, row) :: acc, (0, row + 1))
-          else
-            ((item, col, row) :: acc, (col + 1, row))
+    -- this is the width of each thumbnail.
+    -- and it is ALSO the center position in the panel.
+    panelCenter = w / 2
+    thumbnailWidth = w / 2
+    -- and here, confusingly, I use the meanings in both ways ^_^!
+    x_start = panelCenter - (thumbnailWidth / 2)
+    y_start =
+      2 + -- the stroke-width
+      5 + -- the padding (top)
+      10 + -- margin (top)
+      y_offset
+    -- now, one of the thumbnails are going to be in-frame, and others will not be.
+    -- there will be a half-thumbnail to the left and to the right.
+    -- … with a gap between, too, so a bit less then a half.
+    thumbnail_y_mid =
+      y_start + thumbnailHeight thumbnailWidth / 2
+    gap_between = w * 0.05 -- the gap is 5% of the width
+    -- with extra margin at the bottom
+    thumbnailPosition idx =
+      x_start + (toFloat idx * (gap_between + thumbnailWidth))
+    my_height = 4 + 10 + 40 + thumbnailHeight thumbnailWidth
+    keys_and_thumbs =
+      Dict.toList thumbnails
+      |> List.filterMap
+        (\(k, v) ->
+          Maybe.map (\uuid -> (uuid, v)) (Uuid.fromString k)
         )
-        ([], (0, 0))
-        alphabet
-      |> Tuple.first
-    chooser_svg =
+    thumbnail_carousel =
+      g
+        [ transform
+            [ Translate
+                (-1 * (thumbnailPosition focusedIndex - thumbnailWidth/2))
+                0
+            ]
+        , class [ "thumbnail-carousel" ]
+        ]
+        ( List.indexedMap
+            (\i (uuid, thumb) ->
+              g
+                [ transform [ Translate (thumbnailPosition i) y_start ]
+                ]
+                [ -- give it a background
+                  rect
+                    [ x 0
+                    , y 0
+                    , width <| thumbnailWidth
+                    , height <| thumbnailHeight thumbnailWidth
+                    , fill <| Paint <| Color.rgba 1 1 0.941 1
+                    , rx 15
+                    , ry 15
+                    ]
+                    []
+                  -- there is nothing interactable in the thumbnail, so this is
+                  -- really just for getting the types to line up sensibly.
+                , thumb |> Svg.map (\_ -> Tick)
+                , -- cover it with a "top" which is interactable
+                  rect
+                    [ x -5
+                    , y -5
+                    , width <| thumbnailWidth + 10
+                    , height <| thumbnailHeight thumbnailWidth + 10
+                    , fill <| Paint <|
+                        if AutoSet.member (ViaGraphReference uuid, 1) conn then
+                          Color.rgba 1 0.5 0 0.1
+                        else if AutoSet.member (ViaGraphReference uuid, 0) conn then
+                          Color.rgba 1 1 0 0.1
+                        else
+                          Color.rgba 1 1 1 0.1
+                    , rx 15
+                    , ry 15
+                    , strokeWidth 2
+                    , stroke <| Paint <| Color.black
+                    , cursor CursorPointer
+                    , onClick <| ToggleSelectedTransition (ViaGraphReference uuid)
+                    ]
+                    []
+                ]
+            )
+            keys_and_thumbs
+        )
+    with_ui =
       g
         []
-        ( List.map
-            (\(item, col, row) ->
-              viewSingleKey
-                item
-                conn
-                (col, row)
-                y_offset
-            )
-            gridItemsAndCoordinates
-        )
+        [ thumbnail_carousel
+          -- the static UI. Must place this after the thumbnails so
+          -- that it appears on top; and must place it outside of
+          -- the transformed group, so it is relative to the screen.
+          -- move right, if such a thing is possible
+        , if focusedIndex < Dict.size thumbnails - 1 then
+            g
+              []
+              [ rect
+                  [ x <| panelCenter + thumbnailWidth/2 + gap_between + thumbnailWidth/4 - 30
+                  , y <| y_offset + thumbnail_y_mid - 30
+                  , Px.width 60
+                  , Px.height 60
+                  , Px.rx 5
+                  , Px.ry 5
+                  , class [ "transition-chooser-key" ]
+                  , strokeWidth 2
+                  , stroke <| Paint <| Color.white
+                  , onClick SwitchToNextComputation
+                  ]
+                  []
+              , text_
+                  [ x <| panelCenter + thumbnailWidth/2 + gap_between + thumbnailWidth/4
+                  , y <| y_offset + thumbnail_y_mid
+                  , fontSize 30
+                  , rx 15
+                  , ry 15
+                  , strokeWidth 0
+                  , textAnchor AnchorMiddle
+                  , alignmentBaseline AlignmentCentral
+                  , dominantBaseline DominantBaselineMiddle
+                  , pointerEvents "none"
+                  ]
+                  [ text <| "→" ]
+              , title
+                  []
+                  [ text "Next computation" ]
+              ]
+          else
+            g [] []
+        , if focusedIndex > 0 then
+            g
+              []
+              [ rect
+                  [ x <| panelCenter - thumbnailWidth/2 - gap_between - thumbnailWidth/4 - 30
+                  , y <| y_offset + thumbnail_y_mid - 30
+                  , Px.width 60
+                  , Px.height 60
+                  , Px.rx 5
+                  , Px.ry 5
+                  , class [ "transition-chooser-key" ]
+                  , strokeWidth 2
+                  , stroke <| Paint <| Color.white
+                  , onClick SwitchToPreviousComputation
+                  ]
+                  []
+              , text_
+                  [ x <| panelCenter - thumbnailWidth/2 - gap_between - thumbnailWidth/4
+                  , y <| y_offset + thumbnail_y_mid
+                  , fontSize 30
+                  , rx 15
+                  , ry 15
+                  , strokeWidth 0
+                  , textAnchor AnchorMiddle
+                  , alignmentBaseline AlignmentCentral
+                  , dominantBaseline DominantBaselineMiddle
+                  , pointerEvents "none"
+                  ]
+                  [ text <| "←" ]
+              , title
+                  []
+                  [ text "Previous computation" ]
+              ]
+          else
+            g [] []
+        ]
+        
   in
-    ( chooser_svg, my_height )
+    ( with_ui, my_height )
 
 viewSvgTransitionChooser : AcceptChoice -> Model -> Svg Msg
 viewSvgTransitionChooser via model =
@@ -2127,8 +2284,8 @@ viewSvgTransitionChooser via model =
       case via of
         ChooseCharacter ->
           viewSvgCharacterChooser conn category_chooser_space w
-        ChooseGraphReference ->
-          viewSvgComputationChooser conn category_chooser_space w
+        ChooseGraphReference idx ->
+          viewSvgComputationChooser idx conn category_chooser_space w model.graphThumbnails
           -- viewSvgGraphRefChooser conn
     chooserButtonSize = 30
   in
@@ -2173,7 +2330,7 @@ viewSvgTransitionChooser via model =
           [ text <|
               case via of
                 ChooseCharacter -> "Single characters"
-                ChooseGraphReference -> "Computations"
+                ChooseGraphReference _ -> "Computations"
           ]
         ]
       -- choose-next button
@@ -2191,8 +2348,8 @@ viewSvgTransitionChooser via model =
             , stroke <| Paint <| Color.white
             , onClick <| SwitchVia <|
                 case via of
-                  ChooseCharacter -> ChooseGraphReference
-                  ChooseGraphReference -> ChooseCharacter
+                  ChooseCharacter -> ChooseGraphReference 0
+                  ChooseGraphReference _ -> ChooseCharacter
             ]
             []
         , text_
@@ -2222,8 +2379,8 @@ viewSvgTransitionChooser via model =
             , stroke <| Paint <| Color.white
             , onClick <| SwitchVia <|
                 case via of
-                  ChooseCharacter -> ChooseGraphReference
-                  ChooseGraphReference -> ChooseCharacter
+                  ChooseCharacter -> ChooseGraphReference 0
+                  ChooseGraphReference _ -> ChooseCharacter
             ]
             []
         , text_
@@ -2510,33 +2667,58 @@ viewMainSvgContent model =
         g [] []
   ]
 
+{-| Given a width, get the correct height for a thumbnail -}
+thumbnailHeight : Float -> Float
+thumbnailHeight w =
+  -- just fudge some kind of an "appropriate" aspect ratio ;-)!
+  w / sqrt 5
+
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
 viewComputationThumbnail width { model, uuid, description } =
-  -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
   let
-    height = width / sqrt 5 -- some kind of aspect ratio
+    height = thumbnailHeight width
+    ( m_w, m_h ) = model.dimensions
+    inner_pad = 40
+    ( (min_x, max_x), (min_y, max_y) ) =    
+      Graph.fold
+        (\ctx ((xmin, xmax), (ymin, ymax)) ->
+          ( ( min ctx.node.label.x xmin
+            , max ctx.node.label.x xmax
+            )
+          , ( min ctx.node.label.y ymin
+            , max ctx.node.label.y ymax
+            )
+          )
+        )
+        ((m_w, 0), (m_h, 0))
+        model.userGraph.graph
+      |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad*2), (c - inner_pad, d + inner_pad*2))
   in
+    -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
+    -- so, since I can nest a SVG inside a SVG, let me just abuse that a bit…
     svg
-      [ TypedSvg.Attributes.viewBox 0 0 (Tuple.first model.dimensions) (Tuple.second model.dimensions)
-        --TypedSvg.Attributes.viewBox 0 0 width height
-      , TypedSvg.Attributes.pointerEvents "none"
+      [
+        TypedSvg.Attributes.InPx.width width
+      , TypedSvg.Attributes.InPx.height height
       ]
-      [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
-        viewMainSvgContent
-          { model
-            | dimensions = (width, height)
-            , zoom = 3.0
-            , pan = model.dimensions
-            , mouseCoords = (0, 0)
-            , currentOperation = Nothing
-          }
+      [ svg
+        {-
+          As I get in 
+        -}
+        [ TypedSvg.Attributes.viewBox
+            min_x -- x-offset
+            min_y -- y-offset
+            (max_x - min_x) -- width
+            (max_y - min_y) -- height
+          --TypedSvg.Attributes.viewBox 0 0 width height
+        , TypedSvg.Attributes.pointerEvents "none"
+        ]
+        [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
+          viewMainSvgContent model
+        ]
       , TypedSvg.g
-          [ TypedSvg.Attributes.transform [ TypedSvg.Types.Matrix 9 0 0 9 0 0 ]
-          ]
-          [ viewGraphReference uuid 0 0
-          , Maybe.map (\d -> TypedSvg.title [] [ TypedSvg.Core.text d ]) description
-            |> Maybe.withDefault (TypedSvg.g [] [])
-          ]
+          []
+          [ viewGraphReference uuid 0 0 ]
       ]
 
 view : Model -> Svg Msg

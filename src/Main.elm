@@ -27,6 +27,10 @@ import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
 import Html.Styled exposing (h2, h4)
+import AutoSet
+import TypedSvg.Core exposing (Svg)
+import Dict exposing (Dict)
+import Svg
 
 {-
 Quality / technology requirements:
@@ -124,7 +128,9 @@ decodeGraphPackage =
     (\dimensions ->
       D.field "model"
         (D.map
-          (FDG.automatonGraphToModel dimensions)
+          -- If/when it becomes the currentPackage, I will add in
+          -- the appropriate thumbnail list
+          (FDG.automatonGraphToModel dimensions Dict.empty)
           DFA.deserializeAutomatonGraph
         )
       |> D.andThen
@@ -152,9 +158,9 @@ decodeFlags =
         (D.field "packages" <| D.list decodeGraphPackage)
     )
 
-createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> (Float, Float) -> GraphPackage
-createNewPackage uuid testUuid currentTime dimensions = -- this is the width & height of the panel
-  { model = FDG.init dimensions
+createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> Dict String (Svg ()) -> (Float, Float) -> GraphPackage
+createNewPackage uuid testUuid currentTime thumbs dimensions = -- this is the width & height of the panel
+  { model = FDG.init dimensions thumbs
   , dimensions = dimensions
   , description = Nothing
   , uuid = uuid
@@ -162,6 +168,18 @@ createNewPackage uuid testUuid currentTime dimensions = -- this is the width & h
   , currentTestKey = Uuid.toString testUuid
   , tests = Dict.empty
   }
+
+-- this is to generate thumbnails that are then used in ForceDirectedGraph
+-- when one is choosing graph references
+getThumbnails : Float -> Dict String GraphPackage -> Dict String (Svg ())
+getThumbnails w packages =
+  -- the 'w' parameter is the width of the top-right panel
+  Dict.map
+    (\_ v ->
+      FDG.viewComputationThumbnail (w / 2) v
+      |> Svg.map (\_ -> ())
+    )
+    packages
 
 init : E.Value -> (Model, Cmd Msg)
 init flags =
@@ -176,18 +194,20 @@ init flags =
     initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
     (uuid, newSeed) = Random.step Uuid.generator initialSeed
     (uuid2, newSeed2) = Random.step Uuid.generator newSeed
+    packages =
+      decoded.packages
+      -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
+      |> List.map (\v -> ( Uuid.toString v.uuid, v ))
+      |> Dict.fromList
   in
     ( { currentPackage =
           createNewPackage
             uuid
             uuid2
             decoded.startTime
+            (getThumbnails (initialRightTopWidth / 2) packages)
             (initialRightTopWidth, initialRightTopHeight)
-      , packages =
-          decoded.packages
-          -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
-          |> List.map (\v -> ( Uuid.toString v.uuid, v ))
-          |> Dict.fromList
+      , packages = packages
       , mainPanelDimensions =
           ( decoded.width - 4 -- 2px border all around main-container
           , decoded.height - 4 -- same border as above
@@ -271,7 +291,11 @@ update msg model =
                 -- we call automatonGraphToModel because it runs the simulation to completion,
                 -- which in turn organizes our nodes properly on the screen.
                 { updatedPackage
-                  | model = FDG.automatonGraphToModel model.rightTopPanelDimensions newFdModel.userGraph
+                  | model =
+                      FDG.automatonGraphToModel
+                        model.rightTopPanelDimensions
+                        (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
+                        newFdModel.userGraph
                 }
                 |> \pkg -> Dict.insert (Uuid.toString pkg.uuid) pkg model.packages
               else
@@ -525,6 +549,7 @@ update msg model =
                   uuid
                   uuid2
                   model.currentTime
+                  (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
                   model.rightTopPanelDimensions
             , uuidSeed = newSeed2
           }
@@ -547,9 +572,15 @@ update msg model =
             (_, _, newGraphPackage) =
               calculateRightTopDimensions
                 { model | currentPackage = pkg }
+            m = newGraphPackage.model
+            ( w, _ ) = model.rightTopPanelDimensions
+            withPackageList =
+              { newGraphPackage
+                | model =
+                    { m | graphThumbnails = getThumbnails w model.packages }
+                }
           in
-            ( { model | currentPackage = newGraphPackage
-              }
+            ( { model | currentPackage = withPackageList }
             , Cmd.none
             )
 
@@ -557,14 +588,16 @@ update msg model =
       let
         (newUuid, newSeed) = Random.step Uuid.generator model.uuidSeed
         (newUuid2, newSeed2) = Random.step Uuid.generator newSeed
+        newPackages = Dict.remove (Uuid.toString uuid) model.packages
       in
         ( { model
-            | packages = Dict.remove (Uuid.toString uuid) model.packages
+            | packages = newPackages
             , currentPackage =
                 createNewPackage
                   newUuid
                   newUuid2
                   model.currentTime
+                  (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
                   model.rightTopPanelDimensions
             , uuidSeed = newSeed2
           }
@@ -648,28 +681,28 @@ calculateRightTopDimensions model =
         model
         (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
   in
-  Debug.log
-    ( "Dimension calculation"
-    ++"\nApplication area width & height: " ++ Debug.toString (viewportWidth, viewportHeight)
-    ++"\nWidth calculation:"
-    ++"\n   Icon-bar width (excl. 1px right-border): " ++ String.fromFloat iconBarWidth
-    ++"\n   Left-panel width (INCL. 1px right-border + 20px padding on each side): " ++ String.fromFloat leftPanelWidth
-    ++"\n   Left-right splitter width: " ++ String.fromFloat leftRightSplitterWidth
-    ++"\n   Calculation: " ++ String.fromFloat viewportWidth ++ " [total width] "
-    ++" - " ++ String.fromFloat iconBarWidth ++ " [icon-bar width] "
-    ++" - " ++ String.fromFloat leftPanelWidth ++ " [left-panel width] "
-    ++" - " ++ String.fromFloat leftRightSplitterWidth ++ " [left-right splitter width] "
-    ++" - 1 [icon-bar border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopWidth
-    ++"\nHeight calculation:"
-    ++"\n   Status-bar height (excl. 1px top-border): " ++ String.fromFloat statusBarHeight
-    ++"\n   Bottom-panel height (INCL. 1px border on each side): " ++ String.fromFloat bottomPanelHeight
-    ++"\n   Right-top-bottom splitter height: " ++ String.fromFloat rightTopBottomSplitterHeight
-    ++"\n   Calculation: " ++ String.fromFloat viewportHeight ++ " [total height] "
-    ++" - " ++ String.fromFloat statusBarHeight ++ " [status-bar height] "
-    ++" - " ++ String.fromFloat bottomPanelHeight ++ " [bottom-panel height] "
-    ++" - " ++ String.fromFloat rightTopBottomSplitterHeight ++ " [right-top-bottom splitter height] "
-    ++" - 1 [status-bar border] - 1 [bottom-panel border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopHeight
-    ) () |> \_ ->
+  -- Debug.log
+  --   ( "Dimension calculation"
+  --   ++"\nApplication area width & height: " ++ Debug.toString (viewportWidth, viewportHeight)
+  --   ++"\nWidth calculation:"
+  --   ++"\n   Icon-bar width (excl. 1px right-border): " ++ String.fromFloat iconBarWidth
+  --   ++"\n   Left-panel width (INCL. 1px right-border + 20px padding on each side): " ++ String.fromFloat leftPanelWidth
+  --   ++"\n   Left-right splitter width: " ++ String.fromFloat leftRightSplitterWidth
+  --   ++"\n   Calculation: " ++ String.fromFloat viewportWidth ++ " [total width] "
+  --   ++" - " ++ String.fromFloat iconBarWidth ++ " [icon-bar width] "
+  --   ++" - " ++ String.fromFloat leftPanelWidth ++ " [left-panel width] "
+  --   ++" - " ++ String.fromFloat leftRightSplitterWidth ++ " [left-right splitter width] "
+  --   ++" - 1 [icon-bar border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopWidth
+  --   ++"\nHeight calculation:"
+  --   ++"\n   Status-bar height (excl. 1px top-border): " ++ String.fromFloat statusBarHeight
+  --   ++"\n   Bottom-panel height (INCL. 1px border on each side): " ++ String.fromFloat bottomPanelHeight
+  --   ++"\n   Right-top-bottom splitter height: " ++ String.fromFloat rightTopBottomSplitterHeight
+  --   ++"\n   Calculation: " ++ String.fromFloat viewportHeight ++ " [total height] "
+  --   ++" - " ++ String.fromFloat statusBarHeight ++ " [status-bar height] "
+  --   ++" - " ++ String.fromFloat bottomPanelHeight ++ " [bottom-panel height] "
+  --   ++" - " ++ String.fromFloat rightTopBottomSplitterHeight ++ " [right-top-bottom splitter height] "
+  --   ++" - 1 [status-bar border] - 1 [bottom-panel border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopHeight
+  --   ) () |> \_ ->
   ( rightTopWidth, rightTopHeight, newGraph )
 
 -- VIEW

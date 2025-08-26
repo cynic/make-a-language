@@ -471,6 +471,13 @@ path.link {
   pointer-events: none;
 }
 
+.thumbnail-carousel {
+  .transition-chooser-key {
+    transition: all 0.3s ease;
+    fill: var(--dracula-comment);
+  }
+  }
+
 .transition-chooser-key {
   transition: all 0.3s ease;
   fill: var(--dracula-comment);
