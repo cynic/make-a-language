@@ -680,6 +680,13 @@ calculateRightTopDimensions model =
       fdg_update
         model
         (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
+    withUpdatedThumbnails =
+      let
+        m = newGraph.model
+      in
+        { newGraph
+          | model = { m | graphThumbnails = getThumbnails rightTopWidth model.packages }
+        }
   in
   -- Debug.log
   --   ( "Dimension calculation"
@@ -703,7 +710,7 @@ calculateRightTopDimensions model =
   --   ++" - " ++ String.fromFloat rightTopBottomSplitterHeight ++ " [right-top-bottom splitter height] "
   --   ++" - 1 [status-bar border] - 1 [bottom-panel border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopHeight
   --   ) () |> \_ ->
-  ( rightTopWidth, rightTopHeight, newGraph )
+  ( rightTopWidth, rightTopHeight, withUpdatedThumbnails )
 
 -- VIEW
 
