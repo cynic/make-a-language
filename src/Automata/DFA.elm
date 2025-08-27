@@ -1851,10 +1851,11 @@ serializeTransition t =
         [ ("c", E.string <| String.fromChar c)
         , ("_", E.bool <| f == 1)
         ]
-    (ViaGraphReference uuid, f) ->
+    (ViaGraphReference uuid ce, f) ->
       E.object
         [ ("ref", E.string <| Uuid.toString uuid)
         , ("_", E.bool <| f == 1)
+        , ("±", E.string <| computationEffortToString ce)
         ]
 
 serializeEdge : Edge Connection -> E.Value
@@ -1898,7 +1899,7 @@ deserializeEffect =
     , D.field "?" (D.null ()) |> D.map (\_ -> SomeEffectFigureItOutLater)
     ]
 
--- deserializeNode : D.Decoder (Graph.Node Entity)
+deserializeNode : D.Decoder (Graph.Node Entity)
 deserializeNode =
   D.map4
     (\x y i e ->
@@ -1918,6 +1919,17 @@ deserializeNode =
     (D.field "i" <| D.int)
     (D.field "e" <| deserializeEffect)
 
+deserializeComputationEffort : D.Decoder ComputationEffort
+deserializeComputationEffort =
+  D.string
+  |> D.andThen
+    (\s ->
+      case s of
+        "↗" -> D.succeed Greedy
+        "↘" -> D.succeed Lazy
+        _ -> D.fail <| "Could not parse unknown computation-effort string '" ++ s ++ "'"
+    )
+
 deserializeTransition : D.Decoder Transition
 deserializeTransition =
   D.oneOf
@@ -1933,13 +1945,26 @@ deserializeTransition =
             )
         )
         (D.field "_" D.bool)
-    , D.map2
-        (\c f -> (c, if f then 1 else 0))
+    , D.map3
+        (\c f e -> (ViaGraphReference c e, if f then 1 else 0))
         ( D.field "ref" D.string
           |> D.andThen
             (\s ->
               case Uuid.fromString s of
-                Just uuid -> D.map ViaGraphReference (D.succeed uuid)
+                Just uuid -> D.succeed uuid
+                Nothing -> D.fail <| "'" ++ s ++ "' is not a valid UUIDv4."
+            )
+        )
+        (D.field "_" D.bool)
+        (D.field "±" deserializeComputationEffort)
+      -- temporary, backwards-compatibility
+    , D.map2
+        (\c f -> (ViaGraphReference c Lazy, if f then 1 else 0))
+        ( D.field "ref" D.string
+          |> D.andThen
+            (\s ->
+              case Uuid.fromString s of
+                Just uuid -> D.succeed uuid
                 Nothing -> D.fail <| "'" ++ s ++ "' is not a valid UUIDv4."
             )
         )
@@ -1954,8 +1979,7 @@ deserializeEdge =
     (D.field "dst" <| D.int)
     (D.field "via" <| D.list deserializeTransition)
 
--- CANNOT include the type annotation; if I do, I hit a compiler bug!
--- deserializeAutomatonGraph : D.Decoder (AutomatonGraph)
+deserializeAutomatonGraph : D.Decoder AutomatonGraph
 deserializeAutomatonGraph =
   D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e))
     (D.field "n" <| D.list deserializeNode)

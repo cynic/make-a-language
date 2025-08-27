@@ -39,6 +39,7 @@ import Uuid
 import Math.Matrix4 exposing (translate)
 import Svg.Attributes
 import Svg
+import Css exposing (inlineSize_)
 
 type alias Model = FDG_Model
 
@@ -1224,10 +1225,11 @@ transitionToTextSpan (via, finality) otherClasses =
             :: otherClasses via
         ]
         [ text <| textChar ch ]
-    ViaGraphReference ref ->
+    ViaGraphReference ref ce ->
       tspan
         [ class <|
             (if finality == 0 then "nonfinal" else "final")
+            :: (if ce == Lazy then "lazy-effort" else "greedy-effort")
             :: otherClasses via
         ]
         [ text "🔗"
@@ -2165,9 +2167,9 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
                     , width <| thumbnailWidth + 10
                     , height <| thumbnailHeight thumbnailWidth + 10
                     , fill <| Paint <|
-                        if AutoSet.member (ViaGraphReference uuid, 1) conn then
+                        if AutoSet.member (ViaGraphReference uuid Lazy, 1) conn || AutoSet.member (ViaGraphReference uuid Greedy, 1) conn then
                           Color.rgba 1 0.5 0 0.1
-                        else if AutoSet.member (ViaGraphReference uuid, 0) conn then
+                        else if AutoSet.member (ViaGraphReference uuid Lazy, 0) conn || AutoSet.member (ViaGraphReference uuid Greedy, 0) conn then
                           Color.rgba 1 1 0 0.1
                         else
                           Color.rgba 1 1 1 0.1
@@ -2176,7 +2178,7 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
                     , strokeWidth 2
                     , stroke <| Paint <| Color.black
                     , cursor CursorPointer
-                    , onClick <| ToggleSelectedTransition (ViaGraphReference uuid)
+                    , onClick <| ToggleSelectedTransition (ViaGraphReference uuid Lazy)
                     ]
                     []
                 ]
@@ -2673,6 +2675,79 @@ thumbnailHeight w =
   -- just fudge some kind of an "appropriate" aspect ratio ;-)!
   w / sqrt 5
 
+{-| Takes a guess at where a string should be broken into words.
+
+    Characters-per-line = line-in-px / average-character-width
+    Avg-character-width = font-size / font-character-constant
+
+    CPL = LIP / ACW = LIP / (FS / FCC)
+
+    That "font-character-constant" is the key metric, and it is
+    typeface-specific. All other parts of this can be known.
+    Some values for FCC:
+    - Trebuchet: 2.2
+    - Arial: 2.26
+    - Times New Roman: 2.48
+    - Baskerville: 2.51
+
+    (see https://pearsonified.com/characters-per-line/)
+
+    - `fcc`: font-character-constant
+    - `px`: font-size in pixels
+    - `width`: this is the width of a line, in px.
+
+    We return a list of strings.
+-}
+breakStringBadly : Float -> Int -> Float -> String -> List String
+breakStringBadly fcc px width text =
+  let
+    acw = toFloat px / fcc
+    cpl = width / acw |> floor |> Debug.log "CPL"
+    -- now break up the text along whitespace
+    nextWordSize charList count word =
+      case charList of
+        ' '::((' '::_) as t) ->
+          nextWordSize t count word -- we'll get it next time 'round
+        ' '::rest ->
+          (count, String.fromList <| List.reverse word, rest)
+        c::rest ->
+          nextWordSize rest (count + 1) (c::word)
+        [] ->
+          (count, String.fromList <| List.reverse word, [])
+    break charList n current acc =
+      -- `n` is the number of words on the current line
+      let
+        (next_word_size, next_word, remaining) =
+          nextWordSize charList 0 []
+      in
+        if List.isEmpty charList then
+          -- base case
+          case current of
+            [] ->
+              List.reverse acc
+            _ ->
+              List.reverse (String.join " " (List.reverse current) :: acc)
+        else
+          -- still some work to do.
+          if n == 0 then
+            if n + next_word_size > cpl then
+              -- We are at the start of the line; there is nothing to do but
+              -- put this word in anyway, and let it exceed bounds. It's too large.
+              -- So, put it in, move to the next line, and carry on.
+              break remaining 0 [] (next_word :: acc)
+            else -- we're still under the limit
+              -- n+1 because we have to account for the space to be inserted after.
+              break remaining (n + 1 + next_word_size) (next_word :: current) acc
+          else -- words to the left of me, ?? to the right.
+            if n + next_word_size > cpl then
+              -- skip to the next line.
+              break remaining (next_word_size + 1) [next_word] (String.join " " (List.reverse current) :: acc)
+            else
+              -- keep going
+              break remaining (n + 1 + next_word_size) (next_word :: current) acc
+  in
+    break (String.toList text) 0 [] []
+
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
 viewComputationThumbnail width { model, uuid, description } =
   let
@@ -2693,6 +2768,16 @@ viewComputationThumbnail width { model, uuid, description } =
         ((m_w, 0), (m_h, 0))
         model.userGraph.graph
       |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad*2), (c - inner_pad, d + inner_pad*2))
+    fontSize = 16
+    lineSpacing = 1.2
+    fcc = 2.0 -- font-character-constant; typeface-specific
+    brokenString =
+      Maybe.map (breakStringBadly fcc fontSize width) description
+      |> Maybe.withDefault []
+    descriptionStart_y =
+      height -
+        (toFloat (List.length brokenString - 1) * (toFloat fontSize * lineSpacing) )
+        - 0.5 * fontSize
   in
     -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
     -- so, since I can nest a SVG inside a SVG, let me just abuse that a bit…
@@ -2719,6 +2804,25 @@ viewComputationThumbnail width { model, uuid, description } =
       , TypedSvg.g
           []
           [ viewGraphReference uuid 0 0 ]
+      , text_
+          [ textAnchor AnchorMiddle
+          , alignmentBaseline AlignmentCentral
+          , fill <| Paint <| Color.black
+          , fontFamily [ "serif" ]
+          , strokeWidth 2
+          , stroke <| Paint <| Color.white
+          , Html.Attributes.attribute "paint-order" "stroke fill markers"
+          ]
+          ( List.indexedMap
+              (\i line ->
+                tspan
+                  [ x <| width / 2
+                  , y <| descriptionStart_y + (toFloat i * (toFloat fontSize * lineSpacing))
+                  ]
+                  [ text line ]
+              )
+              brokenString
+          )
       ]
 
 view : Model -> Svg Msg

@@ -154,12 +154,16 @@ type alias Entity =
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
 
+type ComputationEffort
+  = Greedy -- match as much as you can!!
+  | Lazy -- match as little as you can…
+
 -- **NOTE**
 -- If AcceptVia is modified, also modify the corresponding AcceptChoice
 -- data structure in ForceDirectedGraph.
 type AcceptVia
   = ViaCharacter Char
-  | ViaGraphReference Uuid
+  | ViaGraphReference Uuid ComputationEffort
 
 type NodeEffect
   = NoEffect
@@ -244,6 +248,11 @@ graphToAutomatonGraph start graph =
   , root = start
   }
 
+computationEffortToString : ComputationEffort -> String
+computationEffortToString ce =
+  case ce of
+    Greedy -> "↗"
+    Lazy -> "↘"
 {-| Convert an AcceptVia to a round-trip string.
 
 *NOTE*: This is NOT to be used for printable output!
@@ -255,8 +264,8 @@ acceptConditionToString v =
   case v of
     ViaCharacter ch ->
       String.fromChar ch
-    ViaGraphReference uuid ->
-      Uuid.toString uuid
+    ViaGraphReference uuid ce ->
+      Uuid.toString uuid ++ computationEffortToString ce
 
 {-| Convert an AcceptVia to a printable-for-output string. -}
 printableAcceptCondition : AcceptVia -> String
@@ -264,10 +273,10 @@ printableAcceptCondition v =
   case v of
     ViaCharacter ch ->
       String.fromChar ch
-    ViaGraphReference uuid ->
+    ViaGraphReference uuid ce ->
       Uuid.toString uuid
       |> String.left 8
-      |> \s -> s ++ "..."
+      |> \s -> s ++ computationEffortToString ce ++ "..."
 
 {-| True if at least one transition terminates at this node -}
 isTerminalNode : NodeContext a Connection -> Bool
@@ -302,10 +311,10 @@ transitionToString transition =
       String.fromChar ch
     (ViaCharacter ch, _) ->
       "\u{0307}" ++ String.fromChar ch
-    (ViaGraphReference uuid, 0) ->
-      Uuid.toString uuid
-    (ViaGraphReference uuid, _) ->
-      "!" ++ Uuid.toString uuid
+    (ViaGraphReference uuid ce, 0) ->
+      Uuid.toString uuid ++ computationEffortToString ce
+    (ViaGraphReference uuid ce, _) ->
+      "!" ++ Uuid.toString uuid ++ computationEffortToString ce
 
 connectionToString : Connection -> String
 connectionToString =

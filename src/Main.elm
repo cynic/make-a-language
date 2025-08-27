@@ -877,7 +877,7 @@ viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
   let
     displaySvg =
-      FDG.viewComputationThumbnail model.leftPanelWidth package
+      FDG.viewComputationThumbnail (model.leftPanelWidth - 15) package
     description =
       case package.description of
         Nothing ->
@@ -916,8 +916,7 @@ viewPackageItem model package =
       else
         HA.title "Apply or cancel the pending changes before selecting another package."
     ]
-    [ description
-    , Html.Styled.fromUnstyled <| Html.map ForceDirectedMsg displaySvg
+    [ Html.Styled.fromUnstyled <| Html.map ForceDirectedMsg displaySvg
     , div
         [ HA.css
             [ Css.position Css.absolute
@@ -1317,7 +1316,7 @@ viewTransition transition classList =
       span
         [ HA.classList classList ]
         [ text <| String.fromChar ch ]
-    ViaGraphReference _ ->
+    ViaGraphReference _ _ ->
       span
         [ HA.classList classList ]
         [ text "🔗" ]
@@ -1535,7 +1534,7 @@ subscriptions model =
     [ FDG.subscriptions
         model.currentPackage.model
       |> Sub.map ForceDirectedMsg
-    , BE.onResize (\w h -> OnResize (toFloat w, toFloat h) |> Debug.log "Raw resize values")
+    , BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     , Time.every 25000 -- 'sup, homie Nyquist? All good?
         ( Time.posixToMillis
           >> (\v -> (v // (1000 * 60)) * (1000 * 60))
