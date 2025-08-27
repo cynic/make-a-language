@@ -36,10 +36,7 @@ import Dict exposing (Dict)
 import Maybe.Extra as Maybe
 import Automata.Debugging
 import Uuid
-import Math.Matrix4 exposing (translate)
-import Svg.Attributes
 import Svg
-import Css exposing (inlineSize_)
 
 type alias Model = FDG_Model
 
@@ -72,6 +69,7 @@ type Msg
   | Stop
   | SwitchToNextComputation
   | SwitchToPreviousComputation
+  | SetComputationEffort ComputationEffort
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
 
@@ -1014,6 +1012,14 @@ update msg model =
           { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
         _ ->
           model
+
+    SetComputationEffort ce ->
+      case model.currentOperation of
+        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| ModifyingGraph ce d }
+        Just (AlteringConnection _ d) ->
+          { model | currentOperation = Just <| AlteringConnection ce d }
+        _ -> model
 
     StartSplit nodeId ->
       Graph.get nodeId model.userGraph.graph
@@ -2103,14 +2109,15 @@ viewSvgCharacterChooser conn y_offset w =
     ( chooser_svg, my_height )
 
 viewSvgComputationChooser : Int -> AutoSet.Set String Transition -> Float -> Float -> Dict String (Svg ()) -> (Svg Msg, Float)
-viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
+viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
   let
     -- this is the width of each thumbnail.
     -- and it is ALSO the center position in the panel.
-    panelCenter = w / 2
-    thumbnailWidth = w / 2
+    panelCenter = panelWidth / 2
+    width = panelWidth / 2
+    height = thumbnailHeight width
     -- and here, confusingly, I use the meanings in both ways ^_^!
-    x_start = panelCenter - (thumbnailWidth / 2)
+    x_start = panelCenter - (width / 2)
     y_start =
       2 + -- the stroke-width
       5 + -- the padding (top)
@@ -2119,13 +2126,11 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
     -- now, one of the thumbnails are going to be in-frame, and others will not be.
     -- there will be a half-thumbnail to the left and to the right.
     -- … with a gap between, too, so a bit less then a half.
-    thumbnail_y_mid =
-      y_start + thumbnailHeight thumbnailWidth / 2
-    gap_between = w * 0.05 -- the gap is 5% of the width
+    gap_between = panelWidth * 0.05 -- the gap is 5% of the width
     -- with extra margin at the bottom
     thumbnailPosition idx =
-      x_start + (toFloat idx * (gap_between + thumbnailWidth))
-    my_height = 4 + 10 + 40 + thumbnailHeight thumbnailWidth + 90
+      x_start + (toFloat idx * (gap_between + width))
+    my_height = 4 + 10 + 40 + height + 90
     keys_and_thumbs =
       Dict.toList thumbnails
       |> List.filterMap
@@ -2136,52 +2141,131 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
       g
         [ transform
             [ Translate
-                (-1 * (thumbnailPosition focusedIndex - thumbnailWidth/2))
+                (-1 * (thumbnailPosition focusedIndex - width/2))
                 0
             ]
         , class [ "thumbnail-carousel" ]
         ]
         ( List.indexedMap
             (\i (uuid, thumb) ->
-              g
-                [ transform [ Translate (thumbnailPosition i) y_start ]
-                ]
-                [ -- give it a background
-                  rect
-                    [ x 0
-                    , y 0
-                    , width <| thumbnailWidth
-                    , height <| thumbnailHeight thumbnailWidth
-                    , fill <| Paint <| Color.rgba 1 1 0.941 1
-                    , rx 15
-                    , ry 15
-                    ]
-                    []
-                  -- there is nothing interactable in the thumbnail, so this is
-                  -- really just for getting the types to line up sensibly.
-                , thumb |> Svg.map (\_ -> Tick)
-                , -- cover it with a "top" which is interactable
-                  rect
-                    [ x -5
-                    , y -5
-                    , width <| thumbnailWidth + 10
-                    , height <| thumbnailHeight thumbnailWidth + 10
-                    , fill <| Paint <|
-                        if AutoSet.member (ViaGraphReference uuid Lazy, 1) conn || AutoSet.member (ViaGraphReference uuid Greedy, 1) conn then
-                          Color.rgba 1 0.5 0 0.1
-                        else if AutoSet.member (ViaGraphReference uuid Lazy, 0) conn || AutoSet.member (ViaGraphReference uuid Greedy, 0) conn then
-                          Color.rgba 1 1 0 0.1
-                        else
-                          Color.rgba 1 1 1 0.1
-                    , rx 15
-                    , ry 15
-                    , strokeWidth 2
-                    , stroke <| Paint <| Color.black
-                    , cursor CursorPointer
-                    , onClick <| ToggleSelectedTransition (ViaGraphReference uuid Lazy)
-                    ]
-                    []
-                ]
+              let
+                isSelected =
+                  AutoSet.member (ViaGraphReference uuid Lazy, 1) conn ||
+                  AutoSet.member (ViaGraphReference uuid Greedy, 1) conn ||
+                  AutoSet.member (ViaGraphReference uuid Lazy, 0) conn ||
+                  AutoSet.member (ViaGraphReference uuid Greedy, 0) conn
+                isLazy =
+                  isSelected &&
+                  (AutoSet.member (ViaGraphReference uuid Lazy, 1) conn ||
+                   AutoSet.member (ViaGraphReference uuid Lazy, 0) conn)
+                scale = height / 5
+              in
+                g
+                  [ transform [ Translate (thumbnailPosition i) y_start ]
+                  ]
+                  [ -- give it a background
+                    rect
+                      [ x 0
+                      , y 0
+                      , TypedSvg.Attributes.InPx.width <| width
+                      , TypedSvg.Attributes.InPx.height <| height
+                      , fill <| Paint <|
+                          if isSelected then Color.rgb 0.596 0.984 0.596 else Color.rgb 1 1 0.941
+                      , rx 15
+                      , ry 15
+                      ]
+                      []
+                    -- there is nothing interactable in the thumbnail, so this is
+                    -- really just for getting the types to line up sensibly.
+                  , thumb |> Svg.map (\_ -> Tick)
+                  , -- cover it with a "top" which is interactable
+                    rect
+                      [ x -5
+                      , y -5
+                      , TypedSvg.Attributes.InPx.width <| width + 10
+                      , TypedSvg.Attributes.InPx.height <| height + 10
+                      , fill <| Paint <| Color.rgba 1 1 1 0.1
+                      , rx 15
+                      , ry 15
+                      , strokeWidth 2
+                      , stroke <| Paint <|
+                          if isSelected then Color.green else Color.black
+                      , cursor CursorPointer
+                      , onClick <| ToggleSelectedTransition (ViaGraphReference uuid Lazy)
+                      ]
+                      []
+                  , -- if the item is selected, then put on a UI for things that can be
+                    -- changed about it.
+                    -- first up, a big checkbox to say "Yes! You're selected!"
+                    if isSelected then
+                      -- REMEMBER: I'm already translated! So everything is relative
+                      -- to the "frame" of this particular thumbnail.
+                      -- …which certainly is convenient in some respects…!
+                      g
+                        []
+                        [ circle
+                            [ cx <| width / 2
+                            , cy <| height - height / 5
+                            , r <| scale / 2
+                            , fill <| Paint <| Color.white
+                            ]
+                            []
+                        , text_
+                            [ x <| width / 2
+                            , y <| height - height / 5
+                            , fill <| Paint <| Color.green
+                            , fontSize scale
+                            , dominantBaseline DominantBaselineCentral
+                            , alignmentBaseline AlignmentCentral
+                            , textAnchor AnchorMiddle
+                            ]
+                            [ text "✔" ]
+                        , rect
+                            [ x <| width / 4 - (width / 5)
+                            , y <| height - (height / 5) - (height / 16)
+                            , TypedSvg.Attributes.InPx.width <| width / 3
+                            , TypedSvg.Attributes.InPx.height <| height / 8
+                            , rx <| scale * 0.15
+                            , ry <| scale * 0.15
+                            , class [ "transition-chooser-key" ]
+                            , strokeWidth 1
+                            , stroke <| Paint <| Color.black
+                            , cursor CursorPointer
+                            , onClick (if isLazy then SetComputationEffort Greedy else SetComputationEffort Lazy)
+                            ]
+                            []
+                        , text_
+                            [ x <| width / 4 - (width / 25)
+                            , y <| height - (height / 5)
+                            , fill <| Paint <| Color.black
+                            , fontFamily [ "sans-serif" ]
+                            , fontSize <| height / 15
+                            , dominantBaseline DominantBaselineCentral
+                            , alignmentBaseline AlignmentCentral
+                            , textAnchor AnchorMiddle
+                            , TypedSvg.Attributes.pointerEvents "none"
+                            ]
+                            ( if isLazy then
+                                [ tspan
+                                    []
+                                    [ text "📉" ]
+                                , tspan
+                                    []
+                                    [ text " Match least" ]
+                                ]
+                              else
+                                [ tspan
+                                    []
+                                    [ text "📈" ]
+                                , tspan
+                                    []
+                                    [ text " Match most" ]
+                                ]
+                            )
+                        ]
+                    else
+                      g [][]
+                  ]
             )
             keys_and_thumbs
         )
@@ -2198,7 +2282,7 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
               []
               [ rect
                   [ x <| panelCenter + 30
-                  , y <| y_offset + thumbnailHeight thumbnailWidth + 30
+                  , y <| y_offset + height + 30
                   , Px.width 60
                   , Px.height 60
                   , Px.rx 5
@@ -2211,7 +2295,7 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
                   []
               , text_
                   [ x <| panelCenter + 60
-                  , y <| y_offset + thumbnailHeight thumbnailWidth + 60
+                  , y <| y_offset + height + 60
                   , fontSize 40
                   , rx 15
                   , ry 15
@@ -2233,7 +2317,7 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
               []
               [ rect
                   [ x <| panelCenter - 60
-                  , y <| y_offset + thumbnailHeight thumbnailWidth + 30
+                  , y <| y_offset + height + 30
                   , Px.width 60
                   , Px.height 60
                   , Px.rx 5
@@ -2246,7 +2330,7 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
                   []
               , text_
                   [ x <| panelCenter - 30
-                  , y <| y_offset + thumbnailHeight thumbnailWidth + 60
+                  , y <| y_offset + height + 60
                   , fontSize 40
                   , rx 15
                   , ry 15

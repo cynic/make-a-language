@@ -87,7 +87,7 @@ type UserOperation
 
 type AcceptChoice
   = ChooseCharacter
-  -- the parameter is the thumbnail index to focus on
+  -- the first parameter is the thumbnail index to focus on
   | ChooseGraphReference Int
 
 type alias FDG_Model =
