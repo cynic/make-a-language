@@ -1000,18 +1000,18 @@ update msg model =
     SwitchToNextComputation ->
       case model.currentOperation of
         Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| idx + 1) d }
+          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| min (Dict.size model.graphThumbnails - 1) (idx + 1)) d }
         Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| idx + 1) d }
+          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| min (Dict.size model.graphThumbnails - 1) (idx + 1)) d }
         _ ->
           model
 
     SwitchToPreviousComputation ->
       case model.currentOperation of
         Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| idx - 1) d }
+          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| max 0 (idx - 1)) d }
         Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| idx - 1) d }
+          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
         _ ->
           model
 
@@ -2125,7 +2125,7 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
     -- with extra margin at the bottom
     thumbnailPosition idx =
       x_start + (toFloat idx * (gap_between + thumbnailWidth))
-    my_height = 4 + 10 + 40 + thumbnailHeight thumbnailWidth
+    my_height = 4 + 10 + 40 + thumbnailHeight thumbnailWidth + 90
     keys_and_thumbs =
       Dict.toList thumbnails
       |> List.filterMap
@@ -2197,8 +2197,8 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
             g
               []
               [ rect
-                  [ x <| panelCenter + thumbnailWidth/2 + gap_between + thumbnailWidth/4 - 30
-                  , y <| y_offset + thumbnail_y_mid - 30
+                  [ x <| panelCenter + 30
+                  , y <| y_offset + thumbnailHeight thumbnailWidth + 30
                   , Px.width 60
                   , Px.height 60
                   , Px.rx 5
@@ -2210,9 +2210,9 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
                   ]
                   []
               , text_
-                  [ x <| panelCenter + thumbnailWidth/2 + gap_between + thumbnailWidth/4
-                  , y <| y_offset + thumbnail_y_mid
-                  , fontSize 30
+                  [ x <| panelCenter + 60
+                  , y <| y_offset + thumbnailHeight thumbnailWidth + 60
+                  , fontSize 40
                   , rx 15
                   , ry 15
                   , strokeWidth 0
@@ -2232,8 +2232,8 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
             g
               []
               [ rect
-                  [ x <| panelCenter - thumbnailWidth/2 - gap_between - thumbnailWidth/4 - 30
-                  , y <| y_offset + thumbnail_y_mid - 30
+                  [ x <| panelCenter - 60
+                  , y <| y_offset + thumbnailHeight thumbnailWidth + 30
                   , Px.width 60
                   , Px.height 60
                   , Px.rx 5
@@ -2245,9 +2245,9 @@ viewSvgComputationChooser focusedIndex conn y_offset w thumbnails =
                   ]
                   []
               , text_
-                  [ x <| panelCenter - thumbnailWidth/2 - gap_between - thumbnailWidth/4
-                  , y <| y_offset + thumbnail_y_mid
-                  , fontSize 30
+                  [ x <| panelCenter - 30
+                  , y <| y_offset + thumbnailHeight thumbnailWidth + 60
+                  , fontSize 40
                   , rx 15
                   , ry 15
                   , strokeWidth 0
@@ -2830,7 +2830,17 @@ view model =
   let
     ( width, height ) = model.dimensions
     ( mouse_x, mouse_y ) = model.mouseCoords
-    permit_zoom = onMouseScroll Zoom
+    permit_scroll =
+      onMouseScroll
+        (\n ->
+          case model.currentOperation of
+            Just (ModifyingGraph (ChooseGraphReference _) _) ->
+              if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
+            Just (AlteringConnection (ChooseGraphReference _) _) ->
+              if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
+            _ ->
+              Zoom n
+        )
     permit_pan =
       [ onMouseMove MouseMove
       , cursor <|
@@ -2880,6 +2890,10 @@ view model =
       case model.currentOperation of
         Just (Splitting _) ->
           [ permit_click ]
+        Just (AlteringConnection (ChooseGraphReference _) _) ->
+          [ permit_scroll ]
+        Just (ModifyingGraph (ChooseGraphReference _) _) ->
+          [ permit_scroll ]
         Just (ModifyingGraph _ { dest }) ->
           case dest of
             NewNode _ ->
@@ -2887,16 +2901,16 @@ view model =
             ExistingNode _ ->
               []
             _ ->
-              permit_click :: permit_zoom :: permit_pan
+              permit_click :: permit_scroll :: permit_pan
         Just (AlteringConnection _ _) ->
           []
         Just (Dragging _) ->
           -- must have permit_pan (for mouse-movement)
           -- must have permit_stopdrag
           -- ignore click (we only care about stop-drag right now)
-          permit_stopdrag :: permit_zoom :: permit_pan
+          permit_stopdrag :: permit_scroll :: permit_pan
         Nothing ->
-          permit_click :: permit_zoom :: permit_pan
+          permit_click :: permit_scroll :: permit_pan
   in
     svg
       ([ viewBox 0 0 width height
