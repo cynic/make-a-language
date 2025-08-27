@@ -1323,7 +1323,7 @@ viewTransition transition classList =
       span
         [ HA.classList classList ]
         [ text <| String.fromChar ch ]
-    ViaGraphReference _ _ ->
+    ViaGraphReference _ ->
       span
         [ HA.classList classList ]
         [ text "🔗" ]

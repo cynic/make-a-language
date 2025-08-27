@@ -69,7 +69,7 @@ type Msg
   | Stop
   | SwitchToNextComputation
   | SwitchToPreviousComputation
-  | SetComputationEffort ComputationEffort
+  | SetComputationEffort
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
 
@@ -1013,13 +1013,8 @@ update msg model =
         _ ->
           model
 
-    SetComputationEffort ce ->
-      case model.currentOperation of
-        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph ce d }
-        Just (AlteringConnection _ d) ->
-          { model | currentOperation = Just <| AlteringConnection ce d }
-        _ -> model
+    SetComputationEffort ->
+      model -- just punt.
 
     StartSplit nodeId ->
       Graph.get nodeId model.userGraph.graph
@@ -1231,11 +1226,10 @@ transitionToTextSpan (via, finality) otherClasses =
             :: otherClasses via
         ]
         [ text <| textChar ch ]
-    ViaGraphReference ref ce ->
+    ViaGraphReference ref ->
       tspan
         [ class <|
             (if finality == 0 then "nonfinal" else "final")
-            :: (if ce == Lazy then "lazy-effort" else "greedy-effort")
             :: otherClasses via
         ]
         [ text "🔗"
@@ -2150,14 +2144,12 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
             (\i (uuid, thumb) ->
               let
                 isSelected =
-                  AutoSet.member (ViaGraphReference uuid Lazy, 1) conn ||
-                  AutoSet.member (ViaGraphReference uuid Greedy, 1) conn ||
-                  AutoSet.member (ViaGraphReference uuid Lazy, 0) conn ||
-                  AutoSet.member (ViaGraphReference uuid Greedy, 0) conn
+                  AutoSet.member (ViaGraphReference uuid, 1) conn ||
+                  AutoSet.member (ViaGraphReference uuid, 0) conn
                 isLazy =
                   isSelected &&
-                  (AutoSet.member (ViaGraphReference uuid Lazy, 1) conn ||
-                   AutoSet.member (ViaGraphReference uuid Lazy, 0) conn)
+                  (AutoSet.member (ViaGraphReference uuid, 1) conn ||
+                   AutoSet.member (ViaGraphReference uuid, 0) conn)
                 scale = height / 5
               in
                 g
@@ -2191,7 +2183,7 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
                       , stroke <| Paint <|
                           if isSelected then Color.green else Color.black
                       , cursor CursorPointer
-                      , onClick <| ToggleSelectedTransition (ViaGraphReference uuid Lazy)
+                      , onClick <| ToggleSelectedTransition (ViaGraphReference uuid)
                       ]
                       []
                   , -- if the item is selected, then put on a UI for things that can be
@@ -2231,7 +2223,7 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
                             , strokeWidth 1
                             , stroke <| Paint <| Color.black
                             , cursor CursorPointer
-                            , onClick (if isLazy then SetComputationEffort Greedy else SetComputationEffort Lazy)
+                            , onClick (if isLazy then SetComputationEffort else SetComputationEffort)
                             ]
                             []
                         , text_

@@ -1851,11 +1851,10 @@ serializeTransition t =
         [ ("c", E.string <| String.fromChar c)
         , ("_", E.bool <| f == 1)
         ]
-    (ViaGraphReference uuid ce, f) ->
+    (ViaGraphReference uuid, f) ->
       E.object
         [ ("ref", E.string <| Uuid.toString uuid)
         , ("_", E.bool <| f == 1)
-        , ("±", E.string <| computationEffortToString ce)
         ]
 
 serializeEdge : Edge Connection -> E.Value
@@ -1919,17 +1918,6 @@ deserializeNode =
     (D.field "i" <| D.int)
     (D.field "e" <| deserializeEffect)
 
-deserializeComputationEffort : D.Decoder ComputationEffort
-deserializeComputationEffort =
-  D.string
-  |> D.andThen
-    (\s ->
-      case s of
-        "↗" -> D.succeed Greedy
-        "↘" -> D.succeed Lazy
-        _ -> D.fail <| "Could not parse unknown computation-effort string '" ++ s ++ "'"
-    )
-
 deserializeTransition : D.Decoder Transition
 deserializeTransition =
   D.oneOf
@@ -1945,21 +1933,8 @@ deserializeTransition =
             )
         )
         (D.field "_" D.bool)
-    , D.map3
-        (\c f e -> (ViaGraphReference c e, if f then 1 else 0))
-        ( D.field "ref" D.string
-          |> D.andThen
-            (\s ->
-              case Uuid.fromString s of
-                Just uuid -> D.succeed uuid
-                Nothing -> D.fail <| "'" ++ s ++ "' is not a valid UUIDv4."
-            )
-        )
-        (D.field "_" D.bool)
-        (D.field "±" deserializeComputationEffort)
-      -- temporary, backwards-compatibility
     , D.map2
-        (\c f -> (ViaGraphReference c Lazy, if f then 1 else 0))
+        (\c f -> (ViaGraphReference c, if f then 1 else 0))
         ( D.field "ref" D.string
           |> D.andThen
             (\s ->
