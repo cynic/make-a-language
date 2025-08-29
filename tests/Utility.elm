@@ -1,6 +1,6 @@
 module Utility exposing
   ( ag, dfa, mkDFA_input, ag_equals, dfa_equals, dummyEntity
-  , mkConn
+  , mkConn, mkAutomatonGraph
   )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
