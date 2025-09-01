@@ -13,6 +13,8 @@ import Tuple.Extra
 import Json.Encode as E
 import Json.Decode as D
 import Uuid
+import Automata.Debugging exposing (printAutomatonGraph)
+import Automata.Debugging exposing (debugAutomatonGraph)
 -- import Automata.Debugging
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
@@ -131,8 +133,8 @@ stepThroughInitial s g =
       ExecutionData [] (upcomingAcceptConditions s) g.root
     )
 
-extend : DFARecord a -> DFARecord a -> ExtDFA
-extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
+extend : Phase1Purpose -> DFARecord a -> DFARecord a -> ExtDFA
+extend purpose w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
   let
     max_dfa =
       IntDict.findMax dfa.states
@@ -152,7 +154,12 @@ extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
               )
           |> IntDict.fromList
       , start = w_dfa_orig.start + max_dfa
-      , finals = Set.map (\a -> a + max_dfa) w_dfa_orig.finals
+      , finals =
+          case purpose of
+            Add_Word ->
+              Set.map (\a -> a + max_dfa) w_dfa_orig.finals
+            Remove_Word ->
+              Set.empty
       }
     unusedId = max_dfa + max_w_dfa + 1
     extDFA =
@@ -171,7 +178,7 @@ extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
       , queue_or_clone = IntDict.keys w_dfa.states |> List.reverse
       , unusedId = unusedId
       }
-      |> clone_or_queue dfa.start w_dfa.start
+      |> clone_or_queue purpose dfa.start w_dfa.start
   in
     extDFA
 
@@ -333,8 +340,12 @@ transitions_to_dest q dfa =
     []
     dfa.transition_function
 
-clone_or_queue : NodeId -> NodeId -> ExtDFA -> ExtDFA
-clone_or_queue q_m q_w extDFA =
+type Phase1Purpose
+  = Add_Word
+  | Remove_Word
+
+clone_or_queue : Phase1Purpose -> NodeId -> NodeId -> ExtDFA -> ExtDFA
+clone_or_queue purpose q_m q_w extDFA =
   { extDFA
     | transition_function =
         case ( IntDict.get q_w extDFA.transition_function, IntDict.get q_m extDFA.transition_function ) of
@@ -347,18 +358,26 @@ clone_or_queue q_m q_w extDFA =
           ( Just a, Just b ) ->
             IntDict.insert q_w (AutoDict.union a b) extDFA.transition_function
     , finals =
-        if Set.member q_m extDFA.finals then
-          Set.insert q_w extDFA.finals
-        else
-          extDFA.finals
+        -- now, here is the trick: if I am ADDING q_w, then I add q_w to
+        -- the finals as appropriate.  However, if I am REMOVING
+        -- q_w, then none of these states becomes final; we don't stop anywhere
+        -- that q_w stops.
+        case purpose of
+          Add_Word ->
+            if Set.member q_m extDFA.finals then
+              Set.insert q_w extDFA.finals
+            else
+              extDFA.finals
+          Remove_Word ->
+            extDFA.finals
    }
 
-clone_or_queue_many : NodeId -> NodeId -> ForwardTree -> ExtDFA -> ExtDFA
-clone_or_queue_many q_m q_w tree extDFA =
+clone_or_queue_many : Phase1Purpose -> NodeId -> NodeId -> ForwardTree -> ExtDFA -> ExtDFA
+clone_or_queue_many purpose q_m q_w tree extDFA =
   case tree of
     PathEnd ->
       -- we're at the end of the transitions.
-      clone_or_queue q_m q_w extDFA
+      clone_or_queue purpose q_m q_w extDFA
     ForwardNode dict ->
       AutoDict.foldl
         (\ch subtree acc ->
@@ -367,18 +386,24 @@ clone_or_queue_many q_m q_w tree extDFA =
               Debug.log "🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
               acc
             (Nothing, Just _) ->
-              -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
-              clone_or_queue q_m q_w acc
+              case purpose of
+                Add_Word ->
+                  -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
+                  clone_or_queue purpose q_m q_w acc
+                Remove_Word ->
+                  -- we don't want to or need to add q_w-specific nodes.
+                  acc
             (Just m_node, Just w_node) ->
-              clone_or_queue_many m_node w_node subtree (clone_or_queue q_m q_w acc)
+              clone_or_queue_many purpose m_node w_node subtree (clone_or_queue purpose q_m q_w acc)
         )
         extDFA
         dict
 
-phase_1 : ExtDFA -> ExtDFA
-phase_1 extDFA_orig =
+phase_1 : Phase1Purpose -> ExtDFA -> ExtDFA
+phase_1 purpose extDFA_orig =
   -- Traverse the ForwardTree and apply append_transitions for every path
   clone_or_queue_many
+    purpose
     extDFA_orig.start
     extDFA_orig.clone_start
     (w_forward_transitions extDFA_orig)
@@ -550,16 +575,29 @@ replace_or_register extDFA =
 
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
-    extend w_dfa_orig m_dfa
-    -- |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
-    |> phase_1
-    -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
-    |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
-    |> (\dfa -> { dfa | start = dfa.clone_start })
-    -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
-    |> replace_or_register
-    -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
-    |> retract
+  extend Add_Word w_dfa_orig m_dfa
+  -- |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
+  |> phase_1 Add_Word
+  -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
+  |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
+  |> (\dfa -> { dfa | start = dfa.clone_start })
+  -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
+  |> replace_or_register
+  -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
+  |> retract
+
+exclude : DFARecord a -> DFARecord a -> DFARecord {}
+exclude to_exclude m_dfa =
+  extend Remove_Word to_exclude m_dfa
+  |> debugExtDFA_ "[exclude] extDFA creation from merged w_dfa + dfa"
+  |> phase_1 Remove_Word
+  |> debugExtDFA_ "[exclude] End of Phase 1 (clone-and-queue)"
+  |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
+  |> (\dfa -> { dfa | start = dfa.clone_start })
+  |> debugExtDFA_ "[exclude] End of Phase 2 (remove-unreachable + switch-start)"
+  |> replace_or_register
+  |> debugExtDFA_ "[exclude] End of Phase 3 (replace-or-register)"
+  |> retract
 
 {-
 This is like union, but without the final step (register-or-replace).  That's
@@ -570,9 +608,9 @@ doing register-or-replace will be inaccurate.
 -}
 partial_union : DFARecord a -> DFARecord a -> DFARecord {}
 partial_union w_dfa_orig m_dfa =
-    extend w_dfa_orig m_dfa
+    extend Add_Word w_dfa_orig m_dfa
     -- |> debugExtDFA_ "[partial_union] extDFA creation from merged w_dfa + dfa"
-    |> phase_1
+    |> phase_1 Add_Word
     -- |> debugExtDFA_ "[partial_union] End of Phase 1 (clone-and-queue)"
     |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
     |> (\dfa -> { dfa | start = dfa.clone_start })
@@ -1097,7 +1135,7 @@ minimiseNodesByCombiningTransitions g_ =
     -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
 
--- toAutomatonGraph : DFARecord a -> AutomatonGraph
+toAutomatonGraph : DFARecord a -> AutomatonGraph
 toAutomatonGraph dfa =
   let
     stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toAutomatonGraph] State-list"
