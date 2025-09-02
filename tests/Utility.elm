@@ -23,6 +23,8 @@ import AutoSet
 import AutoDict
 import Maybe.Extra
 import Dict
+import Uuid exposing (Uuid)
+import Automata.Data exposing (Transition)
 
 dummyEntity : Int -> Entity
 dummyEntity id =
@@ -70,8 +72,9 @@ mkDFA transitions finals =
   , finals = Set.fromList finals
   }
 
-mkConn : String -> Connection
-mkConn s =
+
+mkConn : Uuid -> String -> Connection
+mkConn uuid s =
   let
     uuid_helper list finality acc =
       case List.splitAt 36 list of
@@ -80,15 +83,16 @@ mkConn s =
             acc -- just end it here.
           else
             case Uuid.fromString (String.fromList uuidChars) of
-              Just uuid ->
-                helper rest (AutoSet.insert (ViaGraphReference uuid, finality) acc)
+              Just ref ->
+                helper rest (AutoSet.insert (Transition uuid (ViaGraphReference ref) finality) acc)
               Nothing ->
                 acc -- not a valid UUIDv4; end it here.
     
     helper xs acc =
       case xs of
         '+'::'+'::rest ->
-          helper rest (AutoSet.insert (ViaCharacter '+', 0) acc |> AutoSet.remove (ViaCharacter '+', 1))
+          helper rest (AutoSet.insert (Transition uuid (ViaCharacter '+') False) acc
+          |> AutoSet.remove (Transition uuid (ViaCharacter '+'), True))
         '+'::rest ->
           uuid_helper rest 0 acc
         '!'::'+'::'+'::rest ->

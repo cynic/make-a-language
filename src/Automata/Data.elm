@@ -38,10 +38,9 @@ type BottomPanel
   | EditDescriptionPanel
 
 type alias GraphPackage =
-  { model : FDG_Model
+  { model : FDG_Model -- the UUID is inside the model's .userGraph.graphIdentifier
   , dimensions : ( Float, Float )
   , description : Maybe String
-  , uuid : Uuid.Uuid
   , created : Time.Posix -- for ordering
   , currentTestKey : String
   , tests : Dict String Test
@@ -165,12 +164,48 @@ type NodeEffect
   = NoEffect
   | SomeEffectFigureItOutLater
 
-type alias Transition = (AcceptVia, Int) -- INSANELY, Bool is NOT `comparable`. So, 0=False, 1=True. 🤪.
+{-
+When we make a union of DFAs, each transition is tagged with a set of values that represent
+which DFA(s) it is present in (i.e., which ones it "comes from").  When we are executing on
+that union'd DFA, we begin with the full set of tags from all of its constituents.  The rule
+is: we can only take a transition if its tag is in the allowed set.  As we select transitions,
+the tags get reduced at each step to the intersection between the allowed set and the tags
+on the followed transition.  This means that we end up with a smaller set of allowable
+outbound links that we can possibly take, while maintaining a single graph.
+
+Why do we want to do this?  To be able to represent multiple graphs in the union WITHOUT
+invalid cross-language transitions happening.  For example, consider:
+
+X : [ (0, p, 1), (1, !q, 0) ]
+Y : [ (0, !v, 1) ]
+
+Their union might be phrased as:
+
+Z : [ (0, p, 1), (1, !q, 0), 0, !v, 2) ]
+
+…but now, have a look at what's permitted.  Suddenly, the sequence "pqv" is accepted when it
+was NOT accepted in either X or Y.  But now, let's give them some tags in the union.
+
+Z : [ (0, {X}p, 1), (1, {X}!q, 0), 0, {Y}!v, 2) ]
+
+We begin with {X,Y}.  And given the input "pqv", we follow "p", and our allowed-set shrinks to
+{X,Y}-union-{X}={X}. That still lets us take "!q".  But we can no longer take "v", because the
+allowed-set does not contain {Y}, so we end our journey here.
+-}
+
+type alias Transition =
+  { tags : AutoSet.Set String Uuid
+  , via : AcceptVia
+    -- INSANELY, Bool is NOT `comparable`.
+    -- Well, screw it. At this point—neither is anything else in this data structure!!
+  , isFinal : Bool
+  }
 type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
 type alias Node = NodeContext Entity Connection -- a Node itself does not carry any data, hence the ()
 type alias AutomatonGraph =
   { graph : Graph Entity Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
+  , graphIdentifier : Uuid
   , maxId : NodeId
   , root : NodeId
   }
@@ -203,8 +238,8 @@ type alias ExtDFA =
   , unusedId : NodeId
   }
 type alias ExecutionData =
-  { transitionsTaken : List (NodeId, Transition) -- (src, transition)
-  , remainingData : List AcceptVia
+  { transitionsTaken : List (NodeId, AutoSet.Set String Transition, List Char) -- (src, transitions [multiple could match], consumed)
+  , remainingData : List Char
   , currentNode : NodeId
   }
 
@@ -230,18 +265,12 @@ type alias Test =
   , result : ExecutionResult
   }
 
-empty : AutomatonGraph
-empty =
+empty : Uuid -> AutomatonGraph
+empty uuid =
   { graph = Graph.empty
+  , graphIdentifier = uuid
   , maxId = 0
   , root = 0
-  }
-
-graphToAutomatonGraph : NodeId -> Graph Entity Connection -> AutomatonGraph
-graphToAutomatonGraph start graph =
-  { graph = graph
-  , maxId = Graph.nodeIdRange graph |> Maybe.map Tuple.second |> Maybe.withDefault 0
-  , root = start
   }
 
 {-| Convert an AcceptVia to a round-trip string.
@@ -277,7 +306,7 @@ isTerminalNode node =
     (\_ conn state ->
       state ||
         AutoSet.foldl
-          (\(_, isFinal) state_ -> state_ || isFinal == 1)
+          (\{isFinal} state_ -> state_ || isFinal)
           False
           conn
     )
@@ -296,13 +325,13 @@ graphEdgeToString {from, to, label} =
   "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
 
 transitionToString : Transition -> String
-transitionToString transition =
-  case transition of
-    (ViaCharacter ch, 0) ->
+transitionToString {via, isFinal} =
+  case (via, isFinal) of
+    (ViaCharacter ch, False) ->
       String.fromChar ch
     (ViaCharacter ch, _) ->
       "\u{0307}" ++ String.fromChar ch
-    (ViaGraphReference uuid, 0) ->
+    (ViaGraphReference uuid, False) ->
       Uuid.toString uuid
     (ViaGraphReference uuid, _) ->
       "!" ++ Uuid.toString uuid

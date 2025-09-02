@@ -9,13 +9,12 @@ import Automata.Data exposing (..)
 import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
 import Dict.Extra
 import Maybe.Extra
-import Tuple.Extra
 import Json.Encode as E
 import Json.Decode as D
 import Uuid
 import Automata.Debugging exposing (printAutomatonGraph)
 import Automata.Debugging exposing (debugAutomatonGraph)
--- import Automata.Debugging
+import Uuid exposing (Uuid)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -26,6 +25,18 @@ import Automata.Debugging exposing (debugAutomatonGraph)
 type alias MConnection = AutoSet.Set String AcceptVia -- a MConnection is a link between two nodes.
 -- type alias Connections = IntDict MConnection
 type alias Node = NodeContext Bool MConnection -- a Node indicates terminality
+
+connectionToGraph : Uuid -> Connection -> AutomatonGraph
+connectionToGraph uuid conn =
+  Automata.Data.empty uuid -- STUB!!
+
+graphReferenceSet : Connection -> AutoSet.Set String Uuid
+graphReferenceSet conn =
+  AutoSet.empty Uuid.toString -- STUB!!
+
+traverseConnectionGraph : List Char -> AutoSet.Set String Uuid -> AutomatonGraph -> Maybe (AutoSet.Set String Uuid, List Char)
+traverseConnectionGraph data allowed g =
+  Nothing -- STUB!!
 
 oneTransition : AutomatonGraph -> ExecutionState -> ExecutionState
 oneTransition g executionState =
@@ -38,29 +49,56 @@ oneTransition g executionState =
           case data.remainingData of
             [] ->
               executionState -- we're done! Can't go any further!
-            h::t ->
-              ctx.outgoing
-              |> IntDict.toList
-              |> List.findMap
-                (\(k, conn) ->
-                  if AutoSet.member (h, 1) conn then
-                    Just <| Accepted
-                      { data
-                        | transitionsTaken = (data.currentNode, (h, 1))::data.transitionsTaken
-                        , remainingData = t
-                        , currentNode = k
+            _ ->
+              let
+                outgoingAsGraphs =
+                  IntDict.toList ctx.outgoing
+                  |> List.map
+                    (\(k, conn) ->
+                      -- Create a graph from the things in this connection
+                      { outgoing = k
+                      , transitionGraph = connectionToGraph g.graphIdentifier conn
+                      , allowed = graphReferenceSet conn
+                      , connection = conn
                       }
-                  else if AutoSet.member (h, 0) conn then
-                    Just <| Rejected
-                      { data
-                        | transitionsTaken = (data.currentNode, (h, 0))::data.transitionsTaken
-                        , remainingData = t
-                        , currentNode = k
-                      }
-                  else
-                    Nothing
-                )
-              |> Maybe.withDefault (NoPossibleTransition data)
+                    )
+                chosenOutgoingData =
+                  outgoingAsGraphs
+                  |> List.findMap
+                    (\{outgoing, transitionGraph, allowed, connection} ->
+                      -- traverseConnectionGraph only generates a Just value IF it accepts.
+                      -- This is the same as how a character is used to "accept".
+                      -- But that has no effect on whether the transition in the link
+                      -- is actually terminal or not.
+                      traverseConnectionGraph data.remainingData allowed transitionGraph
+                      |> Maybe.map
+                        (\(finalSet, consumed) ->
+                          { dest = outgoing -- I have a Just value, so YES, I select THIS outgoing!
+                          , matching_transitions =
+                            let
+                              final =
+                                AutoSet.filter .isFinal connection
+                              present =
+                                AutoSet.filter (\{tags} -> AutoSet.size (AutoSet.intersect finalSet tags) > 0) final
+                            in
+                              present
+                          , consumed = consumed
+                          , remaining = List.drop (List.length consumed) data.remainingData
+                          }
+                        )
+                    )
+                  |> Maybe.map
+                    (\{dest, matching_transitions, consumed, remaining} ->
+                      Accepted
+                        { data
+                        | transitionsTaken = (data.currentNode, matching_transitions, consumed)::data.transitionsTaken
+                        , remainingData = remaining
+                        , currentNode = dest
+                        }
+                    )
+              in
+                chosenOutgoingData
+                |> Maybe.withDefault (NoPossibleTransition data)
         )
       |> Maybe.withDefault (RequestedNodeDoesNotExist data)
   in
@@ -99,10 +137,14 @@ step g executionResult =
               -- Therefore, I must take at least one TRANSITION to
               -- accept.  Otherwise—by default—I will reject.
               EndOfComputation (Rejected d)
-            (_, (_, 1))::_ ->
-              EndOfComputation (Accepted d)
-            _::_ -> -- i.e. (_, (_, 0))::_
-              EndOfComputation (Rejected d)
+            (_, matched_transitions, _)::_ ->
+              let
+                final = AutoSet.filter .isFinal matched_transitions
+              in
+                if AutoSet.size final > 0 then
+                  EndOfComputation (Accepted d)
+                else
+                  EndOfComputation (Rejected d)
     EndOfInput _ ->
       executionResult
     EndOfComputation _ ->
@@ -126,7 +168,7 @@ stepThroughInitial : String -> AutomatonGraph -> ExecutionResult
 stepThroughInitial s g =
   let
     upcomingAcceptConditions =
-      String.toList >> List.map ViaCharacter
+      String.toList
   in
   step g
     (CanContinue <| Rejected <|
@@ -303,16 +345,6 @@ delta : NodeId -> AcceptVia -> DFARecord a -> Maybe NodeId
 delta q x dfa =
   IntDict.get q dfa.transition_function
   |> Maybe.andThen (AutoDict.get x)
-
--- delta_star : NodeId -> List Char -> DFARecord a -> Maybe NodeId
--- delta_star q xs dfa =
---   List.foldl (\x -> Maybe.andThen (\q_ -> delta q_ x dfa)) (Just q) xs
-
-transitions_from_source : NodeId -> DFARecord a -> List (NodeId, AcceptVia)
-transitions_from_source q dfa =
-  IntDict.get q dfa.transition_function
-  |> Maybe.map (AutoDict.toList >> List.map Tuple.Extra.flip)
-  |> Maybe.withDefault []
 
 {-| Returns a list of (NodeId, Char) pairs representing all transitions in the given DFA that lead to the specified node.
 
@@ -586,180 +618,6 @@ union w_dfa_orig m_dfa =
   -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
   |> retract
 
-exclude : DFARecord a -> DFARecord a -> DFARecord {}
-exclude to_exclude m_dfa =
-  extend Remove_Word to_exclude m_dfa
-  |> debugExtDFA_ "[exclude] extDFA creation from merged w_dfa + dfa"
-  |> phase_1 Remove_Word
-  |> debugExtDFA_ "[exclude] End of Phase 1 (clone-and-queue)"
-  |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
-  |> (\dfa -> { dfa | start = dfa.clone_start })
-  |> debugExtDFA_ "[exclude] End of Phase 2 (remove-unreachable + switch-start)"
-  |> replace_or_register
-  |> debugExtDFA_ "[exclude] End of Phase 3 (replace-or-register)"
-  |> retract
-
-{-
-This is like union, but without the final step (register-or-replace).  That's
-because, during user changes, if we join nodes too eagerly, we might end up
-joining nodes that the user hasn't intended to join; fundamentally, the problem
-is that we don't know (yet) if the right-language is complete. Until we know,
-doing register-or-replace will be inaccurate.
--}
-partial_union : DFARecord a -> DFARecord a -> DFARecord {}
-partial_union w_dfa_orig m_dfa =
-    extend Add_Word w_dfa_orig m_dfa
-    -- |> debugExtDFA_ "[partial_union] extDFA creation from merged w_dfa + dfa"
-    |> phase_1 Add_Word
-    -- |> debugExtDFA_ "[partial_union] End of Phase 1 (clone-and-queue)"
-    |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
-    |> (\dfa -> { dfa | start = dfa.clone_start })
-    -- |> debugExtDFA_ "[partial_union] End of Phase 2 (remove-unreachable + switch-start)"
-    |> retract
-
-complement : DFARecord a -> DFARecord a
-complement dfa =
-  -- the non-final states become the final states, and vice-versa.
-  { dfa
-    | finals = Set.diff (IntDict.keys dfa.states |> Set.fromList) dfa.finals
-  }
-
-modifyConnection : NodeId -> NodeId -> Connection -> AutomatonGraph -> AutomatonGraph
-modifyConnection source target newConn =
-  -- find the correct source.  From there, I can change the connection.
-  -- Changing the connection cannot possibly affect anything that is
-  -- later in the graph—all of that is set—but it can affect things that
-  -- are "prior" to the destination.
-  -- If `newConn` is an empty set, then a link is destroyed: this may
-  -- result in a disconnected portion of the graph (if it was the only
-  -- link to the start).  Therefore, I need to use `remove_unreachable`
-  -- on the `target`, to get rid of disconnected portions.
-  -- Whether disconnected or not, there may now be new similarities in
-  -- the graph.  So, we can find the nodes to examine using `wordsEndingAt`
-  -- (going either from source [if the link is destroyed] or from target
-  -- [otherwise]), and then use `replace_or_register` to re-check for
-  -- similarities.
-  -- 
-  -- I will also need to put in tests for these cases…
-  let
-    craaazy_extend : DFARecord {} -> ExtDFA
-    craaazy_extend dfa =
-      { states = dfa.states
-      , transition_function = dfa.transition_function
-      , start =
-          -- remember, .start functions as the OLD start, and is the value used in
-          -- `remove_unreachable`.  After that phase is done, we set it to be the same
-          -- value as .clone_start, which then functions as the NEW start.
-          -- We don't actually HAVE a good value for this!
-          -- If the set is empty, then .start can be the `target`.  `remove_unreachable`
-          -- should get rid of it for us.
-          -- But if the set is not empty, then I should not run `remove_unreachable`
-          -- at all; for example, if the `source` is the starting node, then we will
-          -- end up removing a lot of nodes in the end, incorrectly.
-          -- So in preparation for a possible call to `remove_unreachable`, let me
-          -- set this to the only sane possible value: `target`
-          target
-      , finals = dfa.finals
-      , register =
-          IntDict.keys dfa.states
-          |> Set.fromList
-          |> Set.remove source
-          |> Set.remove target
-      , clone_start =
-          -- see the comment for .start.
-          dfa.start
-      , queue_or_clone =
-          if source == target then
-            [ source ]
-          else
-            [ source, target ]
-      , unusedId = IntDict.keys dfa.states |> List.maximum |> Maybe.withDefault 0 |> (+) 1
-      }
-    rewriteLink : AutomatonGraph -> AutomatonGraph
-    rewriteLink g =
-      { g
-        | graph =
-            Graph.update source
-              (Maybe.map (\sourceContext ->
-                { sourceContext
-                  | outgoing =
-                      if AutoSet.isEmpty newConn then
-                        IntDict.remove target sourceContext.outgoing
-                      else
-                        IntDict.insert target newConn sourceContext.outgoing
-                }
-              ))
-              g.graph
-      }
-  in
-    rewriteLink
-    -- |> Automata.Debugging.debugGraph "[modifyConnection] After rewriteLink"
-    >> fromAutomatonGraph
-    -- |> debugDFA_ "[modifyConnection] After conversion to DFA"
-    >> craaazy_extend
-    -- |> debugExtDFA_ "[modifyConnection] After craaazy extension…"
-    >> (\dfa -> { dfa | start = dfa.clone_start })
-    -- >> replace_or_register
-    -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
-    >> retract
-    >> toAutomatonGraph
-
-removeConnection : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
-removeConnection source target =
-  let
-    craaazy_extend : DFARecord {} -> ExtDFA
-    craaazy_extend dfa =
-      { states = dfa.states
-      , transition_function = dfa.transition_function
-      , start =
-          -- remember, .start functions as the OLD start, and is the value used in
-          -- `remove_unreachable`.  After that phase is done, we set it to be the same
-          -- value as .clone_start, which then functions as the NEW start.
-          -- We don't actually HAVE a good value for this!
-          -- Because the set is empty, .start can be the `target`.  `remove_unreachable`
-          -- should get rid of it for us.
-          target
-      , finals = dfa.finals
-      , register =
-          IntDict.keys dfa.states
-          |> Set.fromList
-          |> Set.remove source
-          |> Set.remove target
-      , clone_start =
-          -- see the comment for .start.
-          dfa.start
-      , queue_or_clone =
-          if source == target then
-            [ source ]
-          else
-            [ source, target ]
-      , unusedId = IntDict.keys dfa.states |> List.maximum |> Maybe.withDefault 0 |> (+) 1
-      }
-    removeLink : AutomatonGraph -> AutomatonGraph
-    removeLink g_ =
-      { g_
-        | graph =
-            Graph.update source
-              (Maybe.map (\sourceContext ->
-                { sourceContext
-                  | outgoing = IntDict.remove target sourceContext.outgoing
-                }
-              ))
-              g_.graph
-      }
-  in
-    removeLink
-    >> fromAutomatonGraph
-    -- |> debugDFA_ "[removeConnection] After conversion to DFA"
-    >> craaazy_extend
-    -- |> debugExtDFA_ "[removeConnection] After craaazy extension…"
-    >>(\dfa -> remove_unreachable (all_forward_transitions target dfa) dfa)
-    >> (\dfa -> { dfa | start = dfa.clone_start })
-    -- |> debugExtDFA_ "[removeConnection] After remove_unreachable"
-    -- >> replace_or_register
-    -- |> debugExtDFA_ "[modifyConnection] After replace_or_register"
-    >> retract
-    >> toAutomatonGraph
 
 empty : Entity -> DFARecord {}
 empty defaultValue =
@@ -820,102 +678,6 @@ minimisation_merge head other g =
       (Graph.get other g.graph)
     |> Maybe.withDefault g
     -- |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
-
-type alias TupleEdge = (NodeId, NodeId, Transition)
-type alias Partition = Set NodeId
-type alias HopcroftRecord =
-  { w : List Partition -- still to be processed.
-  , p : List Partition -- partitions
-  }
-
-hopcroft : AutomatonGraph -> List (List Int)
-hopcroft dawg =
-  -- This is Hopcroft's Algorithm
-  let
-    edges = -- Edge (Transition)
-      Graph.edges dawg.graph
-      |> List.concatMap
-        (\{from, to, label} ->
-          AutoSet.toList label
-          |> List.map (\t -> (from, to, t))
-        )
-    (finals, nonFinals) = -- the initial partition.
-      -- those which lead to finality, and those which don't.
-      List.partition (\(_, _, (_, isFinal)) -> isFinal == 1) edges
-      |> \(a, b) -> ( List.map (\(_,v,_) -> v) a |> Set.fromList, 0::List.map (\(_,v,_) -> v) b |> Set.fromList )
-      -- |> debug_log "Finals and non-finals"
-    refine : HopcroftRecord -> List Partition
-    refine r =
-      case (r {- |> debug_log "hopcroft"-}).w of
-        [] ->
-          r.p
-        a::w_rest ->
-          let
-            xs =
-              List.filterMap
-                (\(from, to, t) ->
-                  if Set.member to a then
-                    Just (t, from)
-                  else
-                    Nothing
-                ) edges
-              |> List.gatherEqualsBy Tuple.first
-              |> List.map (\((transition, h), t) -> (transition, Set.fromList (h::List.map Tuple.second t))) -- Now I should have a list of (ch, {states_from_w_which_go_to_`a`})
-              -- |> debug_log ("`X` set, given `A` of " ++ (Debug.toString (Set.toList a)))
-            refine_for_input_and_y : Partition -> Partition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
-            refine_for_input_and_y y further_split remaining_after w p =
-              ( if List.member y w then
-                  (further_split :: remaining_after :: List.remove y w)
-                  -- |> debug_log "Refining w, stage Ⅱa"
-                else
-                  if Set.size further_split <= Set.size remaining_after then
-                    (further_split :: w)
-                    -- |> debug_log "Refining w, stage Ⅱb"
-                  else
-                    (remaining_after :: w)
-                    -- |> debug_log "Refining w, stage Ⅱc"
-              , (further_split :: remaining_after :: List.remove y p)
-                -- |> debug_log "Refining p, stage Ⅱ"
-              )
-            refine_for_input : Transition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
-            refine_for_input _ x w p = -- really, the transition _ is only there for potential debugging.
-              let
-                candidate_sets =
-                  List.filterMap
-                    (\potential_y ->
-                      let
-                        further_split = Set.intersect x potential_y -- |> debug_log ("Intersection of " ++ Debug.toString x ++ " and " ++ Debug.toString potential_y)
-                        remaining_after = Set.diff potential_y x -- |> debug_log ("Subtraction: " ++ Debug.toString potential_y ++ " minus " ++ Debug.toString x)
-                      in
-                        if Set.isEmpty remaining_after || Set.isEmpty further_split then
-                          Nothing
-                        else
-                          Just (potential_y, further_split, remaining_after)
-                    )
-                    p
-              in
-                case candidate_sets of
-                  [] ->
-                    (w, p)
-                  _ ->
-                    -- println ("Refining for input " ++ String.fromChar ch)
-                    List.foldl (\(y, further, remaining) (w_, p_) -> refine_for_input_and_y y further remaining w_ p_) (w, p) candidate_sets
-            (new_w, new_p) =
-              List.foldl (\(t, x) (w, p) -> refine_for_input t x w p) (w_rest, r.p) xs
-          in
-            refine
-              { w = new_w
-              , p = new_p
-              }
-  in
-    refine
-      { w = [finals, nonFinals]
-      , p = [finals, nonFinals]
-      }
-    -- |> debug_log "Hopcroft raw result"
-    -- |> debugLog "Hopcroft result" (List.map Set.size)
-    |> List.filter (\s -> Set.size s > 1)
-    |> List.map Set.toList
 
 minimiseNodesByCombiningTransitions : AutomatonGraph -> AutomatonGraph
 minimiseNodesByCombiningTransitions g_ =
@@ -1006,7 +768,7 @@ minimiseNodesByCombiningTransitions g_ =
               (\_ conn ((czech, state) as acc_) ->
                 if czech then
                   acc_
-                else if AutoSet.foldl (\(_, f) acc -> acc || f == 1) False conn then
+                else if AutoSet.foldl (\{isFinal} acc -> acc || isFinal) False conn then
                   (True, Set.insert ctx.node.id state)
                 else
                   acc_
@@ -1135,8 +897,8 @@ minimiseNodesByCombiningTransitions g_ =
     -- |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
 
-toAutomatonGraph : DFARecord a -> AutomatonGraph
-toAutomatonGraph dfa =
+toAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
+toAutomatonGraph uuid dfa =
   let
     stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toAutomatonGraph] State-list"
     graph =
@@ -1149,7 +911,11 @@ toAutomatonGraph dfa =
             |> List.foldl
               (\(transition, to) state_ ->
                 let
-                  t = if Set.member to dfa.finals then (transition, 1) else (transition, 0)
+                  t =
+                    { tags = AutoSet.singleton Uuid.toString uuid
+                    , via = transition
+                    , isFinal = Set.member to dfa.finals
+                    }
                 in
                 case Dict.get (from, to) state_ of
                   Nothing ->
@@ -1166,23 +932,16 @@ toAutomatonGraph dfa =
   in
     case stateList of
       [] ->
-        Automata.Data.empty
+        Automata.Data.empty uuid
         -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, since DFA was empty"
       h::_ ->
         { graph = graph
+        , graphIdentifier = uuid
         , maxId = Tuple.first h -- |> Debug.log "[toGraph] maxId"
         , root = dfa.start -- |> Debug.log "[toGraph] root"
         }
         -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
         |> minimiseNodesByCombiningTransitions
-
-fromGraph : NodeId -> Graph Entity Connection -> DFARecord {}
-fromGraph start graph =
-  { graph = graph
-  , root = start
-  , maxId = List.maximum (Graph.nodes graph |> List.map .id) |> Maybe.withDefault 0
-  }
-  |> fromAutomatonGraph
 
 renumberAutomatonGraph : AutomatonGraph -> AutomatonGraph
 renumberAutomatonGraph g =
@@ -1191,8 +950,13 @@ renumberAutomatonGraph g =
       IntDict.toList
       >> List.map
         (\(k, conn) ->
-          (k, AutoSet.toList conn
-          |> List.map (Tuple.mapFirst acceptConditionToString))
+          ( k
+          , AutoSet.toList conn
+            |> List.map
+              (\{via, isFinal} ->
+                (acceptConditionToString via, if isFinal then 1 else 0)
+              )
+          )
         )
     nodeMap =
       Graph.nodeIds g.graph
@@ -1228,6 +992,7 @@ renumberAutomatonGraph g =
             }
           )
           g.graph
+    , graphIdentifier = g.graphIdentifier
     , maxId = IntDict.findMax nodeMap |> Maybe.map Tuple.second |> Maybe.withDefault 0
     , root = get g.root
     }
@@ -1257,12 +1022,10 @@ splitTerminalAndNonTerminal g =
   let
         -- Helper to classify a transition as terminal or non-terminal
     isTerminal : Transition -> Bool
-    isTerminal (_, isFinal) =
-      isFinal == 1
+    isTerminal = .isFinal
 
     isNonTerminal : Transition -> Bool
-    isNonTerminal (_, isFinal) =
-      isFinal == 0
+    isNonTerminal = not << .isFinal
 
     -- Find the next unused node id
     nextId : Int
@@ -1417,6 +1180,7 @@ splitTerminalAndNonTerminal g =
         newEdges
   in
     { graph = newGraph
+    , graphIdentifier = g.graphIdentifier
     , maxId = newMaxId
     , root = g.root
     }
@@ -1432,7 +1196,7 @@ ellipsis n s =
 
 stateIdentifierToString : StateIdentifier -> String
 stateIdentifierToString (f, list) =
-  (if f == 0 then "" else "*")
+  (if f == 1 then "*" else "")
   ++ "["
   ++ (List.map String.fromInt list |> String.join ",")
   ++ "]"
@@ -1530,20 +1294,20 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
       IntDict.foldl
         (\destId conn columnDict_ ->
           AutoSet.foldl
-            (\(ch, f) d ->
-              case AutoDict.get ch d of
+            (\{via, isFinal} d ->
+              case AutoDict.get via d of
                 Nothing ->
                   -- Debug.log ("Inserting first " ++ String.fromChar ch ++ "-transition (" ++ (if f == 0 then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   Graph.get destId g.graph
                   |> Maybe.map
                     (\{node} ->
-                      AutoDict.insert ch ((f, [destId]), node.label) d
+                      AutoDict.insert via ((if isFinal then 1 else 0, [destId]), node.label) d
                     )
                   |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
                 Just ((f2, list), v) ->
                   -- Debug.log ("Inserting another " ++ String.fromChar ch ++ "-transition (" ++ (if f == 0 then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   -- if any of the transitions is final, then the created state will be final
-                  AutoDict.insert ch ((max f f2, normalizeSet (destId::list)), v) d
+                  AutoDict.insert via ((max (if isFinal then 1 else 0) f2, normalizeSet (destId::list)), v) d
             )
             columnDict_
             conn
@@ -1557,7 +1321,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     terminalityOf node =
       IntDict.values node.incoming
       -- has at least one incoming terminal transition.
-      |> List.any (\conn -> AutoSet.filter (\(_, f) -> f == 1) conn |> (not << AutoSet.isEmpty))
+      |> List.any (\conn -> AutoSet.filter .isFinal conn |> (not << AutoSet.isEmpty))
       |> \b -> if b then 1 else 0
 
     -- Get all transitions from the original NFA and organize them
@@ -1806,9 +1570,14 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                         (\item ->
                           case item of
                             Nothing ->
-                              Just <| AutoSet.singleton transitionToString (acceptCondition, f)
+                              Just <|
+                                AutoSet.singleton transitionToString <|
+                                  Transition (AutoSet.singleton Uuid.toString g.graphIdentifier) acceptCondition (f == 1)
                             Just conn ->
-                              Just <| AutoSet.insert (acceptCondition, f) conn
+                              Just <|
+                                AutoSet.insert
+                                  (Transition (AutoSet.singleton Uuid.toString g.graphIdentifier) acceptCondition (f == 1))
+                                  conn
                         ) acc_
                     _ ->
                       acc_
@@ -1828,6 +1597,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
       Graph.fromNodesAndEdges newGraphNodes newGraphEdges
   in
     { graph = newGraph
+    , graphIdentifier = g.graphIdentifier
     , root = g.root
     , maxId = new_maxId
     }
@@ -1861,7 +1631,7 @@ fromAutomatonGraphHelper g =
           else
             IntDict.foldl
               (\dest conn dict ->
-                AutoSet.foldl (\(char,_) -> AutoDict.insert char dest) dict conn
+                AutoSet.foldl (\{via} -> AutoDict.insert via dest) dict conn
               )
               (AutoDict.empty acceptConditionToString)
               ctx.outgoing
@@ -1882,17 +1652,17 @@ fromAutomatonGraph =
     -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
 serializeTransition : Transition -> E.Value
-serializeTransition t =
-  case t of
-    (ViaCharacter c, f) ->
+serializeTransition {via, isFinal} =
+  case via of
+    ViaCharacter c ->
       E.object
         [ ("c", E.string <| String.fromChar c)
-        , ("_", E.bool <| f == 1)
+        , ("_", E.bool isFinal)
         ]
-    (ViaGraphReference uuid, f) ->
+    ViaGraphReference uuid ->
       E.object
         [ ("ref", E.string <| Uuid.toString uuid)
-        , ("_", E.bool <| f == 1)
+        , ("_", E.bool isFinal)
         ]
 
 serializeEdge : Edge Connection -> E.Value
@@ -1925,6 +1695,7 @@ serializeAutomatonGraph g =
   E.object
     [ ("e", E.list serializeEdge <| Graph.edges g.graph)
     , ("n", E.list serializeNode <| Graph.nodes g.graph)
+    , ("i", Uuid.encode g.graphIdentifier)
     , ("r", E.int g.root)
     , ("m", E.int g.maxId)
     ]
@@ -1956,11 +1727,11 @@ deserializeNode =
     (D.field "i" <| D.int)
     (D.field "e" <| deserializeEffect)
 
-deserializeTransition : D.Decoder Transition
-deserializeTransition =
+deserializeTransition : Uuid -> D.Decoder Transition
+deserializeTransition uuid =
   D.oneOf
     [ D.map2
-        (\c f -> (c, if f then 1 else 0))
+        (Transition (AutoSet.singleton Uuid.toString uuid))
         ( D.field "c" D.string
           |> D.andThen
             (\s ->
@@ -1972,33 +1743,30 @@ deserializeTransition =
         )
         (D.field "_" D.bool)
     , D.map2
-        (\c f -> (ViaGraphReference c, if f then 1 else 0))
-        ( D.field "ref" D.string
-          |> D.andThen
-            (\s ->
-              case Uuid.fromString s of
-                Just uuid -> D.succeed uuid
-                Nothing -> D.fail <| "'" ++ s ++ "' is not a valid UUIDv4."
-            )
-        )
+        (\c -> Transition (AutoSet.singleton Uuid.toString uuid) (ViaGraphReference c))
+        (D.field "ref" Uuid.decoder)
         (D.field "_" D.bool)
     ]
 
-deserializeEdge : D.Decoder (Edge Connection)
-deserializeEdge =
+deserializeEdge : Uuid -> D.Decoder (Edge Connection)
+deserializeEdge uuid =
   D.map3
     (\f t l -> Edge f t (AutoSet.fromList transitionToString l))
     (D.field "src" <| D.int)
     (D.field "dst" <| D.int)
-    (D.field "via" <| D.list deserializeTransition)
+    (D.field "via" <| D.list <| deserializeTransition uuid)
 
 deserializeAutomatonGraph : D.Decoder AutomatonGraph
 deserializeAutomatonGraph =
-  D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e))
-    (D.field "n" <| D.list deserializeNode)
-    (D.field "e" <| D.list deserializeEdge)
-    (D.field "m" <| D.int)
-    (D.field "r" <| D.int)
+  D.field "i" Uuid.decoder
+  |> D.andThen
+    (\uuid ->
+      D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e) uuid)
+        (D.field "n" <| D.list deserializeNode)
+        (D.field "e" <| D.list <| deserializeEdge uuid)
+        (D.field "m" <| D.int)
+        (D.field "r" <| D.int)
+    )
 
 -----------------
 -- DEBUGGING

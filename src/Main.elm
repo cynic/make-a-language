@@ -112,7 +112,6 @@ encodeGraphPackage pkg =
           ]
       )
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
-    , ("uuid", Uuid.encode pkg.uuid)
     , ("created", E.int (Time.posixToMillis pkg.created))
     , ("tests", E.dict identity encodeTest pkg.tests)
     , ("currentTestKey", E.string pkg.currentTestKey)
@@ -135,9 +134,8 @@ decodeGraphPackage =
         )
       |> D.andThen
         (\fdg ->
-          D.map5 (GraphPackage fdg dimensions)
+          D.map4 (GraphPackage fdg dimensions)
             (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
-            (D.field "uuid" Uuid.decoder)
             (D.field "created" <| D.map Time.millisToPosix D.int)
             (D.field "currentTestKey" D.string)
             (D.field "tests" <| D.dict (decodeTest fdg.userGraph))
@@ -160,10 +158,9 @@ decodeFlags =
 
 createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> Dict String (Svg ()) -> (Float, Float) -> GraphPackage
 createNewPackage uuid testUuid currentTime thumbs dimensions = -- this is the width & height of the panel
-  { model = FDG.init dimensions thumbs
+  { model = FDG.init uuid dimensions thumbs
   , dimensions = dimensions
   , description = Nothing
-  , uuid = uuid
   , created = currentTime
   , currentTestKey = Uuid.toString testUuid
   , tests = Dict.empty
@@ -197,7 +194,7 @@ init flags =
     packages =
       decoded.packages
       -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
-      |> List.map (\v -> ( Uuid.toString v.uuid, v ))
+      |> List.map (\v -> ( Uuid.toString v.model.userGraph.graphIdentifier, v ))
       |> Dict.fromList
   in
     ( { currentPackage =
@@ -297,7 +294,7 @@ update msg model =
                         (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
                         newFdModel.userGraph
                 }
-                |> \pkg -> Dict.insert (Uuid.toString pkg.uuid) pkg model.packages
+                |> \pkg -> Dict.insert (Uuid.toString pkg.model.userGraph.graphIdentifier) pkg model.packages
               else
                 model.packages
         }
@@ -442,7 +439,11 @@ update msg model =
       in
         ( { model
             | currentPackage = updatedPackage
-            , packages = Dict.insert (Uuid.toString currentPackage.uuid) updatedPackage model.packages
+            , packages =
+                Dict.insert
+                  (Uuid.toString currentPackage.model.userGraph.graphIdentifier)
+                  updatedPackage
+                  model.packages
           }
         , persistPackage updatedPackage
         )
@@ -461,7 +462,11 @@ update msg model =
       in
         ( { model
             | currentPackage = updatedPackage
-            , packages = Dict.insert (Uuid.toString currentPackage.uuid) updatedPackage model.packages
+            , packages =
+                Dict.insert
+                  (Uuid.toString currentPackage.model.userGraph.graphIdentifier)
+                  updatedPackage
+                  model.packages
           }
         , persistPackage updatedPackage
         )
@@ -636,7 +641,11 @@ update msg model =
       in
         ( { model
             | currentPackage = updatedPackage
-            , packages = Dict.insert (Uuid.toString currentPackage.uuid) currentPackage model.packages
+            , packages =
+                Dict.insert
+                  (Uuid.toString currentPackage.model.userGraph.graphIdentifier)
+                  updatedPackage -- CHECK!  Should this be 'currentPackage'? (I 'fixed' this during a totally different refactor)
+                  model.packages
           }
         , persistPackage updatedPackage
         )
@@ -885,21 +894,11 @@ viewPackageItem model package =
   let
     displaySvg =
       FDG.viewComputationThumbnail (model.leftPanelWidth - 15) package
-    description =
-      case package.description of
-        Nothing ->
-          text ""
-        Just desc ->
-          div
-            [ HA.css
-                [ Css.padding (Css.px 5)
-                ]
-            ]
-            [ text desc ]
     canSelect =
       -- we can select this EITHER if there are no pending changes, OR
       -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
-      model.currentPackage.model.undoBuffer == [] || package.uuid == model.currentPackage.uuid
+      model.currentPackage.model.undoBuffer == [] ||
+      package.model.userGraph.graphIdentifier == model.currentPackage.model.userGraph.graphIdentifier
   in
   div 
     [ HA.classList
@@ -919,7 +918,7 @@ viewPackageItem model package =
             Css.cursor Css.notAllowed
         ]
     , if canSelect then
-        onClick (SelectPackage package.uuid)
+        onClick (SelectPackage package.model.userGraph.graphIdentifier)
       else
         HA.title "Apply or cancel the pending changes before selecting another package."
     ]
@@ -936,7 +935,7 @@ viewPackageItem model package =
             ]
         , HA.title "Delete computation"
         , if canSelect then
-            onClick (DeletePackage package.uuid)
+            onClick (DeletePackage package.model.userGraph.graphIdentifier)
           else
             HA.title "Apply or cancel the pending changes before deleting a package."
         ]
@@ -1295,20 +1294,19 @@ executionText { currentPackage } =
                           [ HA.class "computation-progress-processed" ]
                           ( datum.transitionsTaken
                             |> List.reverse
-                            |> List.map 
-                              (\(_, (ch, isFinal)) ->
-                                viewTransition ch
-                                  [ ("final", isFinal == 1)
-                                  , ("non-final", isFinal == 0)
-                                  ]
+                            |> List.map
+                              (\(_, matching_transitions, consumed) ->
+                                viewInputProcessing consumed
+                                  ( if (AutoSet.filter .isFinal matching_transitions |> AutoSet.size) > 0 then
+                                      ["final"]
+                                    else
+                                      ["non-final"]
+                                  )
                               )
                           )
                       , span
                           [ HA.class "computation-progress-to-do" ]
-                          ( List.map
-                              (\ch -> viewTransition ch [])
-                              datum.remainingData
-                          )
+                          [ viewInputProcessing datum.remainingData [] ]
                       ]
                   )
                   maybeDatum
@@ -1316,17 +1314,11 @@ executionText { currentPackage } =
               ]
     ]
 
-viewTransition : AcceptVia -> List (String, Bool) -> Html msg
-viewTransition transition classList =
-  case transition of
-    ViaCharacter ch ->
-      span
-        [ HA.classList classList ]
-        [ text <| String.fromChar ch ]
-    ViaGraphReference _ ->
-      span
-        [ HA.classList classList ]
-        [ text "🔗" ]
+viewInputProcessing : List Char -> List String -> Html msg
+viewInputProcessing characters classes =
+  span
+    [ HA.classList <| List.map (\v -> (v, True)) classes ]
+    [ text <| String.fromList characters ]
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =

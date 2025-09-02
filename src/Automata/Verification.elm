@@ -137,7 +137,6 @@ verifiedRecognizedWords dfa =
       Just e ->
         [e]
 
-type alias TupleEdge = (NodeId, NodeId, Transition)
 type alias Partition = Set NodeId
 type alias HopcroftRecord =
   { w : List Partition -- still to be processed.

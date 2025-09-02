@@ -37,6 +37,7 @@ import Maybe.Extra as Maybe
 import Automata.Debugging
 import Uuid
 import Svg
+import Uuid exposing (Uuid)
 
 type alias Model = FDG_Model
 
@@ -187,6 +188,7 @@ makeSimulation (w, h) g =
 toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
   { graph = Graph.mapContexts initializeNode g.graph
+  , graphIdentifier = g.graphIdentifier
   , root = g.root
   , maxId = g.maxId
   }
@@ -229,8 +231,8 @@ automatonGraphToModel (w, h) thumbs g =
     , execution = Nothing
     }
 
-init : (Float, Float) -> Dict String (Svg ()) -> Model
-init (w, h) thumbs =
+init : Uuid -> (Float, Float) -> Dict String (Svg ()) -> Model
+init uuid (w, h) thumbs =
   automatonGraphToModel
     (w, h)
     thumbs
@@ -242,7 +244,7 @@ init (w, h) thumbs =
       , vy = 0
       , id = 0
       }
-      |> toAutomatonGraph
+      |> toAutomatonGraph uuid
     )
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
@@ -449,26 +451,6 @@ path_for_removal graph start source destination =
           path
     )
     (Graph.get destination (graph {- |> debugGraph "getting userchange-data from" -}))
-
-{-| Create a DFA consisting of all paths ending at the specified transition.
--}
-wordsEndingAt : NodeId -> AutomatonGraph -> AutomatonGraph
-wordsEndingAt nodeId g =
-  let
-    nodes =
-      Graph.guidedBfs
-        Graph.alongIncomingEdges
-        (Graph.ignorePath (\context acc ->
-          context.node.id :: acc
-        ))
-        [nodeId]
-        []
-        (Graph.update g.root (Maybe.map (\node -> { node | incoming = IntDict.empty })) g.graph)
-      |> Tuple.first
-    induced =
-      Graph.inducedSubgraph nodes g.graph
-  in
-    graphToAutomatonGraph g.root induced
 
 newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_graphchange src x y conn g =
@@ -907,14 +889,33 @@ update msg model =
 
     ToggleSelectedTransition acceptCondition ->
       let
+        alterTransitions : Connection -> Connection
         alterTransitions transitions =
-          if AutoSet.member (acceptCondition, 0) transitions then
-            AutoSet.remove (acceptCondition, 0) transitions
-            |> AutoSet.insert (acceptCondition, 1)
-          else if AutoSet.member (acceptCondition, 1) transitions then
-            AutoSet.remove (acceptCondition, 1) transitions
-          else
-            AutoSet.insert (acceptCondition, 0) transitions
+          AutoSet.foldl
+            (\t (seen, state) ->
+              if t.via == acceptCondition then
+                if t.isFinal then
+                  (True, state) -- skip it; i.e., remove it.
+                else
+                  (True, AutoSet.insert { t | isFinal = True } state)
+              else
+                (seen, AutoSet.insert t state)
+            )
+            (False, AutoSet.empty transitionToString)
+            transitions
+          |>  (\(seen, resultSet) ->
+                if seen then
+                  resultSet -- I've handled this above.
+                else
+                  -- need to insert it.
+                  AutoSet.insert
+                    (Transition
+                      (AutoSet.singleton Uuid.toString model.userGraph.graphIdentifier)
+                      acceptCondition
+                      False
+                    )
+                    resultSet
+              )
       in
         case model.currentOperation of
           Just (ModifyingGraph via ({ transitions } as mod)) ->
@@ -936,10 +937,15 @@ update msg model =
             }
           Just (Splitting { to_split, left, right }) ->
             let
-              onLeft_0 = AutoSet.member (acceptCondition, 0) left
-              onLeft_1 = AutoSet.member (acceptCondition, 1) left
-              onRight_0 = AutoSet.member (acceptCondition, 0) right
-              onRight_1 = AutoSet.member (acceptCondition, 1) right
+              tr finality =
+                Transition
+                  (AutoSet.singleton Uuid.toString model.userGraph.graphIdentifier)
+                  acceptCondition
+                  finality
+              onLeft_0 = AutoSet.member (tr False) left
+              onLeft_1 = AutoSet.member (tr True) left
+              onRight_0 = AutoSet.member (tr False) right
+              onRight_1 = AutoSet.member (tr True) right
               pushToRight t =
                 ( AutoSet.remove t left, AutoSet.insert t right )
               pushToLeft t =
@@ -947,19 +953,19 @@ update msg model =
               ( newLeft, newRight ) =
                 if onLeft_0 && onLeft_1 then
                   -- push the non-terminal to the right.
-                  pushToRight (acceptCondition, 0)
+                  pushToRight (tr False)
                 else if onLeft_1 then
                   -- push the terminal to the right
-                  pushToRight (acceptCondition, 1)
+                  pushToRight (tr True)
                 else if onRight_0 && onRight_1 then
                   -- push the non-terminal to the left
-                  pushToLeft (acceptCondition, 0)
+                  pushToLeft (tr False)
                 else if onRight_1 then
-                  pushToLeft (acceptCondition, 1)
+                  pushToLeft (tr True)
                 else if onLeft_0 then
-                  pushToRight (acceptCondition, 0)
+                  pushToRight (tr False)
                 else if onRight_0 then
-                  pushToLeft (acceptCondition, 0)
+                  pushToLeft (tr False)
                 else
                   ( left, right )
             in
@@ -1185,7 +1191,7 @@ applyChangesToGraph g =
           identifyDisconnectedNodes g
           |> Set.foldl Graph.remove g.graph
     }
-    |> (fromAutomatonGraph >> toAutomatonGraph)
+    |> (fromAutomatonGraph >> toAutomatonGraph g.graphIdentifier)
 
 confirmChanges : Model -> Model
 confirmChanges model =
@@ -1217,19 +1223,19 @@ textChar ch =
       String.fromChar ch
 
 transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
-transitionToTextSpan (via, finality) otherClasses =
+transitionToTextSpan {via, isFinal} otherClasses =
   case via of
     ViaCharacter ch ->
       tspan
         [ class <|
-            (if finality == 0 then "nonfinal" else "final")
+            (if isFinal then "final" else "nonfinal")
             :: otherClasses via
         ]
         [ text <| textChar ch ]
     ViaGraphReference ref ->
       tspan
         [ class <|
-            (if finality == 0 then "nonfinal" else "final")
+            (if isFinal then "final" else "nonfinal")
             :: otherClasses via
         ]
         [ text "🔗"
@@ -1444,19 +1450,24 @@ executionData r =
     EndOfComputation s -> Just <| getData s
     CanContinue s -> Just <| getData s
 
+-- from the execution result, obtain the edges which were taken.
+-- Note that multiple edges may be "taken" between two nodes,
+-- in the cases of (1) loops and (2) graph-ref intersections.
 executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia)
 executing_edges result =
   let
+    trace : ExecutionData -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia) -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia)
     trace data acc =
       case data.transitionsTaken of
         [] ->
           acc
-        (src, (acceptanceCondition, _))::tail ->
+
+        (src, matching_transitions, _)::tail -> -- more than one transtion may match (e.g. graph-ref intersections)
           trace
             { data | transitionsTaken = tail, currentNode = src }
             (Dict.update (src, data.currentNode)
-              ( Maybe.map (AutoSet.insert acceptanceCondition)
-                >> Maybe.orElse (Just <| AutoSet.singleton acceptConditionToString acceptanceCondition)
+              ( Maybe.map (AutoSet.union (AutoSet.map acceptConditionToString .via matching_transitions))
+                >> Maybe.orElse (Just <| AutoSet.map acceptConditionToString .via matching_transitions)
               )
               acc
             )
@@ -2025,14 +2036,16 @@ transition_spacing : Float
 transition_spacing = 15
 
 -- https://ishadeed.com/article/target-size/
-viewSingleKey : Char -> Connection -> (Int, Int) -> Float -> Svg Msg
-viewSingleKey ch conn (gridX, gridY) y_offset =
+viewSingleKey : Uuid -> Char -> Connection -> (Int, Int) -> Float -> Svg Msg
+viewSingleKey uuid ch conn (gridX, gridY) y_offset =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = y_offset + transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
-    isThisNodeTerminal = AutoSet.member (ViaCharacter ch, 1) conn
+    tr finality =
+      Transition (AutoSet.singleton Uuid.toString uuid) (ViaCharacter ch) finality
+    isThisNodeTerminal = AutoSet.member (tr True) conn
     keyClass =
-      if AutoSet.member (ViaCharacter ch, 0) conn then
+      if AutoSet.member (tr False) conn then
         [ "transition-chooser-key", "selected" ]
       else if isThisNodeTerminal then
         [ "transition-chooser-key", "selected", "terminal" ]
@@ -2068,8 +2081,8 @@ viewSingleKey ch conn (gridX, gridY) y_offset =
         [ text <| String.fromChar ch ]
     ]
 
-viewSvgCharacterChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
-viewSvgCharacterChooser conn y_offset w =
+viewSvgCharacterChooser : Uuid -> AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
+viewSvgCharacterChooser uuid conn y_offset w =
   let
     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
     alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
@@ -2092,6 +2105,7 @@ viewSvgCharacterChooser conn y_offset w =
         ( List.map
             (\(item, col, row) ->
               viewSingleKey
+                uuid
                 item
                 conn
                 (col, row)
@@ -2102,8 +2116,8 @@ viewSvgCharacterChooser conn y_offset w =
   in
     ( chooser_svg, my_height )
 
-viewSvgComputationChooser : Int -> AutoSet.Set String Transition -> Float -> Float -> Dict String (Svg ()) -> (Svg Msg, Float)
-viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
+viewSvgGraphRefChooser : Int -> Uuid -> AutoSet.Set String Transition -> Float -> Float -> Dict String (Svg ()) -> (Svg Msg, Float)
+viewSvgGraphRefChooser focusedIndex uuid conn y_offset panelWidth thumbnails =
   let
     -- this is the width of each thumbnail.
     -- and it is ALSO the center position in the panel.
@@ -2129,7 +2143,7 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
       Dict.toList thumbnails
       |> List.filterMap
         (\(k, v) ->
-          Maybe.map (\uuid -> (uuid, v)) (Uuid.fromString k)
+          Maybe.map (\ref -> (ref, v)) (Uuid.fromString k)
         )
     thumbnail_carousel =
       g
@@ -2141,15 +2155,11 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
         , class [ "thumbnail-carousel" ]
         ]
         ( List.indexedMap
-            (\i (uuid, thumb) ->
+            (\i (ref, thumb) ->
               let
+                tr = Transition (AutoSet.singleton Uuid.toString uuid) (ViaGraphReference ref)
                 isSelected =
-                  AutoSet.member (ViaGraphReference uuid, 1) conn ||
-                  AutoSet.member (ViaGraphReference uuid, 0) conn
-                isLazy =
-                  isSelected &&
-                  (AutoSet.member (ViaGraphReference uuid, 1) conn ||
-                   AutoSet.member (ViaGraphReference uuid, 0) conn)
+                  AutoSet.member (tr True) conn || AutoSet.member (tr False) conn
                 scale = height / 5
               in
                 g
@@ -2183,7 +2193,7 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
                       , stroke <| Paint <|
                           if isSelected then Color.green else Color.black
                       , cursor CursorPointer
-                      , onClick <| ToggleSelectedTransition (ViaGraphReference uuid)
+                      , onClick <| ToggleSelectedTransition (ViaGraphReference ref)
                       ]
                       []
                   , -- if the item is selected, then put on a UI for things that can be
@@ -2223,7 +2233,7 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
                             , strokeWidth 1
                             , stroke <| Paint <| Color.black
                             , cursor CursorPointer
-                            , onClick (if isLazy then SetComputationEffort else SetComputationEffort)
+                            , onClick (SetComputationEffort)
                             ]
                             []
                         , text_
@@ -2237,7 +2247,7 @@ viewSvgComputationChooser focusedIndex conn y_offset panelWidth thumbnails =
                             , textAnchor AnchorMiddle
                             , TypedSvg.Attributes.pointerEvents "none"
                             ]
-                            ( if isLazy then
+                            ( if True then
                                 [ tspan
                                     []
                                     [ text "📉" ]
@@ -2361,10 +2371,9 @@ viewSvgTransitionChooser via model =
     ( chooser_svg, chooser_height) =
       case via of
         ChooseCharacter ->
-          viewSvgCharacterChooser conn category_chooser_space w
+          viewSvgCharacterChooser model.userGraph.graphIdentifier conn category_chooser_space w
         ChooseGraphReference idx ->
-          viewSvgComputationChooser idx conn category_chooser_space w model.graphThumbnails
-          -- viewSvgGraphRefChooser conn
+          viewSvgGraphRefChooser idx model.userGraph.graphIdentifier conn category_chooser_space w model.graphThumbnails
     chooserButtonSize = 30
   in
   g
@@ -2825,7 +2834,7 @@ breakStringBadly fcc px width text =
     break (String.toList text) 0 [] []
 
 viewComputationThumbnail : Float -> GraphPackage -> Svg Msg
-viewComputationThumbnail width { model, uuid, description } =
+viewComputationThumbnail width { model, description } =
   let
     height = thumbnailHeight width
     ( m_w, m_h ) = model.dimensions
@@ -2879,7 +2888,7 @@ viewComputationThumbnail width { model, uuid, description } =
         ]
       , TypedSvg.g
           []
-          [ viewGraphReference uuid 0 0 ]
+          [ viewGraphReference model.userGraph.graphIdentifier 0 0 ]
       , text_
           [ textAnchor AnchorMiddle
           , alignmentBaseline AlignmentCentral
