@@ -1,7 +1,7 @@
 module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
-import Utility exposing (ag_equals, mkConn)
+import Utility exposing (ag_equals, dummy_uuid)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import Graph exposing (NodeId)
 import Automata.Data exposing (AutomatonGraph, Entity, mkAG_input)
@@ -38,6 +38,7 @@ into a compiler bug https://github.com/elm/compiler/issues/1839 .
 So, I'm basically going to try to work around that by expanding
 things inline until I get something that works.
 -}
+mkConn = Utility.mkConn dummy_uuid
 
 ag : String -> AutomatonGraph
 ag s_ =
@@ -72,12 +73,14 @@ ag s_ =
     case nodes of
       [] ->
         { graph = Graph.fromNodesAndEdges [{ id = 0, label = { id = 0, x = 0, y = 0, vx = 0, vy = 0, effect = NoEffect } }] []
+        , graphIdentifier = dummy_uuid
         , root = 0
         , maxId = 0
         }
       _ ->
         { graph =
             Graph.fromNodesAndEdges nodes edges
+        , graphIdentifier = dummy_uuid
         , root =
             case ts of
               (src, _, _)::_ -> src

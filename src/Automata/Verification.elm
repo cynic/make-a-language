@@ -27,8 +27,8 @@ explore node s graph =
               (\outnode ->
                   AutoSet.toList conn
                   |> List.map
-                    (\(acceptCondition, isFinal) ->
-                        (outnode, s ++ printableAcceptCondition acceptCondition, isFinal == 1)
+                    (\{via, isFinal} ->
+                        (outnode, s ++ printableAcceptCondition via, isFinal)
                     )
               )
       )
@@ -74,7 +74,7 @@ exploreDeterministic node graph =
           allSets =
             node.outgoing
             |> IntDict.values
-            |> List.map (AutoSet.map acceptConditionToString Tuple.first) -- |> debug_log ("CHECK for #" ++ String.fromInt node.node.id)
+            |> List.map (AutoSet.map acceptConditionToString .via) -- |> debug_log ("CHECK for #" ++ String.fromInt node.node.id)
           allTransitions =
             List.foldl AutoSet.union (AutoSet.empty acceptConditionToString) allSets -- |> debug_log "All transitions"
           duplicate =
@@ -156,7 +156,7 @@ minimality dawg =
         )
     (finals, nonFinals) = -- the initial partition.
       -- those which lead to finality, and those which don't.
-      List.partition (\(_, _, (_, isFinal)) -> isFinal == 1) edges
+      List.partition (\(_, _, {isFinal}) -> isFinal) edges
       |> \(a, b) -> ( List.map (\(_,v,_) -> v) a |> Set.fromList, 0::List.map (\(_,v,_) -> v) b |> Set.fromList )
       -- |> debug_log "Finals and non-finals"
     refine : HopcroftRecord -> List Partition

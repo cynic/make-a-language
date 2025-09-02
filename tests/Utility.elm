@@ -1,6 +1,6 @@
 module Utility exposing
   ( ag, dfa, mkDFA_input, ag_equals, dfa_equals, dummyEntity
-  , mkConn, mkAutomatonGraph
+  , mkConn, mkAutomatonGraph, dummy_uuid
   )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
@@ -25,6 +25,13 @@ import Maybe.Extra
 import Dict
 import Uuid exposing (Uuid)
 import Automata.Data exposing (Transition)
+import Random.Pcg.Extended as Random
+
+dummy_uuid : Uuid
+dummy_uuid = Tuple.first <| Random.step Uuid.generator <| Random.initialSeed 1 [2, 3, 4, 5]
+
+dummy_uuid_set : AutoSet.Set String Uuid
+dummy_uuid_set = AutoSet.singleton Uuid.toString dummy_uuid
 
 dummyEntity : Int -> Entity
 dummyEntity id =
@@ -76,6 +83,7 @@ mkDFA transitions finals =
 mkConn : Uuid -> String -> Connection
 mkConn uuid s =
   let
+    uuid_set = AutoSet.singleton Uuid.toString uuid
     uuid_helper list finality acc =
       case List.splitAt 36 list of
         (uuidChars, rest) ->
@@ -84,31 +92,34 @@ mkConn uuid s =
           else
             case Uuid.fromString (String.fromList uuidChars) of
               Just ref ->
-                helper rest (AutoSet.insert (Transition uuid (ViaGraphReference ref) finality) acc)
+                helper rest (AutoSet.insert (Transition uuid_set (ViaGraphReference ref) finality) acc)
               Nothing ->
                 acc -- not a valid UUIDv4; end it here.
     
     helper xs acc =
       case xs of
         '+'::'+'::rest ->
-          helper rest (AutoSet.insert (Transition uuid (ViaCharacter '+') False) acc
-          |> AutoSet.remove (Transition uuid (ViaCharacter '+'), True))
+          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter '+') False) acc
+          |> AutoSet.remove (Transition uuid_set (ViaCharacter '+') True))
         '+'::rest ->
-          uuid_helper rest 0 acc
+          uuid_helper rest False acc
         '!'::'+'::'+'::rest ->
-          helper rest (AutoSet.insert (ViaCharacter '+', 1) acc |> AutoSet.remove (ViaCharacter '+', 0))
+          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter '+') True) acc
+          |> AutoSet.remove (Transition uuid_set (ViaCharacter '+') False))
         '!'::'+'::rest ->
-          uuid_helper rest 1 acc
+          uuid_helper rest True acc
         '!'::ch::rest ->
-          helper rest (AutoSet.insert (ViaCharacter ch, 1) acc |> AutoSet.remove (ViaCharacter ch, 0))
+          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter ch) True) acc
+          |> AutoSet.remove (Transition uuid_set (ViaCharacter ch) False))
         ch::rest ->
-          helper rest (AutoSet.insert (ViaCharacter ch, 0) acc |> AutoSet.remove (ViaCharacter ch, 1))
+          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter ch) False) acc
+          |> AutoSet.remove (Transition uuid_set (ViaCharacter ch) True))
         [] -> acc
   in
     helper (String.toList s) (AutoSet.empty transitionToString)
 
-mkAutomatonGraphWithValues : (NodeId -> Entity) -> List (NodeId, String, NodeId) -> AutomatonGraph
-mkAutomatonGraphWithValues valueFunction ts =
+mkAutomatonGraphWithValues : Uuid -> (NodeId -> Entity) -> List (NodeId, String, NodeId) -> AutomatonGraph
+mkAutomatonGraphWithValues uuid valueFunction ts =
   let
     edges =
       List.foldl
@@ -117,9 +128,9 @@ mkAutomatonGraphWithValues valueFunction ts =
             (\item ->
               case item of
                 Nothing ->
-                  Just (mkConn s)
+                  Just (mkConn uuid s)
                 Just existing ->
-                  Just <| AutoSet.union existing (mkConn s)
+                  Just <| AutoSet.union existing (mkConn uuid s)
             )
             acc
         )
@@ -139,12 +150,14 @@ mkAutomatonGraphWithValues valueFunction ts =
     case nodes of
       [] ->
         { graph = Graph.fromNodesAndEdges [{ id = 0, label = valueFunction 0}] []
+        , graphIdentifier = uuid
         , root = 0
         , maxId = 0
         }
       _ ->
         { graph =
             Graph.fromNodesAndEdges nodes edges
+        , graphIdentifier = uuid
         , root =
             case ts of
               (src, _, _)::_ -> src
@@ -154,7 +167,7 @@ mkAutomatonGraphWithValues valueFunction ts =
 
 mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph
 mkAutomatonGraph =
-  mkAutomatonGraphWithValues (dummyEntity)
+  mkAutomatonGraphWithValues dummy_uuid (dummyEntity)
 
 -- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))
@@ -223,7 +236,7 @@ ag_equals g_expected g_actual =
           ( from
           , to
           , AutoSet.toList label
-            |> List.map (Tuple.mapFirst Automata.Data.printableAcceptCondition)
+            |> List.map (.via >> Automata.Data.printableAcceptCondition)
           )
         )
       |> List.sortBy (\(_, _, v) -> v)

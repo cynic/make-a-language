@@ -17,6 +17,7 @@ import Utility
 -- nodesAndWords d =
 --   (D.numNodes d, D.verifiedRecognizedWords d)
 
+
 {-| Create a DFA that accepts exactly one string. -}
 add_string_to_dfa : String -> Maybe (D.DFARecord {})
 add_string_to_dfa string =
@@ -82,8 +83,8 @@ czech l expectedRecognized =
         dfa =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
           fromWords x
-        minimality = D.minimality (toAutomatonGraph dfa)
-        recognized = D.verifiedRecognizedWords (toAutomatonGraph dfa)
+        minimality = D.minimality (toAutomatonGraph Utility.dummy_uuid dfa)
+        recognized = D.verifiedRecognizedWords (toAutomatonGraph Utility.dummy_uuid dfa)
       in
         if recognized /= expectedRecognized then
           Debug.log "Failure on recognized words of permutation" x
