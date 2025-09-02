@@ -125,9 +125,6 @@ canExecute : Model -> Bool
 canExecute model =
   List.isEmpty model.undoBuffer
 
-getExecutionResult : Model -> Maybe ExecutionResult
-getExecutionResult = .execution
-
 viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
 viewportForces (w, h) _ =
   [ Force.center (w / 2) (h / 2)
@@ -179,11 +176,6 @@ basicForces g height =
         )
         (Graph.nodes g.graph)
   ]  
-
-makeSimulation : (Float, Float) -> AutomatonGraph -> Force.State NodeId
-makeSimulation (w, h) g =
-  Force.simulation
-    (basicForces g (round h) ++ viewportForces (w, h) g.graph)
 
 toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
@@ -318,139 +310,6 @@ identifyDisconnectedNodes g =
   |> Graph.nodeIds
   |> Set.fromList
 
-{-| Obtain the shortest path to a specified NodeId.
-
-If no such path exists, then return Nothing.  Can specify an
-`accept` function for additional checks, if desired.
--}
-createPathTo : NodeId -> List NodeId -> (RequestedChangePath -> Bool) -> Graph Entity Connection -> NodeId -> Maybe RequestedChangePath
-createPathTo target waypoints accept graph start =
-  let
-    -- avoid backtracking; so, we have a "seen" set.
-    findPath : Set NodeId -> NodeId -> RequestedChangePath -> Maybe RequestedChangePath
-    findPath seen current acc =
-      if Set.member current seen && current /= target then
-        Nothing --|> Debug.log "Already seen this; must be on a recursive path; backtracking"
-      else
-        Graph.get ({-Debug.log "current"-} current) graph
-        |> Maybe.andThen
-          (\node ->
-            let
-              nodeIsStart = node.node.id == start
-              seenAllNecessaryNodes =
-                List.all
-                  (\id ->
-                    id == current ||
-                    Set.member id seen --|> Debug.log ("Is #" ++ String.fromInt id ++ " the current node or in " ++ Debug.toString seen)
-                  )
-                  (target::waypoints)
-              nodeIsAccepted = accept acc
-            in
-              if nodeIsStart && seenAllNecessaryNodes && nodeIsAccepted then
-                  Just acc
-                -- else
-                --   -- if I don't encounter `target` and all specified waypoints
-                --   -- on the way, then this path is useless to me.
-                --   Nothing |> Debug.log "Path failed checks"
-              else
-                node.incoming
-                |> IntDict.toList
-                -- |> Debug.log ("Incoming nodes for #" ++ String.fromInt current ++ " are")
-                |> List.filterMap
-                  (\(k, v) ->
-                    if current /= k then
-                      AutoSet.toList v
-                      |> List.head
-                      |> Maybe.andThen
-                        (\t ->
-                          findPath
-                            (Set.insert current seen)
-                            ({- Debug.log "going to look at" -} k)
-                            ({- Debug.log "current path" -} (t::acc))
-                        )
-                    else
-                      Nothing -- ignore purely recursive links; they won't get us anywhere.
-                  )
-                |> List.minimumBy List.length
-          )
-  in
-    findPath Set.empty target []
-    -- |> Debug.log ("[createPathTo] Asked to find path to #" ++ String.fromInt target ++ ", found")
-
-{-| Obtain the NodeId at the end of the specified path.
-
-If the path is invalid for the graph context, then return Nothing.
--}
-followPathTo : RequestedChangePath -> AutomatonGraph -> Maybe NodeId
-followPathTo path g =
-  let
-    followPath : NodeId -> RequestedChangePath -> Maybe NodeId
-    followPath current remaining =
-      case remaining of
-        [] ->
-          Just current
-        h::t ->
-          Graph.get current g.graph
-          |> Maybe.andThen
-            (\node ->
-              IntDict.toList node.outgoing
-              |> List.filter (\(_, conn) -> AutoSet.member h conn)
-              -- here, I am treating the graph as if it is an NFA.
-              -- And that is because indeed, a user may well just treat it as an NFA
-              -- and randomly create two or more paths!!  So, we need to explore each
-              -- path and see which ones might be valid.
-              |> List.filterMap (\(k, _) -> followPath k t)
-              |> List.head
-              -- |> Maybe.andThen (\(k, _) -> followPath k t)
-            )
-  in
-    followPath g.root path
-    -- |> Debug.log ("[followPathTo] Followed " ++ Debug.toString path ++ " to arrive at")
-
-path_for_removal : Graph Entity Connection -> NodeId -> NodeId -> NodeId -> Maybe (RequestedChangePath, RequestedChangePath)
-path_for_removal graph start source destination =
-  -- this is called when there is a link between the source and destination,
-  -- and it must be removed.  As a result, other nodes might be disconnected.
-  Maybe.andThen
-    (\dest ->
-      let
-        acceptFunction =
-          -- check that there is a link between source & dest, and that
-          -- the destination can be obtained via the last transition in 1 hop
-          -- (unless we are dealing with recursion).
-          -- Check the recursive case first.
-          if source == destination then
-            \_ -> True -- |> Debug.log "No accept-check, this is recursive" -- the checks in createPathTo should already cover this.
-          else
-            \p ->
-              -- we reverse because we want to check the LAST link in the chain for 1-hop
-              case List.reverse p of
-                [] ->  -- you're not recursive, so there must be AT LEAST one link!
-                  False
-                  -- |> Debug.log "Failed accept: no links in path, but not recursive"
-                h::_ ->
-                  IntDict.get source dest.incoming
-                  -- |> Debug.log "Is there a 1-hop link?"
-                  |> Maybe.map (AutoSet.member ({- Debug.log "Checking for transition" -} h))
-                  |> Maybe.withDefault False
-                  -- |> Debug.log ("Is there a 1-link hop from #" ++ String.fromInt destination ++ " to #" ++ String.fromInt source)
-        path =
-          createPathTo destination [source] acceptFunction graph start
-      in
-        Maybe.map
-          (\p ->
-            if source == destination then
-              ( p, p )
-            else
-              case List.reverse p of
-                [] -> -- special case, this is the root
-                  ( p, p )
-                _::revPath ->
-                  ( List.reverse revPath, p )
-          )
-          path
-    )
-    (Graph.get destination (graph {- |> debugGraph "getting userchange-data from" -}))
 
 newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_graphchange src x y conn g =
@@ -1094,10 +953,6 @@ update msg model =
 
     Stop ->
       { model | execution = Nothing }
-
-offset : (Float, Float) -> (Float, Float) -> (Float, Float)
-offset (offset_x, offset_y) (x, y) =
-  (x - offset_x, y - offset_y)
 
 subscriptions : Model -> Sub Msg
 subscriptions model =

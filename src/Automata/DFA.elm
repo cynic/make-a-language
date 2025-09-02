@@ -6,7 +6,7 @@ import List.Extra as List
 import Dict exposing (Dict)
 import AutoDict
 import Automata.Data exposing (..)
-import Graph exposing (Graph, NodeContext, Node, NodeId, Edge)
+import Graph exposing (NodeContext, NodeId, Edge)
 import Dict.Extra
 import Maybe.Extra
 import Json.Encode as E
@@ -22,9 +22,6 @@ import Uuid exposing (Uuid)
 -- This is superior to marking finality on a vertex, because
 -- multiple transitions—some final, some not—could end on a
 -- vertex.
-type alias MConnection = AutoSet.Set String AcceptVia -- a MConnection is a link between two nodes.
--- type alias Connections = IntDict MConnection
-type alias Node = NodeContext Bool MConnection -- a Node indicates terminality
 
 connectionToGraph : Uuid -> Connection -> AutomatonGraph
 connectionToGraph uuid conn =
@@ -291,30 +288,6 @@ forwardtree_nodes start extDFA_orig tree_ =
   in
     nodes_of_forwardtree tree_ [start]
     |> List.reverse
-
-all_forward_transitions : NodeId -> ExtDFA -> ForwardTree
-all_forward_transitions start extDFA =
-  let
-    helper : NodeId -> Set NodeId -> ForwardTree
-    helper current seen =
-      case IntDict.get current extDFA.transition_function of
-        Nothing -> PathEnd
-        Just dict ->
-          let
-            filtered =
-              AutoDict.filter
-                (\_ state ->
-                  not (Set.member state seen)
-                  && current /= state
-                )
-                dict
-            children =
-              AutoDict.map (\_ state -> helper state (Set.insert state seen)) filtered
-          in
-            if AutoDict.isEmpty children then PathEnd else ForwardNode children
-  in
-    helper start Set.empty
-    -- |> Debug.log "[all_forward_transitions] result"
 
 w_forward_transitions : ExtDFA -> ForwardTree
 w_forward_transitions extDFA =
@@ -903,7 +876,7 @@ toAutomatonGraph uuid dfa =
     stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toAutomatonGraph] State-list"
     graph =
       Graph.fromNodesAndEdges
-        (stateList |> List.map (\(id, label) -> Node id label))
+        (stateList |> List.map (\(id, label) -> Graph.Node id label))
         (IntDict.toList (dfa {- |> debugDFA_ "[toAutomatonGraph] DFA as received" -}).transition_function
         |> List.foldl
           (\(from, dict) state ->
@@ -1555,7 +1528,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                     )
         )
         (Dict.keys finalTable)
-      |> List.map (\(id, v) -> Node id v)
+      |> List.map (\(id, v) -> Graph.Node id v)
 
     newGraphEdges =
       Dict.foldl
@@ -1690,7 +1663,7 @@ serializeNode n =
     , ("e", serializeEffect n.label.effect)
     ]
 
--- serializeAutomatonGraph : AutomatonGraph -> E.Value
+serializeAutomatonGraph : AutomatonGraph -> E.Value
 serializeAutomatonGraph g =
   E.object
     [ ("e", E.list serializeEdge <| Graph.edges g.graph)
