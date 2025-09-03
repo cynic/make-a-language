@@ -31,6 +31,8 @@ import AutoSet
 import TypedSvg.Core exposing (Svg)
 import Dict exposing (Dict)
 import Svg
+import AutoDict
+import Uuid exposing (Uuid)
 
 {-
 Quality / technology requirements:
@@ -59,12 +61,11 @@ type Msg
   | ResetExecution
   | StepThroughExecution
   | SelectBottomPanel BottomPanel
-  | Seconded Time.Posix
   | CreateNewPackage
-  | SelectPackage Uuid.Uuid
-  | DeletePackage Uuid.Uuid
-  | SelectTest String
-  | DeleteTest String
+  | SelectPackage Uuid
+  | DeletePackage Uuid
+  | SelectTest Uuid
+  | DeleteTest Uuid
   | CreateNewTest
 
 type alias Model = Main_Model
@@ -101,45 +102,67 @@ decodeTest g =
     (D.field "input" D.string)
     (D.field "expectation" <| D.map (\b -> if b then ExpectAccepted else ExpectRejected) D.bool)
 
+encodeAutoDict : (k -> String) -> (v -> E.Value) -> AutoDict.Dict comparable k v -> E.Value
+encodeAutoDict toKey toValue dictionary =
+  AutoDict.toList dictionary
+  |> List.map (\(k, v) -> ( toKey k, toValue v ))
+  |> E.object
+
+{-| Decode an AutoDict.
+
+Need to pass:
+- `keyFunction`: the usual `key -> comparable` function used by the AutoDict
+- `stringToKey`: a decoder to convert a field name to a `key`, if possible.  Fields
+    with names that cannot be converted are considered to be invaled and ignored
+    entirely.
+- `valueDecoder`: a decoder for the field value
+-}
+decodeAutoDict : (key -> comparable) -> (String -> Maybe key) -> D.Decoder value -> D.Decoder (AutoDict.Dict comparable key value)
+decodeAutoDict keyFunction stringToKey valueDecoder =
+  D.map (AutoDict.fromList keyFunction)
+    ( D.keyValuePairs valueDecoder -- gives me a List (String, value)
+      |> D.map
+        (\kvList ->
+          List.filterMap
+            (\(fieldName, v) ->
+              stringToKey fieldName
+              |> Maybe.map (\k -> (k, v))
+            )
+            kvList
+        )
+    )
+
 encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
-    [ ("model", DFA.serializeAutomatonGraph pkg.model.userGraph)
+    [ ("graph", DFA.serializeAutomatonGraph pkg.userGraph)
     , ("dimensions",
         E.object
-          [ ("w", E.float <| Tuple.first pkg.model.dimensions)
-          , ("h", E.float <| Tuple.second pkg.model.dimensions)
+          [ ("w", E.float <| Tuple.first pkg.dimensions)
+          , ("h", E.float <| Tuple.second pkg.dimensions)
           ]
       )
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
     , ("created", E.int (Time.posixToMillis pkg.created))
-    , ("tests", E.dict identity encodeTest pkg.tests)
-    , ("currentTestKey", E.string pkg.currentTestKey)
+    , ("tests", encodeAutoDict Uuid.toString encodeTest pkg.tests)
+    , ("currentTestKey", Uuid.encode pkg.currentTestKey)
     ]
 
 decodeGraphPackage : D.Decoder GraphPackage
 decodeGraphPackage =
-  D.map2
-    (\w h -> (w, h))
-    (D.at ["dimensions", "w"] D.float)
-    (D.at ["dimensions", "h"] D.float)
+  D.field "graph" DFA.deserializeAutomatonGraph
   |> D.andThen
-    (\dimensions ->
-      D.field "model"
-        (D.map
-          -- If/when it becomes the currentPackage, I will add in
-          -- the appropriate thumbnail list
-          (FDG.automatonGraphToModel dimensions Dict.empty)
-          DFA.deserializeAutomatonGraph
+    (\graph ->
+      D.map5 (GraphPackage graph)
+        ( D.map2
+            (\w h -> (w, h))
+            (D.at ["dimensions", "w"] D.float)
+            (D.at ["dimensions", "h"] D.float)
         )
-      |> D.andThen
-        (\fdg ->
-          D.map4 (GraphPackage fdg dimensions)
-            (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
-            (D.field "created" <| D.map Time.millisToPosix D.int)
-            (D.field "currentTestKey" D.string)
-            (D.field "tests" <| D.dict (decodeTest fdg.userGraph))
-        )
+        (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
+        (D.field "created" <| D.map Time.millisToPosix D.int)
+        (D.field "currentTestKey" Uuid.decoder)
+        (D.field "tests" <| decodeAutoDict Uuid.toString Uuid.fromString (decodeTest graph))
     )
 
 decodeFlags : D.Decoder Flags
@@ -156,28 +179,6 @@ decodeFlags =
         (D.field "packages" <| D.list decodeGraphPackage)
     )
 
-createNewPackage : Uuid.Uuid -> Uuid.Uuid -> Time.Posix -> Dict String (Svg ()) -> (Float, Float) -> GraphPackage
-createNewPackage uuid testUuid currentTime thumbs dimensions = -- this is the width & height of the panel
-  { model = FDG.init uuid dimensions thumbs
-  , dimensions = dimensions
-  , description = Nothing
-  , created = currentTime
-  , currentTestKey = Uuid.toString testUuid
-  , tests = Dict.empty
-  }
-
--- this is to generate thumbnails that are then used in ForceDirectedGraph
--- when one is choosing graph references
-getThumbnails : Float -> Dict String GraphPackage -> Dict String (Svg ())
-getThumbnails w packages =
-  -- the 'w' parameter is the width of the top-right panel
-  Dict.map
-    (\_ v ->
-      FDG.viewComputationThumbnail (w / 2) v
-      |> Svg.map (\_ -> ())
-    )
-    packages
-
 init : E.Value -> (Model, Cmd Msg)
 init flags =
   let
@@ -189,22 +190,18 @@ init flags =
     initialRightTopWidth = decoded.width - 60 - 4 - 1 - 2  -- 60px for icon bar, 2px border each side, 1px icon-bar border + 1px each side top-right border
     initialRightTopHeight = decoded.height - 218  -- 185px bottom panel + 1px border each side + 8px splitter + 30px status bar + 1px status-bar border
     initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
-    (uuid, newSeed) = Random.step Uuid.generator initialSeed
-    (uuid2, newSeed2) = Random.step Uuid.generator newSeed
     packages =
       decoded.packages
       -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
-      |> List.map (\v -> ( Uuid.toString v.model.userGraph.graphIdentifier, v ))
-      |> Dict.fromList
+      |> List.map (\v -> ( v.userGraph.graphIdentifier, v ))
+      |> AutoDict.fromList Uuid.toString
   in
-    ( { currentPackage =
-          createNewPackage
-            uuid
-            uuid2
-            decoded.startTime
-            (getThumbnails (initialRightTopWidth / 2) packages)
+    ( { fdg_model =
+          FDG.init
             (initialRightTopWidth, initialRightTopHeight)
-      , packages = packages
+            decoded.startTime
+            initialSeed
+            packages
       , mainPanelDimensions =
           ( decoded.width - 4 -- 2px border all around main-container
           , decoded.height - 4 -- same border as above
@@ -219,8 +216,6 @@ init flags =
       , isDraggingVerticalSplitter = False
       , executionStage = Ready
       , selectedBottomPanel = AddTestPanel
-      , uuidSeed = newSeed2
-      , currentTime = decoded.startTime
       }
     , Cmd.none
     )
@@ -242,9 +237,8 @@ update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     ForceDirectedMsg fdMsg ->
       let
-        currentPackage = model.currentPackage
         newFdModel =
-          FDG.update fdMsg currentPackage.model
+          FDG.update fdMsg model.fdg_model
           -- |> \v ->
           --   if fdMsg /= FDG.Tick then
           --     Debug.log "msg" fdMsg |> \_ ->
@@ -252,30 +246,12 @@ update msg model =
           --   else
           --     v
         preUpdateChangeCount =
-          List.length currentPackage.model.undoBuffer
+          List.length model.fdg_model.undoBuffer
         isCommitlike =
           preUpdateChangeCount > 0 && newFdModel.undoBuffer == []
-        updatedPackage =
-          { currentPackage
-            | model = newFdModel
-            , tests = -- re-run the tests upon "commit"
-                if isCommitlike then
-                  Dict.map
-                    (\_ entry ->
-                      { entry
-                        | result =
-                            DFA.stepThroughInitial entry.input newFdModel.userGraph
-                            |> DFA.run newFdModel.userGraph
-                      }
-                    )
-                    currentPackage.tests
-                else
-                  currentPackage.tests
-          }
       in
       ( { model
-          | currentPackage = updatedPackage
-          , executionStage =
+          | executionStage =
               if FDG.canExecute newFdModel then
                 if model.executionStage == NotReady then
                   Ready
@@ -283,23 +259,10 @@ update msg model =
                   model.executionStage
               else
                 NotReady
-          , packages =
-              if isCommitlike then
-                -- we call automatonGraphToModel because it runs the simulation to completion,
-                -- which in turn organizes our nodes properly on the screen.
-                { updatedPackage
-                  | model =
-                      FDG.automatonGraphToModel
-                        model.rightTopPanelDimensions
-                        (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
-                        newFdModel.userGraph
-                }
-                |> \pkg -> Dict.insert (Uuid.toString pkg.model.userGraph.graphIdentifier) pkg model.packages
-              else
-                model.packages
+          , fdg_model = newFdModel
         }
       , if isCommitlike then
-          persistPackage updatedPackage
+          persistPackage model.fdg_model.currentPackage
         else
           Cmd.none
       )
@@ -315,11 +278,11 @@ update msg model =
             -- work with, I guess.
             | mainPanelDimensions = (width - 4, height)
           }
-        (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions newModel
+        (newRightTopWidth, newRightTopHeight, newFdgModel) = calculateRightTopDimensions newModel
       in
       ( { newModel
           | rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-          , currentPackage = newGraphPackage
+          , fdg_model = newFdgModel
         }
       , Cmd.none
       )
@@ -334,14 +297,14 @@ update msg model =
             (False, Nothing)  -- Close panel if same icon clicked
           else
             (True, Just icon)  -- Open panel with new icon
-        (newRightTopWidth, newRightTopHeight, newGraphPackage) =
+        (newRightTopWidth, newRightTopHeight, newFdgModel) =
           calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
       in
       ( { model 
         | leftPanelOpen = newLeftPanelOpen
         , selectedIcon = newSelectedIcon
         , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-        , currentPackage = newGraphPackage
+        , fdg_model = newFdgModel
         }
       , Cmd.none
       )
@@ -375,15 +338,10 @@ update msg model =
           minWidth = 100 + leftOffset
           maxWidth = viewportWidth / 2
           newLeftPanelWidth = clamp minWidth maxWidth (x - leftOffset)
-          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | leftPanelWidth = newLeftPanelWidth }
         in
-        ( { model
-          | leftPanelWidth = newLeftPanelWidth
-          , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-          , currentPackage = newGraphPackage
-          }
-        , Cmd.none
-        )
+          ( recalculateUI { model | leftPanelWidth = newLeftPanelWidth }
+          , Cmd.none
+          )
       else if model.isDraggingVerticalSplitter then
         let
           (_, viewportHeight) = model.mainPanelDimensions
@@ -391,66 +349,49 @@ update msg model =
           maxHeight = viewportHeight / 2
           statusBarHeight = 30
           newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
-          (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | rightBottomPanelHeight = newBottomHeight }
         in
-        ( { model
-          | rightBottomPanelHeight = newBottomHeight
-          , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-          , currentPackage = newGraphPackage
-          }
+        ( recalculateUI { model | rightBottomPanelHeight = newBottomHeight }
         , Cmd.none
         )
       else
         ( model, Cmd.none )
 
     ToggleBottomPanel ->
-      let
-        newBottomPanelOpen = not model.rightBottomPanelOpen
-        (newRightTopWidth, newRightTopHeight, newGraphPackage) = calculateRightTopDimensions { model | rightBottomPanelOpen = newBottomPanelOpen }
-      in
-      ( { model 
-        | rightBottomPanelOpen = newBottomPanelOpen
-        , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-        , currentPackage = newGraphPackage
-        }
+      ( recalculateUI { model | rightBottomPanelOpen = not model.rightBottomPanelOpen }
       , Cmd.none
       )
 
     UpdateTestPanelContent newInput expectation ->
       let
-        currentPackage = model.currentPackage
+        pkg = model.fdg_model.currentPackage
         updatedTests =
           case newInput of
             "" ->
-              Dict.remove currentPackage.currentTestKey currentPackage.tests
+              AutoDict.remove pkg.currentTestKey pkg.tests
             _ ->
-              Dict.insert
-                currentPackage.currentTestKey
+              AutoDict.insert
+                pkg.currentTestKey
                   ( Test
                       newInput
                       expectation
-                      ( DFA.stepThroughInitial newInput model.currentPackage.model.userGraph
-                        |> DFA.run model.currentPackage.model.userGraph
+                      ( DFA.stepThroughInitial newInput pkg.userGraph
+                        |> DFA.run pkg.userGraph
                       )
                   )
-                currentPackage.tests
+                pkg.tests
         updatedPackage =
-          { currentPackage | tests = updatedTests }
+          { pkg | tests = updatedTests }
       in
         ( { model
-            | currentPackage = updatedPackage
-            , packages =
-                Dict.insert
-                  (Uuid.toString currentPackage.model.userGraph.graphIdentifier)
-                  updatedPackage
-                  model.packages
+            | fdg_model =
+                FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
           }
         , persistPackage updatedPackage
         )
 
     UpdateDescriptionPanelContent content ->
       let
-        currentPackage = model.currentPackage
+        currentPackage = model.fdg_model.currentPackage
         updatedPackage =
           { currentPackage
             | description =
@@ -461,12 +402,7 @@ update msg model =
           }
       in
         ( { model
-            | currentPackage = updatedPackage
-            , packages =
-                Dict.insert
-                  (Uuid.toString currentPackage.model.userGraph.graphIdentifier)
-                  updatedPackage
-                  model.packages
+            | fdg_model = FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
           }
         , persistPackage updatedPackage
         )
@@ -482,15 +418,16 @@ update msg model =
       -- a 'Ready' state has already been met.
       ( { model 
         | executionStage = Ready
-        , currentPackage =
-            fdg_update model
+        , fdg_model =
+            FDG.update
               ( FDG.Load
-                  ( Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+                  ( AutoDict.get model.fdg_model.currentPackage.currentTestKey model.fdg_model.currentPackage.tests
                     |> Maybe.map .input
                     |> Maybe.withDefault ""
                   )
               )
-            |> \pkg -> fdg_update { model | currentPackage = pkg } FDG.Run
+              model.fdg_model
+            |> FDG.update FDG.Run
         }
       , Cmd.none
       )
@@ -498,7 +435,7 @@ update msg model =
     ResetExecution ->
       ( { model 
         | executionStage = Ready
-        , currentPackage = fdg_update model FDG.Stop
+        , fdg_model = FDG.update FDG.Stop model.fdg_model
         }
       , Cmd.none
       )
@@ -508,26 +445,27 @@ update msg model =
         newFdModel =
           if model.executionStage /= StepThrough then
             -- this is the first click of stepping, so do a load first.
-            fdg_update model
+            FDG.update
               ( FDG.Load
-                  ( Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+                  ( AutoDict.get model.fdg_model.currentPackage.currentTestKey model.fdg_model.currentPackage.tests
                     |> Maybe.map .input
                     |> Maybe.withDefault ""
                   )
               )
+              model.fdg_model
           else
-            fdg_update model FDG.Step
+            FDG.update FDG.Step model.fdg_model
       in
       ( { model 
         | executionStage =
-            case newFdModel.model.execution of
+            case newFdModel.execution of
               Nothing ->
                 model.executionStage
               Just (CanContinue _) ->
                 StepThrough
               _ ->
                 ExecutionComplete
-        , currentPackage =
+        , fdg_model =
             newFdModel
         }
       , Cmd.none
@@ -538,131 +476,81 @@ update msg model =
       , Cmd.none
       )
 
-    Seconded t ->
-      ( { model | currentTime = t }
-      , Cmd.none
-      )
-
     CreateNewPackage ->
-      let
-        (uuid, newSeed) = Random.step Uuid.generator model.uuidSeed
-        (uuid2, newSeed2) = Random.step Uuid.generator newSeed
-      in
-        ( { model
-            | currentPackage =
-                createNewPackage
-                  uuid
-                  uuid2
-                  model.currentTime
-                  (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
-                  model.rightTopPanelDimensions
-            , uuidSeed = newSeed2
-          }
+        ( { model | fdg_model = FDG.reInitialize model.fdg_model }
         , Cmd.none
         )
 
     SelectPackage uuid ->
-      case Dict.get (Uuid.toString uuid) model.packages of
+      case AutoDict.get uuid model.fdg_model.packages of
         Nothing ->
           ( model, Cmd.none )
         Just pkg ->
           let
-            -- the packaged graphs are stored with their original
-            -- coordinates. This lets me faithfully recreate what
-            -- they looked like, at a zoomed scale.
-            -- However, when I put them up for editing, I need to
-            -- resize for the ACTUAL dimensions that are currently
-            -- prevailing on-screen.
-            -- And that is what this next bit of code is for.
-            (_, _, newGraphPackage) =
-              calculateRightTopDimensions
-                { model | currentPackage = pkg }
-            m = newGraphPackage.model
-            ( w, _ ) = model.rightTopPanelDimensions
-            withPackageList =
-              { newGraphPackage
-                | model =
-                    { m | graphThumbnails = getThumbnails w model.packages }
-                }
+            fdg_model = model.fdg_model
+            newFdgModel =
+              { fdg_model | currentPackage = { pkg | dimensions = fdg_model.dimensions } }
+              |> FDG.update (FDG.ViewportUpdated model.fdg_model.dimensions)
+              |> FDG.update FDG.Reheat
           in
-            ( { model | currentPackage = withPackageList }
-            , Cmd.none
-            )
+          ( { model
+              | fdg_model = newFdgModel
+            }
+          , Cmd.none
+          )
 
     DeletePackage uuid ->
       let
-        (newUuid, newSeed) = Random.step Uuid.generator model.uuidSeed
-        (newUuid2, newSeed2) = Random.step Uuid.generator newSeed
-        newPackages = Dict.remove (Uuid.toString uuid) model.packages
+        fdg_model = model.fdg_model
+        newPackages = AutoDict.remove uuid model.fdg_model.packages
+        newFdgModel = { fdg_model | packages = newPackages }
       in
-        ( { model
-            | packages = newPackages
-            , currentPackage =
-                createNewPackage
-                  newUuid
-                  newUuid2
-                  model.currentTime
-                  (getThumbnails (Tuple.first model.rightTopPanelDimensions) model.packages)
-                  model.rightTopPanelDimensions
-            , uuidSeed = newSeed2
-          }
+        ( if uuid == fdg_model.currentPackage.userGraph.graphIdentifier then
+            { model | fdg_model = FDG.reInitialize newFdgModel }
+          else
+            { model | fdg_model = newFdgModel }
         , Ports.deleteFromStorage (Uuid.toString uuid)
         )
 
     CreateNewTest ->
       let
-        currentPackage = model.currentPackage
-        (uuid, newSeed) = Random.step Uuid.generator model.uuidSeed
-      in
-        ( { model
-            | currentPackage =
-                { currentPackage | currentTestKey = Uuid.toString uuid }
+        fdg_model = model.fdg_model
+        currentPackage = fdg_model.currentPackage
+        (uuid, newSeed) = Random.step Uuid.generator fdg_model.uuidSeed
+        newFdgModel =
+          { fdg_model
+            | currentPackage = { currentPackage | currentTestKey = uuid }
             , uuidSeed = newSeed
           }
+      in
+        ( { model | fdg_model = newFdgModel }
         , Cmd.none
         )
 
     SelectTest key ->
       let
-        currentPackage = model.currentPackage
+        currentPackage = model.fdg_model.currentPackage
+        updatedPackage = { currentPackage | currentTestKey = key }
       in
         ( { model
-            | currentPackage =
-                { currentPackage | currentTestKey = key }
+            | fdg_model = FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
           }
-        , Cmd.none
+        , Cmd.none -- no need to persist this though
         )
 
     DeleteTest key ->
       let
-        currentPackage = model.currentPackage
+        currentPackage = model.fdg_model.currentPackage
         updatedPackage =
-          { currentPackage | tests = Dict.remove key currentPackage.tests }
+          { currentPackage | tests = AutoDict.remove key currentPackage.tests }
       in
         ( { model
-            | currentPackage = updatedPackage
-            , packages =
-                Dict.insert
-                  (Uuid.toString currentPackage.model.userGraph.graphIdentifier)
-                  updatedPackage -- CHECK!  Should this be 'currentPackage'? (I 'fixed' this during a totally different refactor)
-                  model.packages
+            | fdg_model = FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
           }
         , persistPackage updatedPackage
         )
 
-fdg_update : Model -> FDG.Msg -> GraphPackage
-fdg_update model updateMessage =
-  let
-    currentPackage = model.currentPackage
-    newModel = 
-      FDG.update
-        updateMessage
-        model.currentPackage.model
-  in
-    { currentPackage | model = newModel }
-
-
-calculateRightTopDimensions : Model -> ( Float, Float, GraphPackage )
+calculateRightTopDimensions : Model -> ( Float, Float, FDG.Model )
 calculateRightTopDimensions model =
   let
     -- the main panel dimensions are the size of the application area.
@@ -685,17 +573,10 @@ calculateRightTopDimensions model =
     -- add in: the 1px statusBar  border
     -- Also, the right-panel has a 1px border all around; add it in.
     rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - rightTopBottomSplitterHeight - 1 - 2
-    newGraph =
-      fdg_update
-        model
+    newFdgModel =
+      FDG.update
         (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
-    withUpdatedThumbnails =
-      let
-        m = newGraph.model
-      in
-        { newGraph
-          | model = { m | graphThumbnails = getThumbnails rightTopWidth model.packages }
-        }
+        model.fdg_model        
   in
   -- Debug.log
   --   ( "Dimension calculation"
@@ -719,7 +600,18 @@ calculateRightTopDimensions model =
   --   ++" - " ++ String.fromFloat rightTopBottomSplitterHeight ++ " [right-top-bottom splitter height] "
   --   ++" - 1 [status-bar border] - 1 [bottom-panel border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopHeight
   --   ) () |> \_ ->
-  ( rightTopWidth, rightTopHeight, withUpdatedThumbnails )
+  ( rightTopWidth, rightTopHeight, newFdgModel )
+
+recalculateUI : Model -> Model
+recalculateUI model =
+  let
+    ( rightTopWidth, rightTopHeight, newFdgModel ) =
+      calculateRightTopDimensions model
+  in
+    { model
+      | fdg_model = newFdgModel
+      , rightTopPanelDimensions = ( rightTopWidth, rightTopHeight )
+    }
 
 -- VIEW
 
@@ -773,7 +665,7 @@ viewIconBar : Model -> Html Msg
 viewIconBar model =
   let
     (pass, fail, error) =
-      Dict.toList model.currentPackage.tests
+      AutoDict.toList model.fdg_model.currentPackage.tests
       |> List.foldl
         (\(_, {expectation, result}) (p, f, e) ->
           case isAccepted result of
@@ -893,12 +785,12 @@ viewPackageItem : Model -> GraphPackage -> Html Msg
 viewPackageItem model package =
   let
     displaySvg =
-      FDG.viewComputationThumbnail (model.leftPanelWidth - 15) package
+      FDG.viewComputationThumbnail (model.leftPanelWidth - 15) model.fdg_model package
     canSelect =
       -- we can select this EITHER if there are no pending changes, OR
       -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
-      model.currentPackage.model.undoBuffer == [] ||
-      package.model.userGraph.graphIdentifier == model.currentPackage.model.userGraph.graphIdentifier
+      model.fdg_model.undoBuffer == [] ||
+      package.userGraph.graphIdentifier == model.fdg_model.currentPackage.userGraph.graphIdentifier
   in
   div 
     [ HA.classList
@@ -918,7 +810,7 @@ viewPackageItem model package =
             Css.cursor Css.notAllowed
         ]
     , if canSelect then
-        onClick (SelectPackage package.model.userGraph.graphIdentifier)
+        onClick (SelectPackage package.userGraph.graphIdentifier)
       else
         HA.title "Apply or cancel the pending changes before selecting another package."
     ]
@@ -935,14 +827,14 @@ viewPackageItem model package =
             ]
         , HA.title "Delete computation"
         , if canSelect then
-            onClick (DeletePackage package.model.userGraph.graphIdentifier)
+            onClick (DeletePackage package.userGraph.graphIdentifier)
           else
             HA.title "Apply or cancel the pending changes before deleting a package."
         ]
         [ text "🚮" ]
     ]
 
-viewTestItemInPanel : (String, Test) -> Html Msg
+viewTestItemInPanel : (Uuid, Test) -> Html Msg
 viewTestItemInPanel (key, test) =
   let
     testStatus = isFailingTest test
@@ -989,8 +881,8 @@ viewLeftTestPanel : Model -> Html Msg
 viewLeftTestPanel model =
   let
     (expectAccept, expectReject) =
-      model.currentPackage.tests
-      |> Dict.toList
+      model.fdg_model.currentPackage.tests
+      |> AutoDict.toList
       |> List.partition (Tuple.second >> .expectation >> (==) ExpectAccepted)
     displayTests headingHtml tx =
       case tx of
@@ -1027,7 +919,7 @@ viewLeftTestPanel model =
               ]
               [ text "➕" ]
           ]
-      , model.currentPackage.description
+      , model.fdg_model.currentPackage.description
         |> Maybe.map
           (\desc ->
             div
@@ -1076,8 +968,8 @@ viewLeftPanel model =
                 ]
             -- , p [] [ text "File management functionality would go here." ]
             , ul []
-              ( model.packages
-                |> Dict.toList
+              ( model.fdg_model.packages
+                |> AutoDict.toList
                 |> List.map Tuple.second
                 |> List.sortBy (Time.posixToMillis << .created)
                 |> List.reverse
@@ -1160,7 +1052,7 @@ viewRightTopPanel model =
       div 
         [ HA.class "right-top-panel__content" ]
         [ Html.Styled.fromUnstyled
-            ( FDG.view model.currentPackage.model
+            ( FDG.view model.fdg_model
               |> Html.map ForceDirectedMsg
             )
         ]
@@ -1205,7 +1097,7 @@ viewTestPanelButtons model =
   [ div
     [ HA.class (getActionButtonClass model.executionStage RunExecution)
     , onClick RunExecution
-    , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
+    , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.fdg_model))
     , HA.title "Run"
     ]
     [ text "▶️" ]
@@ -1219,16 +1111,16 @@ viewTestPanelButtons model =
   , div
     [ HA.class (getActionButtonClass model.executionStage StepThroughExecution)
     , onClick StepThroughExecution
-    , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.currentPackage.model))
+    , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.fdg_model))
     , HA.title "Step-through"
     ]
     [ text "⏭️" ]
   , div
-    [ HA.class (getActionButtonClass model.executionStage (DeleteTest model.currentPackage.currentTestKey))
+    [ HA.class (getActionButtonClass model.executionStage (DeleteTest model.fdg_model.currentPackage.currentTestKey))
     , HA.css
         [ Css.marginTop (Css.px 15)
         ]
-    , onClick <| DeleteTest model.currentPackage.currentTestKey
+    , onClick <| DeleteTest model.fdg_model.currentPackage.currentTestKey
     , HA.disabled (model.executionStage == StepThrough)
     , HA.title "Delete test"
     ]
@@ -1262,10 +1154,10 @@ viewBottomPanelHeader model =
     ]
 
 executionText : Model -> Html a
-executionText { currentPackage } =
+executionText { fdg_model } =
   div
     []
-    [ case currentPackage.model.execution of
+    [ case fdg_model.execution of
         Nothing ->
           p [] [ text "🦗 Bug! K%UGFCR" ] -- eheh?! I should never be here!
         Just result ->
@@ -1324,7 +1216,7 @@ viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =
   let
     test =
-      Dict.get model.currentPackage.currentTestKey model.currentPackage.tests
+      AutoDict.get model.fdg_model.currentPackage.currentTestKey model.fdg_model.currentPackage.tests
     testInput =
       Maybe.map .input test 
       |> Maybe.withDefault ""
@@ -1395,7 +1287,7 @@ viewAddTestPanelContent model =
         , HA.value testInput
         , onInput (\v -> UpdateTestPanelContent v testExpected)
         , HA.placeholder "Enter your test input here"
-        , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
+        , HA.disabled <| Maybe.Extra.isJust model.fdg_model.currentOperation
         ]
         []
   in
@@ -1425,10 +1317,10 @@ viewEditDescriptionPanelContent : Model -> Html Msg
 viewEditDescriptionPanelContent model =
   textarea 
     [ HA.class "right-bottom-panel__textarea"
-    , HA.value (model.currentPackage.description |> Maybe.withDefault "")
+    , HA.value (model.fdg_model.currentPackage.description |> Maybe.withDefault "")
     , onInput UpdateDescriptionPanelContent
     , HA.placeholder "What does this computation do?"
-    , HA.disabled <| Maybe.Extra.isJust model.currentPackage.model.currentOperation
+    , HA.disabled <| Maybe.Extra.isJust model.fdg_model.currentOperation
     ]
     []
 
@@ -1531,15 +1423,9 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch
     [ FDG.subscriptions
-        model.currentPackage.model
+        model.fdg_model
       |> Sub.map ForceDirectedMsg
     , BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
-    , Time.every 25000 -- 'sup, homie Nyquist? All good?
-        ( Time.posixToMillis
-          >> (\v -> (v // (1000 * 60)) * (1000 * 60))
-          >> Time.millisToPosix
-          >> Seconded
-        )
     , if model.isDraggingHorizontalSplitter || model.isDraggingVerticalSplitter then
         Sub.batch
           [ BE.onMouseMove (D.map2 MouseMove (D.field "clientX" D.float) (D.field "clientY" D.float))

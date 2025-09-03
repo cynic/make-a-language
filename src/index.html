@@ -49,8 +49,8 @@
           .put(item);
         put_request.onsuccess = (e) => {
           // it exists; update it.
-          console.log("Updated/Inserted " + item.uuid);
-          console.log(e.target.result);
+          console.log("Updated/Inserted " + item.graph.uuid);
+          // console.log(e.target.result);
         };
       });
 
@@ -90,7 +90,7 @@
     db_open.onupgradeneeded = (e) => { // also called during initial creation
       // right now, there's only one version, so I'm going to be v.lazy.
       const mydb = e.target.result;
-      const computations = mydb.createObjectStore("computations", { "keyPath" : "uuid" });
+      const computations = mydb.createObjectStore("computations", { "keyPath" : "graph.uuid" });
     };
     db_open.onsuccess = (e) => {
       e.target.result.onerror = (err) => {

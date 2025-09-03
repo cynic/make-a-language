@@ -38,17 +38,16 @@ type BottomPanel
   | EditDescriptionPanel
 
 type alias GraphPackage =
-  { model : FDG_Model -- the UUID is inside the model's .userGraph.graphIdentifier
+  { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
   , dimensions : ( Float, Float )
   , description : Maybe String
   , created : Time.Posix -- for ordering
-  , currentTestKey : String
-  , tests : Dict String Test
+  , currentTestKey : Uuid
+  , tests : AutoDict.Dict String Uuid Test
   }
 
 type alias Main_Model =
-  { currentPackage : GraphPackage
-  , packages : Dict String GraphPackage
+  { fdg_model : FDG_Model
   , mainPanelDimensions : ( Float, Float )
   , leftPanelOpen : Bool
   , selectedIcon : Maybe LeftPanelIcon
@@ -60,8 +59,6 @@ type alias Main_Model =
   , isDraggingVerticalSplitter : Bool
   , executionStage : ExecutionStage
   , selectedBottomPanel : BottomPanel
-  , uuidSeed : Random.Seed
-  , currentTime : Time.Posix
   }
 
 type alias Flags =
@@ -72,7 +69,6 @@ type alias Flags =
   , startTime : Time.Posix
   , packages : List GraphPackage
   }
-
 
 {-------------------------------------------------------
   ForceDirectedGraph.elm
@@ -91,8 +87,16 @@ type AcceptChoice
 
 type alias FDG_Model =
   { currentOperation : Maybe UserOperation
-  , userGraph : AutomatonGraph
-  , graphThumbnails : Dict String (Svg ())
+  , currentPackage : GraphPackage
+    -- Instead of repeating here, I could just supply a Uuid -> GraphPackage
+    -- "resolver" function. But I choose to repeat, because such a function
+    -- would be totally opaque to any tools, and if something ever goes wrong
+    -- with an out-of-date resolver, I'm going to spend days poring over where
+    -- that problem is.
+    --
+    -- No, I'll take the ability to examine the internals over that future
+    -- morass.
+  , packages : AutoDict.Dict String Uuid GraphPackage
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
   , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
@@ -106,6 +110,8 @@ type alias FDG_Model =
   , redoBuffer : List (AutomatonGraph)
   , disconnectedNodes : Set NodeId
   , execution : Maybe ExecutionResult
+  , currentTime : Time.Posix
+  , uuidSeed : Random.Seed
   }
 
 {-------------------------------------------------------

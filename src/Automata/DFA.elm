@@ -1666,11 +1666,11 @@ serializeNode n =
 serializeAutomatonGraph : AutomatonGraph -> E.Value
 serializeAutomatonGraph g =
   E.object
-    [ ("e", E.list serializeEdge <| Graph.edges g.graph)
-    , ("n", E.list serializeNode <| Graph.nodes g.graph)
-    , ("i", Uuid.encode g.graphIdentifier)
-    , ("r", E.int g.root)
-    , ("m", E.int g.maxId)
+    [ ("edges", E.list serializeEdge <| Graph.edges g.graph)
+    , ("nodes", E.list serializeNode <| Graph.nodes g.graph)
+    , ("uuid", Uuid.encode g.graphIdentifier)
+    , ("root", E.int g.root)
+    , ("maxId", E.int g.maxId)
     ]
 
 deserializeEffect : D.Decoder NodeEffect
@@ -1731,14 +1731,14 @@ deserializeEdge uuid =
 
 deserializeAutomatonGraph : D.Decoder AutomatonGraph
 deserializeAutomatonGraph =
-  D.field "i" Uuid.decoder
+  D.field "uuid" Uuid.decoder
   |> D.andThen
     (\uuid ->
       D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e) uuid)
-        (D.field "n" <| D.list deserializeNode)
-        (D.field "e" <| D.list <| deserializeEdge uuid)
-        (D.field "m" <| D.int)
-        (D.field "r" <| D.int)
+        (D.field "nodes" <| D.list deserializeNode)
+        (D.field "edges" <| D.list <| deserializeEdge uuid)
+        (D.field "maxId" <| D.int)
+        (D.field "root" <| D.int)
     )
 
 -----------------
