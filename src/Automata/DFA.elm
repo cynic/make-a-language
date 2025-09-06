@@ -910,7 +910,6 @@ toAutomatonGraph uuid dfa =
       h::_ ->
         { graph = graph
         , graphIdentifier = uuid
-        , maxId = Tuple.first h -- |> Debug.log "[toGraph] maxId"
         , root = dfa.start -- |> Debug.log "[toGraph] root"
         }
         -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
@@ -966,7 +965,6 @@ renumberAutomatonGraph g =
           )
           g.graph
     , graphIdentifier = g.graphIdentifier
-    , maxId = IntDict.findMax nodeMap |> Maybe.map Tuple.second |> Maybe.withDefault 0
     , root = get g.root
     }
     -- |> debugAutomatonGraph "[renumberAutomatonGraph] result"
@@ -1003,7 +1001,7 @@ splitTerminalAndNonTerminal g =
     -- Find the next unused node id
     nextId : Int
     nextId =
-      g.maxId + 1
+      maxId g + 1
 
     -- For each node, determine if it needs to be split
     nodesToSplit =
@@ -1035,8 +1033,6 @@ splitTerminalAndNonTerminal g =
     splitMap =
       List.indexedMap (\i node -> (node.node.id, nextId + i)) nodesToSplit
       |> Dict.fromList
-
-    newMaxId = Dict.keys splitMap |> List.maximum |> Maybe.withDefault g.maxId
 
     -- Helper to update incoming edges for all nodes
     updateIncoming : List (NodeContext Entity Connection) -> List (NodeContext Entity Connection)
@@ -1154,10 +1150,9 @@ splitTerminalAndNonTerminal g =
   in
     { graph = newGraph
     , graphIdentifier = g.graphIdentifier
-    , maxId = newMaxId
     , root = g.root
     }
-    -- |> Automata.Debugging.debugAutomatonGraph " after split"
+    |> Automata.Debugging.debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
 
 
 ellipsis : Int -> String -> String
@@ -1483,13 +1478,13 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     reachableTable : Table
     reachableTable =
       removeUnreachableStates mergedTable
-      -- |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
+      |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
 
     -- Step 3: Rename rows using maxId
-    (finalTable, new_maxId) =
+    finalTable =
       let
         sourceSets = Dict.keys reachableTable |> List.filter (\(_, list) -> List.length list > 1)
-        baseId = g.maxId + 1
+        baseId = maxId g + 1
         
         renameMapping = 
           sourceSets
@@ -1503,9 +1498,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             reachableTable
             renameMapping
       in
-        ( renamedTable -- |> debugTable_ "[nfaToDFA] Rows have been renamed"
-        , g.maxId + List.length renameMapping
-        )
+        renamedTable
 
     -- Build the new DFA graph using the Graph API
     -- Create the new graph
@@ -1572,7 +1565,6 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     { graph = newGraph
     , graphIdentifier = g.graphIdentifier
     , root = g.root
-    , maxId = new_maxId
     }
     -- |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
@@ -1670,7 +1662,6 @@ serializeAutomatonGraph g =
     , ("nodes", E.list serializeNode <| Graph.nodes g.graph)
     , ("uuid", Uuid.encode g.graphIdentifier)
     , ("root", E.int g.root)
-    , ("maxId", E.int g.maxId)
     ]
 
 deserializeEffect : D.Decoder NodeEffect
@@ -1734,10 +1725,9 @@ deserializeAutomatonGraph =
   D.field "uuid" Uuid.decoder
   |> D.andThen
     (\uuid ->
-      D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e) uuid)
+      D.map3 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e) uuid)
         (D.field "nodes" <| D.list deserializeNode)
         (D.field "edges" <| D.list <| deserializeEdge uuid)
-        (D.field "maxId" <| D.int)
         (D.field "root" <| D.int)
     )
 

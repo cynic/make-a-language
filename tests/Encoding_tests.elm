@@ -21,7 +21,6 @@ mkAutomatonGraph nodeIds edges root =
         ( nodeIds |> List.map mkNode )
         ( List.map (\(from, to, chars) -> Edge from to (mkConn dummy_uuid chars)) edges )
   , graphIdentifier = dummy_uuid
-  , maxId = List.maximum nodeIds |> Maybe.withDefault 0
   , root = root
   }
 

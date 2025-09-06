@@ -5,6 +5,7 @@ import Automata.DFA exposing
   , fromAutomatonGraphHelper, minimiseNodesByCombiningTransitions
   )
 import Utility exposing (ag, dfa, ag_equals, dfa_equals)
+import ForceDirectedGraph exposing (applyChangesToGraph)
 
 toAG_suite : Test
 toAG_suite =

@@ -186,7 +186,6 @@ toForceGraph g =
   { graph = Graph.mapContexts initializeNode g.graph
   , graphIdentifier = g.graphIdentifier
   , root = g.root
-  , maxId = g.maxId
   }
 
 type alias ComputeGraphResult =
@@ -356,20 +355,20 @@ newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -
 newnode_graphchange src x y conn g =
   { g
     | graph =
-        Graph.insert
-          { node =
-            { label =
-                let
-                  initial = entity (g.maxId + 1) NoEffect
-                in
-                  { initial | x = x, y = y }
-            , id = g.maxId + 1
+        let
+          id = maxId g + 1
+
+          initial = entity id NoEffect
+        in
+          Graph.insert
+            { node =
+              { label = { initial | x = x, y = y }
+              , id = id
+              }
+            , incoming = IntDict.singleton src conn
+            , outgoing = IntDict.empty
             }
-          , incoming = IntDict.singleton src conn
-          , outgoing = IntDict.empty
-          }
-          g.graph
-    , maxId = g.maxId + 1
+            g.graph
   }
   -- |> debugAutomatonGraph "[create_union_graphchange] updated graph"
 
@@ -455,21 +454,22 @@ splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
           )
           (IntDict.empty, IntDict.empty)
     ag = model.currentPackage.userGraph
+    id = maxId ag + 1
     newUserGraph =
       { ag
         | graph =
             ag.graph
             |> Graph.insert
               { node =
-                  { label = entity (ag.maxId + 1) NoEffect
-                  , id = ag.maxId + 1
+                  { label = entity id NoEffect
+                  , id = id
                   }
               , incoming =
                   leftConnections
-                  |> IntDict.insert (ag.maxId + 1) recursive_connection
+                  |> IntDict.insert id recursive_connection
               , outgoing =
                   node.outgoing
-                  |> IntDict.insert (ag.maxId + 1) recursive_connection
+                  |> IntDict.insert id recursive_connection
               }
             |> Graph.update node.node.id
               (\_ ->
@@ -480,7 +480,6 @@ splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
                         |> IntDict.insert node.node.id recursive_connection
                   }
               )
-        , maxId = ag.maxId + 1
       }
   in
     newUserGraph
@@ -1128,13 +1127,15 @@ subscriptions model =
 
 applyChangesToGraph : AutomatonGraph -> AutomatonGraph
 applyChangesToGraph g =
-    { g
-      | graph =
-          -- first, actually remove all disconnected nodes.
-          identifyDisconnectedNodes g
-          |> Set.foldl Graph.remove g.graph
-    }
-    |> (fromAutomatonGraph >> toAutomatonGraph g.graphIdentifier)
+  Debugging.debugAutomatonGraph "Initial from user" g |> \_ ->
+  { g
+    | graph =
+        -- first, actually remove all disconnected nodes.
+        identifyDisconnectedNodes g
+        |> Set.foldl Graph.remove g.graph
+  }
+  |> Debugging.debugAutomatonGraph "After removing disconnected"
+  |> (fromAutomatonGraph >> toAutomatonGraph g.graphIdentifier)
 
 recreateGraphInModel : Model -> AutomatonGraph -> Model
 recreateGraphInModel model g =
@@ -1145,7 +1146,6 @@ recreateGraphInModel model g =
     viewport = viewportForces (w, h) forceGraph.graph
     pkg = model.currentPackage
   in
-    Debug.log "MOO" () |> \_ ->
     { model -- make sure we are referencing the correct Model!
       | simulation = Force.simulation (basic ++ viewport)
       , basicForces = basic
@@ -2834,7 +2834,7 @@ viewComputationThumbnail width m { dimensions, userGraph, description } =
         ((m_w, 0), (m_h, 0))
         userGraph.graph
       |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad*2), (c - inner_pad, d + inner_pad*2))
-      |> Debug.log "Bounds"
+      -- |> Debug.log "Bounds"
     fontSize = 16
     lineSpacing = 1.2
     fcc = 2.0 -- font-character-constant; typeface-specific

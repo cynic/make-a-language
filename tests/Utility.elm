@@ -152,7 +152,6 @@ mkAutomatonGraphWithValues uuid valueFunction ts =
         { graph = Graph.fromNodesAndEdges [{ id = 0, label = valueFunction 0}] []
         , graphIdentifier = uuid
         , root = 0
-        , maxId = 0
         }
       _ ->
         { graph =
@@ -162,7 +161,6 @@ mkAutomatonGraphWithValues uuid valueFunction ts =
             case ts of
               (src, _, _)::_ -> src
               _ -> 0
-        , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
         }
 
 mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph

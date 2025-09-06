@@ -212,7 +212,6 @@ type alias AutomatonGraph =
   { graph : Graph Entity Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
   , graphIdentifier : Uuid
-  , maxId : NodeId
   , root : NodeId
   }
 
@@ -275,9 +274,14 @@ empty : Uuid -> AutomatonGraph
 empty uuid =
   { graph = Graph.empty
   , graphIdentifier = uuid
-  , maxId = 0
   , root = 0
   }
+
+maxId : AutomatonGraph -> Int
+maxId {graph} =
+  Graph.nodeIdRange graph
+  |> Maybe.map Tuple.second
+  |> Maybe.withDefault 0
 
 {-| Convert an AcceptVia to a round-trip string.
 

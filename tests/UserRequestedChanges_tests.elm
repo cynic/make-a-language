@@ -75,7 +75,6 @@ ag s_ =
         { graph = Graph.fromNodesAndEdges [{ id = 0, label = { id = 0, x = 0, y = 0, vx = 0, vy = 0, effect = NoEffect } }] []
         , graphIdentifier = dummy_uuid
         , root = 0
-        , maxId = 0
         }
       _ ->
         { graph =
@@ -85,7 +84,6 @@ ag s_ =
             case ts of
               (src, _, _)::_ -> src
               _ -> 0
-        , maxId = List.maximumBy .id nodes |> Maybe.map .id |> Maybe.withDefault 0
         }
 
 -- very thin convenience wrapper to get rid of the "x" and "y" components
