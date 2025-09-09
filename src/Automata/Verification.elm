@@ -144,11 +144,11 @@ type alias HopcroftRecord =
   }
 
 minimality : AutomatonGraph -> List (List Int)
-minimality dawg =
+minimality g =
   -- This is Hopcroft's Algorithm
   let
     edges = -- Edge (Transition)
-      Graph.edges dawg.graph
+      Graph.edges g.graph
       |> List.concatMap
         (\{from, to, label} ->
           AutoSet.toList label

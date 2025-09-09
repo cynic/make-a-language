@@ -55,8 +55,8 @@ toAG_suite =
       --   [ test "Case Ⅰ" <|
       --     \_ ->
       --       ag_equals
-      --         (ag "0-z-1 1-pq-2")
-      --         (mk [] "0-z-1 0-z-2 1-p-3 2-q-4")
+      --         (ag "0-a-1 1-i-2 2-p-3")
+      --         (mk "0-a-1 1-i-2 2-p-3 2-p-6 3-!q-4 4-z-2 4-v-3 4-p-6 6-q-7 6-!o-9 7-!v-6 7-!z-8")
       --   ]
       ]
     ]
@@ -236,21 +236,31 @@ fromAG_suite =
           ag_equals
             (ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-z-2 1-z-2")
             (nfaToDFA <| ag "0-b-8 0-!a-1 1-k-0 8-k-0 8-kz-2 1-kz-2")
-      ]
-    , describe "Crafting step (post terminality-splitting, post NFA→DFA)"
-      [ test "different transitions to same endpoint" <|
-        \_ ->
-          dfa_equals 
-            (dfa "0-z-1 1-p-2 1-q-2" [])
-            (fromAutomatonGraphHelper <| ag "0-z-1 1-pq-2")
-      ]
-    , describe "Full conversion"
-      [ describe "edge cases"
-        [ test "with one node" <|
+      , describe "Crafting step (post terminality-splitting, post NFA→DFA)"
+        [ test "different transitions to same endpoint" <|
           \_ ->
-            dfa_equals
-              (dfa "0-a-5 2-c-3 4-a-5 4-b-2 4-k-4 5-b-2 5-c-3 5-k-4" [3])
-              (fromAutomatonGraph (ag "0-a-1 0-a-2 1-b-2 1-k-1 1-k-0 2-!c-3"))
+            dfa_equals 
+              (dfa "0-z-1 1-p-2 1-q-2" [])
+              (fromAutomatonGraphHelper <| ag "0-z-1 1-pq-2")
+        ]
+      , describe "Full conversion"
+        [ describe "edge cases & bug-fixes"
+          [ test "with one node" <|
+            \_ ->
+              dfa_equals
+                (dfa "0-a-5 2-c-3 4-a-5 4-b-2 4-k-4 5-b-2 5-c-3 5-k-4" [3])
+                (fromAutomatonGraph (ag "0-a-1 0-a-2 1-b-2 1-k-1 1-k-0 2-!c-3"))
+          , test "Case Ⅰ" <|
+            \_ ->
+              ag_equals
+                (ag "0-a-1 1-i-2 2-p-10 11-p-10 10-!q-13 10-!o-8 13-!z-11 13-!v-12 12-!q-13 12-!o-8")
+                (applyChangesToGraph <| ag "0-a-1 1-i-2 2-p-3 2-p-6 3-!q-4 4-z-2 4-v-3 4-p-6 6-q-7 6-!o-9 7-!v-6 7-!z-8")
+          , test "Case Ⅱ" <|
+            \_ ->
+              ag_equals
+                (ag "0-p-6 6-!q-8 8-!v-6 8-p-5 5-q-4 4-!v-5")
+                (applyChangesToGraph <| ag "0-p-1 1-!q-2 2-v-1 2-p-3 0-p-3 3-q-4 4-!v-3")
+          ]
         ]
       ]
     ]

@@ -40,6 +40,7 @@ import Svg
 import Uuid exposing (Uuid)
 import AutoDict
 import Random.Pcg.Extended as Random
+import Automata.Debugging as Debugging
 
 type alias Model = FDG_Model
 
