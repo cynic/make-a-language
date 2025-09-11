@@ -199,13 +199,82 @@ We begin with {X,Y}.  And given the input "pqv", we follow "p", and our allowed-
 allowed-set does not contain {Y}, so we end our journey here.
 -}
 
+{-
+A thought comes up: what am I supposed to do if I have a "sub-graph" whose transitions
+might be sub-graph transitions OR super-graph transitions?
+
+For example:
+
+@r : a → @b → c → !d
+
+where @b is: !k → c → !d ?
+
+Now, given the input "akcd", should we complete the sub-graph or the super-graph?
+
+Well, let's start by flattening.  We flatten by inserting the sub-graph, and then
+attaching the destination node of the connection to each of the terminals of that
+sub-graph.  In this case, this would result in:
+
+a → {b}!k → {b}c → {b}!d → c → !d [dest-node linked to sub-graph !d]
+     `-→ c → !d [dest-node linked to sub-graph !k]
+
+Which flattens to
+
+a → {b}!k → {b}c → {b}!d → c → !d , which is a final graph that will accept anything.
+
+If @b : k → !j , then flattening would end up with:
+
+a → {b}k → {b}!j → c → !d .
+
+If @b : [ (0, !k, 1), (1, !z, 0) ], then flattening gives us:
+
+@r : [ (0, a, 1), (2, c, 3), (3, !d, 4), (1, !k, 2), (2, !z, 1), (2, !z, 2) ]
+
+-}
+
 type alias Transition =
-  { tags : AutoSet.Set String Uuid
+  {
+  --| finality is specific to a particular tag; and tags are specific to a particular DFA.
+  -- But if I have a tag-specific dict, then what happens if I can't find a matching tag?
+  -- Or, what happens if the tag-set is empty?
+  -- Then, I think:
+  -- (1) It is an error in the code, and I should spit out a debugging message;
+  --     (AND I should write some tests for this!)
+  -- (2) I should, by default, say that it is NOT final.
+  --
+  -- But what happens when there are >1 tags in an allowed-set, during execution, and
+  -- one of them is final and the other one is not?  Then it is the finality which
+  -- takes preference, because legitimately, at least one of the "unioned" DFAs DOES
+  -- end at this point; and if the input ends here, for example, then that's a
+  -- definite case of "ACCEPT".
+    finality : AutoDict.Dict String Uuid Bool
   , via : AcceptVia
     -- INSANELY, Bool is NOT `comparable`.
     -- Well, screw it. At this point—neither is anything else in this data structure!!
-  , isFinal : Bool
   }
+
+{-|
+A transition may be final.  But when DFAs are overlaid, the underlying DFAs may have
+different finality for the same transition; and when we read a transition, we read it
+based on the DFA(s) that we have been following to arrive at that transition.  So, based
+on those DFAs, a transition might be final or not.
+
+And indeed, this goes beyond transitions to any other (future) aspect of the underlying
+DFA that is specific to that underlying DFA and needs to be unpacked as such.
+-}
+type alias OverlayContextForExecution = AutoSet.Set String Uuid
+
+isFinalInContext : Transition -> OverlayContextForExecution -> Bool
+isFinalInContext transition context =
+  AutoDict.foldl
+    -- a transition is final if any of its APPLICABLE
+    -- (i.e. `AutoSet.member uuid context`) finality contexts
+    -- indicates that it is final (i.e. `value`); and if any
+    -- are, then we don't need to check the rest (`state ||`).
+    (\uuid value state -> state || (value && AutoSet.member uuid context))
+    False
+    transition.finality
+
 type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
 type alias Node = NodeContext Entity Connection -- a Node itself does not carry any data, hence the ()
 type alias AutomatonGraph =
