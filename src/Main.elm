@@ -102,40 +102,10 @@ decodeTest g =
     (D.field "input" D.string)
     (D.field "expectation" <| D.map (\b -> if b then ExpectAccepted else ExpectRejected) D.bool)
 
-encodeAutoDict : (k -> String) -> (v -> E.Value) -> AutoDict.Dict comparable k v -> E.Value
-encodeAutoDict toKey toValue dictionary =
-  AutoDict.toList dictionary
-  |> List.map (\(k, v) -> ( toKey k, toValue v ))
-  |> E.object
-
-{-| Decode an AutoDict.
-
-Need to pass:
-- `keyFunction`: the usual `key -> comparable` function used by the AutoDict
-- `stringToKey`: a decoder to convert a field name to a `key`, if possible.  Fields
-    with names that cannot be converted are considered to be invaled and ignored
-    entirely.
-- `valueDecoder`: a decoder for the field value
--}
-decodeAutoDict : (key -> comparable) -> (String -> Maybe key) -> D.Decoder value -> D.Decoder (AutoDict.Dict comparable key value)
-decodeAutoDict keyFunction stringToKey valueDecoder =
-  D.map (AutoDict.fromList keyFunction)
-    ( D.keyValuePairs valueDecoder -- gives me a List (String, value)
-      |> D.map
-        (\kvList ->
-          List.filterMap
-            (\(fieldName, v) ->
-              stringToKey fieldName
-              |> Maybe.map (\k -> (k, v))
-            )
-            kvList
-        )
-    )
-
 encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
-    [ ("graph", DFA.serializeAutomatonGraph pkg.userGraph)
+    [ ("graph", DFA.encodeAutomatonGraph pkg.userGraph)
     , ("dimensions",
         E.object
           [ ("w", E.float <| Tuple.first pkg.dimensions)
@@ -144,13 +114,13 @@ encodeGraphPackage pkg =
       )
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
     , ("created", E.int (Time.posixToMillis pkg.created))
-    , ("tests", encodeAutoDict Uuid.toString encodeTest pkg.tests)
+    , ("tests", DFA.encodeAutoDict Uuid.toString encodeTest pkg.tests)
     , ("currentTestKey", Uuid.encode pkg.currentTestKey)
     ]
 
 decodeGraphPackage : D.Decoder GraphPackage
 decodeGraphPackage =
-  D.field "graph" DFA.deserializeAutomatonGraph
+  D.field "graph" DFA.decodeAutomatonGraph
   |> D.andThen
     (\graph ->
       D.map5 (GraphPackage graph)
@@ -162,7 +132,7 @@ decodeGraphPackage =
         (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
         (D.field "created" <| D.map Time.millisToPosix D.int)
         (D.field "currentTestKey" Uuid.decoder)
-        (D.field "tests" <| decodeAutoDict Uuid.toString Uuid.fromString (decodeTest graph))
+        (D.field "tests" <| DFA.decodeAutoDict Uuid.toString Uuid.fromString (decodeTest graph))
     )
 
 decodeFlags : D.Decoder Flags
@@ -1163,6 +1133,7 @@ executionText { fdg_model } =
         Just result ->
           let
             maybeDatum = FDG.executionData result
+            overlayContext = makeInitialContext fdg_model.currentPackage.userGraph
           in
             p
               [ HA.class "output-line" ]
@@ -1184,12 +1155,12 @@ executionText { fdg_model } =
                       [ HA.class "computation-progress" ]
                       [ span
                           [ HA.class "computation-progress-processed" ]
-                          ( datum.transitionsTaken
+                          ( datum.transitions
                             |> List.reverse
                             |> List.map
-                              (\(_, matching_transitions, consumed) ->
+                              (\{matching, consumed} ->
                                 viewInputProcessing consumed
-                                  ( if (AutoSet.filter .isFinal matching_transitions |> AutoSet.size) > 0 then
+                                  ( if (AutoSet.filter (isFinalInContext overlayContext) matching |> AutoSet.size) > 0 then
                                       ["final"]
                                     else
                                       ["non-final"]

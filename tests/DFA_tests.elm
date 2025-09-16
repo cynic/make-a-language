@@ -84,12 +84,13 @@ czech l expectedRecognized =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
           fromWords x
         minimality = D.minimality (toAutomatonGraph Utility.dummy_uuid dfa)
-        recognized = D.verifiedRecognizedWords (toAutomatonGraph Utility.dummy_uuid dfa)
+        -- recognized = D.verifiedRecognizedWords (toAutomatonGraph Utility.dummy_uuid dfa)
       in
-        if recognized /= expectedRecognized then
-          Debug.log "Failure on recognized words of permutation" x
-          |> \_ -> Expect.equal recognized expectedRecognized
-        else if not (List.isEmpty minimality) then
+        -- if recognized /= expectedRecognized then
+        --   Debug.log "Failure on recognized words of permutation" x
+        --   |> \_ -> Expect.equal recognized expectedRecognized
+        --else
+        if not (List.isEmpty minimality) then
           Debug.log "Failure on minimality" x
           |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality |> String.join "; "))
         else

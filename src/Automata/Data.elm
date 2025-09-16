@@ -249,8 +249,6 @@ type alias Transition =
   -- definite case of "ACCEPT".
     finality : AutoDict.Dict String Uuid Bool
   , via : AcceptVia
-    -- INSANELY, Bool is NOT `comparable`.
-    -- Well, screw it. At this point—neither is anything else in this data structure!!
   }
 
 {-|
@@ -264,8 +262,18 @@ DFA that is specific to that underlying DFA and needs to be unpacked as such.
 -}
 type alias OverlayContextForExecution = AutoSet.Set String Uuid
 
-isFinalInContext : Transition -> OverlayContextForExecution -> Bool
-isFinalInContext transition context =
+{-| WARNING: This is probably NOT the function that you want! See
+    `isFinalInContext` for the actual function that you want.
+-}
+isFinalInAnyContext : Transition -> Bool
+isFinalInAnyContext {finality} =
+  AutoDict.foldl
+    (\_ value state -> state || value)
+    False
+    finality
+
+isFinalInContext : OverlayContextForExecution -> Transition -> Bool
+isFinalInContext context {finality} =
   AutoDict.foldl
     -- a transition is final if any of its APPLICABLE
     -- (i.e. `AutoSet.member uuid context`) finality contexts
@@ -273,7 +281,11 @@ isFinalInContext transition context =
     -- are, then we don't need to check the rest (`state ||`).
     (\uuid value state -> state || (value && AutoSet.member uuid context))
     False
-    transition.finality
+    finality
+
+makeInitialContext : AutomatonGraph -> OverlayContextForExecution
+makeInitialContext {graphIdentifier} =
+  AutoSet.singleton Uuid.toString graphIdentifier
 
 type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
 type alias Node = NodeContext Entity Connection -- a Node itself does not carry any data, hence the ()
@@ -283,6 +295,18 @@ type alias AutomatonGraph =
   , graphIdentifier : Uuid
   , root : NodeId
   }
+
+-- type alias FlatTransition =
+--   {
+--     isFinal : Bool
+--   , via : Char
+--   }
+-- type alias FlatConnection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
+-- type alias FlattenedGraph =
+--   { graph : Graph Entity FlatConnection
+--   , graphIdentifier : Uuid
+--   , root : NodeId
+--   }
 
 {- So with an DFA, I can basically do anything that's deterministic.
 
@@ -311,10 +335,18 @@ type alias ExtDFA =
   , queue_or_clone : List NodeId
   , unusedId : NodeId
   }
+
+type alias TransitionTakenData =
+  { src : NodeId
+  , matching : AutoSet.Set String Transition -- multiple could match
+  , consumed : List Char
+  }
+
 type alias ExecutionData =
-  { transitionsTaken : List (NodeId, AutoSet.Set String Transition, List Char) -- (src, transitions [multiple could match], consumed)
+  { transitions : List TransitionTakenData
   , remainingData : List Char
   , currentNode : NodeId
+  , overlayContext : OverlayContextForExecution
   }
 
 type ExecutionState
@@ -377,15 +409,16 @@ printableAcceptCondition v =
       |> String.left 8
       |> \s -> s ++ "..."
 
-{-| True if at least one transition terminates at this node -}
-isTerminalNode : NodeContext a Connection -> Bool
-isTerminalNode node =
+{-| True if at least one transition terminates at this node,
+    within the given execution context -}
+isTerminalNode : OverlayContextForExecution -> NodeContext a Connection -> Bool
+isTerminalNode context node =
   -- IntDict.isEmpty node.outgoing &&
   ( IntDict.foldl
     (\_ conn state ->
       state ||
         AutoSet.foldl
-          (\{isFinal} state_ -> state_ || isFinal)
+          (\t state_ -> state_ || isFinalInContext context t)
           False
           conn
     )
@@ -393,10 +426,10 @@ isTerminalNode node =
     (node.incoming)
   )
 
-isTerminal : NodeId -> Graph x Connection -> Bool
-isTerminal id graph =
+isTerminal : OverlayContextForExecution -> NodeId -> Graph x Connection -> Bool
+isTerminal context id graph =
   Graph.get id graph
-  |> Maybe.map isTerminalNode
+  |> Maybe.map (isTerminalNode context)
   |> Maybe.withDefault False
 
 graphEdgeToString : Graph.Edge Connection -> String
@@ -404,16 +437,29 @@ graphEdgeToString {from, to, label} =
   "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
 
 transitionToString : Transition -> String
-transitionToString {via, isFinal} =
-  case (via, isFinal) of
-    (ViaCharacter ch, False) ->
-      String.fromChar ch
-    (ViaCharacter ch, _) ->
-      "\u{0307}" ++ String.fromChar ch
-    (ViaGraphReference uuid, False) ->
-      Uuid.toString uuid
-    (ViaGraphReference uuid, _) ->
-      "!" ++ Uuid.toString uuid
+transitionToString {via, finality} =
+  let
+    allValues = AutoDict.values finality
+    (t, f) =
+      List.partition identity allValues
+      |> Tuple.mapBoth List.length List.length
+    prevChar =
+      if f == 0 then
+        case via of
+          ViaCharacter _ ->
+            "\u{0307}"
+          ViaGraphReference _ ->
+            "!"
+      else if t == 0 then
+        ""
+      else
+        String.fromInt t ++ ":" ++ String.fromInt f ++ "."
+  in
+  case via of
+    ViaCharacter ch ->
+      prevChar ++ String.fromChar ch
+    ViaGraphReference uuid ->
+      prevChar ++ Uuid.toString uuid
 
 connectionToString : Connection -> String
 connectionToString =
@@ -427,11 +473,6 @@ graphToString printer graph =
     printer
     (Just << connectionToString)
     graph
-
-
-
-
-
 
 -- Parser for converting string representation to AutomatonGraph
 -- Example: "0-!av-1 0-b!vk!z-2 2-p-0" -> [(0, "!av", 1), (0, "b!vk!z", 2), (2, "p", 0)]

@@ -83,7 +83,7 @@ mkDFA transitions finals =
 mkConn : Uuid -> String -> Connection
 mkConn uuid s =
   let
-    uuid_set = AutoSet.singleton Uuid.toString uuid
+    uuid_dict f = AutoDict.singleton Uuid.toString uuid f
     uuid_helper list finality acc =
       case List.splitAt 36 list of
         (uuidChars, rest) ->
@@ -92,28 +92,28 @@ mkConn uuid s =
           else
             case Uuid.fromString (String.fromList uuidChars) of
               Just ref ->
-                helper rest (AutoSet.insert (Transition uuid_set (ViaGraphReference ref) finality) acc)
+                helper rest (AutoSet.insert (Transition (uuid_dict finality) (ViaGraphReference ref)) acc)
               Nothing ->
                 acc -- not a valid UUIDv4; end it here.
     
     helper xs acc =
       case xs of
         '+'::'+'::rest ->
-          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter '+') False) acc
-          |> AutoSet.remove (Transition uuid_set (ViaCharacter '+') True))
+          helper rest (AutoSet.insert (Transition (uuid_dict False) (ViaCharacter '+')) acc
+          |> AutoSet.remove (Transition (uuid_dict True) (ViaCharacter '+')))
         '+'::rest ->
           uuid_helper rest False acc
         '!'::'+'::'+'::rest ->
-          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter '+') True) acc
-          |> AutoSet.remove (Transition uuid_set (ViaCharacter '+') False))
+          helper rest (AutoSet.insert (Transition (uuid_dict True) (ViaCharacter '+')) acc
+          |> AutoSet.remove (Transition (uuid_dict False) (ViaCharacter '+')))
         '!'::'+'::rest ->
           uuid_helper rest True acc
         '!'::ch::rest ->
-          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter ch) True) acc
-          |> AutoSet.remove (Transition uuid_set (ViaCharacter ch) False))
+          helper rest (AutoSet.insert (Transition (uuid_dict True) (ViaCharacter ch)) acc
+          |> AutoSet.remove (Transition (uuid_dict False) (ViaCharacter ch)))
         ch::rest ->
-          helper rest (AutoSet.insert (Transition uuid_set (ViaCharacter ch) False) acc
-          |> AutoSet.remove (Transition uuid_set (ViaCharacter ch) True))
+          helper rest (AutoSet.insert (Transition (uuid_dict False) (ViaCharacter ch)) acc
+          |> AutoSet.remove (Transition (uuid_dict True) (ViaCharacter ch)))
         [] -> acc
   in
     helper (String.toList s) (AutoSet.empty transitionToString)

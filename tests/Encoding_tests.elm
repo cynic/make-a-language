@@ -3,7 +3,7 @@ import Test exposing (..)
 import Utility exposing (..)
 import Expect
 import Automata.Data exposing (NodeEffect(..), AcceptVia(..), Entity)
-import Automata.DFA exposing (serializeAutomatonGraph, deserializeAutomatonGraph)
+import Automata.DFA exposing (encodeAutomatonGraph, decodeAutomatonGraph)
 import Graph exposing (Node, Edge)
 import Json.Decode as D
 import Automata.Debugging exposing (debugAutomatonGraph)
@@ -30,7 +30,7 @@ czech root nodes edges =
       mkAutomatonGraph nodes edges root
       |> debugAutomatonGraph "[czech] AutomatonGraph test"
   in
-    case serializeAutomatonGraph v |> D.decodeValue deserializeAutomatonGraph of
+    case encodeAutomatonGraph v |> D.decodeValue decodeAutomatonGraph of
       Ok v_ -> Expect.equal v v_
       Err e -> Expect.fail (Debug.toString e)
 
