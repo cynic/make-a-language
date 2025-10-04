@@ -329,6 +329,7 @@ type alias ExtDFA =
   { states : IntDict Entity
   , transition_function: IntDict (AutoDict.Dict String AcceptVia NodeId)
   , start : NodeId
+  , w_dfa_orig : DFARecord {}
   , finals : Set NodeId
   , register : Set NodeId
   , clone_start : NodeId

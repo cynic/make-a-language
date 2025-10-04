@@ -1,5 +1,5 @@
 module Utility exposing
-  ( ag, dfa, mkDFA_input, ag_equals, dfa_equals, dummyEntity
+  ( ag, dfa, mkDFA_input, mkDFA, ag_equals, dfa_equals, dummyEntity
   , mkConn, mkAutomatonGraph, dummy_uuid
   )
 import Parser exposing (Parser, (|=), (|.))

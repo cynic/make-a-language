@@ -17,6 +17,7 @@ import Automata.Debugging exposing (debugAutomatonGraph)
 import Uuid exposing (Uuid)
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (printNodeContext)
+import Automata.Debugging exposing (println)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -181,45 +182,43 @@ extend purpose w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
       IntDict.findMax dfa.states
       |> Maybe.map (Tuple.first >> (+) 1)
       |> Maybe.withDefault 0
-    max_w_dfa = IntDict.findMax w_dfa_orig.states
+    max_w_dfa =
+      IntDict.findMax w_dfa_orig.states
       |> Maybe.map (Tuple.first >> (+) 1)
       |> Maybe.withDefault 0
-    w_dfa =
-      { states =
-          IntDict.toList w_dfa_orig.states |> List.map (\(a, b) -> (a + max_dfa, b)) |> IntDict.fromList
-      , transition_function =
-          IntDict.toList w_dfa_orig.transition_function
-          |> List.map
-              (\(a, d) ->
-                (a + max_dfa, AutoDict.map (\_ b -> b + max_dfa) d)
-              )
-          |> IntDict.fromList
-      , start = w_dfa_orig.start + max_dfa
-      , finals =
-          case purpose of
-            Add_Word ->
-              Set.map (\a -> a + max_dfa) w_dfa_orig.finals
-            Remove_Word ->
-              Set.empty
-      }
-    unusedId = max_dfa + max_w_dfa + 1
     extDFA =
-      { states = IntDict.union w_dfa.states dfa.states
+      { states = dfa.states
         -- we amend this so that it has transition functions for cloned q0
-      , transition_function = IntDict.union w_dfa.transition_function dfa.transition_function
-          -- IntDict.get dfa.start dfa.transition_function
-          -- |> Maybe.map (\to_add -> IntDict.insert unusedId to_add dfa.transition_function)
-          -- |> Maybe.withDefault dfa.transition_function
-          -- |> debugLog_ "Amended transitions" printTransitions
+      , transition_function = dfa.transition_function
       , start = dfa.start
-      , finals = Set.union w_dfa.finals dfa.finals
+      , finals = dfa.finals
         -- the register, correctly, does NOT include the cloned q0
       , register = Set.fromList <| IntDict.keys dfa.states
-      , clone_start = w_dfa.start
-      , queue_or_clone = IntDict.keys w_dfa.states |> List.reverse
-      , unusedId = unusedId
+      , clone_start = w_dfa_orig.start
+      , queue_or_clone = [] -- IntDict.keys w_dfa.states |> List.reverse
+      , unusedId = max_dfa + max_w_dfa + 1
+      , w_dfa_orig =
+          { states =
+              IntDict.toList w_dfa_orig.states
+              |> List.map (\(a, b) -> (a + max_dfa, b))
+              |> IntDict.fromList
+          , transition_function =
+              IntDict.toList w_dfa_orig.transition_function
+              |> List.map
+                (\(a, d) ->
+                  ( a + max_dfa
+                  , AutoDict.map (\_ b -> b + max_dfa) d
+                  )
+                )
+              |> IntDict.fromList
+          , start = w_dfa_orig.start + max_dfa
+          , finals =
+              Set.map (\a -> a + max_dfa) w_dfa_orig.finals
+          }
+          |> debugDFA_ "w_dfa_orig"
       }
-      |> clone_or_queue purpose dfa.start w_dfa.start
+      |> debugExtDFA_ "extDFA (initial)"
+      |> debugExtDFA_ "extDFA (post-clone-and-queue)"
   in
     extDFA
 
@@ -258,6 +257,22 @@ a tree structure.
 
 type ForwardTree = PathEnd | ForwardNode (AutoDict.Dict String AcceptVia ForwardTree)
 
+printForwardTree : ForwardTree -> String
+printForwardTree fwd_tree =
+  case fwd_tree of
+    PathEnd -> "•"
+    ForwardNode dict ->
+      AutoDict.toList dict
+      |> List.map
+        (\(acceptCondition, nextTree) ->
+          "(" ++ printableAcceptCondition acceptCondition ++ ") -> [" ++ printForwardTree nextTree ++ "]"
+        )
+      |> String.join ", "
+
+debugForwardTree : String -> ForwardTree -> ForwardTree
+debugForwardTree msg =
+  debugLog_ msg printForwardTree
+
 {-| Return the nodes of the forwardtree, in-order.
 -}
 forwardtree_nodes : NodeId -> ExtDFA -> ForwardTree -> List NodeId
@@ -294,32 +309,56 @@ forwardtree_nodes start extDFA_orig tree_ =
 w_forward_transitions : ExtDFA -> ForwardTree
 w_forward_transitions extDFA =
   let
-    helper : NodeId -> Set NodeId -> ForwardTree
-    helper current seen =
+    {-
+      I need to track by (src, via, dest).
+      I cannot just track by (via, dest).
+      Consider: (0, a, 1) (1, b, 2) (2, a, 1) [1]
+      Suddenly, that last transition doesn't get counted…
+    -}
+    helper : Maybe NodeId -> NodeId -> AutoSet.Set (Int, String, Int) (NodeId, AcceptVia, NodeId) -> ForwardTree
+    helper src current seen =
       case IntDict.get current extDFA.transition_function of
         Nothing -> PathEnd
         Just dict ->
           let
             filtered =
               AutoDict.filter
-                (\_ state ->
-                  not (Set.member state seen)
-                  && current /= state
-                  && List.member state extDFA.queue_or_clone
+                (\via dest ->
+                  not (AutoSet.member ({- Debug.log "testing" -} (current, via, dest)) ({- Debug.log "seen" -} seen)) &&
+                  current /= dest --&&
+                  --List.member dest extDFA.queue_or_clone
                 )
                 dict
+              -- |> Debug.log "filtered"
             children =
-              AutoDict.map (\_ state -> helper state (Set.insert state seen)) filtered
+              AutoDict.map
+                (\via state ->
+                  -- Debug.log "Examining" (current, via, state) |> \_ ->
+                  helper (Just current) state (AutoSet.insert (current, via, state) seen)
+                )
+                filtered
           in
-            if AutoDict.isEmpty children then PathEnd else ForwardNode children
+            if AutoDict.isEmpty children then
+              PathEnd
+            else
+              ForwardNode children
   in
-    helper extDFA.clone_start Set.empty
-    -- |> Debug.log "[w_forward_transitions] result"
+    helper Nothing extDFA.clone_start (AutoSet.empty (\(a,b,c) -> ( a, acceptConditionToString b, c )))
+    |> debugForwardTree "[w_forward_transitions] result"
 
 delta : NodeId -> AcceptVia -> DFARecord a -> Maybe NodeId
 delta q x dfa =
   IntDict.get q dfa.transition_function
   |> Maybe.andThen (AutoDict.get x)
+  |> (\v ->
+    case v of
+      Nothing ->
+        Debug.log ("[delta] δ(" ++ String.fromInt q ++ ", " ++ printableAcceptCondition x ++ ") = ∅") () |> \_ ->
+        v
+      Just q_ ->
+        Debug.log ("[delta] δ(" ++ String.fromInt q ++ ", " ++ printableAcceptCondition x ++ ") = " ++ String.fromInt q_) () |> \_ ->
+        v
+  )
 
 {-| Returns a list of (NodeId, Char) pairs representing all transitions in the given DFA that lead to the specified node.
 
@@ -363,7 +402,19 @@ clone_or_queue purpose q_m q_w extDFA =
           ( Nothing, Nothing) ->
             extDFA.transition_function
           ( Just a, Just b ) ->
-            IntDict.insert q_w (AutoDict.union a b) extDFA.transition_function
+            IntDict.insert q_w
+              (AutoDict.merge
+                (\x y -> Basics.compare (acceptConditionToString x) (acceptConditionToString y))
+                -- left only
+                (\k v acc -> AutoDict.insert k (v |> Debug.log "left only") acc)
+                -- both
+                (\k v w acc -> AutoDict.insert k (v |> Debug.log "BOTH; taking left") acc)
+                -- right only
+                (\k v acc -> AutoDict.insert k (v |> Debug.log "right only") acc)
+                (AutoDict.empty acceptConditionToString)
+                a b
+              )
+              extDFA.transition_function
     , finals =
         -- now, here is the trick: if I am ADDING q_w, then I add q_w to
         -- the finals as appropriate.  However, if I am REMOVING
@@ -385,10 +436,11 @@ clone_or_queue_many purpose q_m q_w tree extDFA =
     PathEnd ->
       -- we're at the end of the transitions.
       clone_or_queue purpose q_m q_w extDFA
+      |> debugExtDFA_ ("[clone_or_queue_many] end of path, (q_m = #" ++ String.fromInt q_m ++ ", q_w = #" ++ String.fromInt q_w ++ ")")
     ForwardNode dict ->
       AutoDict.foldl
         (\ch subtree acc ->
-          case (delta q_m ch acc, delta q_w ch acc) of
+          case (delta q_m ch acc, delta q_w ch acc) |> Debug.log ("(δ(q_m, " ++ printableAcceptCondition ch ++ "), δ(q_w, " ++ printableAcceptCondition ch ++ "))") of
             (_, Nothing) ->
               Debug.log "🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
               acc
@@ -397,24 +449,321 @@ clone_or_queue_many purpose q_m q_w tree extDFA =
                 Add_Word ->
                   -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
                   clone_or_queue purpose q_m q_w acc
+                  |> debugExtDFA_ ("[clone_or_queue_many] queued, (q_m = #" ++ String.fromInt q_m ++ ", q_w = #" ++ String.fromInt q_w ++ ")")
                 Remove_Word ->
                   -- we don't want to or need to add q_w-specific nodes.
                   acc
             (Just m_node, Just w_node) ->
               clone_or_queue_many purpose m_node w_node subtree (clone_or_queue purpose q_m q_w acc)
+              |> debugExtDFA_ ("[clone_or_queue_many] cloned subtree starting at m = #" ++ String.fromInt m_node ++ ", w = #" ++ String.fromInt w_node)
         )
         extDFA
         dict
 
-phase_1 : Phase1Purpose -> ExtDFA -> ExtDFA
-phase_1 purpose extDFA_orig =
+state_key : { q_m : Maybe NodeId, q_w : Maybe NodeId } -> String
+state_key { q_m, q_w } =
+  case (q_m, q_w) of
+    (Nothing, Nothing) ->
+      "/"
+    (Just q_m_, Nothing) ->
+      String.fromInt q_m_ ++ "/"
+    (Nothing, Just q_w_) ->
+      "/" ++ String.fromInt q_w_
+    (Just q_m_, Just q_w_) ->
+      String.fromInt q_m_ ++ "/" ++ String.fromInt q_w_
+
+build_out : List { q_m : Maybe NodeId, q_w : Maybe NodeId } -> AutoSet.Set String { q_m : Maybe NodeId, q_w : Maybe NodeId  } -> AutoDict.Dict String { q_m : Maybe NodeId, q_w : Maybe NodeId } NodeId -> ExtDFA -> ExtDFA
+build_out node_stack handled mapping extDFA =
+  case node_stack of
+    [] -> extDFA
+    ({ q_m, q_w } as head) :: rest ->
+      if AutoSet.member head handled then
+        -- we have seen & dealt with this one before.
+        build_out rest handled mapping extDFA
+      else
+        case (q_m, q_w) of
+          (Just q__m, Just q__w) ->
+            -- Both states are valid.  Now, find the transitions from these,
+            -- and push them onto the stack.  When we're done, mark handled and
+            -- recurse.
+            let
+              transitions_m =
+                IntDict.get q__m extDFA.transition_function
+                |> Maybe.withDefault (AutoDict.empty acceptConditionToString)
+              transitions_w =
+                IntDict.get q__w extDFA.w_dfa_orig.transition_function
+                |> Maybe.withDefault (AutoDict.empty acceptConditionToString)
+              all_transitions_out =
+                (AutoDict.keys transitions_m ++ AutoDict.keys transitions_w)
+                |> List.uniqueBy acceptConditionToString
+                |> Debug.log ("[build_out (" ++ String.fromInt q__m ++ ", " ++ String.fromInt q__w ++ ")] Transitions out")
+              resulting_combination_states =
+                List.map
+                  (\via ->
+                      ( via
+                      , { q_m = AutoDict.get via transitions_m
+                        , q_w = AutoDict.get via transitions_w
+                        }
+                      )
+                  )
+                  all_transitions_out
+                |> AutoDict.fromList acceptConditionToString
+              resulting_combination_states_excluding_handled =
+                List.filter
+                  (\v -> not <| AutoSet.member v handled)
+                  (AutoDict.values resulting_combination_states)
+              new_node_stack =
+                rest ++ resulting_combination_states_excluding_handled
+              new_handled =
+                AutoSet.insert head handled
+              (new_mapping, unusedId) =
+                List.foldl
+                  (\k (acc, unused) ->
+                    case AutoDict.get k acc of
+                      Just _ ->
+                        -- okay, this already has a mapping; just carry on
+                        (acc, unused)
+                      Nothing ->
+                        -- this is a new one; give it a new ID
+                        case (k.q_w, k.q_m) of
+                          (Nothing, Nothing) ->
+                              -- don't bother with a mapping; this is an absorption state.
+                              (acc, unused)
+                          (Nothing, Just existing_m) ->
+                              -- this is already in the register; just reference it.
+                              -- In Carrasco & Forcada's algorithm, when we have a (Wx, Mx) pair
+                              -- that transitions to (⊥, ??), then we just redirect to the existing
+                              -- node in the register.
+                              (AutoDict.insert k existing_m acc, unused)
+                          (Just _, Nothing) ->
+                            -- When we have (Wx, Mx) leading to (??, ⊥), then we have a backlink that
+                            -- Carrasco & Forcada's algorithm does NOT handle properly.  And we will
+                            -- make another state for that.
+                            (AutoDict.insert k unused acc, unused + 1)
+                          (Just _, Just _) ->
+                            -- this is going to be a state that we "follow" in `m`.  We will deal
+                            -- with it on the stack.
+                            (AutoDict.insert k unused acc, unused + 1)
+                  )
+                  (mapping, extDFA.unusedId)
+                  resulting_combination_states_excluding_handled
+              -- okay!  By now, we have all states mapped.  So we can make the transitions
+              -- out of here.
+              head_mapping =
+                AutoDict.get head mapping
+                |> Maybe.Extra.withDefaultLazy
+                  (\() ->
+                    Debug.log "🚨 ERROR!! How can I fail to get a head-mapping?? A previous build_out MUST have added one!" -1
+                  )
+                |> \id ->
+                  -- TODO: What to do when BOTH of them have an Entity?
+                  -- Right now, I'm just taking `w`'s entity. This, of course, is wrong.
+                  -- (at least partly because it means union is not commutative)
+                  IntDict.get q__w extDFA.w_dfa_orig.states
+                  |> Maybe.map (\state -> { state | id = id })
+                  |> Maybe.Extra.withDefaultLazy
+                    (\() ->
+                      Entity 0 0 0 0 id NoEffect
+                      |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
+                    )
+              new_transitions =
+                all_transitions_out
+                |> List.map
+                    (\via ->
+                      ( via
+                      , AutoDict.get via resulting_combination_states
+                        |> Maybe.Extra.withDefaultLazy
+                          (\() ->
+                            Debug.log "🚨 ERROR!! How can I fail to get a known-good via-mapping??"
+                              { q_w = Nothing, q_m = Nothing }
+                          )
+                        |>  (\rawKey ->
+                                AutoDict.get rawKey new_mapping
+                                |> Maybe.Extra.withDefaultLazy
+                                  (\() ->
+                                    Debug.log "🚨 ERROR!! How can I fail to get a known-good q_m+q_w-mapping??" -1
+                                  )
+                            )
+                      )
+                    )
+                |> AutoDict.fromList acceptConditionToString
+              -- and we need to set as final if either q_m or q_w is final.
+            in
+              build_out
+                new_node_stack
+                new_handled
+                new_mapping
+                ({ extDFA
+                  | transition_function =
+                      IntDict.insert head_mapping.id new_transitions extDFA.transition_function
+                  , states = IntDict.insert head_mapping.id head_mapping extDFA.states
+                  , unusedId = unusedId
+                  , queue_or_clone = head_mapping.id :: extDFA.queue_or_clone
+                  , finals =
+                      if Set.member q__m extDFA.finals || Set.member q__w extDFA.w_dfa_orig.finals then
+                        Set.insert head_mapping.id extDFA.finals
+                      else
+                        extDFA.finals
+                }
+                |> debugExtDFA_ "After build_out"
+                )
+          (Just q__m, Nothing ) ->
+            -- this state only exists in q_m. So I don't need to worry about anything from q_w.
+            -- q_m should already have the necessary transitions for this; so I can ignore.
+            println ("build_out (" ++ String.fromInt q__m ++ ", ⊥)")
+            build_out rest (AutoSet.insert head handled) mapping extDFA
+          ( Nothing, Just q__w) ->
+            -- this state only exists in q_w; in Carrasco & Forcada's terminology, it becomes a 
+            -- "queue" state and gets added to the `queue_or_clone` list.  Once q_m is out of the
+            -- picture, it's only via a backlink that I can possibly get back to any q_m-relevant
+            -- node.
+            -- We will bump transitions from this onto the stack so that they get the same treatment
+            -- as "queued" things later on.
+            let
+              transitions_w =
+                IntDict.get q__w extDFA.w_dfa_orig.transition_function
+                |> Maybe.withDefault (AutoDict.empty acceptConditionToString)
+              all_transitions_out =
+                AutoDict.keys transitions_w
+                |> List.uniqueBy acceptConditionToString
+                |> Debug.log ("[build_out (⊥, " ++ String.fromInt q__w ++ ")] Transitions out")
+              resulting_combination_states =
+                List.map
+                  (\via ->
+                      ( via
+                      , { q_m = Nothing
+                        , q_w = AutoDict.get via transitions_w
+                        }
+                      )
+                  )
+                  all_transitions_out
+                |> AutoDict.fromList acceptConditionToString
+              resulting_combination_states_excluding_handled =
+                List.filter
+                  (\v -> not <| AutoSet.member v handled)
+                  (AutoDict.values resulting_combination_states)
+              new_node_stack =
+                rest ++ resulting_combination_states_excluding_handled
+              new_handled =
+                AutoSet.insert head handled
+              (new_mapping, unusedId) =
+                List.foldl
+                  (\k (acc, unused) ->
+                    case AutoDict.get k acc of
+                      Just _ ->
+                        -- okay, this already has a mapping; just carry on
+                        (acc, unused)
+                      Nothing ->
+                        -- this is a new one; give it a new ID
+                        case (k.q_w, k.q_m) of
+                          (Nothing, Nothing) ->
+                              -- don't bother with a mapping; this is an absorption state.
+                              (acc, unused)
+                          (Nothing, Just existing_m) ->
+                              -- this is already in the register; just reference it.
+                              -- In Carrasco & Forcada's algorithm, when we have a (Wx, Mx) pair
+                              -- that transitions to (⊥, ??), then we just redirect to the existing
+                              -- node in the register.
+                              (AutoDict.insert k existing_m acc, unused)
+                          (Just _, Nothing) ->
+                            -- When we have (Wx, Mx) leading to (??, ⊥), then we have a backlink that
+                            -- Carrasco & Forcada's algorithm does NOT handle properly.  And we will
+                            -- make another state for that.
+                            (AutoDict.insert k unused acc, unused + 1)
+                          (Just _, Just _) ->
+                            -- this is going to be a state that we "follow" in `m`.  We will deal
+                            -- with it on the stack.
+                            (AutoDict.insert k unused acc, unused + 1)
+                  )
+                  (mapping, extDFA.unusedId)
+                  resulting_combination_states_excluding_handled
+              -- okay!  By now, we have all states mapped.  So we can make the transitions
+              -- out of here.
+              head_mapping =
+                AutoDict.get head mapping
+                |> Maybe.Extra.withDefaultLazy
+                  (\() ->
+                    Debug.log "🚨 ERROR!! How can I fail to get a head-mapping?? A previous build_out MUST have added one!" -1
+                  )
+                |> \id ->
+                  -- TODO: What to do when BOTH of them have an Entity?
+                  -- Right now, I'm just taking `w`'s entity. This, of course, is wrong.
+                  -- (at least partly because it means union is not commutative)
+                  IntDict.get q__w extDFA.w_dfa_orig.states
+                  |> Maybe.map (\state -> { state | id = id })
+                  |> Maybe.Extra.withDefaultLazy
+                    (\() ->
+                      Entity 0 0 0 0 id NoEffect
+                      |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
+                    )
+              new_transitions =
+                all_transitions_out
+                |> List.map
+                    (\via ->
+                      ( via
+                      , AutoDict.get via resulting_combination_states
+                        |> Maybe.Extra.withDefaultLazy
+                          (\() ->
+                            Debug.log "🚨 ERROR!! How can I fail to get a known-good via-mapping??"
+                              { q_w = Nothing, q_m = Nothing }
+                          )
+                        |>  (\rawKey ->
+                                AutoDict.get rawKey new_mapping
+                                |> Maybe.Extra.withDefaultLazy
+                                  (\() ->
+                                    Debug.log "🚨 ERROR!! How can I fail to get a known-good q_m+q_w-mapping??" -1
+                                  )
+                            )
+                      )
+                    )
+                |> AutoDict.fromList acceptConditionToString
+              -- and we need to set as final if either q_m or q_w is final.
+            in
+              build_out
+                new_node_stack
+                new_handled
+                new_mapping
+                ({ extDFA
+                  | transition_function =
+                      IntDict.insert head_mapping.id new_transitions extDFA.transition_function
+                  , states = IntDict.insert head_mapping.id head_mapping extDFA.states
+                  , unusedId = unusedId
+                  , queue_or_clone = head_mapping.id :: extDFA.queue_or_clone
+                  , finals =
+                      if Set.member q__w extDFA.w_dfa_orig.finals then
+                        Set.insert head_mapping.id extDFA.finals
+                      else
+                        extDFA.finals
+                }
+                |> debugExtDFA_ "After build_out"
+                )
+          ( Nothing, Nothing ) ->
+            -- Unequivocal absorption state.  Nothing can possibly lead from here.
+            println "[build_out (⊥, ⊥)] Absorption state"
+            build_out rest (AutoSet.insert head handled) mapping extDFA
+
+phase_1 : ExtDFA -> ExtDFA
+phase_1 extDFA_orig =
   -- Traverse the ForwardTree and apply append_transitions for every path
-  clone_or_queue_many
-    purpose
-    extDFA_orig.start
-    extDFA_orig.clone_start
-    (w_forward_transitions extDFA_orig)
-    extDFA_orig
+  -- going to do this the old-fashioned product way.
+  -- The phase-1 algorithm in Carrasco & Forcada works for all words, but not necessarily for all
+  -- DFAs.
+  let
+    root = { q_m = Just extDFA_orig.start, q_w = Just extDFA_orig.w_dfa_orig.start }
+    initialSet = [ root ]
+    handled = AutoSet.empty state_key
+    mapping = AutoDict.singleton state_key root extDFA_orig.unusedId
+  in
+    build_out initialSet handled mapping
+      { extDFA_orig
+        | unusedId = extDFA_orig.unusedId + 1
+        , clone_start = extDFA_orig.unusedId
+      }
+  -- By the end, of this, I want:
+  -- 1. All nodes to be integrated; there are none that are separate.
+  -- 2. The `finals` set is correct as far as both `w` and `m` are concerned.
+  -- 3. The `queue_or_clone` list is present, and in the correct order
+  --    (i.e. back-to-front node order, for checking right-language)
 
 remove_unreachable : ForwardTree -> ExtDFA -> ExtDFA
 remove_unreachable old_w_path extDFA_orig =
@@ -495,9 +844,9 @@ remove_unreachable old_w_path extDFA_orig =
                   partition t (Set.insert node nodes_with_external_edges, Set.remove node nodes_without_external_edges)
       in
         partition
-          (old_w_path_nodes {- |> Debug.log "checking in order" -}) -- must check in-order
+          (old_w_path_nodes |> Debug.log "checking in order") -- must check in-order
           (Tuple.mapBoth Set.fromList Set.fromList initial_partition)
-        --|> Debug.log "(to_keep, to_remove)"
+        |> Debug.log "(to_keep, to_remove)"
     -- Step 4
     purge : NodeId -> ExtDFA -> ExtDFA
     purge q extDFA =
@@ -583,12 +932,12 @@ replace_or_register extDFA =
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
   extend Add_Word w_dfa_orig m_dfa
-  -- |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
-  |> phase_1 Add_Word
-  -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
+  |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
+  |> phase_1 -- Add_Word
+  |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
   |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
   |> (\dfa -> { dfa | start = dfa.clone_start })
-  -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
+  |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
   |> replace_or_register
   -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
   |> retract
@@ -1815,7 +2164,9 @@ printDFA dfa =
 printExtDFA : ExtDFA -> String
 printExtDFA extDFA =
   printDFA extDFA
-  ++ "\n▶ Register / Queue|Clones = "
+  ++ "\n   ▶ orig_w_dfa = "
+  ++ printDFA extDFA.w_dfa_orig
+  ++ "\n   ▶ Register / Queue|Clones = "
   ++ Debug.toString (Set.toList extDFA.register) ++ " / "
   ++ Debug.toString extDFA.queue_or_clone ++ "📍"
   ++ String.fromInt extDFA.clone_start
