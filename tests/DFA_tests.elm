@@ -7,7 +7,7 @@ import Automata.Data as D
 import Automata.Verification as D
 import List.Extra as List
 import Automata.DFA
-import Automata.DFA exposing (toAutomatonGraph)
+import Automata.DFA exposing (toAutomatonGraph, union)
 import IntDict
 import Set
 import AutoDict
@@ -255,6 +255,18 @@ suite =
       , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
           \s -> cheapTestForWords [s]
       ]
+      , describe "union tests"
+        [
+          test "" <|
+          \_ ->
+            let
+              dfa1 = Utility.mkDFA [ (0, 'a', 1), (1, 'b', 2), (2, 'a', 1)  ] [1]
+              dfa2 = Utility.mkDFA [ (0, 'a', 1), (1, 'b', 2), (2, 'd', 3) ] [3]
+            in
+            Utility.ag_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
           test "pqt-zvt-zvr-pqr-pvt-zqr-pvr-zqt" <|

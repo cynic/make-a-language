@@ -939,7 +939,7 @@ union w_dfa_orig m_dfa =
   |> (\dfa -> { dfa | start = dfa.clone_start })
   |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
   |> replace_or_register
-  -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
+  |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
   |> retract
 
 
