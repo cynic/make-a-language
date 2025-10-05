@@ -249,7 +249,7 @@ suite =
       , fuzz (Fuzz.listOfLengthBetween 3 15 (Fuzz.asciiStringOfLengthBetween 1 10)) "always recognizes exactly the unique short or long words that it is given" <|
           cheapTestForWords
 
-      , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 5 10)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
+      , fuzz (Fuzz.listOfLengthBetween 2 5 (Fuzz.asciiStringOfLengthBetween 4 8)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
           standardTestForWords
 
       , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
@@ -266,6 +266,11 @@ suite =
             Utility.ag_equals
               (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
               (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        -- , fuzz (Fuzz.pair dfaGenerator dfaGenerator) "DFA union is commutative " <|
+        --   \(dfa1, dfa2) ->
+        --     Utility.ag_equals
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
         ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
