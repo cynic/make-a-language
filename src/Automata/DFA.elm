@@ -595,7 +595,10 @@ build_out node_stack handled mapping extDFA =
                 new_mapping
                 ({ extDFA
                   | transition_function =
-                      IntDict.insert head_mapping.id new_transitions extDFA.transition_function
+                      if AutoDict.isEmpty new_transitions then
+                        extDFA.transition_function
+                      else
+                        IntDict.insert head_mapping.id new_transitions extDFA.transition_function
                   , states = IntDict.insert head_mapping.id head_mapping extDFA.states
                   , unusedId = unusedId
                   , queue_or_clone = head_mapping.id :: extDFA.queue_or_clone
@@ -725,7 +728,10 @@ build_out node_stack handled mapping extDFA =
                 new_mapping
                 ({ extDFA
                   | transition_function =
-                      IntDict.insert head_mapping.id new_transitions extDFA.transition_function
+                      if AutoDict.isEmpty new_transitions then
+                        extDFA.transition_function
+                      else
+                        IntDict.insert head_mapping.id new_transitions extDFA.transition_function
                   , states = IntDict.insert head_mapping.id head_mapping extDFA.states
                   , unusedId = unusedId
                   , queue_or_clone = head_mapping.id :: extDFA.queue_or_clone
@@ -875,10 +881,10 @@ replace_or_register extDFA =
         let
           p_outgoing =
             IntDict.get p extDFA.transition_function
-            -- |> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
+            |> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
           q_outgoing =
             IntDict.get q extDFA.transition_function
-            -- |> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
+            |> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
         in
           case ( p_outgoing, q_outgoing ) of
             ( Just _, Nothing ) -> False
@@ -904,7 +910,7 @@ replace_or_register extDFA =
     h::t ->
       case Set.toList extDFA.register |> List.find (equiv h) of
         Just found_equivalent ->
-          -- Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
+          Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
           replace_or_register
             { extDFA
               | states = IntDict.remove h extDFA.states
@@ -920,7 +926,7 @@ replace_or_register extDFA =
                     extDFA.start
             }
         Nothing ->
-          -- Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
+          Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
           replace_or_register
             { extDFA
               | register = Set.insert h extDFA.register

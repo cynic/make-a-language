@@ -257,7 +257,7 @@ suite =
       ]
       , describe "union tests"
         [
-          test "" <|
+          test "a recursive word is unioned correctly" <|
           \_ ->
             let
               dfa1 = Utility.mkDFA [ (0, 'a', 1), (1, 'b', 2), (2, 'a', 1)  ] [1]
