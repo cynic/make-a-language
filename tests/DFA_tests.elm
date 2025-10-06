@@ -12,6 +12,7 @@ import IntDict
 import Set
 import AutoDict
 import Utility
+import Array
 
 -- nodesAndWords : D.AutomatonGraph -> (Int, List String)
 -- nodesAndWords d =
@@ -113,6 +114,37 @@ testWith s =
 
 testWithInputs : List String -> List Test
 testWithInputs = List.map testWith
+
+dfaGenerator : Int -> Int -> Fuzz.Fuzzer (D.DFARecord {})
+dfaGenerator random_conns_max nodes_max =
+  let
+    transition_chars =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      |> String.toList
+    -- num_nodes = 8
+    -- num_random_conns = 8
+  in
+    (Fuzz.pair (Fuzz.intRange 2 random_conns_max) (Fuzz.intRange 3 nodes_max))
+    |> Fuzz.andThen
+      (\(num_random_conns, num_nodes) ->
+          Fuzz.map2
+            (\destNodes finals ->
+              let
+                randoms =
+                  List.map3
+                    (\src ch dest -> ( src, ch, dest ))
+                    (List.range 1 num_nodes) transition_chars destNodes
+                links =
+                  List.map2
+                    (\src ch -> ( src, ch, src + 1 ))
+                    (List.range 1 (num_nodes - 1)) (List.drop num_nodes transition_chars)
+              in
+                Utility.mkDFA (randoms ++ links) finals
+            )
+            (Fuzz.listOfLength num_random_conns (Fuzz.intRange 1 num_nodes))
+            -- remember, node 1 can never be a final, when converting from AG…)
+            (Fuzz.listOfLengthBetween 1 num_nodes (Fuzz.intRange 2 num_nodes))
+      )
 
 suite : Test
 suite =
@@ -266,11 +298,16 @@ suite =
             Utility.ag_equals
               (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
               (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        -- , fuzz (Fuzz.pair dfaGenerator dfaGenerator) "DFA union is commutative " <|
-        --   \(dfa1, dfa2) ->
-        --     Utility.ag_equals
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , fuzz (Fuzz.pair (dfaGenerator 2 4) (dfaGenerator 2 4)) "DFA union is commutative (simple tests)" <|
+          \(dfa1, dfa2) ->
+            Utility.ag_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (more complex tests)" <|
+          \(dfa1, dfa2) ->
+            Utility.ag_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
         ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
