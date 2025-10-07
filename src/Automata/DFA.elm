@@ -474,12 +474,44 @@ state_key { q_m, q_w } =
 
 build_out : List { q_m : Maybe NodeId, q_w : Maybe NodeId } -> AutoSet.Set String { q_m : Maybe NodeId, q_w : Maybe NodeId  } -> AutoDict.Dict String { q_m : Maybe NodeId, q_w : Maybe NodeId } NodeId -> ExtDFA -> ExtDFA
 build_out node_stack handled mapping extDFA =
+  let
+    head_id_for head =
+      AutoDict.get head mapping
+      |> Maybe.Extra.withDefaultLazy
+        (\() ->
+          Debug.log "🚨 ERROR!! How can I fail to get a head-mapping?? A previous build_out MUST have added one!" -1
+        )
+    head_mapping_for head q__w =
+      head_id_for head
+      |> \id ->
+        -- TODO: What to do when BOTH of them have an Entity?
+        -- Right now, I'm just taking `w`'s entity. This, of course, is wrong.
+        -- (at least partly because it means union is not commutative)
+        IntDict.get q__w extDFA.w_dfa_orig.states
+        |> Maybe.map (\state -> { state | id = id })
+        |> Maybe.Extra.withDefaultLazy
+          (\() ->
+            Entity 0 0 0 0 id NoEffect
+            |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
+          )
+  in
   case node_stack of
     [] -> extDFA
     ({ q_m, q_w } as head) :: rest ->
       if AutoSet.member head handled then
         -- we have seen & dealt with this one before.
-        build_out rest handled mapping extDFA
+        -- HOWEVER, it now occurs at a later point in the BFS.
+        -- So, we may need to check it twice for right-language equivalence.
+        let
+          head_id = head_id_for head
+          updated_queue_or_clone =
+            if Set.member head_id extDFA.register then
+              extDFA.queue_or_clone -- nothing to do
+            else
+              head_id_for head :: extDFA.queue_or_clone
+        in
+          build_out rest handled mapping
+            { extDFA | queue_or_clone = updated_queue_or_clone }
       else
         case (q_m, q_w) of
           (Just q__m, Just q__w) ->
@@ -496,7 +528,7 @@ build_out node_stack handled mapping extDFA =
               all_transitions_out =
                 (AutoDict.keys transitions_m ++ AutoDict.keys transitions_w)
                 |> List.uniqueBy acceptConditionToString
-                |> Debug.log ("[build_out (" ++ String.fromInt q__m ++ ", " ++ String.fromInt q__w ++ ")] Transitions out")
+                |> Debug.log ("[build_out (Qm=" ++ String.fromInt q__m ++ ", Qw=" ++ String.fromInt q__w ++ ")] Transitions out")
               resulting_combination_states =
                 List.map
                   (\via ->
@@ -513,7 +545,8 @@ build_out node_stack handled mapping extDFA =
                   (\v -> not <| AutoSet.member v handled)
                   (AutoDict.values resulting_combination_states)
               new_node_stack =
-                rest ++ resulting_combination_states_excluding_handled
+                -- depth-first
+                resulting_combination_states_excluding_handled ++ rest
               new_handled =
                 AutoSet.insert head handled
               (new_mapping, unusedId) =
@@ -549,23 +582,7 @@ build_out node_stack handled mapping extDFA =
                   resulting_combination_states_excluding_handled
               -- okay!  By now, we have all states mapped.  So we can make the transitions
               -- out of here.
-              head_mapping =
-                AutoDict.get head mapping
-                |> Maybe.Extra.withDefaultLazy
-                  (\() ->
-                    Debug.log "🚨 ERROR!! How can I fail to get a head-mapping?? A previous build_out MUST have added one!" -1
-                  )
-                |> \id ->
-                  -- TODO: What to do when BOTH of them have an Entity?
-                  -- Right now, I'm just taking `w`'s entity. This, of course, is wrong.
-                  -- (at least partly because it means union is not commutative)
-                  IntDict.get q__w extDFA.w_dfa_orig.states
-                  |> Maybe.map (\state -> { state | id = id })
-                  |> Maybe.Extra.withDefaultLazy
-                    (\() ->
-                      Entity 0 0 0 0 id NoEffect
-                      |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
-                    )
+              head_mapping = head_mapping_for head q__w
               new_transitions =
                 all_transitions_out
                 |> List.map
@@ -613,7 +630,7 @@ build_out node_stack handled mapping extDFA =
           (Just q__m, Nothing ) ->
             -- this state only exists in q_m. So I don't need to worry about anything from q_w.
             -- q_m should already have the necessary transitions for this; so I can ignore.
-            println ("build_out (" ++ String.fromInt q__m ++ ", ⊥)")
+            println ("[build_out (Qm=" ++ String.fromInt q__m ++ ", Qw=⊥)] State only exists in Qm, so ignoring it; existing transitions remain.")
             build_out rest (AutoSet.insert head handled) mapping extDFA
           ( Nothing, Just q__w) ->
             -- this state only exists in q_w; in Carrasco & Forcada's terminology, it becomes a 
@@ -629,7 +646,7 @@ build_out node_stack handled mapping extDFA =
               all_transitions_out =
                 AutoDict.keys transitions_w
                 |> List.uniqueBy acceptConditionToString
-                |> Debug.log ("[build_out (⊥, " ++ String.fromInt q__w ++ ")] Transitions out")
+                |> Debug.log ("[build_out (Qm=⊥, Qw=" ++ String.fromInt q__w ++ ")] Transitions out")
               resulting_combination_states =
                 List.map
                   (\via ->
@@ -646,7 +663,7 @@ build_out node_stack handled mapping extDFA =
                   (\v -> not <| AutoSet.member v handled)
                   (AutoDict.values resulting_combination_states)
               new_node_stack =
-                rest ++ resulting_combination_states_excluding_handled
+                resulting_combination_states_excluding_handled ++ rest
               new_handled =
                 AutoSet.insert head handled
               (new_mapping, unusedId) =
@@ -682,23 +699,7 @@ build_out node_stack handled mapping extDFA =
                   resulting_combination_states_excluding_handled
               -- okay!  By now, we have all states mapped.  So we can make the transitions
               -- out of here.
-              head_mapping =
-                AutoDict.get head mapping
-                |> Maybe.Extra.withDefaultLazy
-                  (\() ->
-                    Debug.log "🚨 ERROR!! How can I fail to get a head-mapping?? A previous build_out MUST have added one!" -1
-                  )
-                |> \id ->
-                  -- TODO: What to do when BOTH of them have an Entity?
-                  -- Right now, I'm just taking `w`'s entity. This, of course, is wrong.
-                  -- (at least partly because it means union is not commutative)
-                  IntDict.get q__w extDFA.w_dfa_orig.states
-                  |> Maybe.map (\state -> { state | id = id })
-                  |> Maybe.Extra.withDefaultLazy
-                    (\() ->
-                      Entity 0 0 0 0 id NoEffect
-                      |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
-                    )
+              head_mapping = head_mapping_for head q__w
               new_transitions =
                 all_transitions_out
                 |> List.map
@@ -870,26 +871,32 @@ replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA =
   let
     equiv : NodeId -> NodeId -> Bool
-    equiv p q =
+    equiv p =
       let
-        final_p = Set.member p extDFA.finals
-        final_q = Set.member q extDFA.finals
+        p_outgoing =
+          IntDict.get p extDFA.transition_function
+          |> Maybe.map AutoDict.toList
+          |> Debug.log ("'p'-outgoing for " ++ String.fromInt p ++ " is")
       in
-      if xor final_p final_q then
-        False
-      else
-        let
-          p_outgoing =
-            IntDict.get p extDFA.transition_function
-            |> Debug.log ("Checking 'p'-outgoing for " ++ String.fromInt p)
-          q_outgoing =
-            IntDict.get q extDFA.transition_function
-            |> Debug.log ("Checking 'q'-outgoing for " ++ String.fromInt q)
-        in
-          case ( p_outgoing, q_outgoing ) of
-            ( Just _, Nothing ) -> False
-            ( Nothing, Just _ ) -> False
-            _ -> p_outgoing == q_outgoing
+        \q ->
+          if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
+            -- MUST have the same finality status.
+            Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; not equivalent; finality differs.") () |> \_ ->
+            False
+          else
+            let
+              q_outgoing =
+                IntDict.get q extDFA.transition_function
+                |> Maybe.map AutoDict.toList
+                |> Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q)
+            in
+              case ( p_outgoing, q_outgoing ) of
+                ( Just _, Nothing ) -> False
+                ( Nothing, Just _ ) -> False
+                ( Nothing, Nothing ) -> True
+                ( Just a, Just b ) ->
+                  Debug.log ("    Result of deep comparison") <|
+                  a == b
     redirectInto : NodeId -> NodeId -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source =
       -- redirect everything that goes to source, into target
@@ -906,32 +913,35 @@ replace_or_register extDFA =
         )
         extDFA.transition_function
   in
-  case extDFA.queue_or_clone of
+  case extDFA.queue_or_clone |> Debug.log "queue_or_clone" of
     h::t ->
-      case Set.toList extDFA.register |> List.find (equiv h) of
-        Just found_equivalent ->
-          Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
-          replace_or_register
-            { extDFA
-              | states = IntDict.remove h extDFA.states
-              , finals = Set.remove h extDFA.finals
-              , transition_function =
-                  redirectInto found_equivalent h
-                  |> IntDict.remove h
-              , queue_or_clone = t
-              , start =
-                  if h == extDFA.start then
-                    found_equivalent -- replace with equivalent.
-                  else
-                    extDFA.start
-            }
-        Nothing ->
-          Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
-          replace_or_register
-            { extDFA
-              | register = Set.insert h extDFA.register
-              , queue_or_clone = t
-            }
+      let
+        equiv_to_cloned_or_queued = equiv h
+      in
+        case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
+          Just found_equivalent ->
+            Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
+            replace_or_register
+              { extDFA
+                | states = IntDict.remove h extDFA.states
+                , finals = Set.remove h extDFA.finals
+                , transition_function =
+                    redirectInto found_equivalent h
+                    |> IntDict.remove h
+                , queue_or_clone = t
+                , start =
+                    if h == extDFA.start then
+                      found_equivalent -- replace with equivalent.
+                    else
+                      extDFA.start
+              }
+          Nothing ->
+            Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
+            replace_or_register
+              { extDFA
+                | register = Set.insert h extDFA.register
+                , queue_or_clone = t
+              }
     [] ->
       extDFA
 

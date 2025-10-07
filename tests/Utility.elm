@@ -238,8 +238,8 @@ ag_equals g_expected g_actual =
           )
         )
       |> List.sortBy (\(_, _, v) -> v)
-    edges1 = getEdges g_expected
-    edges2 = getEdges g_actual
+    edges1 = getEdges (debugAutomatonGraph "[ag_equals] Expected" g_expected) |> Debug.log "EDGES RAW E"
+    edges2 = getEdges (debugAutomatonGraph "[ag_equals] Actual" g_actual) |> Debug.log "EDGES RAW A"
     partition : List (NodeId, NodeId, comparable) -> List (NodeId, NodeId, comparable) -> Set NodeId -> IntDict NodeId -> Maybe String
     partition edges_e edges_a seen mapping =
       case ( edges_e, edges_a ) of
@@ -248,13 +248,13 @@ ag_equals g_expected g_actual =
         ( xs, [] ) ->
           debugAutomatonGraph "Expected" g_expected |> \_ ->
           debugAutomatonGraph "Actual" g_actual |> \_ ->
-          Debug.log "Remaining edges" xs |> \_ ->
-          Just "Expected graph had more edges than actual graph."
+          Debug.log "Unmatched edges in Expected" xs |> \_ ->
+          Just <| "Expected graph had more edges than actual graph: (expected, actual):\n" ++ Debug.toString edges1 ++ "\n\nvs\n\n" ++ Debug.toString edges2
         ( [], ys ) ->
           debugAutomatonGraph "Expected" g_expected |> \_ ->
           debugAutomatonGraph "Actual" g_actual |> \_ ->
-          Debug.log "Remaining edges" ys |> \_ ->
-          Just "Actual graph had more edges than expected graph."
+          Debug.log "Unmatched edges in Actual " ys |> \_ ->
+          Just <| "Actual graph had more edges than expected graph: (expected, actual):\n" ++ Debug.toString edges1 ++ "\n\nvs\n\n" ++ Debug.toString edges2
         ( xs, ys ) ->
           -- find all edges that start with `checking`.
           let
@@ -381,10 +381,11 @@ ag_equals g_expected g_actual =
   in
     case partition edges1 edges2 Set.empty (IntDict.singleton g_expected.root g_actual.root) of
       Just err ->
-        debugAutomatonGraph "Expected" g_expected |> \_ ->
-        debugAutomatonGraph "Actual" g_actual |> \_ ->
+        debugAutomatonGraph "[ag_equals] FAIL: Expected" g_expected |> \_ ->
+        debugAutomatonGraph "[ag_equals] FAIL: Actual" g_actual |> \_ ->
         Expect.fail err
       Nothing ->
+        Debug.log "[ag_equals] PASS" () |> \_ ->
         Expect.pass
 
 dfa_equals : DFARecord a -> DFARecord a -> Expect.Expectation
