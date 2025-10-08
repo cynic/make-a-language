@@ -868,10 +868,10 @@ remove_unreachable old_w_path extDFA_orig =
     Set.foldl purge extDFA_orig without_external_edges
 
 replace_or_register : ExtDFA -> ExtDFA
-replace_or_register extDFA =
+replace_or_register extDFA_ =
   let
-    equiv : NodeId -> NodeId -> Bool
-    equiv p =
+    equiv : ExtDFA -> NodeId -> NodeId -> Bool
+    equiv extDFA p =
       let
         p_outgoing =
           IntDict.get p extDFA.transition_function
@@ -879,7 +879,10 @@ replace_or_register extDFA =
           |> Debug.log ("'p'-outgoing for " ++ String.fromInt p ++ " is")
       in
         \q ->
-          if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
+          if p == q then
+            Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; saying \"no\", because you can't be marked as equivalent to yourself in this context.") () |> \_ ->
+            False -- you can't be equivalent to yourself
+          else if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
             -- MUST have the same finality status.
             Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; not equivalent; finality differs.") () |> \_ ->
             False
@@ -897,8 +900,8 @@ replace_or_register extDFA =
                 ( Just a, Just b ) ->
                   Debug.log ("    Result of deep comparison") <|
                   a == b
-    redirectInto : NodeId -> NodeId -> IntDict (AutoDict.Dict String AcceptVia NodeId)
-    redirectInto target source =
+    redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
+    redirectInto target source extDFA =
       -- redirect everything that goes to source, into target
       IntDict.map
         (\_ dict ->
@@ -912,38 +915,96 @@ replace_or_register extDFA =
             dict
         )
         extDFA.transition_function
-  in
-  case extDFA.queue_or_clone |> Debug.log "queue_or_clone" of
-    h::t ->
+    process : NodeId -> Dict NodeId (List NodeId) -> ExtDFA -> (ExtDFA, Dict NodeId (List NodeId))
+    process qc_node recheck_dict extDFA = -- qc_node == queue/clone-node
       let
-        equiv_to_cloned_or_queued = equiv h
+        equiv_to_cloned_or_queued = equiv extDFA qc_node
       in
         case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
           Just found_equivalent ->
-            Debug.log ("Registering " ++ String.fromInt h ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
-            replace_or_register
-              { extDFA
-                | states = IntDict.remove h extDFA.states
-                , finals = Set.remove h extDFA.finals
-                , transition_function =
-                    redirectInto found_equivalent h
-                    |> IntDict.remove h
-                , queue_or_clone = t
-                , start =
-                    if h == extDFA.start then
-                      found_equivalent -- replace with equivalent.
-                    else
-                      extDFA.start
-              }
+            Debug.log ("Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) ()
+            |> \_ ->
+              let
+                -- if this is equivalent, then we must reprocess other nodes if necessary.
+                -- But first, let's act to effect this change.
+                updated_dfa =
+                  { extDFA
+                    | states = IntDict.remove qc_node extDFA.states
+                    , finals = Set.remove qc_node extDFA.finals
+                    , transition_function =
+                        redirectInto found_equivalent qc_node extDFA
+                        |> IntDict.remove qc_node
+                    , start =
+                        if qc_node == extDFA.start then
+                          found_equivalent -- replace with equivalent.
+                        else
+                          extDFA.start
+                  }
+                -- …and now use that as the basis for a fold.
+                after_recheck_dict =
+                  Dict.remove qc_node recheck_dict
+                  |> Dict.map (\_ v -> List.filter ((/=) qc_node) v)
+                after_recheck =
+                  Dict.get qc_node recheck_dict
+                  |> Maybe.map
+                    (\nodes_to_recheck ->
+                      List.foldl
+                        (\node_to_recheck acc ->
+                          Debug.log "Rechecking" node_to_recheck |> \_ ->
+                          Tuple.first (process node_to_recheck after_recheck_dict acc)
+                        )
+                        updated_dfa
+                        nodes_to_recheck
+                    )
+                  |> Maybe.withDefault updated_dfa -- nothing found in the recheck_dict
+              in
+                (after_recheck, after_recheck_dict)
           Nothing ->
-            Debug.log ("No equivalent found for " ++ String.fromInt h) () |> \_ ->
-            replace_or_register
-              { extDFA
-                | register = Set.insert h extDFA.register
-                , queue_or_clone = t
-              }
-    [] ->
-      extDFA
+            Debug.log ("No equivalent found for " ++ String.fromInt qc_node) ()
+            |> \_ ->
+              let
+                updated_dfa =
+                  { extDFA
+                    | register = Set.insert qc_node extDFA.register
+                  }
+                -- all good. HOWEVER, if there are any references to a clone/queue node
+                -- that is yet to be processed, then place this on the recheck list.
+                queue_or_clone_set = Set.fromList extDFA.queue_or_clone
+                other_clone_queue_refs =
+                  IntDict.get qc_node extDFA.transition_function
+                  |> Maybe.map (AutoDict.toList >> List.map Tuple.second)
+                  |> Maybe.withDefault []
+                  |> List.filter (\nodeid -> nodeid /= qc_node && Set.member nodeid queue_or_clone_set)
+                updated_recheck_dict =
+                  List.foldl
+                    (\nodeid acc ->
+                      Dict.update nodeid
+                        (\potential ->
+                          case potential of
+                            Just list ->
+                              Just <| qc_node::list
+                            Nothing ->
+                              Just [qc_node]
+                        )
+                        acc
+                    )
+                    recheck_dict
+                    other_clone_queue_refs
+              in
+                (updated_dfa, updated_recheck_dict)
+    continue_processing : Dict NodeId (List NodeId) -> ExtDFA -> ExtDFA
+    continue_processing recheck_dict extDFA =
+      case extDFA.queue_or_clone |> Debug.log "queue_or_clone" of
+        h::t ->
+          let
+            (updated_dfa, updated_recheck) = process h recheck_dict extDFA
+          in
+            continue_processing updated_recheck
+              { updated_dfa | queue_or_clone = t }
+        [] ->
+          extDFA
+  in
+    continue_processing Dict.empty extDFA_
 
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
