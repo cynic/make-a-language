@@ -500,18 +500,7 @@ build_out node_stack handled mapping extDFA =
     ({ q_m, q_w } as head) :: rest ->
       if AutoSet.member head handled then
         -- we have seen & dealt with this one before.
-        -- HOWEVER, it now occurs at a later point in the BFS.
-        -- So, we may need to check it twice for right-language equivalence.
-        let
-          head_id = head_id_for head
-          updated_queue_or_clone =
-            if Set.member head_id extDFA.register then
-              extDFA.queue_or_clone -- nothing to do
-            else
-              head_id_for head :: extDFA.queue_or_clone
-        in
-          build_out rest handled mapping
-            { extDFA | queue_or_clone = updated_queue_or_clone }
+        build_out rest handled mapping extDFA
       else
         case (q_m, q_w) of
           (Just q__m, Just q__w) ->
