@@ -307,11 +307,20 @@ suite =
             Utility.ag_equals
               (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
               (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , test "edge-case 1" <|
+        , test "process nodes only when necessary" <|
           \_ ->
             let
               dfa1 = Utility.mkDFA [ (1, 'a', 1), (1, 'e', 2), (2, 'b', 3), (2, 'f', 3), (3, 'g', 4) ] [2]
               dfa2 = Utility.mkDFA [ (6, 'a', 7), (6, 'e', 7), (7, 'b', 8), (7, 'f', 8), (8, 'g', 9) ] [7,9]
+            in
+            Utility.ag_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , test "edge-case 1" <|
+          \_ ->
+            let
+              dfa1 = Utility.mkDFA [ (1, 'a', 3), (1, 'e', 2), (2, 'b', 4), (2, 'f', 3), (3, 'g', 4) ] [2]
+              dfa2 = Utility.mkDFA [ (6, 'a', 6), (6, 'e', 7), (7, 'b', 9), (7, 'f', 8), (8, 'g', 9) ] [9]
             in
             Utility.ag_equals
               (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
@@ -321,7 +330,12 @@ suite =
             Utility.ag_equals
               (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
               (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (more complex tests)" <|
+        , fuzz (Fuzz.pair (dfaGenerator 3 6) (dfaGenerator 3 6)) "DFA union is commutative (advanced tests)" <|
+          \(dfa1, dfa2) ->
+            Utility.ag_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (stress tests)" <|
           \(dfa1, dfa2) ->
             Utility.ag_equals
               (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))

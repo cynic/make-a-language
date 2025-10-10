@@ -460,7 +460,7 @@ clone_or_queue_many purpose q_m q_w tree extDFA =
         extDFA
         dict
 
-state_key : { q_m : Maybe NodeId, q_w : Maybe NodeId } -> String
+state_key : { a | q_m : Maybe NodeId, q_w : Maybe NodeId } -> String
 state_key { q_m, q_w } =
   case (q_m, q_w) of
     (Nothing, Nothing) ->
@@ -494,13 +494,30 @@ build_out node_stack handled mapping extDFA =
             Entity 0 0 0 0 id NoEffect
             |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
           )
+    print_node_stack =
+      List.map state_key >> String.join ", "
+    print_state someState =
+      case someState of
+        Just x -> String.fromInt x
+        Nothing -> "⊥"
   in
-  case node_stack of
+  case node_stack |> debugLog_ "[build_out] node_stack" print_node_stack of
     [] -> extDFA
     ({ q_m, q_w } as head) :: rest ->
       if AutoSet.member head handled then
         -- we have seen & dealt with this one before.
-        build_out rest handled mapping extDFA
+        Debug.log ("[build_out] I have already handled (Qm=" ++ print_state q_m ++ ", Qw=" ++ print_state q_w ++ "); pushing to top of list, then moving on.") () |> \_ ->
+        build_out rest handled mapping
+          { extDFA
+            | queue_or_clone =
+                -- if I am handling this later on, then I will push it to the start of the list.
+                case AutoDict.get head mapping of
+                  Just node ->
+                    node :: List.filter ((/=) node) extDFA.queue_or_clone
+                  Nothing ->
+                    Debug.log ("[build_out] 🚨 ERROR! I should have a mapping, because I have handled this. What's going on??") () |> \_ ->
+                    extDFA.queue_or_clone
+          }
       else
         case (q_m, q_w) of
           (Just q__m, Just q__w) ->
@@ -530,12 +547,12 @@ build_out node_stack handled mapping extDFA =
                   all_transitions_out
                 |> AutoDict.fromList acceptConditionToString
               resulting_combination_states_excluding_handled =
-                List.filter
-                  (\v -> not <| AutoSet.member v handled)
-                  (AutoDict.values resulting_combination_states)
+                AutoDict.values resulting_combination_states
+                -- List.filter
+                --   (\v -> not <| AutoSet.member v handled)
+                --   (AutoDict.values resulting_combination_states)
               new_node_stack =
-                -- depth-first
-                resulting_combination_states_excluding_handled ++ rest
+                rest ++ resulting_combination_states_excluding_handled
               new_handled =
                 AutoSet.insert head handled
               (new_mapping, unusedId) =
@@ -648,11 +665,12 @@ build_out node_stack handled mapping extDFA =
                   all_transitions_out
                 |> AutoDict.fromList acceptConditionToString
               resulting_combination_states_excluding_handled =
-                List.filter
-                  (\v -> not <| AutoSet.member v handled)
-                  (AutoDict.values resulting_combination_states)
+                AutoDict.values resulting_combination_states
+                -- List.filter
+                --   (\v -> not <| AutoSet.member v handled)
+                --   (AutoDict.values resulting_combination_states)
               new_node_stack =
-                resulting_combination_states_excluding_handled ++ rest
+                rest ++ resulting_combination_states_excluding_handled
               new_handled =
                 AutoSet.insert head handled
               (new_mapping, unusedId) =
