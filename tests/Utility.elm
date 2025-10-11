@@ -1,6 +1,6 @@
 module Utility exposing
   ( ag, dfa, mkDFA_input, mkDFA, ag_equals, dfa_equals, dummyEntity
-  , mkConn, mkAutomatonGraph, dummy_uuid
+  , mkConn, mkAutomatonGraph, dummy_uuid, ag_cmp_and_equals
   )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
@@ -26,6 +26,7 @@ import Dict
 import Uuid exposing (Uuid)
 import Automata.Data exposing (Transition)
 import Random.Pcg.Extended as Random
+import Automata.Verification
 
 dummy_uuid : Uuid
 dummy_uuid = Tuple.first <| Random.step Uuid.generator <| Random.initialSeed 1 [2, 3, 4, 5]
@@ -220,6 +221,23 @@ ag = mkAutomatonGraph << Automata.Data.mkAG_input
 
 dfa : String -> List Int -> Automata.Data.DFARecord {}
 dfa s f = mkDFA_input s |> \xs -> mkDFA xs f
+
+ag_cmp_and_equals : AutomatonGraph -> AutomatonGraph -> Expect.Expectation
+ag_cmp_and_equals a b =
+  let
+    minimality1 =
+      Automata.Verification.minimality a
+    minimality2 =
+      Automata.Verification.minimality b
+  in
+    if not (List.isEmpty minimality1) then
+      debugAutomatonGraph "[ag_cmp_and_equals] Failure on minimality for 1st operand" a
+      |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality1 |> String.join "; "))
+    else if not (List.isEmpty minimality2) then
+      debugAutomatonGraph "[ag_cmp_and_equals] Failure on minimality for 2nd operand" b
+      |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality2 |> String.join "; "))
+    else
+      ag_equals a b
 
 type PairResult a
   = One a
