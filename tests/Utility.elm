@@ -231,10 +231,10 @@ ag_cmp_and_equals a b =
       Automata.Verification.minimality b
   in
     if not (List.isEmpty minimality1) then
-      debugAutomatonGraph "[ag_cmp_and_equals] Failure on minimality for 1st operand" a
+      Debug.log "[ag_cmp_and_equals] Failure on minimality for 1st operand" minimality1
       |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality1 |> String.join "; "))
     else if not (List.isEmpty minimality2) then
-      debugAutomatonGraph "[ag_cmp_and_equals] Failure on minimality for 2nd operand" b
+      Debug.log "[ag_cmp_and_equals] Failure on minimality for 2nd operand" minimality2
       |> \_ -> Expect.fail ("can combine: " ++ (List.map (\combinable -> "[" ++ (List.map String.fromInt combinable |> String.join ", ") ++ "]") minimality2 |> String.join "; "))
     else
       ag_equals a b

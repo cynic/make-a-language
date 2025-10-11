@@ -877,35 +877,45 @@ remove_unreachable old_w_path extDFA_orig =
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA_ =
   let
+    alias_recursive : NodeId -> (AcceptVia, NodeId) -> (AcceptVia, NodeId)
+    alias_recursive my_id (via, dest) =
+      -- Two recursive transitions which share the same `via` can nevertheless never be strictly
+      -- equivalent to each other: after all, they refer to different nodes. So, I convert such
+      -- references into ones with a specific `dest` that will not be found elsewhere, so that
+      -- they end up being equivalent IF both of them share the same recursive `via`.
+      if dest == my_id then
+        (via, -(0x1337c0de))
+      else
+        (via, dest)
     equiv : ExtDFA -> NodeId -> NodeId -> Bool
     equiv extDFA p =
       let
         p_outgoing =
           IntDict.get p extDFA.transition_function
-          |> Maybe.map AutoDict.toList
-          |> Debug.log ("'p'-outgoing for " ++ String.fromInt p ++ " is")
+          |> Maybe.map (AutoDict.toList >> List.map (alias_recursive p))
+          |> Debug.log ("[replace_or_register] 'p'-outgoing for " ++ String.fromInt p ++ " is")
       in
         \q ->
           if p == q then
-            Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; saying \"no\", because you can't be marked as equivalent to yourself in this context.") () |> \_ ->
+            Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; saying \"no\", because you can't be marked as equivalent to yourself in this context.") () |> \_ ->
             False -- you can't be equivalent to yourself
           else if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
             -- MUST have the same finality status.
-            Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; not equivalent; finality differs.") () |> \_ ->
+            Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; not equivalent; finality differs.") () |> \_ ->
             False
           else
             let
               q_outgoing =
                 IntDict.get q extDFA.transition_function
-                |> Maybe.map AutoDict.toList
-                |> Debug.log ("Checking against 'q'-outgoing for " ++ String.fromInt q)
+                |> Maybe.map (AutoDict.toList >> List.map (alias_recursive q))
+                |> Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q)
             in
               case ( p_outgoing, q_outgoing ) of
                 ( Just _, Nothing ) -> False
                 ( Nothing, Just _ ) -> False
                 ( Nothing, Nothing ) -> True
                 ( Just a, Just b ) ->
-                  Debug.log ("    Result of deep comparison") <|
+                  Debug.log ("   ⮡ Result of deep comparison") <|
                   a == b
     redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source extDFA =
@@ -929,7 +939,7 @@ replace_or_register extDFA_ =
       in
         case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
           Just found_equivalent ->
-            Debug.log ("Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) ()
+            Debug.log ("[replace_or_register] Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) ()
             |> \_ ->
               let
                 -- if this is equivalent, then we must reprocess other nodes if necessary.
@@ -957,7 +967,7 @@ replace_or_register extDFA_ =
                     (\nodes_to_recheck ->
                       List.foldl
                         (\node_to_recheck acc ->
-                          Debug.log "Rechecking" node_to_recheck |> \_ ->
+                          Debug.log "[replace_or_register] Rechecking" node_to_recheck |> \_ ->
                           Tuple.first (process node_to_recheck after_recheck_dict acc)
                         )
                         updated_dfa
@@ -967,12 +977,12 @@ replace_or_register extDFA_ =
               in
                 (after_recheck, after_recheck_dict)
           Nothing ->
-            Debug.log ("No equivalent found for " ++ String.fromInt qc_node) ()
+            Debug.log ("[replace_or_register] No equivalent found for " ++ String.fromInt qc_node) ()
             |> \_ ->
               let
                 updated_dfa =
                   { extDFA
-                    | register = Set.insert qc_node extDFA.register
+                    | register = Set.insert qc_node extDFA.register |> Debug.log "[replace_or_register] Updated register"
                   }
                 -- all good. HOWEVER, if there are any references to a clone/queue node
                 -- that is yet to be processed, then place this on the recheck list.
@@ -1001,7 +1011,7 @@ replace_or_register extDFA_ =
                 (updated_dfa, updated_recheck_dict)
     continue_processing : Dict NodeId (List NodeId) -> ExtDFA -> ExtDFA
     continue_processing recheck_dict extDFA =
-      case extDFA.queue_or_clone |> Debug.log "queue_or_clone" of
+      case extDFA.queue_or_clone |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" of
         h::t ->
           let
             (updated_dfa, updated_recheck) = process h recheck_dict extDFA
