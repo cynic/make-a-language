@@ -364,21 +364,21 @@ suite =
               Utility.ag_cmp_and_equals
                 (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
                 (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        -- , fuzz (Fuzz.pair (dfaGenerator 2 4) (dfaGenerator 2 4)) "DFA union is commutative (simple tests)" <|
-        --   \(dfa1, dfa2) ->
-        --     Utility.ag_cmp_and_equals
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        -- , fuzz (Fuzz.pair (dfaGenerator 3 6) (dfaGenerator 3 6)) "DFA union is commutative (advanced tests)" <|
-        --   \(dfa1, dfa2) ->
-        --     Utility.ag_cmp_and_equals
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        -- , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (stress tests)" <|
-        --   \(dfa1, dfa2) ->
-        --     Utility.ag_cmp_and_equals
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , fuzz (Fuzz.pair (dfaGenerator 2 4) (dfaGenerator 2 4)) "DFA union is commutative (simple tests)" <|
+          \(dfa1, dfa2) ->
+            Utility.ag_cmp_and_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , fuzz (Fuzz.pair (dfaGenerator 3 6) (dfaGenerator 3 6)) "DFA union is commutative (advanced tests)" <|
+          \(dfa1, dfa2) ->
+            Utility.ag_cmp_and_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (stress tests)" <|
+          \(dfa1, dfa2) ->
+            Utility.ag_cmp_and_equals
+              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
         ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [
