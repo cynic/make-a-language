@@ -350,7 +350,7 @@ suite =
           \_ ->
             let
               dfa1 = Utility.mkDFA [ (1, 'a', 1), (1, 'd', 2), (2, 'b', 1), (2, 'e', 3) ] [2]
-              dfa2 = Utility.mkDFA [ (5, 'a', 7), (5, 'd', 7), (6, 'b', 5), (6, 'e', 7) ] [6]
+              dfa2 = Utility.mkDFA [ (5, 'a', 7), (5, 'd', 6), (6, 'b', 5), (6, 'e', 7) ] [6]
             in
               Utility.ag_cmp_and_equals
                 (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))

@@ -329,11 +329,11 @@ w_forward_transitions extDFA =
                   --List.member dest extDFA.queue_or_clone
                 )
                 dict
-              -- |> Debug.log "filtered"
+              |> Debug.log "[w_forward_transitions] filtered"
             children =
               AutoDict.map
                 (\via state ->
-                  -- Debug.log "Examining" (current, via, state) |> \_ ->
+                  Debug.log "[w_forward_transitions] Examining" (current, via, state) |> \_ ->
                   helper (Just current) state (AutoSet.insert (current, via, state) seen)
                 )
                 filtered
@@ -815,7 +815,9 @@ remove_unreachable old_w_path extDFA_orig =
     -- Step 1
     old_w_path_nodes =
       forwardtree_nodes extDFA_orig.start extDFA_orig old_w_path
-    old_w_path_set = Set.fromList old_w_path_nodes
+    old_w_path_set =
+      Set.fromList old_w_path_nodes
+      |> Debug.log "[remove_unreachable] Nodes from the old w-path"
     -- Step 2
     initial_partition : (List NodeId, List NodeId)
     initial_partition = -- ( with_external_edges, without_external_edges )
@@ -858,9 +860,9 @@ remove_unreachable old_w_path extDFA_orig =
                   partition t (Set.insert node nodes_with_external_edges, Set.remove node nodes_without_external_edges)
       in
         partition
-          (old_w_path_nodes |> Debug.log "checking in order") -- must check in-order
+          (old_w_path_nodes |> Debug.log "[remove_unreachable] checking in order") -- must check in-order
           (Tuple.mapBoth Set.fromList Set.fromList initial_partition)
-        |> Debug.log "(to_keep, to_remove)"
+        |> Debug.log "[remove_unreachable] (to_keep, to_remove)"
     -- Step 4
     purge : NodeId -> ExtDFA -> ExtDFA
     purge q extDFA =
@@ -877,23 +879,13 @@ remove_unreachable old_w_path extDFA_orig =
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA_ =
   let
-    alias_recursive : NodeId -> (AcceptVia, NodeId) -> (AcceptVia, NodeId)
-    alias_recursive my_id (via, dest) =
-      -- Two recursive transitions which share the same `via` can nevertheless never be strictly
-      -- equivalent to each other: after all, they refer to different nodes. So, I convert such
-      -- references into ones with a specific `dest` that will not be found elsewhere, so that
-      -- they end up being equivalent IF both of them share the same recursive `via`.
-      if dest == my_id then
-        (via, -(0x1337c0de))
-      else
-        (via, dest)
     equiv : ExtDFA -> NodeId -> NodeId -> Bool
     equiv extDFA p =
       let
         get_outgoing : NodeId -> Maybe (List (AcceptVia, NodeId))
         get_outgoing nodeid =
           IntDict.get nodeid extDFA.transition_function
-          |> Maybe.map (AutoDict.toList >> List.map (alias_recursive nodeid))
+          |> Maybe.map AutoDict.toList
         p_outgoing =
           get_outgoing p
           |> Debug.log ("[replace_or_register] 'p'-outgoing for " ++ String.fromInt p ++ " is")
@@ -954,7 +946,7 @@ replace_or_register extDFA_ =
                             List.zip a_ b_
                             |> List.all
                               (\((_, a_dest), (_, b_dest)) ->
-                                Debug.log ("[replace_or_register] Recursing from (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ " to check") (a_dest, b_dest) |> \_ ->
+                                Debug.log ("[replace_or_register] Recursing from (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ ") to check") (a_dest, b_dest) |> \_ ->
                                 check_equiv_recursive a_dest b_dest new_handled
                               )
               check_equiv_recursive : NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
