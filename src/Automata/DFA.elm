@@ -890,9 +890,12 @@ replace_or_register extDFA_ =
     equiv : ExtDFA -> NodeId -> NodeId -> Bool
     equiv extDFA p =
       let
+        get_outgoing : NodeId -> Maybe (List (AcceptVia, NodeId))
+        get_outgoing nodeid =
+          IntDict.get nodeid extDFA.transition_function
+          |> Maybe.map (AutoDict.toList >> List.map (alias_recursive nodeid))
         p_outgoing =
-          IntDict.get p extDFA.transition_function
-          |> Maybe.map (AutoDict.toList >> List.map (alias_recursive p))
+          get_outgoing p
           |> Debug.log ("[replace_or_register] 'p'-outgoing for " ++ String.fromInt p ++ " is")
       in
         \q ->
@@ -901,22 +904,68 @@ replace_or_register extDFA_ =
             False -- you can't be equivalent to yourself
           else if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
             -- MUST have the same finality status.
-            Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; not equivalent; finality differs.") () |> \_ ->
             False
           else
             let
               q_outgoing =
-                IntDict.get q extDFA.transition_function
-                |> Maybe.map (AutoDict.toList >> List.map (alias_recursive q))
+                get_outgoing q
                 |> Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q)
+              do_comparison : Maybe (List (AcceptVia, NodeId)) -> Maybe (List (AcceptVia, NodeId)) -> NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
+              do_comparison outgoings_a outgoings_b a b handled =
+                if xor (Set.member a extDFA.finals) (Set.member b extDFA.finals) then
+                  -- MUST have the same finality status.
+                  Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different finality; NOT equivalent.") () |> \_ ->
+                  False
+                else
+                  case ( outgoings_a, outgoings_b ) of
+                    ( Just _, Nothing ) ->
+                      False
+                      |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
+                    ( Nothing, Just _ ) ->
+                      False
+                      |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
+                    ( Nothing, Nothing ) ->
+                      True
+                      |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " both have no outgoing transitions; therefore equivalent.")
+                    ( Just a_, Just b_ ) ->
+                      if a_ == b_ then
+                        Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have equivalent transitions") a_ |> \_ ->
+                        True
+                      else
+                        -- okay, let's trace the computation forward, QxQ.  If we end up at the same
+                        -- node, via all the same transitions, and respecting equivalent finality on the way,
+                        -- then all is well.
+                        -- Otherwise, we can't say that we have equivalence.
+                        let
+                          vias_a = List.map Tuple.first a_
+                          vias_b = List.map Tuple.first b_
+                          new_handled = Set.insert (a, b) handled
+                        in
+                          if vias_a /= vias_b then
+                            Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outbound transitions; not equivalent") (vias_a, vias_b) |> \_ ->
+                            False -- not equivalent; don't have the same computational paths.
+                          else if Set.member (a, b) handled then
+                            True
+                            |> Debug.log ("[replace_or_register] Have already seen (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ "); avoiding cycle and returning")
+                          else
+                            -- hmm, the vias are the same.  Okay; let's push forward per-transition.
+                            -- And if we have equality of THOSE transitions, then we're good;
+                            -- (and in fact, we can join merge THOSE transitions together too.
+                            List.zip a_ b_
+                            |> List.all
+                              (\((_, a_dest), (_, b_dest)) ->
+                                Debug.log ("[replace_or_register] Recursing from (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ " to check") (a_dest, b_dest) |> \_ ->
+                                check_equiv_recursive a_dest b_dest new_handled
+                              )
+              check_equiv_recursive : NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
+              check_equiv_recursive a b handled =
+                let
+                  outgoings_a = get_outgoing a
+                  outgoings_b = get_outgoing b
+                in
+                  do_comparison outgoings_a outgoings_b a b handled
             in
-              case ( p_outgoing, q_outgoing ) of
-                ( Just _, Nothing ) -> False
-                ( Nothing, Just _ ) -> False
-                ( Nothing, Nothing ) -> True
-                ( Just a, Just b ) ->
-                  Debug.log ("   ⮡ Result of deep comparison") <|
-                  a == b
+              do_comparison p_outgoing q_outgoing p q Set.empty
     redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source extDFA =
       -- redirect everything that goes to source, into target
@@ -937,6 +986,7 @@ replace_or_register extDFA_ =
       let
         equiv_to_cloned_or_queued = equiv extDFA qc_node
       in
+        Debug.log ("[replace_or_register] Recheck triggers & targets") recheck_dict |> \_ ->
         case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
           Just found_equivalent ->
             Debug.log ("[replace_or_register] Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) ()
