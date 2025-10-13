@@ -973,12 +973,12 @@ replace_or_register extDFA_ =
             dict
         )
         extDFA.transition_function
-    process : NodeId -> Dict NodeId (List NodeId) -> ExtDFA -> (ExtDFA, Dict NodeId (List NodeId))
-    process qc_node recheck_dict extDFA = -- qc_node == queue/clone-node
+    process : NodeId -> ExtDFA -> ExtDFA
+    process qc_node extDFA = -- qc_node == queue/clone-node
       let
         equiv_to_cloned_or_queued = equiv extDFA qc_node
       in
-        Debug.log ("[replace_or_register] Recheck triggers & targets") recheck_dict |> \_ ->
+        Debug.log ("[replace_or_register] Recheck triggers & targets") |> \_ ->
         case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
           Just found_equivalent ->
             Debug.log ("[replace_or_register] Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) ()
@@ -1000,70 +1000,26 @@ replace_or_register extDFA_ =
                           extDFA.start
                   }
                 -- …and now use that as the basis for a fold.
-                after_recheck_dict =
-                  Dict.remove qc_node recheck_dict
-                  |> Dict.map (\_ v -> List.filter ((/=) qc_node) v)
-                after_recheck =
-                  Dict.get qc_node recheck_dict
-                  |> Maybe.map
-                    (\nodes_to_recheck ->
-                      List.foldl
-                        (\node_to_recheck acc ->
-                          Debug.log "[replace_or_register] Rechecking" node_to_recheck |> \_ ->
-                          Tuple.first (process node_to_recheck after_recheck_dict acc)
-                        )
-                        updated_dfa
-                        nodes_to_recheck
-                    )
-                  |> Maybe.withDefault updated_dfa -- nothing found in the recheck_dict
               in
-                (after_recheck, after_recheck_dict)
+                updated_dfa
           Nothing ->
             Debug.log ("[replace_or_register] No equivalent found for " ++ String.fromInt qc_node) ()
             |> \_ ->
-              let
-                updated_dfa =
-                  { extDFA
-                    | register = Set.insert qc_node extDFA.register |> Debug.log "[replace_or_register] Updated register"
-                  }
-                -- all good. HOWEVER, if there are any references to a clone/queue node
-                -- that is yet to be processed, then place this on the recheck list.
-                queue_or_clone_set = Set.fromList extDFA.queue_or_clone
-                other_clone_queue_refs =
-                  IntDict.get qc_node extDFA.transition_function
-                  |> Maybe.map (AutoDict.toList >> List.map Tuple.second)
-                  |> Maybe.withDefault []
-                  |> List.filter (\nodeid -> nodeid /= qc_node && Set.member nodeid queue_or_clone_set)
-                updated_recheck_dict =
-                  List.foldl
-                    (\nodeid acc ->
-                      Dict.update nodeid
-                        (\potential ->
-                          case potential of
-                            Just list ->
-                              Just <| qc_node::list
-                            Nothing ->
-                              Just [qc_node]
-                        )
-                        acc
-                    )
-                    recheck_dict
-                    other_clone_queue_refs
-              in
-                (updated_dfa, updated_recheck_dict)
-    continue_processing : Dict NodeId (List NodeId) -> ExtDFA -> ExtDFA
-    continue_processing recheck_dict extDFA =
+                { extDFA
+                  | register = Set.insert qc_node extDFA.register |> Debug.log "[replace_or_register] Updated register"
+                }
+    continue_processing : ExtDFA -> ExtDFA
+    continue_processing extDFA =
       case extDFA.queue_or_clone |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" of
         h::t ->
           let
-            (updated_dfa, updated_recheck) = process h recheck_dict extDFA
+            updated_dfa = process h extDFA
           in
-            continue_processing updated_recheck
-              { updated_dfa | queue_or_clone = t }
+            continue_processing { updated_dfa | queue_or_clone = t }
         [] ->
           extDFA
   in
-    continue_processing Dict.empty extDFA_
+    continue_processing extDFA_
 
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
