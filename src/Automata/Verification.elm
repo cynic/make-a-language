@@ -26,7 +26,7 @@ minimality g =
         )
     (finals, nonFinals) = -- the initial partition.
       -- those which lead to finality—however that happens—and those which don't.
-      List.partition (\(_, _, t) -> isFinalInAnyContext t) edges
+      List.partition (\(_, _, t) -> .isFinal t) edges
       |> \(a, b) -> ( List.map (\(_,v,_) -> v) a |> Set.fromList, List.map (\(_,v,_) -> v) b |> Set.fromList )
       -- |> debug_log "[minimality] Finals and non-finals"
     refine : HopcroftRecord -> List Partition

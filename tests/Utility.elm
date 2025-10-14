@@ -84,7 +84,9 @@ mkDFA transitions finals =
 mkConn : Uuid -> String -> Connection
 mkConn uuid s =
   let
-    uuid_dict f = AutoDict.singleton Uuid.toString uuid f
+    -- at one point, `finality` was more complex. So I had this function to make that
+    -- easier to encode. For now, it's simpler again, so this is just identity.
+    uuid_dict f = f
     uuid_helper list finality acc =
       case List.splitAt 36 list of
         (uuidChars, rest) ->

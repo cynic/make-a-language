@@ -827,36 +827,19 @@ update msg model =
             (\t (seen, state) ->
               if t.via == acceptCondition then
                 -- I've found the right transition.  Now, update or remove or…?
-                case AutoDict.get model.currentPackage.userGraph.graphIdentifier t.finality of
-                  Just True ->
-                    ( True
-                    , state -- skip it; i.e., remove it.
-                    )
-                  Just False ->
-                    ( True
-                    , AutoSet.insert
-                        ( { t
-                          | finality =
-                              -- make it final
-                              AutoDict.insert model.currentPackage.userGraph.graphIdentifier True t.finality
-                          }
-                        )
-                        state
-                    )
-                  Nothing ->
-                    -- this is an odd one. Ideally, it'll never be hit; I must log if it is!
-                    -- It can only be hit if I've got a .via that, somehow, has no finality
-                    -- registered for the graph that it is a part of. And THAT indicates
-                    -- a potential problem elsewhere.
-                    ( True
-                    , AutoSet.insert
-                        ( { t
-                          | finality =
-                              AutoDict.insert model.currentPackage.userGraph.graphIdentifier False t.finality
-                          }
-                        )
-                        state
-                    )
+                if t.isFinal then
+                  ( True
+                  , state -- skip it; i.e., remove it.
+                  )
+                else
+                  ( True
+                  , AutoSet.insert
+                      ( { t
+                        | isFinal = True -- make it final.
+                        }
+                      )
+                      state
+                  )
               else
                 (seen, AutoSet.insert t state)
             )
@@ -869,7 +852,7 @@ update msg model =
                   -- need to insert it.
                   AutoSet.insert
                     (Transition
-                      (AutoDict.singleton Uuid.toString model.currentPackage.userGraph.graphIdentifier False)
+                      False
                       acceptCondition
                     )
                     resultSet
@@ -897,7 +880,7 @@ update msg model =
             let
               tr finality =
                 Transition
-                  (AutoDict.singleton Uuid.toString model.currentPackage.userGraph.graphIdentifier finality)
+                  finality
                   acceptCondition
               onLeft_0 = AutoSet.member (tr False) left
               onLeft_1 = AutoSet.member (tr True) left
@@ -1232,14 +1215,14 @@ transitionToTextSpan transition otherClasses =
     ViaCharacter ch ->
       tspan
         [ class <|
-            (if isFinalInAnyContext transition then "final" else "nonfinal")
+            (if .isFinal transition then "final" else "nonfinal")
             :: otherClasses transition.via
         ]
         [ text <| textChar ch ]
     ViaGraphReference ref ->
       tspan
         [ class <|
-            (if isFinalInAnyContext transition then "final" else "nonfinal")
+            (if .isFinal transition then "final" else "nonfinal")
             :: otherClasses transition.via
         ]
         [ text "🔗"
@@ -1638,7 +1621,6 @@ viewNode : Model -> Graph.Node Entity -> Svg Msg
 viewNode { currentPackage, currentOperation, disconnectedNodes, execution, pan, mouseCoords } { label, id } =
   let
     userGraph = currentPackage.userGraph
-    overlayContext = makeInitialContext userGraph
     selectableClass =
       case currentOperation of
         Just (ModifyingGraph _ { source }) ->
@@ -1677,7 +1659,7 @@ viewNode { currentPackage, currentOperation, disconnectedNodes, execution, pan, 
         graphNode
       |> Maybe.withDefault False
     thisNodeIsTerminal =
-      Maybe.map (Automata.Data.isTerminalNode overlayContext) graphNode
+      Maybe.map (isTerminalNode) graphNode
       |> Maybe.withDefault False
     permit_node_reselection =
       Mouse.onWithOptions
@@ -2050,7 +2032,7 @@ viewSingleKey uuid ch conn (gridX, gridY) y_offset =
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = y_offset + transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
     tr finality =
-      Transition (AutoDict.singleton Uuid.toString uuid finality) (ViaCharacter ch)
+      Transition finality (ViaCharacter ch)
     isThisNodeTerminal = AutoSet.member (tr True) conn
     keyClass =
       if AutoSet.member (tr False) conn then
@@ -2165,7 +2147,7 @@ viewSvgGraphRefChooser focusedIndex model uuid conn y_offset panelWidth =
         ( List.indexedMap
             (\i (ref, thumb) ->
               let
-                tr finality = Transition (AutoDict.singleton Uuid.toString uuid finality) (ViaGraphReference ref)
+                tr finality = Transition finality (ViaGraphReference ref)
                 isSelected =
                   AutoSet.member (tr True) conn || AutoSet.member (tr False) conn
                 scale = height / 5

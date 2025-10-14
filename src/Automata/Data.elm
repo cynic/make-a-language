@@ -247,45 +247,9 @@ type alias Transition =
   -- takes preference, because legitimately, at least one of the "unioned" DFAs DOES
   -- end at this point; and if the input ends here, for example, then that's a
   -- definite case of "ACCEPT".
-    finality : AutoDict.Dict String Uuid Bool
+    isFinal : Bool
   , via : AcceptVia
   }
-
-{-|
-A transition may be final.  But when DFAs are overlaid, the underlying DFAs may have
-different finality for the same transition; and when we read a transition, we read it
-based on the DFA(s) that we have been following to arrive at that transition.  So, based
-on those DFAs, a transition might be final or not.
-
-And indeed, this goes beyond transitions to any other (future) aspect of the underlying
-DFA that is specific to that underlying DFA and needs to be unpacked as such.
--}
-type alias OverlayContextForExecution = AutoSet.Set String Uuid
-
-{-| WARNING: This is probably NOT the function that you want! See
-    `isFinalInContext` for the actual function that you want.
--}
-isFinalInAnyContext : Transition -> Bool
-isFinalInAnyContext {finality} =
-  AutoDict.foldl
-    (\_ value state -> state || value)
-    False
-    finality
-
-isFinalInContext : OverlayContextForExecution -> Transition -> Bool
-isFinalInContext context {finality} =
-  AutoDict.foldl
-    -- a transition is final if any of its APPLICABLE
-    -- (i.e. `AutoSet.member uuid context`) finality contexts
-    -- indicates that it is final (i.e. `value`); and if any
-    -- are, then we don't need to check the rest (`state ||`).
-    (\uuid value state -> state || (value && AutoSet.member uuid context))
-    False
-    finality
-
-makeInitialContext : AutomatonGraph -> OverlayContextForExecution
-makeInitialContext {graphIdentifier} =
-  AutoSet.singleton Uuid.toString graphIdentifier
 
 type alias Connection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
 type alias Node = NodeContext Entity Connection -- a Node itself does not carry any data, hence the ()
@@ -347,7 +311,7 @@ type alias ExecutionData =
   { transitions : List TransitionTakenData
   , remainingData : List Char
   , currentNode : NodeId
-  , overlayContext : OverlayContextForExecution
+  , scope : List Uuid
   }
 
 type ExecutionState
@@ -412,14 +376,14 @@ printableAcceptCondition v =
 
 {-| True if at least one transition terminates at this node,
     within the given execution context -}
-isTerminalNode : OverlayContextForExecution -> NodeContext a Connection -> Bool
-isTerminalNode context node =
+isTerminalNode : NodeContext a Connection -> Bool
+isTerminalNode node =
   -- IntDict.isEmpty node.outgoing &&
   ( IntDict.foldl
     (\_ conn state ->
       state ||
         AutoSet.foldl
-          (\t state_ -> state_ || isFinalInContext context t)
+          (\t state_ -> state_ || .isFinal t)
           False
           conn
     )
@@ -427,10 +391,10 @@ isTerminalNode context node =
     (node.incoming)
   )
 
-isTerminal : OverlayContextForExecution -> NodeId -> Graph x Connection -> Bool
-isTerminal context id graph =
+isTerminal : NodeId -> Graph x Connection -> Bool
+isTerminal id graph =
   Graph.get id graph
-  |> Maybe.map (isTerminalNode context)
+  |> Maybe.map isTerminalNode
   |> Maybe.withDefault False
 
 graphEdgeToString : Graph.Edge Connection -> String
@@ -438,29 +402,23 @@ graphEdgeToString {from, to, label} =
   "#" ++ String.fromInt from ++ "➜#" ++ String.fromInt to ++ " (" ++ connectionToString label ++ ")"
 
 transitionToString : Transition -> String
-transitionToString {via, finality} =
+transitionToString {via, isFinal} =
   let
-    allValues = AutoDict.values finality
-    (t, f) =
-      List.partition identity allValues
-      |> Tuple.mapBoth List.length List.length
     prevChar =
-      if f == 0 then
+      if isFinal then
         case via of
           ViaCharacter _ ->
             "\u{0307}"
           ViaGraphReference _ ->
             "!"
-      else if t == 0 then
-        ""
       else
-        String.fromInt t ++ ":" ++ String.fromInt f ++ "."
+        ""
   in
-  case via of
-    ViaCharacter ch ->
-      prevChar ++ String.fromChar ch
-    ViaGraphReference uuid ->
-      prevChar ++ Uuid.toString uuid
+    case via of
+      ViaCharacter ch ->
+        prevChar ++ String.fromChar ch
+      ViaGraphReference uuid ->
+        prevChar ++ Uuid.toString uuid
 
 connectionToString : Connection -> String
 connectionToString =

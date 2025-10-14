@@ -77,7 +77,7 @@ oneTransition g executionState =
   --                         , matching_transitions =
   --                           let
   --                             final =
-  --                               AutoSet.filter (isFinalInContext overlayContext) connection
+  --                               AutoSet.filter (.isFinal) connection
   --                             present =
   --                               AutoSet.filter (\{tags} -> AutoSet.size (AutoSet.intersect finalSet tags) > 0) final
   --                           in
@@ -139,7 +139,7 @@ step g executionResult =
               EndOfComputation (Rejected d)
             {matching}::_ ->
               let
-                final = AutoSet.filter (isFinalInContext d.overlayContext) matching
+                final = AutoSet.filter (.isFinal) matching
               in
                 if AutoSet.size final > 0 then
                   EndOfComputation (Accepted d)
@@ -172,7 +172,7 @@ stepThroughInitial s g =
   in
   step g
     (CanContinue <| Rejected <|
-      ExecutionData [] (upcomingAcceptConditions s) g.root (makeInitialContext g)
+      ExecutionData [] (upcomingAcceptConditions s) g.root [g.graphIdentifier]
     )
 
 extend : Phase1Purpose -> DFARecord a -> DFARecord a -> ExtDFA
@@ -1170,7 +1170,6 @@ minimiseNodesByCombiningTransitions g_ =
           Case 4, the algorithm terminates.
     -}
   let
-    overlayContext = makeInitialContext g_ 
     ending_nodes : Set NodeId
     ending_nodes =
       Graph.fold
@@ -1182,7 +1181,7 @@ minimiseNodesByCombiningTransitions g_ =
               (\_ conn ((czech, state) as acc_) ->
                 if czech then
                   acc_
-                else if AutoSet.foldl (\t acc -> acc || isFinalInContext overlayContext t) False conn then
+                else if AutoSet.foldl (\t acc -> acc || .isFinal t) False conn then
                   (True, Set.insert ctx.node.id state)
                 else
                   acc_
@@ -1327,7 +1326,7 @@ toAutomatonGraph uuid dfa =
               (\(transition, to) state_ ->
                 let
                   t =
-                    { finality = AutoDict.singleton Uuid.toString uuid (Set.member to dfa.finals)
+                    { isFinal = Set.member to dfa.finals
                     , via = transition
                     }
                 in
@@ -1360,7 +1359,6 @@ toAutomatonGraph uuid dfa =
 renumberAutomatonGraph : AutomatonGraph -> AutomatonGraph
 renumberAutomatonGraph g =
   let
-    overlayContext = makeInitialContext g
     fanMapper =
       IntDict.toList
       >> List.map
@@ -1370,7 +1368,7 @@ renumberAutomatonGraph g =
             |> List.map
               (\t ->
                 ( acceptConditionToString t.via
-                , if isFinalInContext overlayContext t then 1 else 0
+                , if .isFinal t then 1 else 0
                 )
               )
           )
@@ -1436,13 +1434,12 @@ splitTerminalAndNonTerminal g =
     can be incremented to result in an unused node-id.
   -}
   let
-    overlayContext = makeInitialContext g
         -- Helper to classify a transition as terminal or non-terminal
     isTerminal : Transition -> Bool
-    isTerminal = isFinalInContext overlayContext
+    isTerminal = .isFinal
 
     isNonTerminal : Transition -> Bool
-    isNonTerminal = not << (isFinalInContext overlayContext)
+    isNonTerminal = not << (.isFinal)
 
     -- Find the next unused node id
     nextId : Int
@@ -1703,7 +1700,6 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     normalizeSet : List NodeId -> List NodeId
     normalizeSet = List.sort >> List.unique
 
-    overlayContext = makeInitialContext g
     populateColumnData : IntDict Connection -> Column -> Column
     populateColumnData outgoing columnDict =
       IntDict.foldl
@@ -1712,17 +1708,17 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             (\t d ->
               case AutoDict.get t.via d of
                 Nothing ->
-                  Debug.log ("Inserting first " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (isFinalInContext overlayContext t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
+                  Debug.log ("Inserting first " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   Graph.get destId g.graph
                   |> Maybe.map
                     (\{node} ->
-                      AutoDict.insert t.via ((if (isFinalInContext overlayContext t) then 1 else 0, [destId]), node.label) d
+                      AutoDict.insert t.via ((if (.isFinal t) then 1 else 0, [destId]), node.label) d
                     )
                   |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
                 Just ((f2, list), v) ->
-                  Debug.log ("Inserting another " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (isFinalInContext overlayContext t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
+                  Debug.log ("Inserting another " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   -- if any of the transitions is final, then the created state will be final
-                  AutoDict.insert t.via ((max (if (isFinalInContext overlayContext t) then 1 else 0) f2, normalizeSet (destId::list)), v) d
+                  AutoDict.insert t.via ((max (if (.isFinal t) then 1 else 0) f2, normalizeSet (destId::list)), v) d
             )
             columnDict_
             conn
@@ -1736,7 +1732,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     terminalityOf node =
       IntDict.values node.incoming
       -- has at least one incoming terminal transition.
-      |> List.any (\conn -> AutoSet.filter (isFinalInContext overlayContext) conn |> (not << AutoSet.isEmpty))
+      |> List.any (\conn -> AutoSet.filter (.isFinal) conn |> (not << AutoSet.isEmpty))
       |> \b -> if b then 1 else 0
 
     -- Get all transitions from the original NFA and organize them
@@ -1986,11 +1982,11 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                             Nothing ->
                               Just <|
                                 AutoSet.singleton transitionToString <|
-                                  Transition (AutoDict.singleton Uuid.toString g.graphIdentifier (f == 1)) acceptCondition
+                                  Transition (f == 1) acceptCondition
                             Just conn ->
                               Just <|
                                 AutoSet.insert
-                                  (Transition (AutoDict.singleton Uuid.toString g.graphIdentifier (f == 1)) acceptCondition)
+                                  (Transition (f == 1) acceptCondition)
                                   conn
                         ) acc_
                     _ ->
@@ -2019,9 +2015,6 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
 fromAutomatonGraphHelper : AutomatonGraph -> DFARecord {}
 fromAutomatonGraphHelper g =
   -- called AFTER splitting non-terminal/terminal, and AFTER NFA→DFA conversion.
-  let
-    overlayContext = makeInitialContext g
-  in
   { states =
       Graph.nodes g.graph
       |> List.map (\node -> ( node.id, node.label) )
@@ -2030,7 +2023,7 @@ fromAutomatonGraphHelper g =
   , finals =
       Graph.fold
         (\ctx finals ->
-          if isTerminalNode overlayContext ctx then 
+          if isTerminalNode ctx then 
             Set.insert ctx.node.id finals
           else
             finals
@@ -2098,17 +2091,17 @@ decodeAutoDict keyFunction stringToKey valueDecoder =
     )
 
 encodeTransition : Transition -> E.Value
-encodeTransition {via, finality} =
+encodeTransition {via, isFinal} =
   case via of
     ViaCharacter c ->
       E.object
         [ ("c", E.string <| String.fromChar c)
-        , ("_", encodeAutoDict Uuid.toString E.bool finality)
+        , ("_", E.bool isFinal)
         ]
     ViaGraphReference uuid ->
       E.object
         [ ("ref", E.string <| Uuid.toString uuid)
-        , ("_", encodeAutoDict Uuid.toString E.bool finality)
+        , ("_", E.bool isFinal)
         ]
 
 encodeEdge : Edge Connection -> E.Value
@@ -2177,7 +2170,7 @@ decodeTransition =
   D.oneOf
     [ D.map2
         (Transition)
-        (D.field "_" (decodeAutoDict Uuid.toString Uuid.fromString D.bool))
+        (D.field "_" D.bool)
         (D.field "c" D.string
           |> D.andThen
             (\s ->
@@ -2189,7 +2182,7 @@ decodeTransition =
         )
     , D.map2
         (Transition)
-        (D.field "_" (decodeAutoDict Uuid.toString Uuid.fromString D.bool))
+        (D.field "_" D.bool)
         (D.field "ref" <| D.map ViaGraphReference Uuid.decoder)
     ]
 

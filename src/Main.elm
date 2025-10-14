@@ -1133,7 +1133,6 @@ executionText { fdg_model } =
         Just result ->
           let
             maybeDatum = FDG.executionData result
-            overlayContext = makeInitialContext fdg_model.currentPackage.userGraph
           in
             p
               [ HA.class "output-line" ]
@@ -1160,7 +1159,7 @@ executionText { fdg_model } =
                             |> List.map
                               (\{matching, consumed} ->
                                 viewInputProcessing consumed
-                                  ( if (AutoSet.filter (isFinalInContext overlayContext) matching |> AutoSet.size) > 0 then
+                                  ( if (AutoSet.filter (.isFinal) matching |> AutoSet.size) > 0 then
                                       ["final"]
                                     else
                                       ["non-final"]
