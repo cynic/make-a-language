@@ -312,6 +312,7 @@ type alias ExecutionData =
   , remainingData : List Char
   , currentNode : NodeId
   , scope : List Uuid
+  , resolutionDict : AutoDict.Dict String Uuid AutomatonGraph
   }
 
 type ExecutionState

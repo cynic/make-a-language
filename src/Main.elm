@@ -89,14 +89,14 @@ encodeTest { input, expectation } =
     -- do not store the result. It must be recalculated each time.
     ]
 
-decodeTest : AutomatonGraph -> D.Decoder Test
-decodeTest g =
+decodeTest : AutoDict.Dict String Uuid AutomatonGraph -> AutomatonGraph -> D.Decoder Test
+decodeTest resolutionDict g =
   D.map2
     (\input expectation ->
       { input = input
       , expectation = expectation
       , result =
-          DFA.stepThroughInitial input g
+          DFA.stepThroughInitial input resolutionDict g
           |> DFA.run g
       })
     (D.field "input" D.string)
@@ -118,8 +118,8 @@ encodeGraphPackage pkg =
     , ("currentTestKey", Uuid.encode pkg.currentTestKey)
     ]
 
-decodeGraphPackage : D.Decoder GraphPackage
-decodeGraphPackage =
+decodeGraphPackage : AutoDict.Dict String Uuid AutomatonGraph -> D.Decoder GraphPackage
+decodeGraphPackage resolutionDict =
   D.field "graph" DFA.decodeAutomatonGraph
   |> D.andThen
     (\graph ->
@@ -132,21 +132,29 @@ decodeGraphPackage =
         (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
         (D.field "created" <| D.map Time.millisToPosix D.int)
         (D.field "currentTestKey" Uuid.decoder)
-        (D.field "tests" <| DFA.decodeAutoDict Uuid.toString Uuid.fromString (decodeTest graph))
+        (D.field "tests" <| DFA.decodeAutoDict Uuid.toString Uuid.fromString (decodeTest resolutionDict graph))
     )
 
 decodeFlags : D.Decoder Flags
 decodeFlags =
-  D.map2 (\w h -> (w, h))
-    (D.field "width" D.float)
-    (D.field "height" D.float)
+  D.map (\ag_list ->
+    List.map (\ag -> (ag.graphIdentifier, ag)) ag_list
+    |> AutoDict.fromList Uuid.toString
+  )
+  (D.field "packages" <| D.list (D.field "graph" DFA.decodeAutomatonGraph))
   |> D.andThen
-    (\(w, h) ->
-      D.map4 (Flags w h)
-        (D.field "initialSeed" D.int)
-        (D.field "extendedSeeds" <| D.list D.int)
-        (D.field "startTime" <| D.map Time.millisToPosix D.int)
-        (D.field "packages" <| D.list decodeGraphPackage)
+    (\resolutionDict ->
+      D.map2 (\w h -> (w, h))
+        (D.field "width" D.float)
+        (D.field "height" D.float)
+      |> D.andThen
+        (\(w, h) ->
+          D.map4 (Flags w h)
+            (D.field "initialSeed" D.int)
+            (D.field "extendedSeeds" <| D.list D.int)
+            (D.field "startTime" <| D.map Time.millisToPosix D.int)
+            (D.field "packages" <| D.list (decodeGraphPackage resolutionDict))
+        )
     )
 
 init : E.Value -> (Model, Cmd Msg)
@@ -334,6 +342,8 @@ update msg model =
     UpdateTestPanelContent newInput expectation ->
       let
         pkg = model.fdg_model.currentPackage
+        resolutionDict =
+          AutoDict.map (\_ -> .userGraph) model.fdg_model.packages
         updatedTests =
           case newInput of
             "" ->
@@ -344,7 +354,7 @@ update msg model =
                   ( Test
                       newInput
                       expectation
-                      ( DFA.stepThroughInitial newInput pkg.userGraph
+                      ( DFA.stepThroughInitial newInput resolutionDict pkg.userGraph
                         |> DFA.run pkg.userGraph
                       )
                   )

@@ -1021,12 +1021,20 @@ update msg model =
           }
     
     Load s ->
-      -- first, can we?
-      case model.undoBuffer of
-        [] ->
-          { model | execution = Just <| DFA.stepThroughInitial s model.currentPackage.userGraph }
-        _ ->
-          model -- nothing to do!
+      let
+        resolutionDict =
+          AutoDict.map (\_ -> .userGraph) model.packages
+        g = model.currentPackage.userGraph
+      in
+        -- first, can we?
+        case model.undoBuffer of
+          [] ->
+            { model
+              | execution =
+                  Just <| DFA.stepThroughInitial s resolutionDict g
+            }
+          _ ->
+            model -- nothing to do!
     
     Run ->
       { model
@@ -1167,6 +1175,8 @@ updateModelAfterConfirmation : Model -> AutomatonGraph -> Model
 updateModelAfterConfirmation model g =
   let
     pkg = model.currentPackage
+    resolutionDict =
+      AutoDict.map (\_ -> .userGraph) model.packages
     newPackages =
       AutoDict.insert pkg.userGraph.graphIdentifier
         { pkg
@@ -1177,7 +1187,7 @@ updateModelAfterConfirmation model g =
                 (\_ entry ->
                   { entry
                     | result =
-                        DFA.stepThroughInitial entry.input g
+                        DFA.stepThroughInitial entry.input resolutionDict g
                         |> DFA.run g
                   }
                 )

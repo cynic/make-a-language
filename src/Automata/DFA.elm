@@ -18,6 +18,8 @@ import Uuid exposing (Uuid)
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (printNodeContext)
 import Automata.Debugging exposing (println)
+import Binary
+import SHA
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -38,30 +40,107 @@ traverseConnectionGraph : List Char -> AutoSet.Set String Uuid -> AutomatonGraph
 traverseConnectionGraph data allowed g =
   Nothing -- STUB!!
 
+transitionToGraph : Transition -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> NodeId -> Maybe AutomatonGraph
+transitionToGraph transition recursionTracker resolutionDict src dest =
+  -- case transition.via of
+  --   ViaGraphReference ref ->
+  --     if AutoSet.member ref recursionTracker then
+  --       Debug.log ("Recursion-tracker forbids the use of graph without finite-domain consumption. Ignoring.") ref |> \_ ->
+  --       Nothing
+  --     else
+  --       AutoDict.get ref resolutionDict
+  --       |> Maybe.map
+  --         (\g ->
+            
+  --         )
+  --   ViaCharacter ch ->
+  Nothing
+
+connectionToGraphs : AutomatonGraph -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> NodeId -> Connection -> Maybe AutomatonGraph
+connectionToGraphs ag recursionTracker resolutionDict src dest conn =
+  let
+    graphs =
+      AutoSet.toList conn
+      |> List.filterMap (\t ->
+        transitionToGraph t recursionTracker resolutionDict src dest
+      )
+  in
+    Nothing
+
+expand : AutomatonGraph -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> Maybe AutomatonGraph
+expand e recursionTracker resolutionDict src =
+  let
+    printSingleOutgoing (d, c) =
+      "→#" ++ String.fromInt d ++ " (" ++ connectionToString c ++ ")"
+    printOutgoing xs =
+      List.map printSingleOutgoing xs |> String.join "; "
+    updatedTracker =
+      if src == e.root then
+        AutoSet.insert e.graphIdentifier recursionTracker
+      else
+        AutoSet.empty Uuid.toString -- there WILL be a concrete link before this.
+    outgoing =
+      Graph.get src e.graph
+      |> Maybe.map (\ctx ->
+        IntDict.toList ctx.outgoing -- List (dest, conn)
+        |> debugLog_ "[nodeToGraph] Outgoing connections" printOutgoing
+      )
+      |> Maybe.withDefault [] -- no source-node, so no outgoing!
+    outgoing_excluding_recursive =
+      outgoing
+      |> List.map
+        (\(dest, conn) ->
+          ( dest
+          , conn
+            |> AutoSet.filter
+              (\t ->
+                case t.via of
+                  ViaGraphReference ref ->
+                    not (AutoSet.member ref updatedTracker)
+                  _ ->
+                    True
+              )
+          )
+        )
+      |> List.filter
+        (\(_, conn) ->
+          not (AutoSet.isEmpty conn)
+        )
+      |> debugLog_ "[nodeToGraph] After filtering out recursive connections" printOutgoing
+    -- okay, let's now take the outgoings and convert them into graphs.
+    outgoingAsGraphs =
+      outgoing_excluding_recursive
+      |> List.map
+        (\(dest, conn) ->
+          connectionToGraphs e updatedTracker resolutionDict src dest conn
+        )
+  in
+    Nothing
+
 oneTransition : AutomatonGraph -> ExecutionState -> ExecutionState
 oneTransition g executionState =
-  -- let
-  --   transitionWithData : ExecutionData -> ExecutionState
-  --   transitionWithData data =
-  --     Graph.get data.currentNode g.graph
-  --     |> Maybe.map
-  --       (\ctx ->
-  --         case data.remainingData of
-  --           [] ->
-  --             executionState -- we're done! Can't go any further!
-  --           _ ->
-  --             let
-  --               outgoingAsGraphs =
-  --                 IntDict.toList ctx.outgoing
-  --                 |> List.map
-  --                   (\(k, conn) ->
-  --                     -- Create a graph from the things in this connection
-  --                     { outgoing = k
-  --                     , transitionGraph = connectionToGraph g.graphIdentifier conn
-  --                     , allowed = graphReferenceSet conn
-  --                     , connection = conn
-  --                     }
-  --                   )
+  let
+    transitionWithData : ExecutionData -> ExecutionState
+    transitionWithData data =
+      Graph.get data.currentNode g.graph
+      |> Maybe.map
+        (\ctx ->
+          case data.remainingData of
+            [] ->
+              executionState -- we're done! Can't go any further!
+            _ ->
+              executionState -- TODO
+              -- let
+                  -- IntDict.toList ctx.outgoing
+                  -- |> List.map
+                  --   (\(k, conn) ->
+                  --     -- Create a graph from the things in this connection
+                  --     { outgoing = k
+                  --     , transitionGraph = connectionToGraph g.graphIdentifier conn
+                  --     , allowed = graphReferenceSet conn
+                  --     , connection = conn
+                  --     }
+                  --   )
   --               chosenOutgoingData =
   --                 outgoingAsGraphs
   --                 |> List.findMap
@@ -96,20 +175,21 @@ oneTransition g executionState =
   --                       , currentNode = dest
   --                       }
   --                   )
-  --             in
-  --               chosenOutgoingData
-  --               |> Maybe.withDefault (NoPossibleTransition data)
-  --       )
-  --     |> Maybe.withDefault (RequestedNodeDoesNotExist data)
-  -- in
-  --   case executionState of
-  --     Accepted d ->
-  --       transitionWithData d
-  --     Rejected d ->
-  --       transitionWithData d
-  --     RequestedNodeDoesNotExist _ ->
-  --       executionState
-  --     NoPossibleTransition _ ->
+              -- in
+                -- chosenOutgoingData
+                -- |> Maybe.withDefault (NoPossibleTransition data)
+                
+        )
+      |> Maybe.withDefault (RequestedNodeDoesNotExist data)
+  in
+    case executionState of
+      Accepted d ->
+        transitionWithData d
+      Rejected d ->
+        transitionWithData d
+      RequestedNodeDoesNotExist _ ->
+        executionState
+      NoPossibleTransition _ ->
         executionState
 
 step : AutomatonGraph -> ExecutionResult -> ExecutionResult
@@ -164,16 +244,64 @@ run g r =
   in
     execute r
 
-stepThroughInitial : String -> AutomatonGraph -> ExecutionResult
-stepThroughInitial s g =
+stepThroughInitial : String -> AutoDict.Dict String Uuid AutomatonGraph -> AutomatonGraph -> ExecutionResult
+stepThroughInitial s resolutionDict g =
   let
     upcomingAcceptConditions =
       String.toList
   in
   step g
     (CanContinue <| Rejected <|
-      ExecutionData [] (upcomingAcceptConditions s) g.root [g.graphIdentifier]
+      ExecutionData [] (upcomingAcceptConditions s) g.root [g.graphIdentifier] resolutionDict
     )
+
+automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph
+automatonGraph_union g1 g2 =
+  let
+    dfa_1 = fromAutomatonGraph g1
+    dfa_2 = fromAutomatonGraph g2
+    (id_1, id_2) =
+      if Uuid.toString g1.graphIdentifier < Uuid.toString g2.graphIdentifier then
+        (g1.graphIdentifier, g2.graphIdentifier)
+      else
+        (g2.graphIdentifier, g1.graphIdentifier)
+    mask = -- "xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx"
+      "000000000000F000C000000000000000"
+      |> Binary.fromHex
+      |> Binary.not
+    formatBits =
+      Binary.fromHex "00000000000040008000000000000000"
+    newId =
+      (Uuid.toString id_1 ++ Uuid.toString id_2)
+      |> Binary.fromHex
+      -- deterministic pseudorandom bits
+      |> SHA.sha256
+      -- take the first 128 bits only
+      |> Binary.shiftRightZfBy 128
+      |> Binary.dropLeadingZeros
+      -- mask off the format bits, and replace them
+      |> Binary.and mask
+      |> Binary.or formatBits
+      -- convert to the correct string format
+      |> Binary.toHex
+      |> (\s ->
+            let
+              (a, a_rest) = (String.left 8 s, String.dropLeft 8 s)
+              (b, b_rest) = (String.left 4 a_rest, String.dropLeft 4 a_rest)
+              (c, c_rest) = (String.left 4 b_rest, String.dropLeft 4 b_rest)
+              (d, d_rest) = (String.left 4 c_rest, String.dropLeft 4 c_rest)
+              (e, e_rest) = (String.left 12 d_rest, String.dropLeft 12 d_rest)
+            in
+              a ++ "-" ++ b ++ "-" ++ c ++ "-" ++ d ++ "-" ++ e
+        )
+      |> Uuid.fromString
+      |> Maybe.Extra.withDefaultLazy
+        (\() ->
+          Debug.log "🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
+          id_1 -- DEFINITELY going to cause problems…
+        )
+  in
+    toAutomatonGraph newId (union dfa_1 dfa_2)
 
 extend : Phase1Purpose -> DFARecord a -> DFARecord a -> ExtDFA
 extend purpose w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
