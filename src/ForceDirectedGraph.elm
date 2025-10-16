@@ -73,7 +73,6 @@ type Msg
   | Stop
   | SwitchToNextComputation
   | SwitchToPreviousComputation
-  | SetComputationEffort
   | Seconded Time.Posix
   | UpdateCurrentPackage GraphPackage
   -- to add: Execute, Step, Stop
@@ -958,9 +957,6 @@ update msg model =
           { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
         _ ->
           model
-
-    SetComputationEffort ->
-      model -- just punt.
 
     StartSplit nodeId ->
       Graph.get nodeId model.currentPackage.userGraph.graph
@@ -2209,61 +2205,19 @@ viewSvgGraphRefChooser focusedIndex model uuid conn y_offset panelWidth =
                             [ cx <| width / 2
                             , cy <| height - height / 5
                             , r <| scale / 2
-                            , fill <| Paint <| Color.white
+                            , fill <| Paint <| if AutoSet.member (tr False) conn then Color.white else paletteColors.transition.final
                             ]
                             []
                         , text_
                             [ x <| width / 2
-                            , y <| height - height / 5
+                            , y <| height - height / 5 + 5
                             , fill <| Paint <| Color.green
                             , fontSize scale
-                            , dominantBaseline DominantBaselineCentral
-                            , alignmentBaseline AlignmentCentral
+                            , dominantBaseline DominantBaselineMiddle
+                            -- , alignmentBaseline AlignmentCentral
                             , textAnchor AnchorMiddle
                             ]
                             [ text "✔" ]
-                        , rect
-                            [ x <| width / 4 - (width / 5)
-                            , y <| height - (height / 5) - (height / 16)
-                            , TypedSvg.Attributes.InPx.width <| width / 3
-                            , TypedSvg.Attributes.InPx.height <| height / 8
-                            , rx <| scale * 0.15
-                            , ry <| scale * 0.15
-                            , class [ "transition-chooser-key" ]
-                            , strokeWidth 1
-                            , stroke <| Paint <| Color.black
-                            , cursor CursorPointer
-                            , onClick (SetComputationEffort)
-                            ]
-                            []
-                        , text_
-                            [ x <| width / 4 - (width / 25)
-                            , y <| height - (height / 5)
-                            , fill <| Paint <| Color.black
-                            , fontFamily [ "sans-serif" ]
-                            , fontSize <| height / 15
-                            , dominantBaseline DominantBaselineCentral
-                            , alignmentBaseline AlignmentCentral
-                            , textAnchor AnchorMiddle
-                            , TypedSvg.Attributes.pointerEvents "none"
-                            ]
-                            ( if True then
-                                [ tspan
-                                    []
-                                    [ text "📉" ]
-                                , tspan
-                                    []
-                                    [ text " Match least" ]
-                                ]
-                              else
-                                [ tspan
-                                    []
-                                    [ text "📈" ]
-                                , tspan
-                                    []
-                                    [ text " Match most" ]
-                                ]
-                            )
                         ]
                     else
                       g [][]
