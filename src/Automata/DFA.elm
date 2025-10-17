@@ -1603,13 +1603,14 @@ splitTerminalAndNonTerminal g =
         in
           hasTerminal && hasNonTerminal
       )
-      |> debugLog_ "[splitTerminalAndNonTerminal] nodes to split" (Debug.toString << List.map (.node >> .id))
+      |> debugLog_ "[splitTerminalAndNonTerminal] nodes to split" (List.map (.node >> .id))
 
     -- Build a mapping from node id to new split node id (for non-terminal transitions)
     splitMap : Dict NodeId NodeId
     splitMap =
       List.indexedMap (\i node -> (node.node.id, nextId + i)) nodesToSplit
       |> Dict.fromList
+      |> Debug.log "[splitTerminalAndNonTerminal] Nodeid → split nodeid mapping (for non-terminal transitions)"
 
     -- Helper to update incoming edges for all nodes
     updateIncoming : List (NodeContext Entity Connection) -> List (NodeContext Entity Connection)
@@ -1638,6 +1639,7 @@ splitTerminalAndNonTerminal g =
                             )
                         )
                         (IntDict.empty, IntDict.empty)
+                    |> debugLog_ ("[splitTerminalAndNonTerminal] Partitioned (terminal, nonterminal) incoming transitions for #" ++ String.fromInt node.node.id) (\(a,b) -> (IntDict.map (\_ v -> AutoSet.toList v) a |> IntDict.toList, IntDict.map (\_ v -> AutoSet.toList v) b |> IntDict.toList))
 
                   -- The outgoing edges are the same for both nodes
                   outgoing = node.outgoing
@@ -1719,15 +1721,78 @@ splitTerminalAndNonTerminal g =
         )
         newNodeContexts
 
+    -- Specially, the root is always considered to be a non-terminal during conversion.
+    -- Otherwise, it may end up in the final set, which means that the DFA accepts
+    -- with zero transitions being taken, whereas no AutomatonGraph can possibly
+    -- exhibit such behaviour: finality is encoded in transitions, so AT LEAST ONE
+    -- transition MUST be taken for acceptance to occur.
+    --
+    -- (by now, we have already split into fully term/non-term, so we need not worry
+    --  about that aspect)
+    updateRoot : Graph.Graph Entity Connection -> (NodeId, Graph.Graph Entity Connection)
+    updateRoot graph =
+      Graph.get g.root graph
+      |> Maybe.map
+          (\rootctx ->
+            let
+              isTerminalConn conn =
+                AutoSet.filter isTerminal conn
+                |> AutoSet.isEmpty
+                |> not
+              recursiveTerminal fan =
+                IntDict.filter
+                  (\k conn ->
+                      k == g.root && isTerminalConn conn
+                  )
+                  fan
+              incomingTerminal = recursiveTerminal rootctx.incoming
+              outgoingTerminal = recursiveTerminal rootctx.outgoing
+              recursiveTransition =
+                IntDict.union incomingTerminal outgoingTerminal
+                |> IntDict.values
+                |> List.head
+                |> Maybe.withDefault (AutoSet.empty transitionToString)
+              hasRecursiveTerminal =
+                not (AutoSet.isEmpty recursiveTransition)
+              maxNode =
+                List.map (.node >> .id) newNodeContexts
+                |> List.maximum
+                |> Maybe.withDefault g.root
+            in
+            -- if there are any RECURSIVE, TERMINAL links that go into the root, then I must
+            -- 'extend' backwards (with just that recursive link).
+            if hasRecursiveTerminal then
+              -- yes, we need to extend
+              ( maxNode + 1
+              , Graph.insert
+                  { node = { id = maxNode + 1, label = rootctx.node.label }
+                  , incoming = IntDict.empty
+                  , outgoing = IntDict.singleton g.root recursiveTransition
+                  }
+                  graph
+              )
+            else
+              -- no need to extend; everything is fine.
+              ( g.root
+              , graph
+              )
+          )
+      |> Maybe.withDefault
+        ( g.root
+        , graph
+        )
+
     -- Build the new graph
-    newGraph =
+    (root, newGraph) =
       Graph.fromNodesAndEdges
         newNodes
         newEdges
+      |> updateRoot
+
   in
     { graph = newGraph
     , graphIdentifier = g.graphIdentifier
-    , root = g.root
+    , root = root
     }
     |> Automata.Debugging.debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
 
@@ -2415,6 +2480,9 @@ debugLog : (a -> String) -> a -> a
 debugLog f a =
   Debug.log (f a) () |> \_ -> a
 
-debugLog_ : String -> (a -> String) -> a -> a
+debugLog_ : String -> (a -> b) -> a -> a
 debugLog_ s f a =
-  Debug.log (s ++ ": " ++ f a) () |> \_ -> a
+  let
+    transformed = f a
+  in
+    Debug.log s transformed |> \_ -> a

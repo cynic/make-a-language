@@ -157,12 +157,12 @@ fromAG_suite =
         , test "one node, recursive" <|
           \_ ->
             ag_equals
-              (ag "0-!a-0 0-b-1 1-b-1 1-!a-0")
+              (ag "2-!a-0 0-!a-0 0-b-1 1-b-1 1-!a-0")
               (splitTerminalAndNonTerminal <| ag "0-!ab-0")
         , test "two nodes, first is recursive" <|
           \_ ->
             ag_equals
-              (ag "0-!a-0 0-b-1 1-b-1 0-c-2 1-c-2 1-!a-0")
+              (ag "3-!a-0 0-!a-0 0-b-1 1-b-1 0-c-2 1-c-2 1-!a-0")
               (splitTerminalAndNonTerminal <| ag "0-!ab-0 0-c-1")
         , test "separate links heading to one node" <|
           \_ ->
@@ -189,6 +189,15 @@ fromAG_suite =
             ag_equals
               (ag "2-!a-0 0-k-2 0-kz-3 1-k-2 1-kz-3 2-b-1")
               (splitTerminalAndNonTerminal <| ag "0-!ab-1 1-kz-2 1-k-0")
+        , test "Root must always be regarded as non-final" <|
+          \_ ->
+            let
+              ag = Utility.mkAutomatonGraph [ (0, "!x", 0) ]
+              conv = fromAutomatonGraph ag
+            in
+              Utility.dfa_equals
+                (Utility.mkDFA [ (0, 'x', 1), (1, 'x', 1) ] [1])
+                conv
         ]
       ]
     , describe "NFA→DFA conversion"

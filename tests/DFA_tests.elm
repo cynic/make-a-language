@@ -13,6 +13,8 @@ import Set
 import AutoDict
 import Utility
 import Array
+import Automata.DFA exposing (fromAutomatonGraph)
+import Automata.DFA exposing (toUnminimisedAutomatonGraph)
 
 -- nodesAndWords : D.AutomatonGraph -> (Int, List String)
 -- nodesAndWords d =
@@ -337,7 +339,7 @@ suite =
               Utility.ag_cmp_and_equals
                 (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
                 (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , test "minimality edge-case 2" <|
+        , test "minimality edge-case 1: multiple-hop resolution" <|
           \_ ->
             let
               dfa1 = Utility.mkDFA [ (1, 'a', 2), (1, 'd', 2), (2, 'b', 1), (2, 'e', 3) ] [2,3]
@@ -346,7 +348,7 @@ suite =
               Utility.ag_cmp_and_equals
                 (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
                 (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , test "minimality edge-case 3" <|
+        , test "minimality edge-case 2: multiple-hop resolution" <|
           \_ ->
             let
               dfa1 = Utility.mkDFA [ (1, 'a', 1), (1, 'd', 2), (2, 'b', 1), (2, 'e', 3) ] [2]
@@ -355,7 +357,7 @@ suite =
               Utility.ag_cmp_and_equals
                 (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
                 (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , test "minimality edge-case 4" <|
+        , test "minimality edge-case 3: multiple-hop resolution" <|
           \_ ->
             let
               dfa1 = Utility.mkDFA [ (1, 'a', 1), (1, 'd', 2), (2, 'b', 1), (2, 'e', 3) ] [2]
