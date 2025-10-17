@@ -1438,15 +1438,14 @@ minimiseNodesByCombiningTransitions g_ =
       (g_ |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph" )
     |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
-
-toAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
-toAutomatonGraph uuid dfa =
+toUnminimisedAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
+toUnminimisedAutomatonGraph uuid dfa =
   let
-    stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toAutomatonGraph] State-list"
+    stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toUnminimisedAutomatonGraph] State-list"
     graph =
       Graph.fromNodesAndEdges
         (stateList |> List.map (\(id, label) -> Graph.Node id label))
-        (IntDict.toList (dfa {- |> debugDFA_ "[toAutomatonGraph] DFA as received" -}).transition_function
+        (IntDict.toList (dfa {- |> debugDFA_ "[toUnminimisedAutomatonGraph] DFA as received" -}).transition_function
         |> List.foldl
           (\(from, dict) state ->
             AutoDict.toList dict
@@ -1474,18 +1473,22 @@ toAutomatonGraph uuid dfa =
     case stateList of
       [] ->
         Automata.Data.empty uuid
-        -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, since DFA was empty"
+        -- |> debugAutomatonGraph "[toUnminimisedAutomatonGraph] Graph, since DFA was empty"
       h::_ ->
         { graph = graph
         , graphIdentifier = uuid
-        , root = dfa.start -- |> Debug.log "[toGraph] root"
+        , root = dfa.start -- |> Debug.log "[toUnminimisedAutomatonGraph] root"
         }
-        -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
-        |> minimiseNodesByCombiningTransitions
-        |> debugAutomatonGraph "[toAutomatonGraph] Graph, final output"
 
-renumberAutomatonGraph : AutomatonGraph -> AutomatonGraph
-renumberAutomatonGraph g =
+toAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
+toAutomatonGraph uuid dfa =
+  toUnminimisedAutomatonGraph uuid dfa
+  |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
+  |> minimiseNodesByCombiningTransitions
+  |> debugAutomatonGraph "[toAutomatonGraph] Graph, minimised, final output"
+
+renumberAutomatonGraphFrom : Int -> AutomatonGraph -> AutomatonGraph
+renumberAutomatonGraphFrom start g =
   let
     fanMapper =
       IntDict.toList
@@ -1511,7 +1514,7 @@ renumberAutomatonGraph g =
           , fanMapper ctx.outgoing
           )
         )
-      |> List.indexedMap (\i node -> (node.node.id, i))
+      |> List.indexedMap (\i node -> (node.node.id, i + start))
       |> IntDict.fromList
     get n =
       case IntDict.get n nodeMap of
@@ -1539,6 +1542,9 @@ renumberAutomatonGraph g =
     , root = get g.root
     }
     -- |> debugAutomatonGraph "[renumberAutomatonGraph] result"
+
+renumberAutomatonGraph : AutomatonGraph -> AutomatonGraph
+renumberAutomatonGraph = renumberAutomatonGraphFrom 1
 
 splitTerminalAndNonTerminal : AutomatonGraph -> AutomatonGraph
 splitTerminalAndNonTerminal g =
