@@ -157,12 +157,12 @@ fromAG_suite =
         , test "one node, recursive" <|
           \_ ->
             ag_equals
-              (ag "2-!a-0 0-!a-0 0-b-1 1-b-1 1-!a-0")
+              (ag "2-!a-0 2-b-1 0-!a-0 0-b-1 1-b-1 1-!a-0")
               (splitTerminalAndNonTerminal <| ag "0-!ab-0")
         , test "two nodes, first is recursive" <|
           \_ ->
             ag_equals
-              (ag "3-!a-0 0-!a-0 0-b-1 1-b-1 0-c-2 1-c-2 1-!a-0")
+              (ag "3-!a-0 3-b-2 3-c-1 2-b-2 2-c-1 2-!a-0 0-b-2 0-c-1 0-!a-0")
               (splitTerminalAndNonTerminal <| ag "0-!ab-0 0-c-1")
         , test "separate links heading to one node" <|
           \_ ->

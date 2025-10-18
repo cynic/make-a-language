@@ -1546,6 +1546,70 @@ renumberAutomatonGraphFrom start g =
 renumberAutomatonGraph : AutomatonGraph -> AutomatonGraph
 renumberAutomatonGraph = renumberAutomatonGraphFrom 1
 
+{- The 'stretch` operation takes an automatongraph that has a recursive terminal 
+-}
+stretch : AutomatonGraph -> AutomatonGraph
+stretch g =
+  Maybe.map2
+    (\rootctx (_, maxId) ->
+      let
+        isTerminalConn conn =
+          AutoSet.filter .isFinal conn
+          |> AutoSet.isEmpty
+          |> not
+        (recursiveOut, nonRecursiveOut) =
+          IntDict.partition (\k _ -> k == g.root) rootctx.outgoing
+        recursiveTerminal =
+          IntDict.partition (\_ -> isTerminalConn)
+        (outgoingTerminal, outgoingNonTerminal) = recursiveTerminal recursiveOut
+        to_stretch =
+          outgoingTerminal
+          |> IntDict.values
+          |> List.head
+        unstretched =
+          outgoingNonTerminal
+          |> IntDict.values
+          |> List.head
+      in
+      -- if there are any RECURSIVE, TERMINAL links that go into the root, then I must
+      -- 'extend' backwards (with just that recursive link).
+        case (to_stretch, unstretched) of
+          ( Nothing, Nothing ) -> -- there are NO recursive transitions at all on the root.
+            g -- nothing to do.
+          ( Nothing, Just _ ) -> -- there are no terminal retursive transitions on the root
+            g -- nothing to do
+          ( Just transitions, Nothing ) ->
+            -- we need to extend
+            { g
+              | root = maxId + 1
+              , graph =
+                  Graph.insert
+                    { node = { id = maxId + 1, label = rootctx.node.label }
+                    , incoming = IntDict.empty
+                    , outgoing =
+                        IntDict.singleton g.root transitions
+                        |> IntDict.union nonRecursiveOut
+                    }
+                    g.graph
+            }
+          ( Just terminals, Just nonTerminals ) ->
+            { g
+              | root = maxId + 1
+              , graph =
+                  Graph.insert
+                    { node = { id = maxId + 1, label = rootctx.node.label }
+                    , incoming = IntDict.empty
+                    , outgoing =
+                      IntDict.singleton g.root (AutoSet.union terminals nonTerminals)
+                      |> IntDict.union nonRecursiveOut
+                    }
+                    g.graph
+            }
+    )
+    (Graph.get g.root g.graph)
+    (Graph.nodeIdRange g.graph)
+  |> Maybe.withDefault g
+
 splitTerminalAndNonTerminal : AutomatonGraph -> AutomatonGraph
 splitTerminalAndNonTerminal g =
   {-
@@ -1721,79 +1785,20 @@ splitTerminalAndNonTerminal g =
         )
         newNodeContexts
 
+    -- Build the new graph
+    newGraph =
+      Graph.fromNodesAndEdges
+        newNodes
+        newEdges
+
+  in
+    { g | graph = newGraph }
     -- Specially, the root is always considered to be a non-terminal during conversion.
     -- Otherwise, it may end up in the final set, which means that the DFA accepts
     -- with zero transitions being taken, whereas no AutomatonGraph can possibly
     -- exhibit such behaviour: finality is encoded in transitions, so AT LEAST ONE
     -- transition MUST be taken for acceptance to occur.
-    --
-    -- (by now, we have already split into fully term/non-term, so we need not worry
-    --  about that aspect)
-    updateRoot : Graph.Graph Entity Connection -> (NodeId, Graph.Graph Entity Connection)
-    updateRoot graph =
-      Graph.get g.root graph
-      |> Maybe.map
-          (\rootctx ->
-            let
-              isTerminalConn conn =
-                AutoSet.filter isTerminal conn
-                |> AutoSet.isEmpty
-                |> not
-              recursiveTerminal fan =
-                IntDict.filter
-                  (\k conn ->
-                      k == g.root && isTerminalConn conn
-                  )
-                  fan
-              incomingTerminal = recursiveTerminal rootctx.incoming
-              outgoingTerminal = recursiveTerminal rootctx.outgoing
-              recursiveTransition =
-                IntDict.union incomingTerminal outgoingTerminal
-                |> IntDict.values
-                |> List.head
-                |> Maybe.withDefault (AutoSet.empty transitionToString)
-              hasRecursiveTerminal =
-                not (AutoSet.isEmpty recursiveTransition)
-              maxNode =
-                List.map (.node >> .id) newNodeContexts
-                |> List.maximum
-                |> Maybe.withDefault g.root
-            in
-            -- if there are any RECURSIVE, TERMINAL links that go into the root, then I must
-            -- 'extend' backwards (with just that recursive link).
-            if hasRecursiveTerminal then
-              -- yes, we need to extend
-              ( maxNode + 1
-              , Graph.insert
-                  { node = { id = maxNode + 1, label = rootctx.node.label }
-                  , incoming = IntDict.empty
-                  , outgoing = IntDict.singleton g.root recursiveTransition
-                  }
-                  graph
-              )
-            else
-              -- no need to extend; everything is fine.
-              ( g.root
-              , graph
-              )
-          )
-      |> Maybe.withDefault
-        ( g.root
-        , graph
-        )
-
-    -- Build the new graph
-    (root, newGraph) =
-      Graph.fromNodesAndEdges
-        newNodes
-        newEdges
-      |> updateRoot
-
-  in
-    { graph = newGraph
-    , graphIdentifier = g.graphIdentifier
-    , root = root
-    }
+    |> stretch
     |> Automata.Debugging.debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
 
 

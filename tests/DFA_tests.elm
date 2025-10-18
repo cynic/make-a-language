@@ -286,7 +286,7 @@ suite =
       -- causes out-of-memory… so, weakening it…
       -- , fuzz (Fuzz.listOfLengthBetween 2 5 (Fuzz.asciiStringOfLengthBetween 4 8)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
       --     standardTestForWords
-      , fuzz (Fuzz.listOfLengthBetween 2 4 (Fuzz.asciiStringOfLengthBetween 3 6)) "consistently returns the same graph irrespective of the order in which words are entered" <|
+      , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 3 6)) "consistently returns the same graph irrespective of the order in which words are entered" <|
           standardTestForWords
 
       , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
