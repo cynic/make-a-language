@@ -67,6 +67,10 @@ connectionToGraphs ag recursionTracker resolutionDict src dest conn =
   in
     Nothing
 
+characterTransitionToAutomatonGraph =
+  { 
+  }
+
 expand : AutomatonGraph -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> Maybe AutomatonGraph
 expand e recursionTracker resolutionDict src =
   let

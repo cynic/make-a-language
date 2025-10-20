@@ -444,6 +444,34 @@ transitionsParser =
         , Parser.loop [] transitionsHelp
         ]
 
+------------------------------------
+-- BEGIN :: Copied & adapted from Force.elm
+------------------------------------
+{-| This is a convenience function for wrapping data up as Entities. The initial position of entities is arranged
+in a [phylotaxic pattern](https://elm-visualization.netlify.app/Petals/). Goes well with `List.indexedMap`.
+-}
+entity : Int -> NodeEffect -> Entity
+entity index v =
+  let
+    initialRadius = 10
+    initialAngle =
+        pi * (3 - sqrt 5)
+    radius =
+        sqrt (0.5 + toFloat index) * initialRadius
+
+    angle =
+        toFloat index * initialAngle
+  in
+    { x = radius * cos angle
+    , y = radius * sin angle
+    , vx = 0.0
+    , vy = 0.0
+    , id = index
+    , effect = v
+    }
+------------------------------------
+-- END :: Copied & adapted from Force.elm
+------------------------------------
 
 transitionsHelp : List (Int, String, Int) -> Parser (Parser.Step (List (Int, String, Int)) (List (Int, String, Int)))
 transitionsHelp revTransitions =
