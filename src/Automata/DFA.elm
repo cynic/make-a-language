@@ -155,14 +155,98 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
     after_graft =
       List.foldl
         (\(outs, conn) (unusedId, this_graph) ->
+          let
+            graft transition graph_to_graft =
+              let
+                terminals = -- the terminals of the split_graph
+                  Graph.fold
+                    (\ctx acc ->
+                      let
+                        isTerminal =
+                          AutoSet.filter .isFinal ctx.incoming
+                          |> (not << AutoSet.isEmpty)
+                      in
+                        if isTerminal then
+                          ctx.node.id :: acc
+                        else
+                          acc
+                    )
+                    []
+                    graph_to_graft.graph
+                -- now, within this context, I need to graft the split_graph
+                -- into the current graph. So let's begin with Step 1.
+                -- 
+                -- Toss all the nodes into the containing graph;
+                -- and also maintain finality or remove it, as directed.
+                -- Now link outbounds to the terminals, in the containing graph.
+                quoting_graph_with_quoted_nodes =
+                  { graph_to_graft
+                    | graph =
+                        if transition.isFinal then
+                          Graph.fold
+                            (Graph.insert)
+                            this_graph.graph
+                            (Graph.fold (::) [] graph_to_graft.graph)
+                        else
+                          Graph.fold
+                            (\ctx g ->
+                              -- there are no terminal transitions.
+                              Graph.insert
+                                { ctx
+                                  | incoming = AutoSet.map (\t -> t { isFinal = False }) ctx.incoming
+                                  , outgoing = AutoSet.map (\t -> t { isFinal = False }) ctx.outgoing
+                                }
+                                g
+                            )
+                            this_graph
+                            (Graph.fold (::) [] graph_to_graft.graph)
+                  }
+                -- next, link all the outbounds from the quoted-graph.
+                with_outbounds_linked =
+                  Graph.fold
+                    (\terminal_id g ->
+                      case Graph.get terminal_id g of
+                        Nothing ->
+                          -- huh?? This SHOULD be found.
+                          -- I've just added it!
+                          g
+                        Just ctx ->
+                          Graph.insert
+                            { ctx
+                              | outgoing =
+                                  IntDict.uniteWith
+                                    (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                    ctx.outgoing
+                                    outs
+                            }
+                            g
+                    )
+                    quoting_graph_with_quoted_nodes
+                    terminals
+                -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`
+                with_inbounds_linked =
+                  Graph.insert
+                    { with_outbounds_linked
+                      | incoming =
+                          IntDict.uniteWith
+                            (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                            with_outbounds_linked.incoming
+                            inbounds
+                    }
+                    with_outbounds_linked
+              in
+                ( Graph.nodeIdRange with_inbounds_linked
+                  |> Maybe.map (\(_, end) -> end + 1)
+                  |> Maybe.withDefault unusedId -- whaaaaaaaaaaaaaaaaaaaaaaat! how???
+                , with_inbounds_linked
+                )
+          in
           AutoSet.toList conn
           |> List.map
             (\transition ->
               case transition.via of
                 ViaCharacter ch ->
-                  ( unusedId + 2 -- +1 for the start vertex, +1 for the end vertex
-                  , characterTransitionToAutomatonGraph unusedId ch
-                  )
+                  graft transition (characterTransitionToAutomatonGraph unusedId ch)
                 ViaGraphReference ref ->
                   if AutoSet.member ref recursion_stack then
                     -- don't consider it; that would lead us to recursion.
@@ -184,82 +268,8 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
                           split_graph =
                             resulting_graph
                             |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
-                          terminals = -- the terminals of the split_graph
-                            Graph.fold
-                              (\ctx acc ->
-                                let
-                                  isTerminal =
-                                    AutoSet.filter .isFinal ctx.incoming
-                                    |> (not << AutoSet.isEmpty)
-                                in
-                                  if isTerminal then
-                                    ctx.node.id :: acc
-                                  else
-                                    acc
-                              )
-                              []
-                              split_graph.graph
-                          -- now, within this context, I need to graft the split_graph
-                          -- into the current graph. So let's begin with Step 1.
-                          -- 
-                          -- Toss all the nodes into the containing graph;
-                          -- and also maintain finality or remove it, as directed.
-                          -- Now link outbounds to the terminals, in the containing graph.
-                          quoting_graph_with_quoted_nodes =
-                            if transition.isFinal then
-                              Graph.fold (Graph.insert) renumbered.graph split_graph
-                            else
-                              Graph.fold
-                                (\ctx g ->
-                                  -- there are no terminal transitions.
-                                  Graph.insert
-                                    { ctx
-                                      | incoming = AutoSet.map (\t -> t { isFinal = False }) ctx.incoming
-                                      , outgoing = AutoSet.map (\t -> t { isFinal = False }) ctx.outgoing
-                                    }
-                                    g
-                                )
-                                this_graph
-                                (Graph.fold (::) [] split_graph.graph)
-                          -- next, link all the outbounds from the quoted-graph.
-                          with_outbounds_linked =
-                            Graph.fold
-                              (\terminal_id g ->
-                                case Graph.get terminal_id g of
-                                  Nothing ->
-                                    -- huh?? This SHOULD be found.
-                                    -- I've just added it!
-                                    g
-                                  Just ctx ->
-                                    Graph.insert
-                                      { ctx
-                                        | outgoing =
-                                            IntDict.uniteWith
-                                              (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
-                                              ctx.outgoing
-                                              outs
-                                      }
-                                      g
-                              )
-                              quoting_graph_with_quoted_nodes
-                              terminals
-                          -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`
-                          with_inbounds_linked =
-                            Graph.insert
-                              { with_outbounds_linked
-                                | incoming =
-                                    IntDict.uniteWith
-                                      (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
-                                      with_outbounds_linked.incoming
-                                      inbounds
-                              }
-                              with_outbounds_linked
                         in
-                          ( Graph.nodeIdRange resulting_graph
-                            |> Maybe.map (\(_, end) -> end + 1)
-                            |> Maybe.withDefault unusedId -- whaaaaaaaaaaaaaaaaaaaaaaat! how???
-                          , with_inbounds_linked
-                          )
+                          graft transition split_graph
                       )
                     |> Maybe.withDefault -- invalid reference. How on earth did this sneak in??
                       ( unusedId
