@@ -20,6 +20,7 @@ import Automata.Debugging exposing (printNodeContext)
 import Automata.Debugging exposing (println)
 import Binary
 import SHA
+import Random.Pcg.Extended exposing (initialSeed)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -63,12 +64,179 @@ connectionToGraphs ag recursionTracker resolutionDict src dest conn =
       AutoSet.toList conn
       |> List.filterMap (\t ->
         transitionToGraph t recursionTracker resolutionDict src dest
-      )
+      ) + Graph.nodeIdRange
   in
     Nothing
 
-characterTransitionToAutomatonGraph =
-  { 
+graphTransitionToAutomatonGraph : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> AutomatonGraph -> AutomatonGraph
+graphTransitionToAutomatonGraph start resolutionDict scope recursion_stack g_orig =
+  let
+    renumbered =
+      renumberAutomatonGraphFrom start g_orig
+      |> stretch
+    outbounds =
+      Graph.get renumbered.root renumbered.graph
+      |> Maybe.map
+        (\ctx ->
+          IntDict.toList ctx.outgoing
+          |> List.filterMap
+            (\(k, conn) ->
+              Graph.get k renumbered.graph
+              |> Maybe.map
+                (\ctx ->
+                  ( k -- this is a destination node.
+                  , ctx.outgoing -- this is the outgoing connections from that destination node.
+                  , conn -- this is the connection leading to that destination node.
+                  )
+                )
+            )
+        )
+      |> Maybe.withDefault [] -- either no root, or no outgoing. Either way…
+    renumbered_unusedId =
+      Graph.nodeIdRange renumbered
+      |> Maybe.map (\(_, end) -> end + 1)
+      |> Maybe.withDefault 1 --- uhh, what now?
+    -- get the respective graphs for each of the outgoing transitions
+    respectiveGraphs =
+      List.foldl
+        (\(dest, outs, conn) (unusedId, graphs) ->
+          AutoSet.toList conn
+          |> List.map
+            (\transition ->
+              case transition.via of
+                ViaCharacter ch ->
+                  ( unusedId + 2 -- +1 for the start vertex, +1 for the end vertex
+                  , characterTransitionToAutomatonGraph unusedId ch
+                  )
+                ViaGraphReference ref ->
+                  if AutoSet.member ref recursion_stack then
+                    -- don't consider it; that would lead us to recursion.
+                    ( unusedId
+                    , graphs
+                    )
+                  else
+                    AutoDict.get ref resolutionDict
+                    |> Maybe.map
+                      (\referenced_graph ->
+                        let
+                          resulting_graph =
+                            graphTransitionToAutomatonGraph
+                              unusedId
+                              resolutionDict
+                              (renumbered.root :: scope)
+                              (AutoSet.insert renumbered.graphIdentifier recursion_stack)
+                              referenced_graph
+                          split_graph =
+                            resulting_graph
+                            |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
+                          terminals = -- the terminals of the split_graph
+                            Graph.fold
+                              (\ctx acc ->
+                                let
+                                  isTerminal =
+                                    AutoSet.filter .isFinal ctx.incoming
+                                    |> (not << AutoSet.isEmpty)
+                                in
+                                  if isTerminal then
+                                    ctx.node.id :: acc
+                                  else
+                                    acc
+                              )
+                              []
+                              split
+                        in
+                          ( Graph.nodeIdRange resulting_graph
+                            |> Maybe.map (\(_, end) -> end + 1)
+                            |> Maybe.withDefault unusedId -- whaaaaaaaaaaaaaaaaaaaaaaat! how???
+                          , { outgoing_from_destination = outs
+                            , quoted_graph = split_graph
+                            , quoted_graph_terminals = terminals
+                            , destination_in_container = dest
+                            , maintain_finality = transition.isFinal
+                            } :: graphs
+                          )
+                      )
+                    |> Maybe.withDefault -- invalid reference. How on earth did this sneak in??
+                      ( unusedId
+                      , graphs
+                      )
+            )
+        )
+        (renumbered_unusedId, [])
+        outbounds
+    partially_grafted =
+      List.fold
+        (\{quoted_graph, maintain_finality, quoted_graph_terminals, outgoing_from_destination} quoting_graph ->
+          let
+            -- Toss all the nodes into the containing graph;
+            -- and also maintain finality or remove it, as directed.
+            quoting_graph_with_quoted_nodes =
+              if maintain_finality then
+                Graph.fold (Graph.insert) quoting_graph.graph quoted_graph
+              else
+                Graph.fold
+                  (\ctx g ->
+                    -- there are no terminal transitions.
+                    Graph.insert
+                      { ctx
+                        | incoming = AutoSet.map (\t -> t { isFinal = False }) ctx.incoming
+                        | outgoing = AutoSet.map (\t -> t { isFinal = False }) ctx.outgoing
+                      }
+                      g
+                  )
+                  quoting_graph
+                  (Graph.fold (::) [] quoted_graph.graph)
+            -- Now link outbounds to the terminals, in the containing graph.
+            with_outbounds_linked =
+              Graph.fold
+                (\terminal_id g ->
+                  case Graph.get terminal_id g of
+                    Nothing ->
+                      -- huh?? This SHOULD be found.
+                      -- I've just added it!
+                      g
+                    Just ctx ->
+                      Graph.insert
+                        { ctx
+                          | outgoing =
+                              IntDict.uniteWith
+                                (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                ctx.outgoing
+                                outgoing_from_destination
+                        }
+                        g
+                )
+                quoting_graph_with_quoted_nodes
+                quoted_graph_terminals
+
+        )
+        quoted_graph
+        respectiveGraphs
+
+
+characterTransitionToAutomatonGraph : NodeId -> Char -> AutomatonGraph
+characterTransitionToAutomatonGraph start ch =
+  { graph =
+      Graph.fromNodesAndEdges
+        [ Graph.Node start (entity start NoEffect)
+        , Graph.Node (start + 1) (entity (start + 1) NoEffect)
+        ]
+        [ Edge start (start + 1)
+            ( AutoSet.singleton transitionToString <|
+                Transition True (ViaCharacter ch)
+            )
+        ]
+  , root = start
+  , graphIdentifier =
+      Binary.fromStringAsUtf8 (String.fromChar ch)
+      |> SHA.sha256
+      |> uuidFromHash
+      |> Maybe.Extra.withDefaultLazy
+        (\() ->
+          Debug.log "🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
+          Random.Pcg.Extended.step Uuid.generator (initalSeed 1 [2, 3, 4, 5])
+          |> Tuple.first
+        )
   }
 
 expand : AutomatonGraph -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> Maybe AutomatonGraph
@@ -259,6 +427,36 @@ stepThroughInitial s resolutionDict g =
       ExecutionData [] (upcomingAcceptConditions s) g.root [g.graphIdentifier] resolutionDict
     )
 
+uuidFromHash : Binary.Bits -> Maybe Uuid
+uuidFromHash =
+  let
+    mask = -- "xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx"
+      "000000000000F000C000000000000000"
+      |> Binary.fromHex
+      |> Binary.not
+    formatBits =
+      Binary.fromHex "00000000000040008000000000000000"
+  in
+    -- take the first 128 bits only
+    Binary.shiftRightZfBy 128
+    >> Binary.dropLeadingZeros
+    -- mask off the format bits, and replace them
+    >> Binary.and mask
+    >> Binary.or formatBits
+    -- convert to the correct string format
+    >> Binary.toHex
+    >> (\s ->
+          let
+            (a, a_rest) = (String.left 8 s, String.dropLeft 8 s)
+            (b, b_rest) = (String.left 4 a_rest, String.dropLeft 4 a_rest)
+            (c, c_rest) = (String.left 4 b_rest, String.dropLeft 4 b_rest)
+            (d, d_rest) = (String.left 4 c_rest, String.dropLeft 4 c_rest)
+            (e, e_rest) = (String.left 12 d_rest, String.dropLeft 12 d_rest)
+          in
+            a ++ "-" ++ b ++ "-" ++ c ++ "-" ++ d ++ "-" ++ e
+      )
+    >> Uuid.fromString
+
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph
 automatonGraph_union g1 g2 =
   let
@@ -269,36 +467,12 @@ automatonGraph_union g1 g2 =
         (g1.graphIdentifier, g2.graphIdentifier)
       else
         (g2.graphIdentifier, g1.graphIdentifier)
-    mask = -- "xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx"
-      "000000000000F000C000000000000000"
-      |> Binary.fromHex
-      |> Binary.not
-    formatBits =
-      Binary.fromHex "00000000000040008000000000000000"
     newId =
       (Uuid.toString id_1 ++ Uuid.toString id_2)
       |> Binary.fromHex
       -- deterministic pseudorandom bits
       |> SHA.sha256
-      -- take the first 128 bits only
-      |> Binary.shiftRightZfBy 128
-      |> Binary.dropLeadingZeros
-      -- mask off the format bits, and replace them
-      |> Binary.and mask
-      |> Binary.or formatBits
-      -- convert to the correct string format
-      |> Binary.toHex
-      |> (\s ->
-            let
-              (a, a_rest) = (String.left 8 s, String.dropLeft 8 s)
-              (b, b_rest) = (String.left 4 a_rest, String.dropLeft 4 a_rest)
-              (c, c_rest) = (String.left 4 b_rest, String.dropLeft 4 b_rest)
-              (d, d_rest) = (String.left 4 c_rest, String.dropLeft 4 c_rest)
-              (e, e_rest) = (String.left 12 d_rest, String.dropLeft 12 d_rest)
-            in
-              a ++ "-" ++ b ++ "-" ++ c ++ "-" ++ d ++ "-" ++ e
-        )
-      |> Uuid.fromString
+      |> uuidFromHash
       |> Maybe.Extra.withDefaultLazy
         (\() ->
           Debug.log "🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
