@@ -24,52 +24,8 @@ import Random.Pcg.Extended exposing (initialSeed)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
--- the Bool indicates whether it is a Final position or not.
--- This is superior to marking finality on a vertex, because
--- multiple transitions—some final, some not—could end on a
--- vertex.
-
-connectionToGraph : Uuid -> Connection -> AutomatonGraph
-connectionToGraph uuid conn =
-  Automata.Data.empty uuid -- STUB!!
-
-graphReferenceSet : Connection -> AutoSet.Set String Uuid
-graphReferenceSet conn =
-  AutoSet.empty Uuid.toString -- STUB!!
-
-traverseConnectionGraph : List Char -> AutoSet.Set String Uuid -> AutomatonGraph -> Maybe (AutoSet.Set String Uuid, List Char)
-traverseConnectionGraph data allowed g =
-  Nothing -- STUB!!
-
-transitionToGraph : Transition -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> NodeId -> Maybe AutomatonGraph
-transitionToGraph transition recursionTracker resolutionDict src dest =
-  -- case transition.via of
-  --   ViaGraphReference ref ->
-  --     if AutoSet.member ref recursionTracker then
-  --       Debug.log ("Recursion-tracker forbids the use of graph without finite-domain consumption. Ignoring.") ref |> \_ ->
-  --       Nothing
-  --     else
-  --       AutoDict.get ref resolutionDict
-  --       |> Maybe.map
-  --         (\g ->
-            
-  --         )
-  --   ViaCharacter ch ->
-  Nothing
-
-connectionToGraphs : AutomatonGraph -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> NodeId -> Connection -> Maybe AutomatonGraph
-connectionToGraphs ag recursionTracker resolutionDict src dest conn =
-  let
-    graphs =
-      AutoSet.toList conn
-      |> List.filterMap (\t ->
-        transitionToGraph t recursionTracker resolutionDict src dest
-      ) + Graph.nodeIdRange
-  in
-    Nothing
-
 {-
-  This gives back an automatongraph in which the specified transition leaving from `source`
+  This gives back an AutomatonGraph in which the specified transition leaving from `source`
   is FULLY resolved.
   By "FULLY resolved", we don't mean that every transition within that graph is resolved.
   Instead, we mean that the the outbounds of `source` are fully resolved to a concrete form.
@@ -120,8 +76,9 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
         (\ctx ->
           let
             -- we have one source-node, so this is easy.
+            ins : IntDict Connection
             ins =
-              IntDict.toList ctx.incoming
+              ctx.incoming
             -- that source node can have multiple destination nodes.
             -- And for each destination node, we want the per-connection
             -- outbounds.
@@ -146,199 +103,218 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
           in
             (ins, outs, (ctx.node.id, IntDict.keys ctx.outgoing))
         )
-      |> Maybe.withDefault ([], [], (-1, [])) -- no valid source-node???  Whaaaaaaaaaaaat???
+      |> Maybe.withDefault (IntDict.empty, [], (-1, [])) -- no valid source-node???  Whaaaaaaaaaaaat???
     renumbered_unusedId =
       Graph.nodeIdRange renumbered.graph
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault 1 --- uhh, what now?
     -- get the respective graphs for each of the outgoing transitions
+    convert_and_graft : (IntDict Connection, Connection) -> (NodeId, AutomatonGraph) -> (NodeId, AutomatonGraph)
+    convert_and_graft (outs, conn) (unusedId_, this_graph) =
+      let
+        identify_terminal_nodes : NodeContext Entity Connection -> List NodeId -> List NodeId
+        identify_terminal_nodes ctx acc =
+          let
+            isTerminal = -- does this connection contain any terminal incoming transitions?
+              -- because we are looking at a graph with separated terminal/non-terminal nodes,
+              -- if we find any, we can conclude for all.
+              ctx.incoming
+              |> IntDict.values
+              |> List.any (AutoSet.filter .isFinal >> (not << AutoSet.isEmpty))
+          in
+            if isTerminal then
+              ctx.node.id :: acc
+            else
+              acc
+        graft : NodeId -> Transition -> AutomatonGraph -> AutomatonGraph -> (NodeId, AutomatonGraph)
+        graft unusedId transition graft_onto graph_to_graft =
+          let
+            terminals = -- the terminals of the split_graph
+              Graph.fold
+                identify_terminal_nodes
+                []
+                graph_to_graft.graph
+            -- now, within this context, I need to graft the split_graph
+            -- into the current graph. So let's begin with Step 1.
+            -- 
+            -- Toss all the nodes into the containing graph;
+            -- and also maintain finality or remove it, as directed.
+            -- Now link outbounds to the terminals, in the containing graph.
+            quoted_nodes : List (NodeContext Entity Connection)
+            quoted_nodes =
+              if transition.isFinal then
+                Graph.fold (::) [] graph_to_graft.graph
+              else
+                Graph.fold
+                  (\ctx acc ->
+                    -- there are no terminal transitions.
+                      { ctx
+                        | incoming = IntDict.map (\_ -> AutoSet.map transitionToString (\t -> { t | isFinal = False })) ctx.incoming
+                        , outgoing = IntDict.map (\_ -> AutoSet.map transitionToString (\t -> { t | isFinal = False })) ctx.outgoing
+                      } :: acc
+                  )
+                  []
+                  graph_to_graft.graph
+            quoting_graph_with_quoted_nodes : AutomatonGraph
+            quoting_graph_with_quoted_nodes =
+              { graft_onto
+                | graph =
+                    List.foldl (Graph.insert) graft_onto.graph quoted_nodes
+              }
+            -- next, link all the outbounds from the quoted-graph.
+            link_quoted_graph_outbound : NodeId -> Graph.Graph Entity Connection -> Graph.Graph Entity Connection
+            link_quoted_graph_outbound terminal_id g =
+              case Graph.get terminal_id g of
+                Nothing ->
+                  -- huh?? This SHOULD be found.
+                  -- I've just added it!
+                  g
+                Just ctx ->
+                  Graph.insert
+                    { ctx
+                      | outgoing =
+                          IntDict.uniteWith
+                            (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                            ctx.outgoing
+                            outs
+                    }
+                    g
+            with_outbounds_linked : AutomatonGraph
+            with_outbounds_linked =
+              { quoting_graph_with_quoted_nodes
+                | graph =
+                    List.foldl
+                      (link_quoted_graph_outbound)
+                      quoting_graph_with_quoted_nodes.graph
+                      terminals
+              }
+            -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`.
+            -- We do this easily by just setting the root to be the same as the `source_graph`
+            -- root; and then attaching the outbounds from our "native" root to it.
+            with_inbounds_linked : AutomatonGraph
+            with_inbounds_linked =
+              Graph.get with_outbounds_linked.root with_outbounds_linked.graph
+              |> Maybe.map
+                (\root_ctx -> -- this is from the quoted graph
+                  { with_outbounds_linked
+                    | root = source_graph_source
+                    , graph =
+                        Graph.update source_graph_source
+                          (Maybe.map
+                            (\source_node_ctx ->
+                                { source_node_ctx
+                                  | outgoing =
+                                      IntDict.uniteWith
+                                        (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                        source_node_ctx.outgoing
+                                        root_ctx.outgoing
+                                  , incoming =
+                                      IntDict.uniteWith
+                                        (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                        source_node_ctx.incoming
+                                        root_ctx.incoming
+                                }
+                            )
+                          )
+                          with_outbounds_linked.graph
+                  }
+                )
+                |> Maybe.withDefault with_outbounds_linked -- NOOOOOOOOO!! SHOULD NOT BE HERE!!!
+          in
+            ( Graph.nodeIdRange with_inbounds_linked.graph
+              |> Maybe.map (\(_, end) -> end + 1)
+              |> Maybe.withDefault unusedId -- whaaaaaaaaaaaaaaaaaaaaaaat! how???
+            , with_inbounds_linked
+            )
+        transition_to_graftable : NodeId -> AutomatonGraph -> Transition -> (NodeId, AutomatonGraph)
+        transition_to_graftable unusedId graft_onto transition =
+          case transition.via of
+            ViaCharacter ch ->
+              graft (unusedId + 2) transition graft_onto (characterTransitionToAutomatonGraph unusedId ch)
+            ViaGraphReference ref ->
+              if AutoSet.member ref recursion_stack then
+                -- don't consider it; that would lead us to recursion.
+                ( unusedId
+                , this_graph
+                )
+              else
+                AutoDict.get ref resolutionDict
+                |> Maybe.map
+                  (\referenced_graph ->
+                    let
+                      resulting_graph =
+                        graphTransitionToAutomatonGraph
+                          unusedId
+                          resolutionDict
+                          (renumbered.graphIdentifier :: scope)
+                          (AutoSet.insert renumbered.graphIdentifier recursion_stack)
+                          referenced_graph.root
+                          referenced_graph
+                      split_graph =
+                        resulting_graph
+                        |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
+                      new_unusedId =
+                        Graph.nodeIdRange split_graph.graph
+                        |> Maybe.map (Tuple.second >> (+) 1)
+                        |> Maybe.withDefault -1 -- huh?!!
+                    in
+                      graft new_unusedId transition graft_onto split_graph
+                  )
+                |> Maybe.withDefault -- invalid reference. How on earth did this sneak in??
+                  ( unusedId
+                  , graft_onto
+                  )
+      in
+        AutoSet.toList conn
+        |> List.foldl
+          (\transition (unusedId, g) ->
+            transition_to_graftable unusedId g transition
+          )
+          (unusedId_, this_graph)
     after_graft =
       List.foldl
-        (\(outs, conn) (unusedId, this_graph) ->
-          let
-            graft transition graph_to_graft =
-              let
-                terminals = -- the terminals of the split_graph
-                  Graph.fold
-                    (\ctx acc ->
-                      let
-                        isTerminal =
-                          AutoSet.filter .isFinal ctx.incoming
-                          |> (not << AutoSet.isEmpty)
-                      in
-                        if isTerminal then
-                          ctx.node.id :: acc
-                        else
-                          acc
-                    )
-                    []
-                    graph_to_graft.graph
-                -- now, within this context, I need to graft the split_graph
-                -- into the current graph. So let's begin with Step 1.
-                -- 
-                -- Toss all the nodes into the containing graph;
-                -- and also maintain finality or remove it, as directed.
-                -- Now link outbounds to the terminals, in the containing graph.
-                quoting_graph_with_quoted_nodes =
-                  { graph_to_graft
-                    | graph =
-                        if transition.isFinal then
-                          Graph.fold
-                            (Graph.insert)
-                            this_graph.graph
-                            (Graph.fold (::) [] graph_to_graft.graph)
-                        else
-                          Graph.fold
-                            (\ctx g ->
-                              -- there are no terminal transitions.
-                              Graph.insert
-                                { ctx
-                                  | incoming = AutoSet.map (\t -> t { isFinal = False }) ctx.incoming
-                                  , outgoing = AutoSet.map (\t -> t { isFinal = False }) ctx.outgoing
-                                }
-                                g
-                            )
-                            this_graph
-                            (Graph.fold (::) [] graph_to_graft.graph)
-                  }
-                -- next, link all the outbounds from the quoted-graph.
-                with_outbounds_linked =
-                  Graph.fold
-                    (\terminal_id g ->
-                      case Graph.get terminal_id g of
-                        Nothing ->
-                          -- huh?? This SHOULD be found.
-                          -- I've just added it!
-                          g
-                        Just ctx ->
-                          Graph.insert
-                            { ctx
-                              | outgoing =
-                                  IntDict.uniteWith
-                                    (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
-                                    ctx.outgoing
-                                    outs
-                            }
-                            g
-                    )
-                    quoting_graph_with_quoted_nodes
-                    terminals
-                -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`
-                with_inbounds_linked =
-                  Graph.insert
-                    { with_outbounds_linked
-                      | incoming =
-                          IntDict.uniteWith
-                            (\l r -> l) -- this should NEVER happen! Node IDs are unique…!
-                            with_outbounds_linked.incoming
-                            inbounds
-                    }
-                    with_outbounds_linked
-              in
-                ( Graph.nodeIdRange with_inbounds_linked
-                  |> Maybe.map (\(_, end) -> end + 1)
-                  |> Maybe.withDefault unusedId -- whaaaaaaaaaaaaaaaaaaaaaaat! how???
-                , with_inbounds_linked
-                )
-          in
-          AutoSet.toList conn
-          |> List.map
-            (\transition ->
-              case transition.via of
-                ViaCharacter ch ->
-                  graft transition (characterTransitionToAutomatonGraph unusedId ch)
-                ViaGraphReference ref ->
-                  if AutoSet.member ref recursion_stack then
-                    -- don't consider it; that would lead us to recursion.
-                    ( unusedId
-                    , this_graph
-                    )
-                  else
-                    AutoDict.get ref resolutionDict
-                    |> Maybe.map
-                      (\referenced_graph ->
-                        let
-                          resulting_graph =
-                            graphTransitionToAutomatonGraph
-                              unusedId
-                              resolutionDict
-                              (renumbered.root :: scope)
-                              (AutoSet.insert renumbered.graphIdentifier recursion_stack)
-                              referenced_graph
-                          split_graph =
-                            resulting_graph
-                            |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
-                        in
-                          graft transition split_graph
-                      )
-                    |> Maybe.withDefault -- invalid reference. How on earth did this sneak in??
-                      ( unusedId
-                      , this_graph
-                      )
-            )
-        )
+        convert_and_graft
         (renumbered_unusedId, renumbered)
         outbounds
-    without_src_and_dest =
-      -- Now I can remove the original `src` and `dest`, because I've linked substitutes into their place; and that is sufficient.
-      List.foldl (Graph.remove) after_graft (source_graph_source :: source_graph_dests)
+      |> Tuple.second
+    without_old_dests =
+      -- For `src`, I link to the original; and that is sufficient.
+      -- For `dest`, I can remove the originals because I have rebound all the outgoings
+      -- to the necessary terminals
+      { after_graft
+        | graph =
+            List.foldl
+              (Graph.remove)
+              after_graft.graph
+              source_graph_dests
+      }
     -- convert NFA→DFA, then minimise for the final result.
     minimised_dfa =
-      splitTerminalAndNonTerminal without_src_and_dest
+      splitTerminalAndNonTerminal without_old_dests
       |> nfaToDFA
       |> minimiseNodesByCombiningTransitions
   in
     minimised_dfa
 
-expand : AutomatonGraph -> AutoSet.Set String Uuid -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> Maybe AutomatonGraph
-expand e recursionTracker resolutionDict src =
+expand : AutomatonGraph -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> AutomatonGraph
+expand e resolutionDict src =
   let
-    printSingleOutgoing (d, c) =
-      "→#" ++ String.fromInt d ++ " (" ++ connectionToString c ++ ")"
-    printOutgoing xs =
-      List.map printSingleOutgoing xs |> String.join "; "
-    updatedTracker =
-      if src == e.root then
-        AutoSet.insert e.graphIdentifier recursionTracker
-      else
-        AutoSet.empty Uuid.toString -- there WILL be a concrete link before this.
-    outgoing =
-      Graph.get src e.graph
-      |> Maybe.map (\ctx ->
-        IntDict.toList ctx.outgoing -- List (dest, conn)
-        |> debugLog_ "[nodeToGraph] Outgoing connections" printOutgoing
-      )
-      |> Maybe.withDefault [] -- no source-node, so no outgoing!
-    outgoing_excluding_recursive =
-      outgoing
-      |> List.map
-        (\(dest, conn) ->
-          ( dest
-          , conn
-            |> AutoSet.filter
-              (\t ->
-                case t.via of
-                  ViaGraphReference ref ->
-                    not (AutoSet.member ref updatedTracker)
-                  _ ->
-                    True
-              )
-          )
-        )
-      |> List.filter
-        (\(_, conn) ->
-          not (AutoSet.isEmpty conn)
-        )
-      |> debugLog_ "[nodeToGraph] After filtering out recursive connections" printOutgoing
-    -- okay, let's now take the outgoings and convert them into graphs.
-    outgoingAsGraphs =
-      outgoing_excluding_recursive
-      |> List.map
-        (\(dest, conn) ->
-          connectionToGraphs e updatedTracker resolutionDict src dest conn
-        )
+    unusedId =
+      Graph.nodeIdRange e.graph
+      |> Maybe.map (\(_, end) -> end + 1)
+      |> Maybe.withDefault -1 -- huh?
   in
-    Nothing
+    graphTransitionToAutomatonGraph
+      unusedId
+      resolutionDict
+      [e.graphIdentifier]
+      (AutoSet.singleton Uuid.toString e.graphIdentifier)
+      src
+      e
+    -- printSingleOutgoing (d, c) =
+    --   "→#" ++ String.fromInt d ++ " (" ++ connectionToString c ++ ")"
+    -- printOutgoing xs =
+    --   List.map printSingleOutgoing xs |> String.join "; "
 
 oneTransition : AutomatonGraph -> ExecutionState -> ExecutionState
 oneTransition g executionState =
