@@ -273,7 +273,7 @@ ag_equals g_expected g_actual =
           ( from
           , to
           , AutoSet.toList label
-            |> List.map (.via >> Automata.Data.printableAcceptCondition)
+            |> List.map Automata.Data.transitionToString
           )
         )
       |> List.sortBy (\(_, _, v) -> v)

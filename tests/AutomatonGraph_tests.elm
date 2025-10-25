@@ -311,5 +311,5 @@ node_expansion =
       in
         ag_equals
           (ag "0-!a-1")
-          (expand (ag "0-@0-1") resolution 0 )
+          (expand (ag "0-!@0-1") resolution 0 )
   ]
