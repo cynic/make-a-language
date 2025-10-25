@@ -5,7 +5,7 @@ import Automata.DFA exposing
   , fromAutomatonGraphHelper, minimiseNodesByCombiningTransitions
   , expand
   )
-import Utility exposing (ag, dfa, ag_equals, dfa_equals)
+import Utility exposing (ag, dfa, ag_equals, dfa_equals, mkAutomatonGraphWithUuid, uuid_from_int)
 import ForceDirectedGraph exposing (applyChangesToGraph)
 import AutoDict exposing (Dict)
 import Uuid
@@ -290,4 +290,26 @@ node_expansion =
       ag_equals
         (ag "0-!a-1")
         (expand (ag "0-!a-1") (AutoDict.empty Uuid.toString) 0)
+  , test "One level of simple graph expansion, non-terminal reference" <|
+    \_ ->
+      let
+        uuid0 = uuid_from_int 0
+        ag0 =
+          mkAutomatonGraphWithUuid uuid0 [ (0, "!a", 1) ]
+        resolution = AutoDict.fromList Uuid.toString [ (uuid0, ag0) ]
+      in
+        ag_equals
+          (ag "0-a-1")
+          (expand (ag "0-@0-1") resolution 0 )
+  , test "One level of simple graph expansion, terminal reference" <|
+    \_ ->
+      let
+        uuid0 = uuid_from_int 0
+        ag0 =
+          mkAutomatonGraphWithUuid uuid0 [ (0, "!a", 1) ]
+        resolution = AutoDict.fromList Uuid.toString [ (uuid0, ag0) ]
+      in
+        ag_equals
+          (ag "0-!a-1")
+          (expand (ag "0-@0-1") resolution 0 )
   ]
