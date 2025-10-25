@@ -3,9 +3,12 @@ import Test exposing (..)
 import Automata.DFA exposing
   ( fromAutomatonGraph, splitTerminalAndNonTerminal, nfaToDFA
   , fromAutomatonGraphHelper, minimiseNodesByCombiningTransitions
+  , expand
   )
 import Utility exposing (ag, dfa, ag_equals, dfa_equals)
 import ForceDirectedGraph exposing (applyChangesToGraph)
+import AutoDict exposing (Dict)
+import Uuid
 
 toAG_suite : Test
 toAG_suite =
@@ -273,3 +276,18 @@ fromAG_suite =
         ]
       ]
     ]
+
+node_expansion : Test
+node_expansion =
+  describe "Node expansion"
+  [ test "No expansion needed (no terminals)" <|
+    \_ ->
+      ag_equals
+        (ag "0-a-1")
+        (expand (ag "0-a-1") (AutoDict.empty Uuid.toString) 0)
+  , test "No expansion needed (one terminal)" <|
+    \_ ->
+      ag_equals
+        (ag "0-!a-1")
+        (expand (ag "0-!a-1") (AutoDict.empty Uuid.toString) 0)
+  ]

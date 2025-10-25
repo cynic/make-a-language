@@ -13,6 +13,9 @@ import Time
 import Random.Pcg.Extended as Random
 import Force
 import TypedSvg.Core exposing (Svg)
+import Binary
+import SHA
+import Maybe.Extra
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -709,3 +712,39 @@ distinctHexColors =
 -- that take up 4 actual pixels each, and we have 7 columns, then the
 -- width × height of our displayed area will be 28 x 16.  I think that's
 -- doable.
+
+uuidFromHash : Binary.Bits -> Maybe Uuid
+uuidFromHash =
+  let
+    mask = -- "xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx"
+      "000000000000F000C000000000000000"
+      |> Binary.fromHex
+      |> Binary.not
+    formatBits =
+      Binary.fromHex "00000000000040008000000000000000"
+  in
+    -- take the first 128 bits only
+    Binary.shiftRightZfBy 128
+    >> Binary.dropLeadingZeros
+    -- mask off the format bits, and replace them
+    >> Binary.and mask
+    >> Binary.or formatBits
+    -- convert to the correct string format
+    >> Binary.toHex
+    >> (\s ->
+          let
+            (a, a_rest) = (String.left 8 s, String.dropLeft 8 s)
+            (b, b_rest) = (String.left 4 a_rest, String.dropLeft 4 a_rest)
+            (c, c_rest) = (String.left 4 b_rest, String.dropLeft 4 b_rest)
+            (d, d_rest) = (String.left 4 c_rest, String.dropLeft 4 c_rest)
+            (e, e_rest) = (String.left 12 d_rest, String.dropLeft 12 d_rest)
+          in
+            a ++ "-" ++ b ++ "-" ++ c ++ "-" ++ d ++ "-" ++ e
+      )
+    >> Uuid.fromString
+
+charToUuid : Char -> Maybe Uuid
+charToUuid ch =
+  Binary.fromStringAsUtf8 (String.fromChar ch)
+  |> SHA.sha256
+  |> uuidFromHash

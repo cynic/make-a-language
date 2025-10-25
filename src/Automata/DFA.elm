@@ -21,6 +21,7 @@ import Automata.Debugging exposing (println)
 import Binary
 import SHA
 import Random.Pcg.Extended exposing (initialSeed)
+import Automata.Debugging exposing (printFan)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -35,33 +36,9 @@ import Random.Pcg.Extended exposing (initialSeed)
   - `source_id`: the node-id of the node from which the transition leaves.
   - `source_graph`: the graph containing the `source_id`.
 -}
-graphTransitionToAutomatonGraph : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
-graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack source_id source_graph =
+resolveTransitionFully : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
+resolveTransitionFully start_id resolutionDict scope recursion_stack source_id source_graph =
   let
-    characterTransitionToAutomatonGraph : NodeId -> Char -> AutomatonGraph
-    characterTransitionToAutomatonGraph start ch =
-      { graph =
-          Graph.fromNodesAndEdges
-            [ Graph.Node start (entity start NoEffect)
-            , Graph.Node (start + 1) (entity (start + 1) NoEffect)
-            ]
-            [ Edge start (start + 1)
-                ( AutoSet.singleton transitionToString <|
-                    Transition True (ViaCharacter ch)
-                )
-            ]
-      , root = start
-      , graphIdentifier =
-          Binary.fromStringAsUtf8 (String.fromChar ch)
-          |> SHA.sha256
-          |> uuidFromHash
-          |> Maybe.Extra.withDefaultLazy
-            (\() ->
-              Debug.log "🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
-              Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
-              |> Tuple.first
-            )
-      }
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
@@ -104,6 +81,29 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
             (ins, outs, (ctx.node.id, IntDict.keys ctx.outgoing))
         )
       |> Maybe.withDefault (IntDict.empty, [], (-1, [])) -- no valid source-node???  Whaaaaaaaaaaaat???
+    char_transition_to_graftable : NodeId -> Char -> AutomatonGraph
+    char_transition_to_graftable unusedId ch =
+      { graph =
+          Graph.fromNodesAndEdges
+            [ Graph.Node unusedId (entity unusedId NoEffect)
+            , Graph.Node (unusedId + 1) (entity (unusedId + 1) NoEffect)
+            ]
+            [ Edge unusedId (unusedId + 1)
+                ( AutoSet.singleton transitionToString <|
+                    Transition True (ViaCharacter ch)
+                )
+            ]
+      , root = unusedId
+      , graphIdentifier =
+          charToUuid ch
+          |> Maybe.Extra.withDefaultLazy
+            (\() ->
+              Debug.log "[resolveTransitionFully] 🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
+              Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
+              |> Tuple.first
+            )
+      }
+      |> debugAutomatonGraph "[resolveTransitionFully] character transition to AutomatonGraph"
     renumbered_unusedId =
       Graph.nodeIdRange renumbered.graph
       |> Maybe.map (\(_, end) -> end + 1)
@@ -134,6 +134,7 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
                 identify_terminal_nodes
                 []
                 graph_to_graft.graph
+              |> Debug.log "[resolveTransitionFully] Terminals re:graft"
             -- now, within this context, I need to graft the split_graph
             -- into the current graph. So let's begin with Step 1.
             -- 
@@ -164,21 +165,25 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
             -- next, link all the outbounds from the quoted-graph.
             link_quoted_graph_outbound : NodeId -> Graph.Graph Entity Connection -> Graph.Graph Entity Connection
             link_quoted_graph_outbound terminal_id g =
-              case Graph.get terminal_id g of
-                Nothing ->
-                  -- huh?? This SHOULD be found.
-                  -- I've just added it!
-                  g
-                Just ctx ->
-                  Graph.insert
-                    { ctx
-                      | outgoing =
-                          IntDict.uniteWith
-                            (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
-                            ctx.outgoing
-                            outs
-                    }
-                    g
+              Graph.update terminal_id
+                (\maybe_ctx ->
+                  case maybe_ctx of
+                    Nothing ->
+                      -- something has gone very wrong. I've just added this!!
+                      Debug.log ("[resolveTransitionFully] 🚨 Where is terminal #" ++ String.fromInt terminal_id ++ "? I've just added it!") () |> \_ ->
+                      Nothing
+                    Just ctx ->
+                      debugLog_ ("[resolveTransitionFully] Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
+                      Just <|
+                        { ctx
+                          | outgoing =
+                              IntDict.uniteWith
+                                (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                ctx.outgoing
+                                outs
+                        }
+                )
+                g
             with_outbounds_linked : AutomatonGraph
             with_outbounds_linked =
               { quoting_graph_with_quoted_nodes
@@ -188,12 +193,13 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
                       quoting_graph_with_quoted_nodes.graph
                       terminals
               }
+              |> debugAutomatonGraph "[resolveTransitionFully] with terminals linked to outbounds"
             -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`.
             -- We do this easily by just setting the root to be the same as the `source_graph`
             -- root; and then attaching the outbounds from our "native" root to it.
             with_inbounds_linked : AutomatonGraph
             with_inbounds_linked =
-              Graph.get with_outbounds_linked.root with_outbounds_linked.graph
+              Graph.get graph_to_graft.root with_outbounds_linked.graph
               |> Maybe.map
                 (\root_ctx -> -- this is from the quoted graph
                   { with_outbounds_linked
@@ -217,7 +223,10 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
                             )
                           )
                           with_outbounds_linked.graph
+                        -- and now the native root is irrelevant. We can remove it.
+                        |> Graph.remove graph_to_graft.root
                   }
+                  |> debugAutomatonGraph ("[resolveTransitionFully] with the graft's source in/out (#" ++ String.fromInt graph_to_graft.root ++ ") linked to the original source in/out (#" ++ String.fromInt source_graph_source ++ ")")
                 )
                 |> Maybe.withDefault with_outbounds_linked -- NOOOOOOOOO!! SHOULD NOT BE HERE!!!
           in
@@ -226,14 +235,16 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
               |> Maybe.withDefault unusedId -- whaaaaaaaaaaaaaaaaaaaaaaat! how???
             , with_inbounds_linked
             )
-        transition_to_graftable : NodeId -> AutomatonGraph -> Transition -> (NodeId, AutomatonGraph)
-        transition_to_graftable unusedId graft_onto transition =
+        graph_transition_to_graftable : NodeId -> AutomatonGraph -> Transition -> (NodeId, AutomatonGraph)
+        graph_transition_to_graftable unusedId graft_onto transition =
           case transition.via of
             ViaCharacter ch ->
-              graft (unusedId + 2) transition graft_onto (characterTransitionToAutomatonGraph unusedId ch)
+              char_transition_to_graftable unusedId ch
+              |> graft (unusedId + 2) transition graft_onto
             ViaGraphReference ref ->
               if AutoSet.member ref recursion_stack then
                 -- don't consider it; that would lead us to recursion.
+                println "This ref would lead to recursion; ignoring."
                 ( unusedId
                 , this_graph
                 )
@@ -243,13 +254,15 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
                   (\referenced_graph ->
                     let
                       resulting_graph =
-                        graphTransitionToAutomatonGraph
+                        resolveTransitionFully
                           unusedId
                           resolutionDict
                           (renumbered.graphIdentifier :: scope)
                           (AutoSet.insert renumbered.graphIdentifier recursion_stack)
                           referenced_graph.root
-                          referenced_graph
+                          ( referenced_graph
+                            |> debugAutomatonGraph "[resolveTransitionFully] the referenced graph is"
+                          )
                       split_graph =
                         resulting_graph
                         |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
@@ -268,7 +281,9 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
         AutoSet.toList conn
         |> List.foldl
           (\transition (unusedId, g) ->
-            transition_to_graftable unusedId g transition
+            graph_transition_to_graftable unusedId g transition
+            |> debugLog_ ("[resolveTransitionFully] unused-id after grafting transition " ++ transitionToString transition) (Tuple.first)
+            |> debugLog_ ("[resolveTransitionFully] automaton graph after grafting transition" ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
           )
           (unusedId_, this_graph)
     after_graft =
@@ -288,6 +303,7 @@ graphTransitionToAutomatonGraph start_id resolutionDict scope recursion_stack so
               after_graft.graph
               source_graph_dests
       }
+      |> debugAutomatonGraph "[resolveTransitionFully] After removing old `dest` values"
     -- convert NFA→DFA, then minimise for the final result.
     minimised_dfa =
       splitTerminalAndNonTerminal without_old_dests
@@ -304,7 +320,8 @@ expand e resolutionDict src =
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault -1 -- huh?
   in
-    graphTransitionToAutomatonGraph
+    debugAutomatonGraph ("Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
+    resolveTransitionFully
       unusedId
       resolutionDict
       [e.graphIdentifier]
@@ -453,36 +470,6 @@ stepThroughInitial s resolutionDict g =
     (CanContinue <| Rejected <|
       ExecutionData [] (upcomingAcceptConditions s) g.root [g.graphIdentifier] resolutionDict
     )
-
-uuidFromHash : Binary.Bits -> Maybe Uuid
-uuidFromHash =
-  let
-    mask = -- "xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx"
-      "000000000000F000C000000000000000"
-      |> Binary.fromHex
-      |> Binary.not
-    formatBits =
-      Binary.fromHex "00000000000040008000000000000000"
-  in
-    -- take the first 128 bits only
-    Binary.shiftRightZfBy 128
-    >> Binary.dropLeadingZeros
-    -- mask off the format bits, and replace them
-    >> Binary.and mask
-    >> Binary.or formatBits
-    -- convert to the correct string format
-    >> Binary.toHex
-    >> (\s ->
-          let
-            (a, a_rest) = (String.left 8 s, String.dropLeft 8 s)
-            (b, b_rest) = (String.left 4 a_rest, String.dropLeft 4 a_rest)
-            (c, c_rest) = (String.left 4 b_rest, String.dropLeft 4 b_rest)
-            (d, d_rest) = (String.left 4 c_rest, String.dropLeft 4 c_rest)
-            (e, e_rest) = (String.left 12 d_rest, String.dropLeft 12 d_rest)
-          in
-            a ++ "-" ++ b ++ "-" ++ c ++ "-" ++ d ++ "-" ++ e
-      )
-    >> Uuid.fromString
 
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph
 automatonGraph_union g1 g2 =
