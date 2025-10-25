@@ -19,7 +19,7 @@ mkAutomatonGraph nodeIds edges root =
   { graph =
       Graph.fromNodesAndEdges
         ( nodeIds |> List.map mkNode )
-        ( List.map (\(from, to, chars) -> Edge from to (mkConn dummy_uuid chars)) edges )
+        ( List.map (\(from, to, chars) -> Edge from to (mkConn chars)) edges )
   , graphIdentifier = dummy_uuid
   , root = root
   }

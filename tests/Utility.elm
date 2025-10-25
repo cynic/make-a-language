@@ -1,6 +1,7 @@
 module Utility exposing
   ( ag, dfa, mkDFA_input, mkDFA, ag_equals, dfa_equals, dummyEntity
   , mkConn, mkAutomatonGraph, dummy_uuid, ag_cmp_and_equals
+  , mkAutomatonGraphWithUuid, uuid_from_int
   )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
@@ -27,6 +28,7 @@ import Uuid exposing (Uuid)
 import Automata.Data exposing (Transition)
 import Random.Pcg.Extended as Random
 import Automata.Verification
+import Random.Pcg.Extended exposing (initialSeed, step)
 
 dummy_uuid : Uuid
 dummy_uuid = Tuple.first <| Random.step Uuid.generator <| Random.initialSeed 1 [2, 3, 4, 5]
@@ -80,13 +82,13 @@ mkDFA transitions finals =
   , finals = Set.fromList finals
   }
 
+uuid_from_int : Int -> Uuid
+uuid_from_int i =
+  initialSeed i [] |> step Uuid.generator |> Tuple.first
 
-mkConn : Uuid -> String -> Connection
-mkConn uuid s =
+mkConn : String -> Connection
+mkConn s =
   let
-    -- at one point, `finality` was more complex. So I had this function to make that
-    -- easier to encode. For now, it's simpler again, so this is just identity.
-    uuid_dict f = f
     uuid_helper list finality acc =
       case List.splitAt 36 list of
         (uuidChars, rest) ->
@@ -95,28 +97,41 @@ mkConn uuid s =
           else
             case Uuid.fromString (String.fromList uuidChars) of
               Just ref ->
-                helper rest (AutoSet.insert (Transition (uuid_dict finality) (ViaGraphReference ref)) acc)
+                helper rest (AutoSet.insert (Transition finality (ViaGraphReference ref)) acc)
               Nothing ->
                 acc -- not a valid UUIDv4; end it here.
     
     helper xs acc =
+      let
+        put finality via =
+          AutoSet.insert (Transition finality via) acc
+          |> AutoSet.remove (Transition (not finality) via)
+      in
       case xs of
+        '@'::ch::rest ->
+          case String.fromChar ch |> String.toInt of
+            Just i ->
+              ViaGraphReference (uuid_from_int i) |> put False |> helper rest
+            Nothing ->
+              ViaCharacter '@' |> put False |> helper (ch::rest)
+        '!'::'@'::ch::rest ->
+          case String.fromChar ch |> String.toInt of
+            Just i ->
+              ViaGraphReference (uuid_from_int i) |> put True |> helper rest
+            Nothing ->
+              ViaCharacter '!' |> put False |> helper ('@'::ch::rest)
         '+'::'+'::rest ->
-          helper rest (AutoSet.insert (Transition (uuid_dict False) (ViaCharacter '+')) acc
-          |> AutoSet.remove (Transition (uuid_dict True) (ViaCharacter '+')))
+          ViaCharacter '+' |> put False |> helper rest
         '+'::rest ->
           uuid_helper rest False acc
         '!'::'+'::'+'::rest ->
-          helper rest (AutoSet.insert (Transition (uuid_dict True) (ViaCharacter '+')) acc
-          |> AutoSet.remove (Transition (uuid_dict False) (ViaCharacter '+')))
+          ViaCharacter '+' |> put True |> helper rest
         '!'::'+'::rest ->
           uuid_helper rest True acc
         '!'::ch::rest ->
-          helper rest (AutoSet.insert (Transition (uuid_dict True) (ViaCharacter ch)) acc
-          |> AutoSet.remove (Transition (uuid_dict False) (ViaCharacter ch)))
+          ViaCharacter ch |> put True |> helper rest
         ch::rest ->
-          helper rest (AutoSet.insert (Transition (uuid_dict False) (ViaCharacter ch)) acc
-          |> AutoSet.remove (Transition (uuid_dict True) (ViaCharacter ch)))
+          ViaCharacter ch |> put False |> helper rest
         [] -> acc
   in
     helper (String.toList s) (AutoSet.empty transitionToString)
@@ -131,9 +146,9 @@ mkAutomatonGraphWithValues uuid valueFunction ts =
             (\item ->
               case item of
                 Nothing ->
-                  Just (mkConn uuid s)
+                  Just (mkConn s)
                 Just existing ->
-                  Just <| AutoSet.union existing (mkConn uuid s)
+                  Just <| AutoSet.union existing (mkConn s)
             )
             acc
         )
@@ -165,6 +180,10 @@ mkAutomatonGraphWithValues uuid valueFunction ts =
               (src, _, _)::_ -> src
               _ -> 0
         }
+
+mkAutomatonGraphWithUuid : Uuid -> List (NodeId, String, NodeId) -> AutomatonGraph
+mkAutomatonGraphWithUuid uuid =
+  mkAutomatonGraphWithValues uuid (dummyEntity)
 
 mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph
 mkAutomatonGraph =
