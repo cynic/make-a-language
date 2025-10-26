@@ -317,6 +317,17 @@ node_expansion =
         ag_equals
           (ag "0-!a-1")
           (expand (ag "0-!@0-1") resolution 0 )
+  , test "One level of simple graph expansion, terminal, self-recursive" <|
+    \_ ->
+      let
+        uuid0 = uuid_from_int 0
+        ag0 =
+          mkAutomatonGraphWithUuid uuid0 [ (0, "!a", 1) ]
+        resolution = AutoDict.fromList Uuid.toString [ (uuid0, ag0) ]
+      in
+        ag_equals
+          (ag "0-!a-0")
+          (expand (ag "0-!@0-0") resolution 0 )
   , test "One level of simple graph expansion, with an outbound, non-terminal reference" <|
     \_ ->
       let

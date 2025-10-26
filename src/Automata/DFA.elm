@@ -42,8 +42,8 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
-      |> Tuple.mapSecond stretch
-    (inbounds, outbounds, (source_graph_source, source_graph_dests)) =
+      |> (\(a,b) -> debugAutomatonGraph "[resolveTransitionFully] renumbered" b |> \_ -> (a, b))
+    (outbounds, (source_graph_source, source_graph_dests)) =
       IntDict.get source_id source_graph_nodemap
       |> Maybe.andThen
         (\renumbered_source ->
@@ -52,10 +52,6 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       |> Maybe.map
         (\ctx ->
           let
-            -- we have one source-node, so this is easy.
-            ins : IntDict Connection
-            ins =
-              ctx.incoming
             -- that source node can have multiple destination nodes.
             -- And for each destination node, we want the per-connection
             -- outbounds.
@@ -69,7 +65,8 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                   Graph.get k renumbered.graph
                   |> Maybe.map
                     (\dest_ctx ->
-                      ( dest_ctx.outgoing -- this is the outgoing connections from that destination node.
+                      ( k -- this is the destination node
+                      , dest_ctx.outgoing -- this is the outgoing connections from that destination node.
                       , conn -- this is the connection leading to that destination node.
                       )
                     )
@@ -78,39 +75,58 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             -- After all, I will be replacing them with a graft.
             -- So I can get rid of them here.
           in
-            (ins, outs, (ctx.node.id, IntDict.keys ctx.outgoing))
-        )
-      |> Maybe.withDefault (IntDict.empty, [], (-1, [])) -- no valid source-node???  Whaaaaaaaaaaaat???
-    char_transition_to_graftable : NodeId -> Char -> AutomatonGraph
-    char_transition_to_graftable unusedId ch =
-      { graph =
-          Graph.fromNodesAndEdges
-            [ Graph.Node unusedId (entity unusedId NoEffect)
-            , Graph.Node (unusedId + 1) (entity (unusedId + 1) NoEffect)
-            ]
-            [ Edge unusedId (unusedId + 1)
-                ( AutoSet.singleton transitionToString <|
-                    Transition True (ViaCharacter ch)
-                )
-            ]
-      , root = unusedId
-      , graphIdentifier =
-          charToUuid ch
-          |> Maybe.Extra.withDefaultLazy
-            (\() ->
-              Debug.log "[resolveTransitionFully] 🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
-              Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
-              |> Tuple.first
+            ( outs
+            , ( ctx.node.id |> Debug.log "[resolveTransitionFully] source-graph source-node id"
+              , IntDict.keys ctx.outgoing |> Debug.log "[resolveTransitionFully] source-graph destination-node ids"
+              )
             )
-      }
-      |> debugAutomatonGraph "[resolveTransitionFully] character transition to AutomatonGraph"
+        )
+      |> Maybe.withDefault ([], (-1, [])) -- no valid source-node???  Whaaaaaaaaaaaat???
+    char_transition_to_graftable : NodeId -> NodeId -> Char -> (NodeId, AutomatonGraph)
+    char_transition_to_graftable unusedId source_graph_dest ch =
+      let
+        t =
+          AutoSet.singleton transitionToString <|
+            Transition True (ViaCharacter ch)
+        next_unusedId =
+          if source_graph_dest == source_graph_source then
+            unusedId + 1
+          else
+            unusedId + 2
+        graph =
+          if source_graph_dest == source_graph_source then
+            Graph.fromNodesAndEdges
+              [ Graph.Node unusedId (entity unusedId NoEffect) ]
+              [ Edge unusedId unusedId t ]
+          else
+            Graph.fromNodesAndEdges
+              [ Graph.Node unusedId (entity unusedId NoEffect)
+              , Graph.Node (unusedId + 1) (entity (unusedId + 1) NoEffect)
+              ]
+              [ Edge unusedId (unusedId + 1) t
+              ]
+      in
+        ( next_unusedId
+        , { graph =graph
+          , root = unusedId
+          , graphIdentifier =
+              charToUuid ch
+              |> Maybe.Extra.withDefaultLazy
+                (\() ->
+                  Debug.log "[resolveTransitionFully] 🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
+                  Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
+                  |> Tuple.first
+                )
+          }
+          |> debugAutomatonGraph "[resolveTransitionFully] character transition to AutomatonGraph"
+        )
     renumbered_unusedId =
       Graph.nodeIdRange renumbered.graph
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault 1 --- uhh, what now?
     -- get the respective graphs for each of the outgoing transitions
-    convert_and_graft : (IntDict Connection, Connection) -> (NodeId, AutomatonGraph) -> (NodeId, AutomatonGraph)
-    convert_and_graft (outs, conn) (unusedId_, this_graph) =
+    convert_and_graft : (NodeId, IntDict Connection, Connection) -> (NodeId, AutomatonGraph) -> (NodeId, AutomatonGraph)
+    convert_and_graft (source_graph_dest, outs, conn) (unusedId_, this_graph) =
       let
         identify_terminal_nodes : NodeContext Entity Connection -> List NodeId -> List NodeId
         identify_terminal_nodes ctx acc =
@@ -239,8 +255,11 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
         graph_transition_to_graftable unusedId graft_onto transition =
           case transition.via of
             ViaCharacter ch ->
-              char_transition_to_graftable unusedId ch
-              |> graft (unusedId + 2) transition graft_onto
+              let
+                (next_unusedId, graftable) =
+                  char_transition_to_graftable unusedId source_graph_dest ch
+              in
+                graft next_unusedId transition graft_onto graftable
             ViaGraphReference ref ->
               if AutoSet.member ref recursion_stack then
                 -- don't consider it; that would lead us to recursion.
@@ -302,7 +321,9 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             List.foldl
               (Graph.remove)
               after_graft.graph
-              source_graph_dests
+              -- the source node might be recursive (source = dest).
+              -- Avoid removing the source node.
+              (source_graph_dests |> List.filter ((/=) source_graph_source))
       }
       |> debugAutomatonGraph "[resolveTransitionFully] After removing old `dest` values"
     -- convert NFA→DFA, then minimise for the final result.
