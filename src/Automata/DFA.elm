@@ -266,6 +266,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                       split_graph =
                         resulting_graph
                         |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
+                        |> debugAutomatonGraph "[resolveTransitionFully] post-split, the graph to graft is"
                       new_unusedId =
                         Graph.nodeIdRange split_graph.graph
                         |> Maybe.map (Tuple.second >> (+) 1)
@@ -320,7 +321,8 @@ expand e resolutionDict src =
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault -1 -- huh?
   in
-    debugAutomatonGraph ("Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
+    debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (Uuid.toString k, printAutomatonGraph v))) resolutionDict |> \_ ->
+    debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
     resolveTransitionFully
       unusedId
       resolutionDict

@@ -30,9 +30,10 @@ printAutomatonGraph g =
     roundABit x = toFloat (round (x * 100.0)) / 100.0 
     printNode : Entity -> Maybe String
     printNode n =
-      Just <|
-        "@" ++ String.fromFloat (roundABit n.x) ++
-        "," ++ String.fromFloat (roundABit n.y)
+      Nothing
+      -- Just <|
+      --   "@" ++ String.fromFloat (roundABit n.x) ++
+      --   "," ++ String.fromFloat (roundABit n.y)
   in
     ("📍" ++ String.fromInt g.root ++ " " ++ graphToString printNode g.graph)
 
