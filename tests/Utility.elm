@@ -274,6 +274,7 @@ ag_equals g_expected g_actual =
           , to
           , AutoSet.toList label
             |> List.map Automata.Data.transitionToString
+            |> List.sort
           )
         )
       |> List.sortBy (\(_, _, v) -> v)
@@ -342,7 +343,7 @@ ag_equals g_expected g_actual =
               Result.andThen
                 (\m ->
                   if a_label /= e_label then
-                    Err <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                    Err <| "Ⅰ Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
                   else
                     -- now I know that e_from is correlated with a_from, and
                     -- e_to is correlated with a_to
@@ -355,7 +356,9 @@ ag_equals g_expected g_actual =
                   partition xs_rest ys_rest newSeen m
                 ( One (e_from, e_to, e_label)::rest_e, One (a_from, a_to, a_label)::rest_a) ->
                   if a_label /= e_label then
-                    Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                    Debug.log "`expected` transitions" e_label |> \_ ->
+                    Debug.log "`actual` transitions" a_label |> \_ ->
+                    Just <| "Ⅱ Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
                   else
                     -- now I know that e_from is correlated with a_from, and
                     -- e_to is correlated with a_to
@@ -371,7 +374,9 @@ ag_equals g_expected g_actual =
                   -- the correct correlation.  So it's going to be
                   -- backtracking time for us.
                   if List.length es /= List.length a_s then
-                    Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                    Debug.log "`expected` transitions" es |> \_ ->
+                    Debug.log "`actual` transitions" a_s |> \_ ->
+                    Just <| "Ⅲ Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
                   else
                     let
                       allCombinations =
@@ -413,7 +418,7 @@ ag_equals g_expected g_actual =
                         e::_ -> Just e
                 -- this next case covers: ( [], _ ); ( _, [] ); (One _::_, Many _::_); and (Many _::_, One _::_)
                 _ ->
-                  Just <| "Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
+                  Just <| "Ⅳ Node #" ++ String.fromInt checking_e ++ " (in expected) / #" ++ String.fromInt checking_a ++ " (in actual) have differing transitions out."
           in
             -- now, see if I can match them up.
             pair_up gathered_xs gathered_ys mapping

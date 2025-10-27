@@ -339,7 +339,8 @@ node_expansion =
       in
         ag_equals
           -- (ag "0-a-1 1-a-1 1-!x-2")
-          (ag "0-a-1 0-!x-2 1-@0-0") -- again, not smallest, but… technically correct!
+          -- (ag "0-a-1 0-!x-2 1-@0-0") -- again, not smallest, but… technically correct!
+          (ag "2-@0-2 2-a-7 2-!x-9 7-@0-2") -- even larger 😔…
           (expand (ag "0-@0-0 0-!x-1") resolution 0 )
   , test "One level of simple graph expansion, with an outbound, non-terminal reference" <|
     \_ ->
@@ -382,16 +383,16 @@ node_expansion =
       let
         uuid0 = uuid_from_int 0
         positive =
-          mkAutomatonGraphWithUuid uuid0 [ (0, "!1!2", 0) ]
+          mkAutomatonGraphWithUuid uuid0 [ (0, "!1!2", 0) ] -- 48c
         uuid1 = uuid_from_int 1
         digit =
-          mkAutomatonGraphWithUuid uuid1 [ (0, "!0!1!2", 0) ]
+          mkAutomatonGraphWithUuid uuid1 [ (0, "!0!1!2", 0) ] -- bc1
         uuid2 = uuid_from_int 2
         integer =
           mkAutomatonGraphWithUuid uuid2 [ (0, "!0", 1), (0, "!@0", 2), (2, "!@1", 2) ]
         resolution = AutoDict.fromList Uuid.toString [ (uuid0, positive), (uuid1, digit), (uuid2, integer) ]
       in
         ag_equals
-          (ag "0-!0-1 0-!1!2-2 2-!@1-2")
+          (ag "0-0-1 0-!1!2-2 2-!1!2-2 2-!@1-3 3-!@1-3")
           (expand (ag "0-0-1 0-!@0-2 2-!@1-2") resolution 0 )
   ]

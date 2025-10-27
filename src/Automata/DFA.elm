@@ -125,7 +125,40 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       Graph.nodeIdRange renumbered.graph
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault 1 --- uhh, what now?
-    -- get the respective graphs for each of the outgoing transitions
+    -- I have all the relevat data. So now we want to remove the old connections from `src`.
+    -- If there is any node that, after this, does not have any incoming edges,
+    -- then I can remove that node entirely.
+    -- So, let me do this as a two-step thing.
+    -- First, I'll visit the `dest` nodes and remove those connections.
+    -- If I find a `dest` that does not have any incoming edges, then I will
+    -- add it to a list for removal.
+    (dest_nodes_to_check, after_dest_connections_removed) =
+      List.foldl
+        (\dest_nodeid (acc, g) ->
+          case Graph.get dest_nodeid g.graph of
+            Nothing ->
+              -- huh?  Oh well, though; I'll take it!
+              ( acc, g )
+            Just dest_ctx ->
+              let
+                new_incoming =
+                  IntDict.filter (\k _ -> k /= source_graph_source) dest_ctx.incoming
+                  |> debugLog_ (dbg_prefix ++ "Removed #" ++ String.fromInt source_graph_source ++ " incoming from dest #" ++ String.fromInt dest_ctx.node.id ++ ". Remaining incoming connections") printFan
+                new_graph =
+                  { g
+                    | graph =
+                        Graph.insert { dest_ctx | incoming = new_incoming } g.graph
+                  }
+              in
+                if IntDict.isEmpty new_incoming then
+                  ( dest_nodeid :: acc, new_graph )
+                else
+                  ( acc, new_graph )
+        )
+        ([], renumbered)
+        -- Avoid removing the source node.
+        source_graph_dests
+    -- get the respective graphs for each of the outgoing transitions, and graft them on
     convert_and_graft : (NodeId, IntDict Connection, Connection) -> (NodeId, AutomatonGraph) -> (NodeId, AutomatonGraph)
     convert_and_graft (source_graph_dest, outs, conn) (unusedId_, this_graph) =
       let
@@ -164,8 +197,10 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             quoted_nodes : List (NodeContext Entity Connection)
             quoted_nodes =
               if transition.isFinal then
+                println (dbg_prefix ++ "Transferring quoted-graph nodes as-is.")
                 Graph.fold (::) [] graph_to_graft.graph
               else
+                println (dbg_prefix ++ "Transferring quoted-graph nodes as non-terminals; host-dest is non-terminal.")
                 Graph.fold
                   (\ctx acc ->
                     -- there are no terminal transitions.
@@ -209,25 +244,25 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                 -- this is a self-recursive link
                 -- if there is a recursive loop, then:
                 -- 1. Remove the recursive loop from the outgoing & incoming of the graph.
-                let
-                  graft_onto_without_selfref =
-                    { quoting_graph_with_quoted_nodes
-                      | graph =
-                          Graph.update source_graph_source
-                            (Maybe.map (\ctx ->
-                              { ctx
-                                | incoming = IntDict.remove source_graph_source ctx.incoming
-                                , outgoing = IntDict.remove source_graph_source ctx.outgoing
-                              }
-                            ))
-                            quoting_graph_with_quoted_nodes.graph
-                    }
-                    |> debugAutomatonGraph (dbg_prefix ++ "Connection is self-recursive. Removing self-reference from host graph source-node.")
-                in
+                -- let
+                --   graft_onto_without_selfref =
+                --     { quoting_graph_with_quoted_nodes
+                --       | graph =
+                --           Graph.update source_graph_source
+                --             (Maybe.map (\ctx ->
+                --               { ctx
+                --                 | incoming = IntDict.remove source_graph_source ctx.incoming
+                --                 , outgoing = IntDict.remove source_graph_source ctx.outgoing
+                --               }
+                --             ))
+                --             quoting_graph_with_quoted_nodes.graph
+                --     }
+                --     |> debugAutomatonGraph (dbg_prefix ++ "Connection is self-recursive. Removing self-reference from host graph source-node.")
+                -- in
                 -- 2. The "forward" direction is now resolved; graft in the "backward" direction as well.
                 List.foldl
                   (link_quoted_graph_outbound)
-                  graft_onto_without_selfref
+                  quoting_graph_with_quoted_nodes
                   terminals
                 |> debugAutomatonGraph (dbg_prefix ++ "self-ref: with terminals linked to outbounds")
               else
@@ -329,29 +364,43 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
           (\transition (unusedId, g) ->
             graph_transition_to_graftable unusedId g transition
             |> debugLog_ (dbg_prefix ++ "unused-id after grafting transition " ++ transitionToString transition) (Tuple.first)
-            |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transition" ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
+            |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transition " ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
           )
           (unusedId_, this_graph)
     after_graft =
       List.foldl
         convert_and_graft
-        (renumbered_unusedId, renumbered)
+        (renumbered_unusedId, after_dest_connections_removed)
         outbounds
       |> Tuple.second
     without_old_dests =
       -- For `src`, I link to the original; and that is sufficient.
-      -- For `dest`, I can remove the originals because I have rebound all the outgoings
-      -- to the necessary terminals
+      -- For `dest`, I can remove some of the originals because I have rebound all the outgoings
+      -- to the necessary terminals.  
       { after_graft
         | graph =
             List.foldl
-              (Graph.remove)
+              (\dest_nodeid g ->
+                  Graph.update dest_nodeid
+                    (Maybe.andThen
+                      (\dest_ctx ->
+                          if IntDict.isEmpty dest_ctx.outgoing then
+                            Nothing -- remove it!
+                          else
+                            Just dest_ctx -- keep it.
+                      )
+                    )
+                    g
+              )
               after_graft.graph
               -- the source node might be recursive (source = dest).
               -- Avoid removing the source node.
-              (source_graph_dests |> List.filter ((/=) source_graph_source))
+              ( dest_nodes_to_check
+                |> List.filter ((/=) source_graph_source)
+                |> Debug.log (dbg_prefix ++ "`dest` nodes to check for the source-node #" ++ String.fromInt source_graph_source ++ " are")
+              )
       }
-      |> debugAutomatonGraph (dbg_prefix ++ "After removing old `dest` values")
+      |> debugAutomatonGraph (dbg_prefix ++ "After removing the necessary `dest` values")
     -- convert NFA→DFA, then minimise for the final result.
     minimised_dfa =
       splitTerminalAndNonTerminal without_old_dests
@@ -1441,13 +1490,13 @@ minimisation_merge head other g =
               (\_ -> AutoSet.union)
               (redirectFan other head headNode.incoming {- |> debugFan_ "[minimisation_merge] headNode.incoming (redir)" -})
               (redirectFan other head otherNode.incoming {- |> debugFan_ "[minimisation_merge] otherNode.incoming (redir)"-})
-            |> debugFan_ "[minimisation_merge] merged incoming"
+            -- |> debugFan_ "[minimisation_merge] merged incoming"
           updatedOutgoing =
             IntDict.uniteWith
               (\_ -> AutoSet.union)
               (redirectFan other head headNode.outgoing {- |> debugFan_ "[minimisation_merge] headNode.outgoing (redir)" -})
               (redirectFan other head otherNode.outgoing {- |> debugFan_ "[minimisation_merge] otherNode.outgoing (redir)" -})
-            |> debugFan_ "[minimisation_merge] merged outgoing"
+            -- |> debugFan_ "[minimisation_merge] merged outgoing"
         in
           { g
             | graph =
@@ -1567,7 +1616,8 @@ minimiseNodesByCombiningTransitions g_ =
       let
         redirected o id =
           IntDict.toList o
-          --|> Debug.log ("[minimiseNodes→fanOutEquals] outgoing of #" ++ String.fromInt id)
+          |> List.map (\(k, v) -> (k, connectionToString v))
+          |> Debug.log ("[minimiseNodes→fanOutEquals] outgoing of #" ++ String.fromInt id)
       in
       redirected a.outgoing a.node.id == redirected b.outgoing b.node.id
       |> Debug.log ("[minimiseNodes→fanOutEquals] Are #" ++ String.fromInt a.node.id ++ " and #" ++ String.fromInt b.node.id ++ " equal?")
@@ -1676,7 +1726,9 @@ minimiseNodesByCombiningTransitions g_ =
   in
     classify_all
       (Set.toList ending_nodes)
-      (g_ |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph" )
+      ( g_
+        |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph"
+      )
     |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
 
 toUnminimisedAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
@@ -1891,7 +1943,11 @@ splitTerminalAndNonTerminal g =
     -- For each node, determine if it needs to be split
     nodesToSplit =
       Graph.nodeIds g.graph
-      |> List.filterMap (\id -> Graph.get id g.graph |> Debug.log ("[splitTerminalAndNonTerminal] Node for #" ++ String.fromInt id))
+      |> List.filterMap
+        (\id ->
+          Graph.get id g.graph
+          -- |> Debug.log ("[splitTerminalAndNonTerminal] Node for #" ++ String.fromInt id)
+        )
       |> List.filter (\node ->
         let
           incomingTransitions =
@@ -1905,20 +1961,20 @@ splitTerminalAndNonTerminal g =
             |> Maybe.withDefault []
           allIncoming =
             outgoingRecursive ++ incomingTransitions
-            |> Debug.log ("[splitTerminalAndNonTerminal] Incoming transitions to " ++ String.fromInt node.node.id)
+            -- |> Debug.log ("[splitTerminalAndNonTerminal] Incoming transitions to " ++ String.fromInt node.node.id)
           hasTerminal = List.any isTerminal allIncoming
           hasNonTerminal = List.any isNonTerminal allIncoming
         in
           hasTerminal && hasNonTerminal
       )
-      |> debugLog_ "[splitTerminalAndNonTerminal] nodes to split" (List.map (.node >> .id))
+      -- |> debugLog_ "[splitTerminalAndNonTerminal] nodes to split" (List.map (.node >> .id))
 
     -- Build a mapping from node id to new split node id (for non-terminal transitions)
     splitMap : Dict NodeId NodeId
     splitMap =
       List.indexedMap (\i node -> (node.node.id, nextId + i)) nodesToSplit
       |> Dict.fromList
-      |> Debug.log "[splitTerminalAndNonTerminal] Nodeid → split nodeid mapping (for non-terminal transitions)"
+      -- |> Debug.log "[splitTerminalAndNonTerminal] Nodeid → split nodeid mapping (for non-terminal transitions)"
 
     -- Helper to update incoming edges for all nodes
     updateIncoming : List (NodeContext Entity Connection) -> List (NodeContext Entity Connection)
@@ -1947,7 +2003,7 @@ splitTerminalAndNonTerminal g =
                             )
                         )
                         (IntDict.empty, IntDict.empty)
-                    |> debugLog_ ("[splitTerminalAndNonTerminal] Partitioned (terminal, nonterminal) incoming transitions for #" ++ String.fromInt node.node.id) (\(a,b) -> (IntDict.map (\_ v -> AutoSet.toList v) a |> IntDict.toList, IntDict.map (\_ v -> AutoSet.toList v) b |> IntDict.toList))
+                    -- |> debugLog_ ("[splitTerminalAndNonTerminal] Partitioned (terminal, nonterminal) incoming transitions for #" ++ String.fromInt node.node.id) (\(a,b) -> (IntDict.map (\_ v -> AutoSet.toList v) a |> IntDict.toList, IntDict.map (\_ v -> AutoSet.toList v) b |> IntDict.toList))
 
                   -- The outgoing edges are the same for both nodes
                   outgoing = node.outgoing
@@ -2043,7 +2099,7 @@ splitTerminalAndNonTerminal g =
     -- exhibit such behaviour: finality is encoded in transitions, so AT LEAST ONE
     -- transition MUST be taken for acceptance to occur.
     |> stretch
-    |> Automata.Debugging.debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
+    -- |> Automata.Debugging.debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
 
 
 ellipsis : Int -> String -> String
@@ -2156,7 +2212,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             (\t d ->
               case AutoDict.get t.via d of
                 Nothing ->
-                  Debug.log ("Inserting first " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
+                  -- Debug.log ("[nfaToDFA] Inserting first " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   Graph.get destId g.graph
                   |> Maybe.map
                     (\{node} ->
@@ -2164,7 +2220,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                     )
                   |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
                 Just ((f2, list), v) ->
-                  Debug.log ("Inserting another " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
+                  -- Debug.log ("[nfaToDFA] Inserting another " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   -- if any of the transitions is final, then the created state will be final
                   AutoDict.insert t.via ((max (if (.isFinal t) then 1 else 0) f2, normalizeSet (destId::list)), v) d
             )
@@ -2194,7 +2250,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         )
         Dict.empty
         g.graph
-      |> debugTable_ "[nfaToDFA] Initial table"
+      -- |> debugTable_ "[nfaToDFA] Initial table"
 
     -- Build the complete table by adding rows for multi-element dest-sets
     buildCompleteTable : Table -> Table
@@ -2232,7 +2288,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     completeTable : Table
     completeTable =
       buildCompleteTable initialTable
-      |> debugTable_ "[nfaToDFA] Complete table"
+      -- |> debugTable_ "[nfaToDFA] Complete table"
 
     -- Step 1: Merge states with identical cell values
     rename : StateIdentifier -> Set StateIdentifier -> Table -> Table
@@ -2279,10 +2335,10 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
               sourceSets_to_merge =
                 List.map Tuple.first tail
                 |> Set.fromList
-                |> debugLog_ "[nfaToDFA] source-sets to merge" (Set.map stateIdentifierToString >> Debug.toString)
+                -- |> debugLog_ "[nfaToDFA] source-sets to merge" (Set.map stateIdentifierToString >> Debug.toString)
               without_merged =
                 Set.foldl Dict.remove table sourceSets_to_merge
-                |> debugTable_ "[nfaToDFA] After removals"
+                -- |> debugTable_ "[nfaToDFA] After removals"
             in
               rename (Tuple.first head) sourceSets_to_merge without_merged
 
@@ -2330,7 +2386,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
           |> List.foldl mergeIdenticalStates completeTable
       in
         groupedByTransitions
-        |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
+        -- |> debugTable_ "[nfaToDFA] Identical cell values have been merged"
 
     -- Step 2: Remove unreachable states (keep only those reachable from root)
     removeUnreachableStates : Table -> Table
@@ -2369,7 +2425,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     reachableTable : Table
     reachableTable =
       removeUnreachableStates mergedTable
-      |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
+      -- |> debugTable_ "[nfaToDFA] Unreachable cell values have been removed"
 
     -- Step 3: Rename rows using maxId
     finalTable =
@@ -2390,7 +2446,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             renameMapping
       in
         renamedTable
-        |> debugTable_ "[nfaToDFA] Rows have been renamed"
+        -- |> debugTable_ "[nfaToDFA] Rows have been renamed"
 
     -- Build the new DFA graph using the Graph API
     -- Create the new graph
@@ -2458,7 +2514,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     , graphIdentifier = g.graphIdentifier
     , root = g.root
     }
-    |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
+    -- |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
 fromAutomatonGraphHelper : AutomatonGraph -> DFARecord {}
 fromAutomatonGraphHelper g =
