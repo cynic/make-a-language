@@ -39,10 +39,11 @@ import Automata.Debugging exposing (printFan)
 resolveTransitionFully : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
 resolveTransitionFully start_id resolutionDict scope recursion_stack source_id source_graph =
   let
+    dbg_prefix = "[resolveTransitionFully " ++ (Uuid.toString source_graph.graphIdentifier |> String.left 4) ++ "…] "
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
-      |> (\(a,b) -> debugAutomatonGraph "[resolveTransitionFully] renumbered" b |> \_ -> (a, b))
+      |> (\(a,b) -> debugAutomatonGraph (dbg_prefix ++ "renumbered") b |> \_ -> (a, b))
     (outbounds, (source_graph_source, source_graph_dests)) =
       IntDict.get source_id source_graph_nodemap
       |> Maybe.andThen
@@ -76,8 +77,8 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             -- So I can get rid of them here.
           in
             ( outs
-            , ( ctx.node.id |> Debug.log "[resolveTransitionFully] source-graph source-node id"
-              , IntDict.keys ctx.outgoing |> Debug.log "[resolveTransitionFully] source-graph destination-node ids"
+            , ( ctx.node.id |> Debug.log (dbg_prefix ++ "source-graph source-node id")
+              , IntDict.keys ctx.outgoing |> Debug.log (dbg_prefix ++ "source-graph destination-node ids")
               )
             )
         )
@@ -113,12 +114,12 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               charToUuid ch
               |> Maybe.Extra.withDefaultLazy
                 (\() ->
-                  Debug.log "[resolveTransitionFully] 🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
+                  Debug.log (dbg_prefix ++ "🚨 INTERNAL ERROR: Failed to generate a UUID") () |> \_ ->
                   Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
                   |> Tuple.first
                 )
           }
-          |> debugAutomatonGraph "[resolveTransitionFully] character transition to AutomatonGraph"
+          |> debugAutomatonGraph (dbg_prefix ++ "character transition to AutomatonGraph")
         )
     renumbered_unusedId =
       Graph.nodeIdRange renumbered.graph
@@ -143,14 +144,17 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             else
               acc
         graft : NodeId -> Transition -> AutomatonGraph -> AutomatonGraph -> (NodeId, AutomatonGraph)
-        graft unusedId transition graft_onto graph_to_graft =
+        graft unusedId transition graft_onto unstretched_graph_to_graft =
           let
+            -- ensure that every graph has at least 2 nodes in it… or 0, if you're insane.
+            graph_to_graft = stretch unstretched_graph_to_graft
             terminals = -- the terminals of the split_graph
+              debugAutomatonGraph (dbg_prefix ++ "graph to graft onto is") graft_onto |> \_ ->
               Graph.fold
                 identify_terminal_nodes
                 []
                 graph_to_graft.graph
-              |> Debug.log "[resolveTransitionFully] Terminals re:graft"
+              |> Debug.log (dbg_prefix ++ "Terminals re:graft")
             -- now, within this context, I need to graft the split_graph
             -- into the current graph. So let's begin with Step 1.
             -- 
@@ -178,38 +182,60 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                 | graph =
                     List.foldl (Graph.insert) graft_onto.graph quoted_nodes
               }
-            -- next, link all the outbounds from the quoted-graph.
-            link_quoted_graph_outbound : NodeId -> Graph.Graph Entity Connection -> Graph.Graph Entity Connection
-            link_quoted_graph_outbound terminal_id g =
-              Graph.update terminal_id
-                (\maybe_ctx ->
-                  case maybe_ctx of
-                    Nothing ->
-                      -- something has gone very wrong. I've just added this!!
-                      Debug.log ("[resolveTransitionFully] 🚨 Where is terminal #" ++ String.fromInt terminal_id ++ "? I've just added it!") () |> \_ ->
-                      Nothing
-                    Just ctx ->
-                      debugLog_ ("[resolveTransitionFully] Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
-                      Just <|
+            -- link all the outbounds from the quoted-graph.
+            link_quoted_graph_outbound : NodeId -> AutomatonGraph -> AutomatonGraph
+            link_quoted_graph_outbound terminal_id ag =
+              { ag
+                | graph =
+                    Graph.update terminal_id
+                      (Maybe.map (\ctx ->
+                        debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
                         { ctx
                           | outgoing =
+                              -- there is one special node here: the source.
+                              -- this node will be 'shared' between the two graphs.
+                              -- so if I see a reference to it, then
                               IntDict.uniteWith
                                 (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
                                 ctx.outgoing
                                 outs
                         }
-                )
-                g
+                      ))
+                      ag.graph
+              }
             with_outbounds_linked : AutomatonGraph
             with_outbounds_linked =
-              { quoting_graph_with_quoted_nodes
-                | graph =
-                    List.foldl
-                      (link_quoted_graph_outbound)
-                      quoting_graph_with_quoted_nodes.graph
-                      terminals
-              }
-              |> debugAutomatonGraph "[resolveTransitionFully] with terminals linked to outbounds"
+              if source_graph_dest == source_graph_source then
+                -- this is a self-recursive link
+                -- if there is a recursive loop, then:
+                -- 1. Remove the recursive loop from the outgoing & incoming of the graph.
+                let
+                  graft_onto_without_selfref =
+                    { quoting_graph_with_quoted_nodes
+                      | graph =
+                          Graph.update source_graph_source
+                            (Maybe.map (\ctx ->
+                              { ctx
+                                | incoming = IntDict.remove source_graph_source ctx.incoming
+                                , outgoing = IntDict.remove source_graph_source ctx.outgoing
+                              }
+                            ))
+                            quoting_graph_with_quoted_nodes.graph
+                    }
+                    |> debugAutomatonGraph (dbg_prefix ++ "Connection is self-recursive. Removing self-reference from host graph source-node.")
+                in
+                -- 2. The "forward" direction is now resolved; graft in the "backward" direction as well.
+                List.foldl
+                  (link_quoted_graph_outbound)
+                  graft_onto_without_selfref
+                  terminals
+                |> debugAutomatonGraph (dbg_prefix ++ "self-ref: with terminals linked to outbounds")
+              else
+                List.foldl
+                  (link_quoted_graph_outbound)
+                  quoting_graph_with_quoted_nodes
+                  terminals
+                |> debugAutomatonGraph (dbg_prefix ++ "with terminals linked to outbounds")
             -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`.
             -- We do this easily by just setting the root to be the same as the `source_graph`
             -- root; and then attaching the outbounds from our "native" root to it.
@@ -242,7 +268,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                         -- and now the native root is irrelevant. We can remove it.
                         |> Graph.remove graph_to_graft.root
                   }
-                  |> debugAutomatonGraph ("[resolveTransitionFully] with the graft's source in/out (#" ++ String.fromInt graph_to_graft.root ++ ") linked to the original source in/out (#" ++ String.fromInt source_graph_source ++ ")")
+                  |> debugAutomatonGraph (dbg_prefix ++ "removed #" ++ String.fromInt graph_to_graft.root ++ " (graft-root) after unioning its inbounds & outbounds with original source #" ++ String.fromInt source_graph_source)
                 )
                 |> Maybe.withDefault with_outbounds_linked -- NOOOOOOOOO!! SHOULD NOT BE HERE!!!
           in
@@ -263,7 +289,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             ViaGraphReference ref ->
               if AutoSet.member ref recursion_stack then
                 -- don't consider it; that would lead us to recursion.
-                println "This ref would lead to recursion; ignoring."
+                println (dbg_prefix ++ "The " ++ Uuid.toString ref ++ " ref would lead to recursion; ignoring.")
                 ( unusedId
                 , this_graph
                 )
@@ -280,12 +306,12 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                           (AutoSet.insert renumbered.graphIdentifier recursion_stack)
                           referenced_graph.root
                           ( referenced_graph
-                            |> debugAutomatonGraph "[resolveTransitionFully] the referenced graph is"
+                            |> debugAutomatonGraph (dbg_prefix ++ " I found a referenced graph (" ++ Uuid.toString referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
                           )
                       split_graph =
                         resulting_graph
                         |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
-                        |> debugAutomatonGraph "[resolveTransitionFully] post-split, the graph to graft is"
+                        |> debugAutomatonGraph (dbg_prefix ++ "post-split, the graph to graft is")
                       new_unusedId =
                         Graph.nodeIdRange split_graph.graph
                         |> Maybe.map (Tuple.second >> (+) 1)
@@ -302,8 +328,8 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
         |> List.foldl
           (\transition (unusedId, g) ->
             graph_transition_to_graftable unusedId g transition
-            |> debugLog_ ("[resolveTransitionFully] unused-id after grafting transition " ++ transitionToString transition) (Tuple.first)
-            |> debugLog_ ("[resolveTransitionFully] automaton graph after grafting transition" ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
+            |> debugLog_ (dbg_prefix ++ "unused-id after grafting transition " ++ transitionToString transition) (Tuple.first)
+            |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transition" ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
           )
           (unusedId_, this_graph)
     after_graft =
@@ -325,7 +351,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               -- Avoid removing the source node.
               (source_graph_dests |> List.filter ((/=) source_graph_source))
       }
-      |> debugAutomatonGraph "[resolveTransitionFully] After removing old `dest` values"
+      |> debugAutomatonGraph (dbg_prefix ++ "After removing old `dest` values")
     -- convert NFA→DFA, then minimise for the final result.
     minimised_dfa =
       splitTerminalAndNonTerminal without_old_dests

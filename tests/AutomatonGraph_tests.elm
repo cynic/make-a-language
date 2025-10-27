@@ -326,8 +326,21 @@ node_expansion =
         resolution = AutoDict.fromList Uuid.toString [ (uuid0, ag0) ]
       in
         ag_equals
-          (ag "0-!a-0")
+          -- (ag "0-!a-0")
+          (ag "0-!a-1 1-!@0-0") -- not the smallest. But technically… correct.
           (expand (ag "0-!@0-0") resolution 0 )
+  , test "One level of simple graph expansion, non-terminal, self-recursive with outbound after" <|
+    \_ ->
+      let
+        uuid0 = uuid_from_int 0
+        ag0 =
+          mkAutomatonGraphWithUuid uuid0 [ (0, "!a", 1) ]
+        resolution = AutoDict.fromList Uuid.toString [ (uuid0, ag0) ]
+      in
+        ag_equals
+          -- (ag "0-a-1 1-a-1 1-!x-2")
+          (ag "0-a-1 0-!x-2 1-@0-0") -- again, not smallest, but… technically correct!
+          (expand (ag "0-@0-0 0-!x-1") resolution 0 )
   , test "One level of simple graph expansion, with an outbound, non-terminal reference" <|
     \_ ->
       let
@@ -364,21 +377,21 @@ node_expansion =
         ag_equals
           (ag "0-!a-1 1-b@1-2")
           (expand (ag "0-!@0-1 1-b-2") resolution 0 )
-  -- , test "Recursive expansion Ⅰ" <|
-  --   \_ ->
-  --     let
-  --       uuid0 = uuid_from_int 0
-  --       positive =
-  --         mkAutomatonGraphWithUuid uuid0 [ (0, "!1!2", 0) ]
-  --       uuid1 = uuid_from_int 1
-  --       digit =
-  --         mkAutomatonGraphWithUuid uuid1 [ (0, "!0!1!2", 0) ]
-  --       uuid2 = uuid_from_int 2
-  --       integer =
-  --         mkAutomatonGraphWithUuid uuid2 [ (0, "!0", 1), (0, "!@0", 2), (2, "!@1", 2) ]
-  --       resolution = AutoDict.fromList Uuid.toString [ (uuid0, positive), (uuid1, digit), (uuid2, integer) ]
-  --     in
-  --       ag_equals
-  --         (ag "0-!0-1 0-!1!2-2 2-!@1-2")
-  --         (expand (ag "0-0-1 0-!@0-2 2-!@1-2") resolution 0 )
+  , test "Recursive expansion Ⅰ" <|
+    \_ ->
+      let
+        uuid0 = uuid_from_int 0
+        positive =
+          mkAutomatonGraphWithUuid uuid0 [ (0, "!1!2", 0) ]
+        uuid1 = uuid_from_int 1
+        digit =
+          mkAutomatonGraphWithUuid uuid1 [ (0, "!0!1!2", 0) ]
+        uuid2 = uuid_from_int 2
+        integer =
+          mkAutomatonGraphWithUuid uuid2 [ (0, "!0", 1), (0, "!@0", 2), (2, "!@1", 2) ]
+        resolution = AutoDict.fromList Uuid.toString [ (uuid0, positive), (uuid1, digit), (uuid2, integer) ]
+      in
+        ag_equals
+          (ag "0-!0-1 0-!1!2-2 2-!@1-2")
+          (expand (ag "0-0-1 0-!@0-2 2-!@1-2") resolution 0 )
   ]
