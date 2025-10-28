@@ -39,7 +39,8 @@ import Automata.Debugging exposing (printFan)
 resolveTransitionFully : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
 resolveTransitionFully start_id resolutionDict scope recursion_stack source_id source_graph =
   let
-    dbg_prefix = "[resolveTransitionFully " ++ (truncate_uuid source_graph.graphIdentifier) ++ "] "
+    mkDbg_prefix uuid = "[resolveTransitionFully " ++ (truncate_uuid uuid) ++ "] "
+    dbg_prefix = mkDbg_prefix source_graph.graphIdentifier
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
@@ -106,20 +107,21 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               ]
               [ Edge unusedId (unusedId + 1) t
               ]
+        uuid =
+          charToUuid ch
+          |> Maybe.Extra.withDefaultLazy
+            (\() ->
+              Debug.log (dbg_prefix ++ "🚨 INTERNAL ERROR: Failed to generate a UUID") () |> \_ ->
+              Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
+              |> Tuple.first
+            )
       in
         ( next_unusedId
-        , { graph =graph
+        , { graph = graph
           , root = unusedId
-          , graphIdentifier =
-              charToUuid ch
-              |> Maybe.Extra.withDefaultLazy
-                (\() ->
-                  Debug.log (dbg_prefix ++ "🚨 INTERNAL ERROR: Failed to generate a UUID") () |> \_ ->
-                  Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
-                  |> Tuple.first
-                )
+          , graphIdentifier = uuid
           }
-          |> debugAutomatonGraph (dbg_prefix ++ "character transition to AutomatonGraph")
+          |> debugAutomatonGraph (mkDbg_prefix uuid ++ "character transition to AutomatonGraph")
         )
     renumbered_unusedId =
       Graph.nodeIdRange renumbered.graph
@@ -191,7 +193,9 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
         graft unusedId transition graft_onto unstretched_graph_to_graft =
           let
             -- ensure that every graph has at least 2 nodes in it… or 0, if you're insane.
-            graph_to_graft = stretch unstretched_graph_to_graft
+            graph_to_graft =
+              stretch unstretched_graph_to_graft
+              |> debugAutomatonGraph (dbg_prefix ++ "graph to graft is")
             terminals = -- the terminals of the split_graph
               debugAutomatonGraph (dbg_prefix ++ "graph to graft onto is") graft_onto |> \_ ->
               Graph.fold
@@ -229,22 +233,32 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                     List.foldl (Graph.insert) graft_onto.graph quoted_nodes
               }
             -- link all the outbounds from the quoted-graph.
+            outbound_links =
+              -- if we are on a self-recursive connection, then we will have saved _ourselves_
+              -- as one of the outbound links!  In that case, just remove that link from
+              -- consideration before we proceed: it is replaced by the graph_to_graft.
+              -- If we don't do this, we will end up with something that is technically correct,
+              -- but definitely not minimal.
+              if source_graph_dest == source_graph_source then
+                outs
+                -- |> debugLog_ (dbg_prefix ++ "Preemptively removing self-recursive connection from outbound links; original links") printFan
+                --|> IntDict.remove source_graph_source
+                -- |> debugLog_ (dbg_prefix ++ "Preemptively removing self-recursive connection from outbound links; remaining links") printFan
+              else
+                outs
             link_quoted_graph_outbound : NodeId -> AutomatonGraph -> AutomatonGraph
             link_quoted_graph_outbound terminal_id ag =
               { ag
                 | graph =
                     Graph.update terminal_id
                       (Maybe.map (\ctx ->
-                        debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
+                        debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outbound_links |> \_ ->
                         { ctx
                           | outgoing =
-                              -- there is one special node here: the source.
-                              -- this node will be 'shared' between the two graphs.
-                              -- so if I see a reference to it, then
                               IntDict.uniteWith
                                 (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
                                 ctx.outgoing
-                                outs
+                                outbound_links
                         }
                       ))
                       ag.graph
@@ -352,7 +366,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                           (AutoSet.insert renumbered.graphIdentifier recursion_stack)
                           referenced_graph.root
                           ( referenced_graph
-                            |> debugAutomatonGraph (dbg_prefix ++ " I found a referenced graph (" ++ truncate_uuid referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
+                            |> debugAutomatonGraph (dbg_prefix ++ "I found a referenced graph (" ++ truncate_uuid referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
                           )
                       split_graph =
                         resulting_graph
@@ -414,9 +428,22 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       |> debugAutomatonGraph (dbg_prefix ++ "After removing the necessary `dest` values")
     -- convert NFA→DFA, then minimise for the final result.
     minimised_dfa =
-      splitTerminalAndNonTerminal without_old_dests
-      |> nfaToDFA
-      |> minimiseNodesByCombiningTransitions
+      -- for now, splitTerminal&NonTerminal + minimiseNodes is not sufficient to handle some cases.
+      -- case in point: [ (8, "2", 10), (8, "1", 9), (10, "2", 10), (9, "1", 9) ] should get me
+      -- [ (8, "12", 8) ] but it does not minimise.  So, I'm going to just do a full round-trip.
+      -- After I write a paper—which is good, this will give me impetus to get it done!—then I can
+      -- continue and try to sort out minimisation more properly.
+      -- splitTerminalAndNonTerminal without_old_dests
+      -- |> nfaToDFA
+      -- |> minimiseNodesByCombiningTransitions
+      let
+        dfa = fromAutomatonGraph without_old_dests
+        unioned = union dfa dfa
+        ag = toAutomatonGraph without_old_dests.graphIdentifier unioned
+      in
+        renumberAutomatonGraphFrom start_id ag
+        |> Tuple.second
+        |> debugAutomatonGraph (dbg_prefix ++ "Minimised, renumbered 'final'")
   in
     minimised_dfa
 
