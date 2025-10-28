@@ -33,9 +33,6 @@ import Random.Pcg.Extended exposing (initialSeed, step)
 dummy_uuid : Uuid
 dummy_uuid = Tuple.first <| Random.step Uuid.generator <| Random.initialSeed 1 [2, 3, 4, 5]
 
-dummy_uuid_set : AutoSet.Set String Uuid
-dummy_uuid_set = AutoSet.singleton Uuid.toString dummy_uuid
-
 dummyEntity : Int -> Entity
 dummyEntity id =
   { effect = NoEffect

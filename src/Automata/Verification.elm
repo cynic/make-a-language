@@ -4,8 +4,6 @@ import Graph exposing (NodeId)
 import Set exposing (Set)
 import List.Extra as List
 import AutoSet
-import Automata.Debugging exposing (debug_log)
-import Automata.Debugging exposing (println)
 
 type alias Partition = Set NodeId
 type alias HopcroftRecord =
@@ -63,7 +61,7 @@ minimality g =
                 -- |> debug_log "[minimality] Refining p, stage Ⅱ"
               )
             refine_for_input : Transition -> Partition -> List Partition -> List Partition -> (List Partition, List Partition)
-            refine_for_input t x w p = -- really, the transition _ is only there for potential debugging.
+            refine_for_input _ x w p = -- really, the transition _ is only there for potential debugging.
               let
                 candidate_sets =
                   List.filterMap

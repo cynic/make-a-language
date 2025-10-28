@@ -2003,8 +2003,8 @@ transition_spacing : Float
 transition_spacing = 15
 
 -- https://ishadeed.com/article/target-size/
-viewSingleKey : Uuid -> Char -> Connection -> (Int, Int) -> Float -> Svg Msg
-viewSingleKey uuid ch conn (gridX, gridY) y_offset =
+viewSingleKey : Char -> Connection -> (Int, Int) -> Float -> Svg Msg
+viewSingleKey ch conn (gridX, gridY) y_offset =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
     buttonY = y_offset + transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
@@ -2048,8 +2048,8 @@ viewSingleKey uuid ch conn (gridX, gridY) y_offset =
         [ text <| String.fromChar ch ]
     ]
 
-viewSvgCharacterChooser : Uuid -> AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
-viewSvgCharacterChooser uuid conn y_offset w =
+viewSvgCharacterChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
+viewSvgCharacterChooser conn y_offset w =
   let
     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
     alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
@@ -2072,7 +2072,6 @@ viewSvgCharacterChooser uuid conn y_offset w =
         ( List.map
             (\(item, col, row) ->
               viewSingleKey
-                uuid
                 item
                 conn
                 (col, row)
@@ -2083,8 +2082,8 @@ viewSvgCharacterChooser uuid conn y_offset w =
   in
     ( chooser_svg, my_height )
 
-viewSvgGraphRefChooser : Int -> Model -> Uuid -> AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
-viewSvgGraphRefChooser focusedIndex model uuid conn y_offset panelWidth =
+viewSvgGraphRefChooser : Int -> Model -> AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
+viewSvgGraphRefChooser focusedIndex model conn y_offset panelWidth =
   let
     -- this is the width of each thumbnail.
     -- and it is ALSO the center position in the panel.
@@ -2296,9 +2295,9 @@ viewSvgTransitionChooser via model =
     ( chooser_svg, chooser_height) =
       case via of
         ChooseCharacter ->
-          viewSvgCharacterChooser model.currentPackage.userGraph.graphIdentifier conn category_chooser_space w
+          viewSvgCharacterChooser conn category_chooser_space w
         ChooseGraphReference idx ->
-          viewSvgGraphRefChooser idx model model.currentPackage.userGraph.graphIdentifier conn category_chooser_space w
+          viewSvgGraphRefChooser idx model conn category_chooser_space w
     chooserButtonSize = 30
   in
   g

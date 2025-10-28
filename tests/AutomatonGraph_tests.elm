@@ -7,7 +7,7 @@ import Automata.DFA exposing
   )
 import Utility exposing (ag, dfa, ag_equals, dfa_equals, mkAutomatonGraphWithUuid, uuid_from_int)
 import ForceDirectedGraph exposing (applyChangesToGraph)
-import AutoDict exposing (Dict)
+import AutoDict
 import Uuid
 
 toAG_suite : Test

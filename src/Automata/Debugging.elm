@@ -27,9 +27,9 @@ printNodeContext {node, incoming, outgoing} =
 printAutomatonGraph : AutomatonGraph -> String
 printAutomatonGraph g =
   let
-    roundABit x = toFloat (round (x * 100.0)) / 100.0 
+    -- roundABit x = toFloat (round (x * 100.0)) / 100.0 
     printNode : Entity -> Maybe String
-    printNode n =
+    printNode _ =
       Nothing
       -- Just <|
       --   "@" ++ String.fromFloat (roundABit n.x) ++
@@ -46,6 +46,17 @@ println : String -> a -> a
 println txt x =
   debug_log txt () |> \_ -> x
 
-debugLog : String -> (a -> b) -> a -> a
-debugLog s f v =
-  debug_log s (f v) |> \_ -> v
+-- debugLog : String -> (a -> b) -> a -> a
+-- debugLog s f v =
+--   debug_log s (f v) |> \_ -> v
+
+debugLog : (a -> String) -> a -> a
+debugLog f a =
+  Debug.log (f a) () |> \_ -> a
+
+debugLog_ : String -> (a -> b) -> a -> a
+debugLog_ s f a =
+  let
+    transformed = f a
+  in
+    Debug.log s transformed |> \_ -> a

@@ -17,7 +17,6 @@ import Platform.Cmd as Cmd
 import Uuid
 import Random.Pcg.Extended as Random
 import Time
-import Dict
 import Ports
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
@@ -28,9 +27,6 @@ import TypedSvg.Types exposing
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
 import Html.Styled exposing (h2, h4)
 import AutoSet
-import TypedSvg.Core exposing (Svg)
-import Dict exposing (Dict)
-import Svg
 import AutoDict
 import Uuid exposing (Uuid)
 

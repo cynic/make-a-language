@@ -8,14 +8,11 @@ import Parser exposing (Parser, (|=), (|.))
 import Uuid exposing (Uuid)
 import List.Extra
 import Color
-import Dict exposing (Dict)
 import Time
 import Random.Pcg.Extended as Random
 import Force
-import TypedSvg.Core exposing (Svg)
 import Binary
 import SHA
-import Maybe.Extra
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -769,7 +766,7 @@ uuidFromHash =
             (b, b_rest) = (String.left 4 a_rest, String.dropLeft 4 a_rest)
             (c, c_rest) = (String.left 4 b_rest, String.dropLeft 4 b_rest)
             (d, d_rest) = (String.left 4 c_rest, String.dropLeft 4 c_rest)
-            (e, e_rest) = (String.left 12 d_rest, String.dropLeft 12 d_rest)
+            e = String.left 12 d_rest
           in
             a ++ "-" ++ b ++ "-" ++ c ++ "-" ++ d ++ "-" ++ e
       )

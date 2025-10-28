@@ -12,9 +12,6 @@ import IntDict
 import Set
 import AutoDict
 import Utility
-import Array
-import Automata.DFA exposing (fromAutomatonGraph)
-import Automata.DFA exposing (toUnminimisedAutomatonGraph)
 
 -- nodesAndWords : D.AutomatonGraph -> (Int, List String)
 -- nodesAndWords d =

@@ -12,16 +12,14 @@ import Maybe.Extra
 import Json.Encode as E
 import Json.Decode as D
 import Uuid
-import Automata.Debugging exposing (printAutomatonGraph)
-import Automata.Debugging exposing (debugAutomatonGraph)
+import Automata.Debugging exposing
+  ( printAutomatonGraph, debugAutomatonGraph, printNodeContext, println
+  , printFan, debugLog_
+  )
 import Uuid exposing (Uuid)
-import Automata.Debugging as Debugging
-import Automata.Debugging exposing (printNodeContext)
-import Automata.Debugging exposing (println)
 import Binary
 import SHA
 import Random.Pcg.Extended exposing (initialSeed)
-import Automata.Debugging exposing (printFan)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -243,7 +241,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                         { ctx
                           | outgoing =
                               IntDict.uniteWith
-                                (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                (\_ l _ -> l) -- this should NEVER happen! Node IDs are unique…!
                                 ctx.outgoing
                                 outs
                         }
@@ -274,12 +272,12 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                                 { source_node_ctx
                                   | outgoing =
                                       IntDict.uniteWith
-                                        (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                        (\_ l _ -> l) -- this should NEVER happen! Node IDs are unique…!
                                         source_node_ctx.outgoing
                                         root_ctx.outgoing
                                   , incoming =
                                       IntDict.uniteWith
-                                        (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
+                                        (\_ l _ -> l) -- this should NEVER happen! Node IDs are unique…!
                                         source_node_ctx.incoming
                                         root_ctx.incoming
                                 }
@@ -433,7 +431,7 @@ oneTransition g executionState =
     transitionWithData data =
       Graph.get data.currentNode g.graph
       |> Maybe.map
-        (\ctx ->
+        (\_ ->
           case data.remainingData of
             [] ->
               executionState -- we're done! Can't go any further!
@@ -588,8 +586,8 @@ automatonGraph_union g1 g2 =
   in
     toAutomatonGraph newId (union dfa_1 dfa_2)
 
-extend : Phase1Purpose -> DFARecord a -> DFARecord a -> ExtDFA
-extend purpose w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
+extend : DFARecord a -> DFARecord a -> ExtDFA
+extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
   let
     max_dfa =
       IntDict.findMax dfa.states
@@ -729,7 +727,7 @@ w_forward_transitions extDFA =
       Suddenly, that last transition doesn't get counted…
     -}
     helper : Maybe NodeId -> NodeId -> AutoSet.Set (Int, String, Int) (NodeId, AcceptVia, NodeId) -> ForwardTree
-    helper src current seen =
+    helper _ current seen =
       case IntDict.get current extDFA.transition_function of
         Nothing -> PathEnd
         Just dict ->
@@ -821,7 +819,7 @@ clone_or_queue purpose q_m q_w extDFA =
                 -- left only
                 (\k v acc -> AutoDict.insert k (v |> Debug.log "left only") acc)
                 -- both
-                (\k v w acc -> AutoDict.insert k (v |> Debug.log "BOTH; taking left") acc)
+                (\k v _ acc -> AutoDict.insert k (v |> Debug.log "BOTH; taking left") acc)
                 -- right only
                 (\k v acc -> AutoDict.insert k (v |> Debug.log "right only") acc)
                 (AutoDict.empty acceptConditionToString)
@@ -1436,9 +1434,9 @@ replace_or_register extDFA_ =
 
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
-  extend Add_Word w_dfa_orig m_dfa
+  extend w_dfa_orig m_dfa
   |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
-  |> phase_1 -- Add_Word
+  |> phase_1
   |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
   |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
   |> (\dfa -> { dfa | start = dfa.clone_start })
@@ -1458,7 +1456,7 @@ empty defaultValue =
 
 debugFan_ : String -> IntDict Connection -> IntDict Connection
 debugFan_ s fan =
-  Automata.Debugging.debugLog s Automata.Debugging.printFan fan
+  debugLog_ s printFan fan
 
 minimisation_merge : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
 minimisation_merge head other g =
@@ -1503,7 +1501,7 @@ minimisation_merge head other g =
       (Graph.get head g.graph)
       (Graph.get other g.graph)
     |> Maybe.withDefault g
-    |> Automata.Debugging.debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
+    |> debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
 
 minimiseNodesByCombiningTransitions : AutomatonGraph -> AutomatonGraph
 minimiseNodesByCombiningTransitions g_ =
@@ -1670,14 +1668,14 @@ minimiseNodesByCombiningTransitions g_ =
           case List.find (fanOutEquals terminal) targets of
             Just equivalent ->
               -- Case T2, sub-case 1
-              Automata.Debugging.println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
+              println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
               Just (minimisation_merge terminal.node.id equivalent.node.id g)
             Nothing ->
               Debug.log ("[minimiseNodes] No suitable targets found; #" ++ String.fromInt terminal.node.id ++ " is not extended by any node.  Checking sources to see if it extends another.") () |> \_ ->
               case List.find (fanOutEquals terminal) sources of
                 Just equivalent ->
                   -- Case T2, sub-case 2
-                  Automata.Debugging.println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
+                  println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
                   Just (minimisation_merge terminal.node.id equivalent.node.id g)
                 Nothing ->
                   Debug.log ("[minimiseNodes] #" ++ String.fromInt terminal.node.id ++ " neither extends nor is extended.") () |> \_ ->
@@ -1687,22 +1685,22 @@ minimiseNodesByCombiningTransitions g_ =
                       IntDict.get terminal.node.id m.incoming
                       |> Maybe.andThen
                         (\chosenConnection ->
-                          Automata.Debugging.debugLog "[minimiseNodes] connection to follow back is" connectionToString chosenConnection |> \_ ->
+                          debugLog_ "[minimiseNodes] connection to follow back is" connectionToString chosenConnection |> \_ ->
                           IntDict.toList m.incoming
                           |> List.filterMap
                             (\(s, conn) ->
                               if s /= terminal.node.id && conn == chosenConnection then
                                 Graph.get s g.graph
-                                |> Maybe.map (Debugging.debugLog ("[minimiseNodes] candidate node (excluding #" ++ String.fromInt terminal.node.id ++ ")") (.node >> .id))
+                                |> Maybe.map (debugLog_ ("[minimiseNodes] candidate node (excluding #" ++ String.fromInt terminal.node.id ++ ")") (.node >> .id))
                               else
                                 Nothing
                             )
                           |> List.find (fanOutEquals terminal)
-                          |> Automata.Debugging.debugLog "[minimiseNodes] selected mergeable candidate"
+                          |> debugLog_ "[minimiseNodes] selected mergeable candidate"
                             (Maybe.map printNodeContext >> Maybe.withDefault "NONE - there is no fan-in; therefore, no merge candidate; therefore, this merge will not take place).")
                           |> Maybe.map
                             (\equivalent ->
-                                Automata.Debugging.println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
+                                println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
                                 minimisation_merge terminal.node.id equivalent.node.id g
                             )
                         )
@@ -1722,9 +1720,9 @@ minimiseNodesByCombiningTransitions g_ =
     classify_all
       (Set.toList ending_nodes)
       ( g_
-        |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Initial graph"
+        |> debugAutomatonGraph "[minimiseNodes] Initial graph"
       )
-    |> Automata.Debugging.debugAutomatonGraph "[minimiseNodes] Final graph"
+    |> debugAutomatonGraph "[minimiseNodes] Final graph"
 
 toUnminimisedAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
 toUnminimisedAutomatonGraph uuid dfa =
@@ -1762,7 +1760,7 @@ toUnminimisedAutomatonGraph uuid dfa =
       [] ->
         Automata.Data.empty uuid
         -- |> debugAutomatonGraph "[toUnminimisedAutomatonGraph] Graph, since DFA was empty"
-      h::_ ->
+      _ ->
         { graph = graph
         , graphIdentifier = uuid
         , root = dfa.start -- |> Debug.log "[toUnminimisedAutomatonGraph] root"
@@ -2094,7 +2092,7 @@ splitTerminalAndNonTerminal g =
     -- exhibit such behaviour: finality is encoded in transitions, so AT LEAST ONE
     -- transition MUST be taken for acceptance to occur.
     |> stretch
-    -- |> Automata.Debugging.debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
+    -- |> debugAutomatonGraph "[splitTerminalAndNonTerminal] after split"
 
 
 ellipsis : Int -> String -> String
@@ -2509,7 +2507,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     , graphIdentifier = g.graphIdentifier
     , root = g.root
     }
-    -- |> Automata.Debugging.debugAutomatonGraph "[nfaToDFA] Resulting graph"
+    -- |> debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
 fromAutomatonGraphHelper : AutomatonGraph -> DFARecord {}
 fromAutomatonGraphHelper g =
@@ -2551,11 +2549,11 @@ fromAutomatonGraphHelper g =
 
 fromAutomatonGraph : AutomatonGraph -> DFARecord {}
 fromAutomatonGraph =
-    Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
+    debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
     splitTerminalAndNonTerminal
-    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
+    >> debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
-    >> Automata.Debugging.debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
+    >> debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
     >> fromAutomatonGraphHelper
     >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
@@ -2685,8 +2683,8 @@ decodeTransition =
         (D.field "ref" <| D.map ViaGraphReference Uuid.decoder)
     ]
 
-decodeEdge : Uuid -> D.Decoder (Edge Connection)
-decodeEdge uuid =
+decodeEdge : D.Decoder (Edge Connection)
+decodeEdge =
   D.map3
     (\f t l -> Edge f t (AutoSet.fromList transitionToString l))
     (D.field "src" <| D.int)
@@ -2695,14 +2693,11 @@ decodeEdge uuid =
 
 decodeAutomatonGraph : D.Decoder AutomatonGraph
 decodeAutomatonGraph =
-  D.field "uuid" Uuid.decoder
-  |> D.andThen
-    (\uuid ->
-      D.map3 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e) uuid)
-        (D.field "nodes" <| D.list decodeNode)
-        (D.field "edges" <| D.list <| decodeEdge uuid)
-        (D.field "root" <| D.int)
-    )
+  D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e))
+    (D.field "nodes" <| D.list decodeNode)
+    (D.field "edges" <| D.list decodeEdge)
+    (D.field "uuid" <| Uuid.decoder)
+    (D.field "root" <| D.int)
 
 -----------------
 -- DEBUGGING
@@ -2775,14 +2770,3 @@ debugDFA dfa =
 debugExtDFA : ExtDFA -> ExtDFA
 debugExtDFA extDFA =
   Debug.log (printExtDFA extDFA) () |> \_ -> extDFA
-
-debugLog : (a -> String) -> a -> a
-debugLog f a =
-  Debug.log (f a) () |> \_ -> a
-
-debugLog_ : String -> (a -> b) -> a -> a
-debugLog_ s f a =
-  let
-    transformed = f a
-  in
-    Debug.log s transformed |> \_ -> a
