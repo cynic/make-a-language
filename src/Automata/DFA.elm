@@ -39,7 +39,7 @@ import Automata.Debugging exposing (printFan)
 resolveTransitionFully : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
 resolveTransitionFully start_id resolutionDict scope recursion_stack source_id source_graph =
   let
-    dbg_prefix = "[resolveTransitionFully " ++ (Uuid.toString source_graph.graphIdentifier |> String.left 4) ++ "…] "
+    dbg_prefix = "[resolveTransitionFully " ++ (truncate_uuid source_graph.graphIdentifier) ++ "] "
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
@@ -147,7 +147,18 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                 new_graph =
                   { g
                     | graph =
-                        Graph.insert { dest_ctx | incoming = new_incoming } g.graph
+                        Graph.insert
+                          { dest_ctx
+                            | incoming = new_incoming
+                            , outgoing =
+                                if dest_ctx.node.id == source_graph_source then
+                                  -- self-recursive!
+                                  -- gotta get rid of it from here too.
+                                  IntDict.remove source_graph_source dest_ctx.outgoing
+                                else
+                                  dest_ctx.outgoing
+                          }
+                          g.graph
                   }
               in
                 if IntDict.isEmpty new_incoming then
@@ -324,7 +335,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             ViaGraphReference ref ->
               if AutoSet.member ref recursion_stack then
                 -- don't consider it; that would lead us to recursion.
-                println (dbg_prefix ++ "The " ++ Uuid.toString ref ++ " ref would lead to recursion; ignoring.")
+                println (dbg_prefix ++ "The " ++ truncate_uuid ref ++ " ref would lead to recursion; ignoring.")
                 ( unusedId
                 , this_graph
                 )
@@ -341,7 +352,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                           (AutoSet.insert renumbered.graphIdentifier recursion_stack)
                           referenced_graph.root
                           ( referenced_graph
-                            |> debugAutomatonGraph (dbg_prefix ++ " I found a referenced graph (" ++ Uuid.toString referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
+                            |> debugAutomatonGraph (dbg_prefix ++ " I found a referenced graph (" ++ truncate_uuid referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
                           )
                       split_graph =
                         resulting_graph
@@ -397,7 +408,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               -- Avoid removing the source node.
               ( dest_nodes_to_check
                 |> List.filter ((/=) source_graph_source)
-                |> Debug.log (dbg_prefix ++ "`dest` nodes to check for the source-node #" ++ String.fromInt source_graph_source ++ " are")
+                |> Debug.log (dbg_prefix ++ "`dest` nodes from source-node #" ++ String.fromInt source_graph_source ++ " to check for removal are")
               )
       }
       |> debugAutomatonGraph (dbg_prefix ++ "After removing the necessary `dest` values")
@@ -417,7 +428,7 @@ expand e resolutionDict src =
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault -1 -- huh?
   in
-    debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (Uuid.toString k, printAutomatonGraph v))) resolutionDict |> \_ ->
+    debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (truncate_uuid k, printAutomatonGraph v))) resolutionDict |> \_ ->
     debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
     resolveTransitionFully
       unusedId

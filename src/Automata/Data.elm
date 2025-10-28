@@ -378,6 +378,32 @@ printableAcceptCondition v =
       |> String.left 8
       |> \s -> s ++ "..."
 
+truncate_uuid : Uuid -> String
+truncate_uuid uuid =
+  (Uuid.toString uuid |> String.left 4) ++ "…"
+
+-- honestly I don't know why this function is here 😅…
+-- These kinds of functions are just calming and fun to make.
+-- I never had an actual use for it, and probably never will…
+-- uuid_string : Uuid -> String
+-- uuid_string uuid =
+--   let
+--     lookup =
+--       "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%^&*_=|`~§±¶÷×¤¢£¥©®™¿¡ØøÅåÇçÑñßÐðÞþŽžŠšŒœĐđĦħĲĳĿŀŁłŊŋŒœŦŧŊŋΘΛΞΣΦΨαβγδεζηθιλμξπρστυφωאבגדהוזחטיךכלםמןנסעףפץצקרשת٠١٢٣٤٥٦٧٨٩БГДЕЖЗИЙЛПУФЦЧШЪЫЭЮЯбвгдежзийклмнопрстуфхцчшщъыьэюя※Ω∆∞≠≈≡√∫∂↕⇑⇓♠♣♥♦♪♫"
+--       |> String.toList
+--       |> List.indexedMap (\i x -> (i, x))
+--       |> Dict.fromList
+--   in
+--     ( Uuid.toString uuid
+--       |> String.replace "-" ""
+--       |> Binary.fromHex
+--       |> Binary.chunksOf 8
+--       |> List.map (\chunk -> Binary.toDecimal chunk)
+--       |> List.filterMap (\i -> Dict.get i lookup)
+--       |> List.take 4
+--       |> String.fromList
+--     ) ++ "…"
+
 {-| True if at least one transition terminates at this node,
     within the given execution context -}
 isTerminalNode : NodeContext a Connection -> Bool
@@ -583,6 +609,12 @@ hexCharToInt ch =
     'd' -> Just 13
     'e' -> Just 14
     'f' -> Just 15
+    'A' -> Just 10
+    'B' -> Just 11
+    'C' -> Just 12
+    'D' -> Just 13
+    'E' -> Just 14
+    'F' -> Just 15
     _ -> Nothing
 
 base16ToInt : String -> Maybe Int

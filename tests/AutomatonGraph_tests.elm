@@ -339,8 +339,8 @@ node_expansion =
       in
         ag_equals
           -- (ag "0-a-1 1-a-1 1-!x-2")
-          -- (ag "0-a-1 0-!x-2 1-@0-0") -- again, not smallest, but… technically correct!
-          (ag "2-@0-2 2-a-7 2-!x-9 7-@0-2") -- even larger 😔…
+          (ag "0-a-1 0-!x-2 1-@0-0") -- again, not smallest, but… technically correct!
+          -- (ag "2-@0-2 2-a-7 2-!x-9 7-@0-2") -- even larger 😔…
           (expand (ag "0-@0-0 0-!x-1") resolution 0 )
   , test "One level of simple graph expansion, with an outbound, non-terminal reference" <|
     \_ ->
