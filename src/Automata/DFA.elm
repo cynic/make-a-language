@@ -233,69 +233,30 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                     List.foldl (Graph.insert) graft_onto.graph quoted_nodes
               }
             -- link all the outbounds from the quoted-graph.
-            outbound_links =
-              -- if we are on a self-recursive connection, then we will have saved _ourselves_
-              -- as one of the outbound links!  In that case, just remove that link from
-              -- consideration before we proceed: it is replaced by the graph_to_graft.
-              -- If we don't do this, we will end up with something that is technically correct,
-              -- but definitely not minimal.
-              if source_graph_dest == source_graph_source then
-                outs
-                -- |> debugLog_ (dbg_prefix ++ "Preemptively removing self-recursive connection from outbound links; original links") printFan
-                --|> IntDict.remove source_graph_source
-                -- |> debugLog_ (dbg_prefix ++ "Preemptively removing self-recursive connection from outbound links; remaining links") printFan
-              else
-                outs
             link_quoted_graph_outbound : NodeId -> AutomatonGraph -> AutomatonGraph
             link_quoted_graph_outbound terminal_id ag =
               { ag
                 | graph =
                     Graph.update terminal_id
                       (Maybe.map (\ctx ->
-                        debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outbound_links |> \_ ->
+                        debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
                         { ctx
                           | outgoing =
                               IntDict.uniteWith
                                 (\_ l r -> l) -- this should NEVER happen! Node IDs are unique…!
                                 ctx.outgoing
-                                outbound_links
+                                outs
                         }
                       ))
                       ag.graph
               }
             with_outbounds_linked : AutomatonGraph
             with_outbounds_linked =
-              if source_graph_dest == source_graph_source then
-                -- this is a self-recursive link
-                -- if there is a recursive loop, then:
-                -- 1. Remove the recursive loop from the outgoing & incoming of the graph.
-                -- let
-                --   graft_onto_without_selfref =
-                --     { quoting_graph_with_quoted_nodes
-                --       | graph =
-                --           Graph.update source_graph_source
-                --             (Maybe.map (\ctx ->
-                --               { ctx
-                --                 | incoming = IntDict.remove source_graph_source ctx.incoming
-                --                 , outgoing = IntDict.remove source_graph_source ctx.outgoing
-                --               }
-                --             ))
-                --             quoting_graph_with_quoted_nodes.graph
-                --     }
-                --     |> debugAutomatonGraph (dbg_prefix ++ "Connection is self-recursive. Removing self-reference from host graph source-node.")
-                -- in
-                -- 2. The "forward" direction is now resolved; graft in the "backward" direction as well.
-                List.foldl
-                  (link_quoted_graph_outbound)
-                  quoting_graph_with_quoted_nodes
-                  terminals
-                |> debugAutomatonGraph (dbg_prefix ++ "self-ref: with terminals linked to outbounds")
-              else
-                List.foldl
-                  (link_quoted_graph_outbound)
-                  quoting_graph_with_quoted_nodes
-                  terminals
-                |> debugAutomatonGraph (dbg_prefix ++ "with terminals linked to outbounds")
+              List.foldl
+                (link_quoted_graph_outbound)
+                quoting_graph_with_quoted_nodes
+                terminals
+              |> debugAutomatonGraph (dbg_prefix ++ "with terminals linked to outbounds")
             -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`.
             -- We do this easily by just setting the root to be the same as the `source_graph`
             -- root; and then attaching the outbounds from our "native" root to it.
@@ -464,10 +425,6 @@ expand e resolutionDict src =
       (AutoSet.singleton Uuid.toString e.graphIdentifier)
       src
       e
-    -- printSingleOutgoing (d, c) =
-    --   "→#" ++ String.fromInt d ++ " (" ++ connectionToString c ++ ")"
-    -- printOutgoing xs =
-    --   List.map printSingleOutgoing xs |> String.join "; "
 
 oneTransition : AutomatonGraph -> ExecutionState -> ExecutionState
 oneTransition g executionState =
