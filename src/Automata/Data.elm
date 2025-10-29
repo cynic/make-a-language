@@ -44,6 +44,8 @@ type alias GraphPackage =
   , created : Time.Posix -- for ordering
   , currentTestKey : Uuid
   , tests : AutoDict.Dict String Uuid Test
+  , undoBuffer : List (AutomatonGraph)
+  , redoBuffer : List (AutomatonGraph)
   }
 
 type alias Main_Model =
@@ -79,6 +81,7 @@ type UserOperation
   | Dragging NodeId -- move a node around (visually)
   | ModifyingGraph AcceptChoice GraphModification -- add a new link + node / new link between existing nodes
   | AlteringConnection AcceptChoice ConnectionAlteration
+  | Executing AutomatonGraph ExecutionResult
 
 type AcceptChoice
   = ChooseCharacter
@@ -106,10 +109,7 @@ type alias FDG_Model =
   , pan : (Float, Float) -- panning offset, x and y
   , mouseCoords : ( Float, Float )
   , mouseIsHere : Bool
-  , undoBuffer : List (AutomatonGraph)
-  , redoBuffer : List (AutomatonGraph)
   , disconnectedNodes : Set NodeId
-  , execution : Maybe ExecutionResult
   , currentTime : Time.Posix
   , uuidSeed : Random.Seed
   }

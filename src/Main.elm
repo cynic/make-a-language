@@ -120,7 +120,10 @@ decodeGraphPackage resolutionDict =
   D.field "graph" DFA.decodeAutomatonGraph
   |> D.andThen
     (\graph ->
-      D.map5 (GraphPackage graph)
+      D.map5
+        (\dimensions description created testKey tests ->
+            GraphPackage graph dimensions description created testKey tests [] []
+        )
         ( D.map2
             (\w h -> (w, h))
             (D.at ["dimensions", "w"] D.float)
@@ -221,9 +224,9 @@ update msg model =
           --   else
           --     v
         preUpdateChangeCount =
-          List.length model.fdg_model.undoBuffer
+          List.length model.fdg_model.currentPackage.undoBuffer
         isCommitlike =
-          preUpdateChangeCount > 0 && newFdModel.undoBuffer == []
+          preUpdateChangeCount > 0 && newFdModel.currentPackage.undoBuffer == []
       in
       ( { model
           | executionStage =
@@ -435,13 +438,13 @@ update msg model =
       in
       ( { model 
         | executionStage =
-            case newFdModel.execution of
-              Nothing ->
-                model.executionStage
-              Just (CanContinue _) ->
+            case newFdModel.currentOperation of
+              Just (Executing _ (CanContinue _)) ->
                 StepThrough
-              _ ->
+              Just (Executing _ _) ->
                 ExecutionComplete
+              _ ->
+                model.executionStage
         , fdg_model =
             newFdModel
         }
@@ -766,7 +769,7 @@ viewPackageItem model package =
     canSelect =
       -- we can select this EITHER if there are no pending changes, OR
       -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
-      model.fdg_model.undoBuffer == [] ||
+      model.fdg_model.currentPackage.undoBuffer == [] ||
       package.userGraph.graphIdentifier == model.fdg_model.currentPackage.userGraph.graphIdentifier
   in
   div 
@@ -1134,10 +1137,8 @@ executionText : Model -> Html Msg
 executionText { fdg_model } =
   div
     []
-    [ case fdg_model.execution of
-        Nothing ->
-          p [] [ text "🦗 Bug! K%UGFCR" ] -- eheh?! I should never be here!
-        Just result ->
+    [ case fdg_model.currentOperation of
+        Just (Executing _ result) ->
           let
             maybeDatum = FDG.executionData result
             showProgress : ExecutionData -> Html Msg
@@ -1185,6 +1186,8 @@ executionText { fdg_model } =
                   maybeDatum
                 |> Maybe.withDefault (text "")
               ]
+        _ ->
+          p [] [ text "🦗 Bug! K%UGFCR" ] -- eheh?! I should never be here!
     ]
 
 viewInputProcessing : List AcceptVia -> List String -> Html msg

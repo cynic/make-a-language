@@ -98,7 +98,7 @@ initializeNode ctx =
 
 canExecute : Model -> Bool
 canExecute model =
-  List.isEmpty model.undoBuffer
+  List.isEmpty model.currentPackage.undoBuffer
 
 viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
 viewportForces (w, h) _ =
@@ -202,6 +202,8 @@ createNewPackage testUuid currentTime dimensions g = -- `dimensions` is the widt
   , created = currentTime
   , currentTestKey = testUuid
   , tests = AutoDict.empty Uuid.toString
+  , undoBuffer = []
+  , redoBuffer = []
   }
 
 init : (Float, Float) -> Time.Posix -> Random.Seed -> AutoDict.Dict String Uuid GraphPackage -> Model
@@ -238,10 +240,7 @@ init (w, h) currentTime randomSeed packages =
     , mouseCoords = ( w/2, h/2 )
     , pan = ( 0, 0)
     , mouseIsHere = False
-    , undoBuffer = []
-    , redoBuffer = []
     , disconnectedNodes = Set.empty
-    , execution = Nothing
     , currentTime = currentTime
     , uuidSeed = newSeed2
     }
@@ -640,6 +639,8 @@ update msg model =
                 model.pan
               Just (Splitting _) ->
                 model.pan
+              Just (Executing _ _) ->
+                ( xPan + xAmount, yPan + yAmount )
         }
 
     SelectNode index ->
@@ -706,6 +707,17 @@ update msg model =
             Just (Dragging _) ->
               -- stop dragging.
               { model | currentOperation = Nothing }
+            Just (Executing original _) ->
+              let
+                pkg = model.currentPackage
+              in
+                { model
+                  | currentOperation = Nothing
+                  , currentPackage =
+                      { pkg
+                        | userGraph = original
+                      }
+                }
       in
       -- ooh!  What are we "escaping" from, though?
         escapery
@@ -724,16 +736,18 @@ update msg model =
           in
             { model_
             | currentOperation = Nothing
-            , currentPackage = { pkg | userGraph = updatedGraph }
+            , currentPackage =
+                { pkg
+                  | userGraph = updatedGraph
+                  , undoBuffer = model.currentPackage.userGraph :: model_.currentPackage.undoBuffer
+                  , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+                }
                     -- NOTE ⬇ WELL! This isn't a typo!
-            , undoBuffer = model.currentPackage.userGraph :: model_.undoBuffer
-            , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
             , basicForces = basic
             , viewportForces = viewport
             , simulation = Force.simulation (basic ++ viewport)
             , disconnectedNodes =
                 identifyDisconnectedNodes updatedGraph
-            , execution = Nothing
             }
         
         createNewNode : NodeId -> Connection -> Float -> Float -> Model
@@ -781,13 +795,15 @@ update msg model =
               )
               |> Maybe.withDefault model
           Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
-            case model.undoBuffer of
+            case model.currentPackage.undoBuffer of
               [] -> -- no changes are proposed, so…
                 model -- …there is nothing for me to do!
               _ ->
                 confirmChanges model
           Just (Dragging _) ->
             model -- confirmation does nothing for this (visual) operation.
+          Just (Executing _ _) ->
+            model -- confirmation does nothing for execution
 
     ToggleSelectedTransition acceptCondition ->
       let
@@ -954,7 +970,7 @@ update msg model =
       |> Maybe.withDefault model
 
     Undo ->
-      case (model.currentOperation, model.undoBuffer) of
+      case (model.currentOperation, model.currentPackage.undoBuffer) of
         (_, []) ->
           model
         (Just _, _) ->
@@ -964,14 +980,17 @@ update msg model =
             pkg = model.currentPackage
           in
             { model
-              | undoBuffer = t
-              , redoBuffer = model.currentPackage.userGraph :: model.redoBuffer
-              , currentPackage = { pkg | userGraph = h }
+              | currentPackage =
+                  { pkg
+                    | undoBuffer = t
+                    , redoBuffer = model.currentPackage.userGraph :: model.currentPackage.redoBuffer
+                    , userGraph = h
+                  }
               , disconnectedNodes = identifyDisconnectedNodes h
             }
 
     Redo ->
-      case (model.currentOperation, model.redoBuffer) of
+      case (model.currentOperation, model.currentPackage.redoBuffer) of
         (_, []) ->
           model
         (Just _, _) ->
@@ -981,9 +1000,12 @@ update msg model =
             pkg = model.currentPackage
           in
           { model
-            | redoBuffer = t
-            , undoBuffer = model.currentPackage.userGraph :: model.undoBuffer
-            , currentPackage = { pkg | userGraph = h }
+            | currentPackage =
+                { pkg
+                  | redoBuffer = t
+                  , undoBuffer = model.currentPackage.userGraph :: model.currentPackage.undoBuffer
+                  , userGraph = h
+                }
             , disconnectedNodes = identifyDisconnectedNodes h
           }
     
@@ -994,27 +1016,66 @@ update msg model =
         g = model.currentPackage.userGraph
       in
         -- first, can we?
-        case model.undoBuffer of
+        case model.currentPackage.undoBuffer of
           [] ->
             { model
-              | execution =
-                  Just <| DFA.stepThroughInitial s resolutionDict g
+              | currentOperation =
+                  Just <| Executing model.currentPackage.userGraph (DFA.stepThroughInitial s resolutionDict g)
             }
           _ ->
             model -- nothing to do!
     
     Run ->
-      { model
-        | execution = Maybe.map (DFA.run) model.execution
-      }
+      let
+        pkg = model.currentPackage
+      in
+        case model.currentOperation of
+          Just (Executing original executionResult) ->
+            { model
+              | currentOperation = Just <| Executing original (DFA.run executionResult)
+              , currentPackage =
+                  { pkg
+                    | userGraph =
+                        executionResultAutomatonGraph executionResult
+                        |> Maybe.withDefault pkg.userGraph
+                  }
+            }
+          _ ->
+            model -- 'run' isn't valid in any other context.
 
     Step ->
-      { model
-        | execution = Maybe.map (DFA.step) model.execution
-      }
+      let
+        pkg = model.currentPackage
+      in
+        case model.currentOperation of
+          Just (Executing original executionResult) ->
+            { model
+              | currentOperation = Just <| Executing original (DFA.step executionResult)
+              , currentPackage =
+                  { pkg
+                    | userGraph =
+                        executionResultAutomatonGraph executionResult
+                        |> Maybe.withDefault pkg.userGraph
+                  }
+            }
+          _ ->
+            model -- 'step' isn't valid in any other context.
 
     Stop ->
-      { model | execution = Nothing }
+      let
+        pkg = model.currentPackage
+      in
+        case model.currentOperation of
+          Just (Executing original _) ->
+            { model
+              | currentOperation = Nothing
+              , currentPackage =
+                  { pkg
+                    | userGraph = original
+                  }
+            }
+          _ ->
+            model -- 'stop' isn't valid in any other context.
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
@@ -1163,8 +1224,11 @@ updateModelAfterConfirmation model g =
         model.packages
     newModel =
       { model
-        | undoBuffer = []
-        , redoBuffer = []
+        | currentPackage =
+            { pkg
+              | undoBuffer = []
+              , redoBuffer = []
+            }
         , packages = newPackages
         -- we are committing, so we want to update the packages.
       }
@@ -1414,6 +1478,11 @@ executionData r =
     EndOfComputation s -> Just <| getData s
     CanContinue s -> Just <| getData s
 
+executionResultAutomatonGraph : ExecutionResult -> Maybe AutomatonGraph
+executionResultAutomatonGraph executionResult =
+  executionData executionResult
+  |> Maybe.map .computation
+
 -- from the execution result, obtain the edges which were taken.
 -- Note that multiple edges may be "taken" between two nodes,
 -- in the cases of (1) loops and (2) graph-ref intersections.
@@ -1494,16 +1563,20 @@ viewLink ({ currentPackage } as model) executing edge =
     positioning =
       path_between source target cardinality 7 7
     font_size = 16.0 -- this is the default, if not otherwise set
+    executionClass =
+      Dict.get (edge.from, edge.to) executing
+      |> Maybe.map (\(recency, _) -> [ "executed", "recent-" ++ String.fromInt recency ])
+      |> Maybe.withDefault []
     labelText =
       case Dict.get (edge.from, edge.to) executing of
         Nothing ->
           connectionToSvgText edge.label
-        Just (recency, chosen_via) ->
+        Just (_, chosen_via) ->
           connectionToSvgTextHighlightingChars
             edge.label
             (\via ->
               if via == chosen_via then
-                [ "executed", "recent-" ++ String.fromInt recency ]
+                executionClass
               else
                 []
             )
@@ -1523,13 +1596,7 @@ viewLink ({ currentPackage } as model) executing edge =
           , d positioning.pathString
           , markerEnd "url(#arrowhead)"
           , noFill
-          , class
-              [ "link"
-              , if Dict.member (edge.from, edge.to) executing then
-                  "executed"
-                else
-                  ""
-              ]
+          , class ("link" :: executionClass)
           ]
           [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
       , text_
@@ -1593,7 +1660,7 @@ nodeRadius : Float
 nodeRadius = 7
 
 viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { currentPackage, currentOperation, disconnectedNodes, execution, pan, mouseCoords } { label, id } =
+viewNode { currentPackage, currentOperation, disconnectedNodes, pan, mouseCoords } { label, id } =
   let
     userGraph = currentPackage.userGraph
     selectableClass =
@@ -1603,20 +1670,21 @@ viewNode { currentPackage, currentOperation, disconnectedNodes, execution, pan, 
             "selected"
           else
             ""
+        Just (Executing _ executionResult) ->
+          executionData executionResult
+          |> Maybe.map
+            (\{ currentNode } ->
+              if id == currentNode then
+                "current-node"
+              else
+                ""
+            )
+          |> Maybe.withDefault ""
         _ ->
           if Set.member id disconnectedNodes then
             "disconnected"
           else
-            execution
-            |> Maybe.andThen executionData
-            |> Maybe.map
-              (\{ currentNode } ->
-                if id == currentNode then
-                  "current-node"
-                else
-                  ""
-              )
-            |> Maybe.withDefault ""
+            ""
     graphNode =
       Graph.get id userGraph.graph
     splittable =
@@ -2545,13 +2613,13 @@ viewSvgTransitionSplitter left right model =
   --   []
 
 viewUndoRedoVisualisation : Model -> Svg a
-viewUndoRedoVisualisation { undoBuffer, redoBuffer, dimensions } =
+viewUndoRedoVisualisation { currentPackage, dimensions } =
   let
     (_, h) = dimensions
     rect_width = 30
     rect_height = 10
     rect_spacing = 3
-    num_undo = List.length undoBuffer
+    num_undo = List.length currentPackage.undoBuffer
     idxToY idx =
       h - (toFloat (40 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
 
@@ -2589,7 +2657,7 @@ viewUndoRedoVisualisation { undoBuffer, redoBuffer, dimensions } =
                 ]
                 []
             )
-            undoBuffer
+            currentPackage.undoBuffer
         )
         ++
         ( List.indexedMap
@@ -2604,7 +2672,7 @@ viewUndoRedoVisualisation { undoBuffer, redoBuffer, dimensions } =
                 ]
                 []
             )
-            redoBuffer
+            currentPackage.redoBuffer
         )
       )
 
@@ -2661,8 +2729,13 @@ viewMainSvgContent model =
     |> List.map
       (viewLink
         model
-        ( Maybe.map executing_edges model.execution
-          |> Maybe.withDefault Dict.empty))
+        ( case model.currentOperation of
+            Just (Executing _ executionResult) ->
+              executing_edges executionResult
+            _ -> -- this is fine, because this is only relevant for execution + currentpackage??
+              Dict.empty
+        )
+      )
     |> g [ class [ "links" ] ]
   , Graph.nodes model.currentPackage.userGraph.graph
     |> List.map (viewNode model)
@@ -2919,6 +2992,8 @@ view model =
               permit_click :: permit_scroll :: permit_pan
         Just (AlteringConnection _ _) ->
           []
+        Just (Executing _ _) ->
+          permit_pan
         Just (Dragging _) ->
           -- must have permit_pan (for mouse-movement)
           -- must have permit_stopdrag
@@ -2950,6 +3025,8 @@ view model =
               viewSvgTransitionSplitter left right model
             )
             |> Maybe.withDefault (g [] [])
+          Just (Executing _ _) ->
+            g [] [] -- no overlay needed. (but if I *DO* put in some overlay at some point, it'd go here!!)
           Nothing ->
             g [] []
           Just (Dragging _) ->
@@ -3020,8 +3097,12 @@ view model =
                 bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
               Just (Splitting _) ->
                 g [] []
-              _ ->
-                case model.undoBuffer of
+              Just (Executing _ _) ->
+                bottomMsg "Executing computation. Press «Esc» to stop execution."
+              Just (Dragging _) ->
+                g [] []
+              Nothing ->
+                case model.currentPackage.undoBuffer of
                   [] ->
                     g [] []
                   _ ->
@@ -3064,16 +3145,16 @@ debugModel_ message model =
       "(" ++ String.fromFloat (Tuple.first model.dimensions) ++ ", " ++ String.fromFloat (Tuple.second model.dimensions) ++
       " : " ++ panToString model.pan ++ ")"
     buffers =
-      String.fromInt (List.length model.undoBuffer) ++ " / " ++ String.fromInt (List.length model.redoBuffer) ++ " undo/redo"
+      String.fromInt (List.length model.currentPackage.undoBuffer) ++ " / " ++ String.fromInt (List.length model.currentPackage.redoBuffer) ++ " undo/redo"
     disconnected =
       "{ " ++ (Set.map String.fromInt model.disconnectedNodes |> Set.toList |> String.join ", ") ++ " }"
     pending =
       "Undobuffer: " ++
-      ( case model.undoBuffer of
+      ( case model.currentPackage.undoBuffer of
           [] -> "nothing"
           _ ->
             "\n" ++
-            ( model.undoBuffer
+            ( model.currentPackage.undoBuffer
               |> List.map (DFA.encodeAutomatonGraph >> Debug.toString >> String.padLeft 4 ' ')
               |> String.join "\n"
             )
