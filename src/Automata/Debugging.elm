@@ -26,20 +26,28 @@ printNodeContext {node, incoming, outgoing} =
 
 printAutomatonGraph : AutomatonGraph -> String
 printAutomatonGraph g =
+    ("📍" ++ String.fromInt g.root ++ " " ++ graphToString (\_ -> Nothing) g.graph)
+
+printAutomatonGraphWithXY : AutomatonGraph -> String
+printAutomatonGraphWithXY g =
   let
-    -- roundABit x = toFloat (round (x * 100.0)) / 100.0 
+    roundABit x = toFloat (round (x * 100.0)) / 100.0 
     printNode : Entity -> Maybe String
-    printNode _ =
-      Nothing
-      -- Just <|
-      --   "@" ++ String.fromFloat (roundABit n.x) ++
-      --   "," ++ String.fromFloat (roundABit n.y)
+    printNode {x, y} =
+      Just <|
+        "@" ++ String.fromFloat (roundABit x) ++
+        "," ++ String.fromFloat (roundABit y)
   in
     ("📍" ++ String.fromInt g.root ++ " " ++ graphToString printNode g.graph)
 
 debugAutomatonGraph : String -> AutomatonGraph -> AutomatonGraph
 debugAutomatonGraph txt g =
   debug_log (txt ++ "\n  ") (printAutomatonGraph g)
+  |> \_ -> g
+
+debugAutomatonGraphXY : String -> AutomatonGraph -> AutomatonGraph
+debugAutomatonGraphXY txt g =
+  debug_log (txt ++ "\n  ") (printAutomatonGraphWithXY g)
   |> \_ -> g
 
 println : String -> a -> a

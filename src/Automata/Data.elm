@@ -371,8 +371,8 @@ printableAcceptCondition v =
       String.fromChar ch
     ViaGraphReference uuid ->
       Uuid.toString uuid
-      |> String.left 8
-      |> \s -> s ++ "..."
+      |> String.left 6
+      |> \s -> s ++ "…"
 
 truncate_uuid : Uuid -> String
 truncate_uuid uuid =
@@ -434,7 +434,7 @@ transitionToString {via, isFinal} =
       if isFinal then
         case via of
           ViaCharacter _ ->
-            "\u{0307}"
+            "\u{0305}"
           ViaGraphReference _ ->
             "!"
       else
@@ -469,6 +469,18 @@ transitionsParser =
         , Parser.loop [] transitionsHelp
         ]
 
+setX : Float -> { a | x : Float } -> { a | x : Float }
+setX new_x node =
+  { node | x = if isNaN new_x then node.x + 0.0023 else new_x }
+
+setY : Float -> { a | y : Float } -> { a | y : Float }
+setY new_y node =
+  { node | y = if isNaN new_y then node.y + 0.002 else new_y }
+
+setXY : Float -> Float -> { a | x : Float, y : Float } -> { a | x : Float, y : Float }
+setXY new_x new_y node =
+  node |> setX new_x |> setY new_y
+
 ------------------------------------
 -- BEGIN :: Copied & adapted from Force.elm
 ------------------------------------
@@ -487,13 +499,13 @@ entity index v =
     angle =
         toFloat index * initialAngle
   in
-    { x = radius * cos angle
-    , y = radius * sin angle
+    { x = 0.1
+    , y = 0.1
     , vx = 0.0
     , vy = 0.0
     , id = index
     , effect = v
-    }
+    } |> setXY (radius * cos angle) (radius * sin angle)
 ------------------------------------
 -- END :: Copied & adapted from Force.elm
 ------------------------------------

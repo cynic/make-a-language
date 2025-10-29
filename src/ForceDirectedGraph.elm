@@ -41,6 +41,7 @@ import Uuid exposing (Uuid)
 import AutoDict
 import Random.Pcg.Extended as Random
 import Automata.Debugging as Debugging
+import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 
 type alias Model = FDG_Model
 
@@ -118,7 +119,7 @@ makeLinkForces graph =
           (\(k, v) forces ->
             { source = ctx.node.id
             , target = k
-            , distance = 10 + 25.0 * toFloat (AutoSet.size v) -- 35-40 seems like a good distance
+            , distance = 10 + 30.0 * toFloat (AutoSet.size v) -- 35-40 seems like a good distance
             , strength = Just 0.7 -- * (toFloat <| Set.size v)
             } :: forces
           )
@@ -251,18 +252,9 @@ reInitialize model =
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode (offsetX, offsetY) (x, y) nodeCtx =
-  let
-    nodeValue =
-      nodeCtx.node.label
-    new_x = x + offsetX
-    new_y = y + offsetY
-  in
-    updateContextWithValue
-      nodeCtx
-      { nodeValue
-        | x = if isNaN new_x then nodeCtx.node.label.x + offsetX else new_x
-        , y = if isNaN new_y then nodeCtx.node.label.y + offsetY else new_y
-      }
+  updateContextWithValue
+    nodeCtx
+    ( setXY (x + offsetX) (y + offsetY) nodeCtx.node.label )
 
 
 updateContextWithValue : NodeContext Entity Connection -> Entity -> NodeContext Entity Connection
@@ -332,7 +324,7 @@ newnode_graphchange src x y conn g =
         in
           Graph.insert
             { node =
-              { label = { initial | x = x, y = y }
+              { label = initial |> setXY x y
               , id = id
               }
             , incoming = IntDict.singleton src conn
@@ -533,9 +525,7 @@ update msg model =
             g = pkg.userGraph
             newGraph =
               Graph.update nodeId
-                ( Maybe.map (updateNode (x,y) model.pan
-                  >> Debug.log "Dragging ended with updated node")
-                )
+                ( Maybe.map (updateNode (x,y) model.pan) )
                 g.graph
           in
             { model
@@ -544,6 +534,7 @@ update msg model =
                   { pkg
                     | userGraph =
                         { g | graph = newGraph }
+                        |> debugAutomatonGraphXY ("Dragging #" ++ String.fromInt nodeId ++ " ended with updated node")
                   }
               , specificForces = sf
               , simulation = Force.simulation (List.concat (IntDict.values sf))
@@ -589,7 +580,7 @@ update msg model =
                             { ctx
                             | node =
                               { node
-                              | label = { l | x = node_x, y = node_y }
+                              | label = l |> setXY node_x node_y
                               }
                             }
                         )
@@ -1267,7 +1258,7 @@ transitionToTextSpan transition otherClasses =
             (if .isFinal transition then "final" else "nonfinal")
             :: otherClasses transition.via
         ]
-        [ text "🔗"
+        [ text "Ω"
         , title [] [ text <| Uuid.toString ref ]
         ]
 

@@ -19,7 +19,7 @@ import List.Extra as List
 {- REGARDING THE ag FUNCTION
 
 So after struggling with the types for a while—they look 100% correct
-to me and I'm pretyt sure they ARE correct!—I discovered that I'd run
+to me and I'm pretty sure they ARE correct!—I discovered that I'd run
 into a compiler bug https://github.com/elm/compiler/issues/1839 .
 
   elm: You ran into a compiler bug. Here are some details for the developers:

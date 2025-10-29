@@ -1149,7 +1149,7 @@ executionText { fdg_model } =
                 [ span
                     [ HA.class "computation-progress-processed" ]
                     ( datum.transitions
-                      |> Debug.log "Execution-data transitions"
+                      -- |> Debug.log "Execution-data transitions"
                       |> List.map
                         (\{matching} ->
                           viewInputProcessing matching.via
@@ -1163,7 +1163,7 @@ executionText { fdg_model } =
                 , span
                     [ HA.class "computation-progress-to-do" ]
                     ( datum.remainingData
-                    |> Debug.log "Execution-data remaining"
+                    -- |> Debug.log "Execution-data remaining"
                     |> List.map ViaCharacter
                     |> List.map (\via -> viewInputProcessing via [])
                     )

@@ -14,7 +14,7 @@ import Json.Decode as D
 import Uuid
 import Automata.Debugging exposing
   ( printAutomatonGraph, debugAutomatonGraph, printNodeContext, println
-  , printFan, debugLog_
+  , printFan, debugLog_, debugAutomatonGraphXY
   )
 import Uuid exposing (Uuid)
 import Binary
@@ -402,7 +402,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       in
         renumberAutomatonGraphFrom start_id ag
         |> Tuple.second
-        |> debugAutomatonGraph (dbg_prefix ++ "Minimised, renumbered 'final'")
+        |> debugAutomatonGraphXY (dbg_prefix ++ "Minimised, renumbered 'final'")
   in
     minimised_dfa
 
@@ -449,6 +449,7 @@ oneTransition data =
             Nothing ->
               (acc, Nothing)
             Just ctx ->
+              debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
               ( TransitionTakenData ctx.node.id t :: acc
               , takeTransition t ctx.outgoing
               )
@@ -457,17 +458,19 @@ oneTransition data =
           |> List.foldl
               followPath
               ([], Graph.get expanded.root expanded.graph)
+          |> Tuple.mapFirst List.reverse
         thisMove : Maybe (Transition, NodeContext Entity Connection)
         thisMove =
           Maybe.andThen
             (\ctx ->
-                takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
+                takeTransition (Transition True (ViaCharacter h)) (ctx.outgoing |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan)
                 |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
                 |> Maybe.Extra.orElseLazy
                     (\() ->
-                      takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
+                      takeTransition (Transition False (ViaCharacter h)) ctx.outgoing
                       |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
                     )
+                |> debugLog_ ("[oneTransition] this-move result") (Maybe.map <| \(t, _) -> transitionToString t)
             )
             currentNode
       in
@@ -484,6 +487,7 @@ oneTransition data =
                 Just <| RequestedNodeDoesNotExist data
                 -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
               Just x ->
+                println ("[oneTransition] Searched for '" ++ String.fromChar h ++ "' but no possible transition from #" ++ String.fromInt x.node.id)
                 -- so I got up to this point, and NOW there's a problem.
                 Just <| NoPossibleTransition
                   { data
@@ -492,10 +496,12 @@ oneTransition data =
                     , computation = expanded
                   }
           Just (t, newNode) ->
+            debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
             { data
               | transitions =
                   transitions_taken ++
                   [TransitionTakenData newNode.node.id t]
+                  |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
                 , remainingData = remainingData
                 , currentNode = newNode.node.id
                 , computation = expanded
@@ -642,10 +648,8 @@ extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
           , finals =
               Set.map (\a -> a + max_dfa) w_dfa_orig.finals
           }
-          |> debugDFA_ "w_dfa_orig"
+          -- |> debugDFA_ "w_dfa_orig"
       }
-      |> debugExtDFA_ "extDFA (initial)"
-      |> debugExtDFA_ "extDFA (post-clone-and-queue)"
   in
     extDFA
 
@@ -871,12 +875,12 @@ build_out node_stack handled mapping extDFA =
         Just x -> String.fromInt x
         Nothing -> "⊥"
   in
-  case node_stack |> debugLog_ "[build_out] node_stack" print_node_stack of
+  case node_stack {- |> debugLog_ "[build_out] node_stack" print_node_stack -} of
     [] -> extDFA
     ({ q_m, q_w } as head) :: rest ->
       if AutoSet.member head handled then
         -- we have seen & dealt with this one before.
-        Debug.log ("[build_out] I have already handled (Qm=" ++ print_state q_m ++ ", Qw=" ++ print_state q_w ++ "); pushing to top of list, then moving on.") () |> \_ ->
+        -- Debug.log ("[build_out] I have already handled (Qm=" ++ print_state q_m ++ ", Qw=" ++ print_state q_w ++ "); pushing to top of list, then moving on.") () |> \_ ->
         build_out rest handled mapping
           { extDFA
             | queue_or_clone =
@@ -904,7 +908,7 @@ build_out node_stack handled mapping extDFA =
               all_transitions_out =
                 (AutoDict.keys transitions_m ++ AutoDict.keys transitions_w)
                 |> List.uniqueBy acceptConditionToString
-                |> Debug.log ("[build_out (Qm=" ++ String.fromInt q__m ++ ", Qw=" ++ String.fromInt q__w ++ ")] Transitions out")
+                -- |> Debug.log ("[build_out (Qm=" ++ String.fromInt q__m ++ ", Qw=" ++ String.fromInt q__w ++ ")] Transitions out")
               resulting_combination_states =
                 List.map
                   (\via ->
@@ -1001,12 +1005,12 @@ build_out node_stack handled mapping extDFA =
                       else
                         extDFA.finals
                 }
-                |> debugExtDFA_ "After build_out"
+                -- |> debugExtDFA_ "After build_out"
                 )
           (Just q__m, Nothing ) ->
             -- this state only exists in q_m. So I don't need to worry about anything from q_w.
             -- q_m should already have the necessary transitions for this; so I can ignore.
-            println ("[build_out (Qm=" ++ String.fromInt q__m ++ ", Qw=⊥)] State only exists in Qm, so ignoring it; existing transitions remain.")
+            -- println ("[build_out (Qm=" ++ String.fromInt q__m ++ ", Qw=⊥)] State only exists in Qm, so ignoring it; existing transitions remain.")
             build_out rest (AutoSet.insert head handled) mapping extDFA
           ( Nothing, Just q__w) ->
             -- this state only exists in q_w; in Carrasco & Forcada's terminology, it becomes a 
@@ -1022,7 +1026,7 @@ build_out node_stack handled mapping extDFA =
               all_transitions_out =
                 AutoDict.keys transitions_w
                 |> List.uniqueBy acceptConditionToString
-                |> Debug.log ("[build_out (Qm=⊥, Qw=" ++ String.fromInt q__w ++ ")] Transitions out")
+                -- |> Debug.log ("[build_out (Qm=⊥, Qw=" ++ String.fromInt q__w ++ ")] Transitions out")
               resulting_combination_states =
                 List.map
                   (\via ->
@@ -1119,11 +1123,11 @@ build_out node_stack handled mapping extDFA =
                       else
                         extDFA.finals
                 }
-                |> debugExtDFA_ "After build_out"
+                -- |> debugExtDFA_ "After build_out"
                 )
           ( Nothing, Nothing ) ->
             -- Unequivocal absorption state.  Nothing can possibly lead from here.
-            println "[build_out (⊥, ⊥)] Absorption state"
+            -- println "[build_out (⊥, ⊥)] Absorption state"
             build_out rest (AutoSet.insert head handled) mapping extDFA
 
 phase_1 : ExtDFA -> ExtDFA
@@ -1221,11 +1225,11 @@ replace_or_register extDFA_ =
           |> Maybe.map AutoDict.toList
         p_outgoing =
           get_outgoing p
-          |> Debug.log ("[replace_or_register] 'p'-outgoing for " ++ String.fromInt p ++ " is")
+          -- |> Debug.log ("[replace_or_register] 'p'-outgoing for " ++ String.fromInt p ++ " is")
       in
         \q ->
           if p == q then
-            Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; saying \"no\", because you can't be marked as equivalent to yourself in this context.") () |> \_ ->
+            -- Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; saying \"no\", because you can't be marked as equivalent to yourself in this context.") () |> \_ ->
             False -- you can't be equivalent to yourself
           else if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
             -- MUST have the same finality status.
@@ -1234,27 +1238,27 @@ replace_or_register extDFA_ =
             let
               q_outgoing =
                 get_outgoing q
-                |> Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q)
+                -- |> Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q)
               do_comparison : Maybe (List (AcceptVia, NodeId)) -> Maybe (List (AcceptVia, NodeId)) -> NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
               do_comparison outgoings_a outgoings_b a b handled =
                 if xor (Set.member a extDFA.finals) (Set.member b extDFA.finals) then
                   -- MUST have the same finality status.
-                  Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different finality; NOT equivalent.") () |> \_ ->
+                  -- Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different finality; NOT equivalent.") () |> \_ ->
                   False
                 else
                   case ( outgoings_a, outgoings_b ) of
                     ( Just _, Nothing ) ->
                       False
-                      |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
+                      -- |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
                     ( Nothing, Just _ ) ->
                       False
-                      |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
+                      -- |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
                     ( Nothing, Nothing ) ->
                       True
-                      |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " both have no outgoing transitions; therefore equivalent.")
+                      -- |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " both have no outgoing transitions; therefore equivalent.")
                     ( Just a_, Just b_ ) ->
                       if a_ == b_ then
-                        Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have equivalent transitions") a_ |> \_ ->
+                        -- Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have equivalent transitions") a_ |> \_ ->
                         True
                       else
                         -- okay, let's trace the computation forward, QxQ.  If we end up at the same
@@ -1267,11 +1271,11 @@ replace_or_register extDFA_ =
                           new_handled = Set.insert (a, b) handled
                         in
                           if vias_a /= vias_b then
-                            Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outbound transitions; not equivalent") (vias_a, vias_b) |> \_ ->
+                            -- Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outbound transitions; not equivalent") (vias_a, vias_b) |> \_ ->
                             False -- not equivalent; don't have the same computational paths.
                           else if Set.member (a, b) handled then
                             True
-                            |> Debug.log ("[replace_or_register] Have already seen (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ "); avoiding cycle and returning")
+                            -- |> Debug.log ("[replace_or_register] Have already seen (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ "); avoiding cycle and returning")
                           else
                             -- hmm, the vias are the same.  Okay; let's push forward per-transition.
                             -- And if we have equality of THOSE transitions, then we're good;
@@ -1279,7 +1283,7 @@ replace_or_register extDFA_ =
                             List.zip a_ b_
                             |> List.all
                               (\((_, a_dest), (_, b_dest)) ->
-                                Debug.log ("[replace_or_register] Recursing from (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ ") to check") (a_dest, b_dest) |> \_ ->
+                                -- Debug.log ("[replace_or_register] Recursing from (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ ") to check") (a_dest, b_dest) |> \_ ->
                                 check_equiv_recursive a_dest b_dest new_handled
                               )
               check_equiv_recursive : NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
@@ -1311,11 +1315,10 @@ replace_or_register extDFA_ =
       let
         equiv_to_cloned_or_queued = equiv extDFA qc_node
       in
-        Debug.log ("[replace_or_register] Recheck triggers & targets") |> \_ ->
+        -- Debug.log ("[replace_or_register] Recheck triggers & targets") |> \_ ->
         case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
           Just found_equivalent ->
-            Debug.log ("[replace_or_register] Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) ()
-            |> \_ ->
+            -- Debug.log ("[replace_or_register] Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
               let
                 -- if this is equivalent, then we must reprocess other nodes if necessary.
                 -- But first, let's act to effect this change.
@@ -1336,14 +1339,15 @@ replace_or_register extDFA_ =
               in
                 updated_dfa
           Nothing ->
-            Debug.log ("[replace_or_register] No equivalent found for " ++ String.fromInt qc_node) ()
-            |> \_ ->
+            -- Debug.log ("[replace_or_register] No equivalent found for " ++ String.fromInt qc_node) () |> \_ ->
                 { extDFA
-                  | register = Set.insert qc_node extDFA.register |> Debug.log "[replace_or_register] Updated register"
+                  | register =
+                      Set.insert qc_node extDFA.register
+                      -- |> Debug.log "[replace_or_register] Updated register"
                 }
     continue_processing : ExtDFA -> ExtDFA
     continue_processing extDFA =
-      case extDFA.queue_or_clone |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" of
+      case extDFA.queue_or_clone {- |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" -} of
         h::t ->
           let
             updated_dfa = process h extDFA
@@ -1357,13 +1361,13 @@ replace_or_register extDFA_ =
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
   extend w_dfa_orig m_dfa
-  |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
+  -- |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
   |> phase_1
-  |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
+  -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
   |> (\extdfa -> remove_unreachable { extdfa | start = extdfa.clone_start })
-  |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
+  -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
   |> replace_or_register
-  |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
+  -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
   |> retract
 
 
@@ -1422,7 +1426,7 @@ minimisation_merge head other g =
       (Graph.get head g.graph)
       (Graph.get other g.graph)
     |> Maybe.withDefault g
-    |> debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
+    -- |> debugAutomatonGraph ("[minimisation_merge] Post merge of #" ++ String.fromInt head ++ " and #" ++ String.fromInt other)
 
 minimiseNodesByCombiningTransitions : AutomatonGraph -> AutomatonGraph
 minimiseNodesByCombiningTransitions g_ =
@@ -1524,17 +1528,17 @@ minimiseNodesByCombiningTransitions g_ =
         )
         Set.empty
         g_.graph
-      |> Debug.log "[minimiseNodes] Terminal nodes (i.e. starting points)"
+      -- |> Debug.log "[minimiseNodes] Terminal nodes (i.e. starting points)"
     fanOutEquals : NodeContext Entity Connection -> NodeContext Entity Connection -> Bool
     fanOutEquals a b =
       let
         redirected o id =
           IntDict.toList o
           |> List.map (\(k, v) -> (k, connectionToString v))
-          |> Debug.log ("[minimiseNodes→fanOutEquals] outgoing of #" ++ String.fromInt id)
+          -- |> Debug.log ("[minimiseNodes→fanOutEquals] outgoing of #" ++ String.fromInt id)
       in
       redirected a.outgoing a.node.id == redirected b.outgoing b.node.id
-      |> Debug.log ("[minimiseNodes→fanOutEquals] Are #" ++ String.fromInt a.node.id ++ " and #" ++ String.fromInt b.node.id ++ " equal?")
+      -- |> Debug.log ("[minimiseNodes→fanOutEquals] Are #" ++ String.fromInt a.node.id ++ " and #" ++ String.fromInt b.node.id ++ " equal?")
     classify : NodeContext Entity Connection -> AutomatonGraph -> Maybe (AutomatonGraph)
     classify terminal g =
       -- classify the terminal node into one of the four classes
@@ -1542,7 +1546,7 @@ minimiseNodesByCombiningTransitions g_ =
         -- case T1.  We will deal with this right at the end, during
         -- finalisation after ALL user changes have been made for this
         -- round of changes.
-        Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " has no fan-out. I won't finalise it now.") () |> \_ ->
+        -- Debug.log ("[minimiseNodes] 🕳️ Terminal #" ++ String.fromInt terminal.node.id ++ " has no fan-out. I won't finalise it now.") () |> \_ ->
         let
           emptyOutgoing =
             Graph.fold
@@ -1554,21 +1558,21 @@ minimiseNodesByCombiningTransitions g_ =
               )
               []
               g.graph
-            |> Debug.log "[minimiseNodes] After merging T1 nodes"
+            -- |> Debug.log "[minimiseNodes] After merging T1 nodes"
         in
           case emptyOutgoing of
             [] ->
-              Debug.log "[finaliseEndNodes] There are no nodes to finalise." |> \_ ->
+              -- Debug.log "[finaliseEndNodes] There are no nodes to finalise." |> \_ ->
               Nothing
             [_] ->
-              Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
+              -- Debug.log "[finaliseEndNodes] There is only one terminal node; therefore, nothing to finalise." |> \_ ->
               Nothing
             term::rest ->
               List.foldl
                 (minimisation_merge term)
                 g
                 rest
-              |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
+              -- |> debugAutomatonGraph "[finaliseEndNodes] Post-finalisation"
               |> Just
       else
         let
@@ -1585,48 +1589,48 @@ minimiseNodesByCombiningTransitions g_ =
           sources =
             getFanExcludingMyself terminal.incoming
         in
-          Debug.log ("[minimiseNodes] Terminal #" ++ String.fromInt terminal.node.id ++ " has a fanout.  Checking targets to see if it is extended by another.") () |> \_ ->
+          -- Debug.log ("[minimiseNodes] Terminal #" ++ String.fromInt terminal.node.id ++ " has a fanout.  Checking targets to see if it is extended by another.") () |> \_ ->
           case List.find (fanOutEquals terminal) targets of
             Just equivalent ->
               -- Case T2, sub-case 1
-              println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
+              -- println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is extended by #" ++ String.fromInt equivalent.node.id)
               Just (minimisation_merge terminal.node.id equivalent.node.id g)
             Nothing ->
-              Debug.log ("[minimiseNodes] No suitable targets found; #" ++ String.fromInt terminal.node.id ++ " is not extended by any node.  Checking sources to see if it extends another.") () |> \_ ->
+              -- Debug.log ("[minimiseNodes] No suitable targets found; #" ++ String.fromInt terminal.node.id ++ " is not extended by any node.  Checking sources to see if it extends another.") () |> \_ ->
               case List.find (fanOutEquals terminal) sources of
                 Just equivalent ->
                   -- Case T2, sub-case 2
-                  println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
+                  -- println ("[minimiseNodes] 🕳️ Node #" ++ String.fromInt terminal.node.id ++ " is an extension of #" ++ String.fromInt equivalent.node.id)
                   Just (minimisation_merge terminal.node.id equivalent.node.id g)
                 Nothing ->
-                  Debug.log ("[minimiseNodes] #" ++ String.fromInt terminal.node.id ++ " neither extends nor is extended.") () |> \_ ->
+                  -- Debug.log ("[minimiseNodes] #" ++ String.fromInt terminal.node.id ++ " neither extends nor is extended.") () |> \_ ->
                   case targets of
                     m::_ ->
-                      Debug.log "[minimiseNodes] Checking for common sources of target-node" m.node.id |> \_ ->
+                      -- Debug.log "[minimiseNodes] Checking for common sources of target-node" m.node.id |> \_ ->
                       IntDict.get terminal.node.id m.incoming
                       |> Maybe.andThen
                         (\chosenConnection ->
-                          debugLog_ "[minimiseNodes] connection to follow back is" connectionToString chosenConnection |> \_ ->
+                          -- debugLog_ "[minimiseNodes] connection to follow back is" connectionToString chosenConnection |> \_ ->
                           IntDict.toList m.incoming
                           |> List.filterMap
                             (\(s, conn) ->
                               if s /= terminal.node.id && conn == chosenConnection then
                                 Graph.get s g.graph
-                                |> Maybe.map (debugLog_ ("[minimiseNodes] candidate node (excluding #" ++ String.fromInt terminal.node.id ++ ")") (.node >> .id))
+                                -- |> Maybe.map (debugLog_ ("[minimiseNodes] candidate node (excluding #" ++ String.fromInt terminal.node.id ++ ")") (.node >> .id))
                               else
                                 Nothing
                             )
                           |> List.find (fanOutEquals terminal)
-                          |> debugLog_ "[minimiseNodes] selected mergeable candidate"
-                            (Maybe.map printNodeContext >> Maybe.withDefault "NONE - there is no fan-in; therefore, no merge candidate; therefore, this merge will not take place).")
+                          -- |> debugLog_ "[minimiseNodes] selected mergeable candidate"
+                            -- (Maybe.map printNodeContext >> Maybe.withDefault "NONE - there is no fan-in; therefore, no merge candidate; therefore, this merge will not take place).")
                           |> Maybe.map
                             (\equivalent ->
-                                println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
+                                -- println ("[minimiseNodes] Node #" ++ String.fromInt terminal.node.id ++ " can be merged with node #" ++ String.fromInt equivalent.node.id)
                                 minimisation_merge terminal.node.id equivalent.node.id g
                             )
                         )
                     [] ->
-                      Debug.log "[minimiseNodes] No suitable targets found." () |> \_ ->
+                      -- Debug.log "[minimiseNodes] No suitable targets found." () |> \_ ->
                       Nothing
     classify_all terminals g =
       case terminals of
@@ -1641,9 +1645,9 @@ minimiseNodesByCombiningTransitions g_ =
     classify_all
       (Set.toList ending_nodes)
       ( g_
-        |> debugAutomatonGraph "[minimiseNodes] Initial graph"
+        -- |> debugAutomatonGraph "[minimiseNodes] Initial graph"
       )
-    |> debugAutomatonGraph "[minimiseNodes] Final graph"
+    -- |> debugAutomatonGraph "[minimiseNodes] Final graph"
 
 toUnminimisedAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
 toUnminimisedAutomatonGraph uuid dfa =
@@ -1690,9 +1694,9 @@ toUnminimisedAutomatonGraph uuid dfa =
 toAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
 toAutomatonGraph uuid dfa =
   toUnminimisedAutomatonGraph uuid dfa
-  |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
+  -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
   |> minimiseNodesByCombiningTransitions
-  |> debugAutomatonGraph "[toAutomatonGraph] Graph, minimised, final output"
+  -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, minimised, final output"
 
 renumberAutomatonGraphFrom : Int -> AutomatonGraph -> (IntDict.IntDict NodeId, AutomatonGraph)
 renumberAutomatonGraphFrom start g =
@@ -2470,13 +2474,13 @@ fromAutomatonGraphHelper g =
 
 fromAutomatonGraph : AutomatonGraph -> DFARecord {}
 fromAutomatonGraph =
-    debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
+    -- debugAutomatonGraph "[fromAutomatonGraph] Graph as received" >>
     splitTerminalAndNonTerminal
-    >> debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
+    -- >> debugAutomatonGraph "[fromAutomatonGraph] Graph after splitting the joined terminal+non-terminal nodes"
     >> nfaToDFA
-    >> debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
+    -- >> debugAutomatonGraph "[fromAutomatonGraph] Graph NFA→DFA conversion"
     >> fromAutomatonGraphHelper
-    >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
+    -- >> debugDFA_ "[fromAutomatonGraph] Graph→DFA"
 
 encodeAutoDict : (k -> String) -> (v -> E.Value) -> AutoDict.Dict comparable k v -> E.Value
 encodeAutoDict toKey toValue dictionary =
