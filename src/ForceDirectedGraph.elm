@@ -1417,27 +1417,25 @@ executionData r =
 -- from the execution result, obtain the edges which were taken.
 -- Note that multiple edges may be "taken" between two nodes,
 -- in the cases of (1) loops and (2) graph-ref intersections.
-executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia)
+executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (Int, AcceptVia)
 executing_edges result =
   let
-    trace : ExecutionData -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia) -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia)
-    trace data acc =
-      case data.transitions of
-        [] ->
-          acc
-
-        {src, matching}::tail -> -- more than one transtion may match (e.g. graph-ref intersections)
-          trace
-            { data | transitions = tail, currentNode = src }
-            (Dict.update (src, data.currentNode)
-              ( Maybe.map (AutoSet.union (AutoSet.map acceptConditionToString .via matching))
-                >> Maybe.orElse (Just <| AutoSet.map acceptConditionToString .via matching)
-              )
-              acc
-            )
+    trace : TransitionTakenData -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia)) -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia))
+    trace {dest, matching} (lastNode, recency, acc) =
+      ( dest
+      , recency - 1
+      , Dict.insert (lastNode, dest) (recency, matching.via) acc
+      )
   in
     executionData result
-    |> Maybe.map (\data -> trace data Dict.empty)
+    |> Maybe.map
+      (\data ->
+          List.foldl
+            trace
+            (data.computation.root, List.length data.transitions, Dict.empty)
+            data.transitions
+          |> (\(_, _, dict) -> dict)
+      )
     |> Maybe.withDefault Dict.empty
 
 viewGraphReference : Uuid.Uuid -> Float -> Float -> Svg a
@@ -1483,7 +1481,7 @@ viewGraphReference uuid x_ y_ =
           )
       )
 
-viewLink : Model -> Dict (NodeId, NodeId) (AutoSet.Set String AcceptVia) -> Edge Connection -> Svg Msg
+viewLink : Model -> Dict (NodeId, NodeId) (Int, AcceptVia) -> Edge Connection -> Svg Msg
 viewLink ({ currentPackage } as model) executing edge =
   let
     userGraph = currentPackage.userGraph
@@ -1500,12 +1498,12 @@ viewLink ({ currentPackage } as model) executing edge =
       case Dict.get (edge.from, edge.to) executing of
         Nothing ->
           connectionToSvgText edge.label
-        Just to_highlight ->
+        Just (recency, chosen_via) ->
           connectionToSvgTextHighlightingChars
             edge.label
-            (\c ->
-              if AutoSet.member c to_highlight then
-                [ "executed" ]
+            (\via ->
+              if via == chosen_via then
+                [ "executed", "recent-" ++ String.fromInt recency ]
               else
                 []
             )

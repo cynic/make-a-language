@@ -29,6 +29,7 @@ import Html.Styled exposing (h2, h4)
 import AutoSet
 import AutoDict
 import Uuid exposing (Uuid)
+import Automata.Debugging
 
 {-
 Quality / technology requirements:
@@ -350,7 +351,9 @@ update msg model =
                   ( Test
                       newInput
                       expectation
-                      ( DFA.stepThroughInitial newInput resolutionDict pkg.userGraph
+                      ( Automata.Debugging.println "Whaaa"
+                        DFA.stepThroughInitial newInput resolutionDict pkg.userGraph
+                        |> Automata.Debugging.println "moo"
                         |> DFA.run pkg.userGraph
                       )
                   )
@@ -1129,7 +1132,7 @@ viewBottomPanelHeader model =
       buttons
     ]
 
-executionText : Model -> Html a
+executionText : Model -> Html Msg
 executionText { fdg_model } =
   div
     []
@@ -1139,6 +1142,31 @@ executionText { fdg_model } =
         Just result ->
           let
             maybeDatum = FDG.executionData result
+            showProgress : ExecutionData -> Html Msg
+            showProgress datum =
+              p
+                [ HA.class "computation-progress" ]
+                [ span
+                    [ HA.class "computation-progress-processed" ]
+                    ( datum.transitions
+                      |> List.foldl
+                        (\{matching} (seen, output) ->
+                          ( matching.via :: seen
+                          , viewInputProcessing seen
+                              ( if matching.isFinal then
+                                  ["final"]
+                                else
+                                  ["non-final"]
+                              ) :: output
+                          )
+                        )
+                        ([], [])
+                      |> Tuple.second
+                    )
+                , span
+                    [ HA.class "computation-progress-to-do" ]
+                    [ viewInputProcessing (datum.remainingData |> List.map ViaCharacter) [] ]
+                ]
           in
             p
               [ HA.class "output-line" ]
@@ -1155,38 +1183,17 @@ executionText { fdg_model } =
                     x ->
                         "🦗 Bug!  " ++ Debug.toString x ++ ".  You should never see this message.  I need to figure out what just happened here…"
               , Maybe.map
-                  (\datum ->
-                    p
-                      [ HA.class "computation-progress" ]
-                      [ span
-                          [ HA.class "computation-progress-processed" ]
-                          ( datum.transitions
-                            |> List.reverse
-                            |> List.map
-                              (\{matching, consumed} ->
-                                viewInputProcessing consumed
-                                  ( if (AutoSet.filter (.isFinal) matching |> AutoSet.size) > 0 then
-                                      ["final"]
-                                    else
-                                      ["non-final"]
-                                  )
-                              )
-                          )
-                      , span
-                          [ HA.class "computation-progress-to-do" ]
-                          [ viewInputProcessing datum.remainingData [] ]
-                      ]
-                  )
+                  showProgress
                   maybeDatum
                 |> Maybe.withDefault (text "")
               ]
     ]
 
-viewInputProcessing : List Char -> List String -> Html msg
-viewInputProcessing characters classes =
+viewInputProcessing : List AcceptVia -> List String -> Html msg
+viewInputProcessing vias classes =
   span
     [ HA.classList <| List.map (\v -> (v, True)) classes ]
-    [ text <| String.fromList characters ]
+    [ text <| String.concat <| List.map acceptConditionToString vias ]
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =

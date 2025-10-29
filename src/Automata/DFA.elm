@@ -435,8 +435,78 @@ oneTransition g executionState =
           case data.remainingData of
             [] ->
               executionState -- we're done! Can't go any further!
-            _ ->
-              executionState -- TODO
+            h::remainingData ->
+              let
+                expanded =
+                  expand g data.resolutionDict data.currentNode
+                -- the node-ids may well have changed.  So, find out where we are.
+                canTakeTransition t autoset =
+                  AutoSet.member t autoset
+                takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection)
+                takeTransition t fan =
+                  IntDict.toList fan
+                  |> List.filter (\(_, conn) -> canTakeTransition t conn)
+                  |> List.head -- no NFAs allowed
+                  |> Maybe.andThen (\(id, _) -> Graph.get id expanded.graph)
+                followPath : Transition -> (List TransitionTakenData, Maybe (NodeContext Entity Connection)) -> (List TransitionTakenData, Maybe (NodeContext Entity Connection))
+                followPath t (acc, lastContext) =
+                  case lastContext of
+                    Nothing ->
+                      (acc, Nothing)
+                    Just ctx ->
+                      ( TransitionTakenData ctx.node.id t :: acc
+                      , takeTransition t ctx.outgoing
+                      )
+                (transitions_taken, currentNode) =
+                  List.map (.matching) data.transitions
+                  |> List.foldl
+                      followPath
+                      ([], Graph.get expanded.root expanded.graph)
+                thisMove : Maybe (Transition, NodeContext Entity Connection)
+                thisMove =
+                  Maybe.andThen
+                    (\ctx ->
+                        takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
+                        |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
+                        |> Maybe.Extra.orElseLazy
+                            (\() ->
+                              takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
+                              |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
+                            )
+                    )
+                    currentNode
+              in
+                case thisMove of
+                  Nothing ->
+                    -- why??
+                    case currentNode of
+                      Nothing ->
+                        -- ah; I failed somewhere on the path TO here.
+                        -- This should be impossible; it seems to indicate that a path
+                        -- which previously existed has now gone missing.
+                        -- This is a bug.
+                        -- And I will die on this hill…
+                        RequestedNodeDoesNotExist data
+                        -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
+                      Just x ->
+                        -- so I got up to this point, and NOW there's a problem.
+                        NoPossibleTransition
+                          { data
+                            | transitions = transitions_taken
+                            , currentNode = x.node.id -- couldn't get past this one.
+                            , computation = expanded
+                          }
+                  Just (t, newNode) ->
+                    { data
+                      | transitions =
+                          transitions_taken ++
+                          [TransitionTakenData newNode.node.id t]
+                        , remainingData = remainingData
+                        , currentNode = newNode.node.id
+                        , computation = expanded
+                    }
+                    |> (\d -> if t.isFinal then Accepted d else Rejected d)
+
               -- let
                   -- IntDict.toList ctx.outgoing
                   -- |> List.map
@@ -525,13 +595,8 @@ step g executionResult =
               -- accept.  Otherwise—by default—I will reject.
               EndOfComputation (Rejected d)
             {matching}::_ ->
-              let
-                final = AutoSet.filter (.isFinal) matching
-              in
-                if AutoSet.size final > 0 then
-                  EndOfComputation (Accepted d)
-                else
-                  EndOfComputation (Rejected d)
+              EndOfComputation
+                ( (if matching.isFinal then Accepted else Rejected) d )
     EndOfInput _ ->
       executionResult
     EndOfComputation _ ->
@@ -559,7 +624,7 @@ stepThroughInitial s resolutionDict g =
   in
   step g
     (CanContinue <| Rejected <|
-      ExecutionData [] (upcomingAcceptConditions s) g.root [g.graphIdentifier] resolutionDict
+      ExecutionData [] (upcomingAcceptConditions s) g.root g resolutionDict
     )
 
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph

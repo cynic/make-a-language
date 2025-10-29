@@ -302,16 +302,15 @@ type alias ExtDFA =
   }
 
 type alias TransitionTakenData =
-  { src : NodeId
-  , matching : AutoSet.Set String Transition -- multiple could match
-  , consumed : List Char
+  { dest : NodeId
+  , matching : Transition
   }
 
 type alias ExecutionData =
   { transitions : List TransitionTakenData
   , remainingData : List Char
   , currentNode : NodeId
-  , scope : List Uuid
+  , computation : AutomatonGraph
   , resolutionDict : AutoDict.Dict String Uuid AutomatonGraph
   }
 
