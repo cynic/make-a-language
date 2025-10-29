@@ -424,156 +424,91 @@ expand e resolutionDict src =
       src
       e
 
-oneTransition : AutomatonGraph -> ExecutionState -> ExecutionState
-oneTransition g executionState =
-  let
-    transitionWithData : ExecutionData -> ExecutionState
-    transitionWithData data =
-      Graph.get data.currentNode g.graph
-      |> Maybe.map
-        (\_ ->
-          case data.remainingData of
-            [] ->
-              executionState -- we're done! Can't go any further!
-            h::remainingData ->
-              let
-                expanded =
-                  expand g data.resolutionDict data.currentNode
-                -- the node-ids may well have changed.  So, find out where we are.
-                canTakeTransition t autoset =
-                  AutoSet.member t autoset
-                takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection)
-                takeTransition t fan =
-                  IntDict.toList fan
-                  |> List.filter (\(_, conn) -> canTakeTransition t conn)
-                  |> List.head -- no NFAs allowed
-                  |> Maybe.andThen (\(id, _) -> Graph.get id expanded.graph)
-                followPath : Transition -> (List TransitionTakenData, Maybe (NodeContext Entity Connection)) -> (List TransitionTakenData, Maybe (NodeContext Entity Connection))
-                followPath t (acc, lastContext) =
-                  case lastContext of
-                    Nothing ->
-                      (acc, Nothing)
-                    Just ctx ->
-                      ( TransitionTakenData ctx.node.id t :: acc
-                      , takeTransition t ctx.outgoing
-                      )
-                (transitions_taken, currentNode) =
-                  List.map (.matching) data.transitions
-                  |> List.foldl
-                      followPath
-                      ([], Graph.get expanded.root expanded.graph)
-                thisMove : Maybe (Transition, NodeContext Entity Connection)
-                thisMove =
-                  Maybe.andThen
-                    (\ctx ->
-                        takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
-                        |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
-                        |> Maybe.Extra.orElseLazy
-                            (\() ->
-                              takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
-                              |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
-                            )
+-- if I can't make another transition, return `Nothing`
+oneTransition : ExecutionData -> Maybe ExecutionState
+oneTransition data =
+  case data.remainingData of
+    [] ->
+      Nothing -- we're done! Can't go any further! ExecutionState would stay the same…
+    h::remainingData ->
+      let
+        expanded =
+          expand data.computation data.resolutionDict data.currentNode
+        -- the node-ids may well have changed.  So, find out where we are.
+        canTakeTransition t autoset =
+          AutoSet.member t autoset
+        takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection)
+        takeTransition t fan =
+          IntDict.toList fan
+          |> List.filter (\(_, conn) -> canTakeTransition t conn)
+          |> List.head -- no NFAs allowed
+          |> Maybe.andThen (\(id, _) -> Graph.get id expanded.graph)
+        followPath : Transition -> (List TransitionTakenData, Maybe (NodeContext Entity Connection)) -> (List TransitionTakenData, Maybe (NodeContext Entity Connection))
+        followPath t (acc, lastContext) =
+          case lastContext of
+            Nothing ->
+              (acc, Nothing)
+            Just ctx ->
+              ( TransitionTakenData ctx.node.id t :: acc
+              , takeTransition t ctx.outgoing
+              )
+        (transitions_taken, currentNode) =
+          List.map (.matching) data.transitions
+          |> List.foldl
+              followPath
+              ([], Graph.get expanded.root expanded.graph)
+        thisMove : Maybe (Transition, NodeContext Entity Connection)
+        thisMove =
+          Maybe.andThen
+            (\ctx ->
+                takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
+                |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
+                |> Maybe.Extra.orElseLazy
+                    (\() ->
+                      takeTransition (Transition True (ViaCharacter h)) ctx.outgoing
+                      |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
                     )
-                    currentNode
-              in
-                case thisMove of
-                  Nothing ->
-                    -- why??
-                    case currentNode of
-                      Nothing ->
-                        -- ah; I failed somewhere on the path TO here.
-                        -- This should be impossible; it seems to indicate that a path
-                        -- which previously existed has now gone missing.
-                        -- This is a bug.
-                        -- And I will die on this hill…
-                        RequestedNodeDoesNotExist data
-                        -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
-                      Just x ->
-                        -- so I got up to this point, and NOW there's a problem.
-                        NoPossibleTransition
-                          { data
-                            | transitions = transitions_taken
-                            , currentNode = x.node.id -- couldn't get past this one.
-                            , computation = expanded
-                          }
-                  Just (t, newNode) ->
-                    { data
-                      | transitions =
-                          transitions_taken ++
-                          [TransitionTakenData newNode.node.id t]
-                        , remainingData = remainingData
-                        , currentNode = newNode.node.id
-                        , computation = expanded
-                    }
-                    |> (\d -> if t.isFinal then Accepted d else Rejected d)
+            )
+            currentNode
+      in
+        case thisMove of
+          Nothing ->
+            -- why??
+            case currentNode of
+              Nothing ->
+                -- ah; I failed somewhere on the path TO here.
+                -- This should be impossible; it seems to indicate that a path
+                -- which previously existed has now gone missing.
+                -- This is a bug.
+                -- And I will die on this hill…
+                Just <| RequestedNodeDoesNotExist data
+                -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
+              Just x ->
+                -- so I got up to this point, and NOW there's a problem.
+                Just <| NoPossibleTransition
+                  { data
+                    | transitions = transitions_taken
+                    , currentNode = x.node.id -- couldn't get past this one.
+                    , computation = expanded
+                  }
+          Just (t, newNode) ->
+            { data
+              | transitions =
+                  transitions_taken ++
+                  [TransitionTakenData newNode.node.id t]
+                , remainingData = remainingData
+                , currentNode = newNode.node.id
+                , computation = expanded
+            }
+            |> (\d -> if t.isFinal then Accepted d else Rejected d)
+            |> Just
 
-              -- let
-                  -- IntDict.toList ctx.outgoing
-                  -- |> List.map
-                  --   (\(k, conn) ->
-                  --     -- Create a graph from the things in this connection
-                  --     { outgoing = k
-                  --     , transitionGraph = connectionToGraph g.graphIdentifier conn
-                  --     , allowed = graphReferenceSet conn
-                  --     , connection = conn
-                  --     }
-                  --   )
-  --               chosenOutgoingData =
-  --                 outgoingAsGraphs
-  --                 |> List.findMap
-  --                   (\{outgoing, transitionGraph, allowed, connection} ->
-  --                     -- traverseConnectionGraph only generates a Just value IF it accepts.
-  --                     -- This is the same as how a character is used to "accept".
-  --                     -- But that has no effect on whether the transition in the link
-  --                     -- is actually terminal or not.
-  --                     traverseConnectionGraph data.remainingData allowed transitionGraph
-  --                     |> Maybe.map
-  --                       (\(finalSet, consumed) ->
-  --                         { dest = outgoing -- I have a Just value, so YES, I select THIS outgoing!
-  --                         , matching_transitions =
-  --                           let
-  --                             final =
-  --                               AutoSet.filter (.isFinal) connection
-  --                             present =
-  --                               AutoSet.filter (\{tags} -> AutoSet.size (AutoSet.intersect finalSet tags) > 0) final
-  --                           in
-  --                             present
-  --                         , consumed = consumed
-  --                         , remaining = List.drop (List.length consumed) data.remainingData
-  --                         }
-  --                       )
-  --                   )
-  --                 |> Maybe.map
-  --                   (\{dest, matching_transitions, consumed, remaining} ->
-  --                     Accepted
-  --                       { data
-  --                       | transitionsTaken = (data.currentNode, matching_transitions, consumed)::data.transitionsTaken
-  --                       , remainingData = remaining
-  --                       , currentNode = dest
-  --                       }
-  --                   )
-              -- in
-                -- chosenOutgoingData
-                -- |> Maybe.withDefault (NoPossibleTransition data)
-                
-        )
-      |> Maybe.withDefault (RequestedNodeDoesNotExist data)
-  in
-    case executionState of
-      Accepted d ->
-        transitionWithData d
-      Rejected d ->
-        transitionWithData d
-      RequestedNodeDoesNotExist _ ->
-        executionState
-      NoPossibleTransition _ ->
-        executionState
-
-step : AutomatonGraph -> ExecutionResult -> ExecutionResult
-step g executionResult =
-  case executionResult {- |> Debug.log "Step with" -} of
-    CanContinue executionState ->
-      case oneTransition g executionState of
+step : ExecutionResult -> ExecutionResult
+step executionResult =
+  let
+    switchUp : ExecutionState -> ExecutionResult
+    switchUp state =
+      case state of
         Accepted ({ remainingData } as d) ->
           case remainingData of
             [] -> EndOfInput (Accepted d)
@@ -583,7 +518,7 @@ step g executionResult =
             [] -> EndOfInput (Rejected d)
             _ -> CanContinue (Rejected d)
         RequestedNodeDoesNotExist d ->
-          Debug.log "INTERNAL ERROR! NODE DOES NOT EXIST!" d |> \_ ->
+          debugAutomatonGraph ("INTERNAL ERROR! NODE DOES NOT EXIST, path=" ++ Debug.toString d.transitions) d.computation |> \_ ->
           InternalError
         NoPossibleTransition d ->
           -- I only arrive here when there IS remaining data,
@@ -597,18 +532,34 @@ step g executionResult =
             {matching}::_ ->
               EndOfComputation
                 ( (if matching.isFinal then Accepted else Rejected) d )
-    EndOfInput _ ->
-      executionResult
-    EndOfComputation _ ->
-      executionResult
-    InternalError ->
-      executionResult
+  in
+    case executionResult {- |> Debug.log "Step with" -} of
+      CanContinue executionState ->
+        case executionState of
+          Accepted d ->
+            oneTransition d
+            |> Maybe.map switchUp
+            |> Maybe.withDefault executionResult
+          Rejected d ->
+            oneTransition d
+            |> Maybe.map switchUp
+            |> Maybe.withDefault executionResult
+          RequestedNodeDoesNotExist _ ->
+            executionResult
+          NoPossibleTransition _ ->
+            executionResult
+      EndOfInput _ ->
+        executionResult
+      EndOfComputation _ ->
+        executionResult
+      InternalError ->
+        executionResult
 
-run : AutomatonGraph -> ExecutionResult -> ExecutionResult
-run g r =
+run : ExecutionResult -> ExecutionResult
+run r =
   let
     execute result =
-      case step g result of
+      case step result of
         (CanContinue _) as okay ->
           execute okay
         x ->
@@ -622,7 +573,7 @@ stepThroughInitial s resolutionDict g =
     upcomingAcceptConditions =
       String.toList
   in
-  step g
+  step
     (CanContinue <| Rejected <|
       ExecutionData [] (upcomingAcceptConditions s) g.root g resolutionDict
     )
@@ -782,46 +733,6 @@ forwardtree_nodes start extDFA_orig tree_ =
     nodes_of_forwardtree tree_ [start]
     |> List.reverse
 
-w_forward_transitions : ExtDFA -> ForwardTree
-w_forward_transitions extDFA =
-  let
-    {-
-      I need to track by (src, via, dest).
-      I cannot just track by (via, dest).
-      Consider: (0, a, 1) (1, b, 2) (2, a, 1) [1]
-      Suddenly, that last transition doesn't get counted…
-    -}
-    helper : Maybe NodeId -> NodeId -> AutoSet.Set (Int, String, Int) (NodeId, AcceptVia, NodeId) -> ForwardTree
-    helper _ current seen =
-      case IntDict.get current extDFA.transition_function of
-        Nothing -> PathEnd
-        Just dict ->
-          let
-            filtered =
-              AutoDict.filter
-                (\via dest ->
-                  not (AutoSet.member ({- Debug.log "testing" -} (current, via, dest)) ({- Debug.log "seen" -} seen)) &&
-                  current /= dest --&&
-                  --List.member dest extDFA.queue_or_clone
-                )
-                dict
-              |> Debug.log "[w_forward_transitions] filtered"
-            children =
-              AutoDict.map
-                (\via state ->
-                  Debug.log "[w_forward_transitions] Examining" (current, via, state) |> \_ ->
-                  helper (Just current) state (AutoSet.insert (current, via, state) seen)
-                )
-                filtered
-          in
-            if AutoDict.isEmpty children then
-              PathEnd
-            else
-              ForwardNode children
-  in
-    helper Nothing extDFA.clone_start (AutoSet.empty (\(a,b,c) -> ( a, acceptConditionToString b, c )))
-    |> debugForwardTree "[w_forward_transitions] result"
-
 delta : NodeId -> AcceptVia -> DFARecord a -> Maybe NodeId
 delta q x dfa =
   IntDict.get q dfa.transition_function
@@ -862,12 +773,8 @@ transitions_to_dest q dfa =
     []
     dfa.transition_function
 
-type Phase1Purpose
-  = Add_Word
-  | Remove_Word
-
-clone_or_queue : Phase1Purpose -> NodeId -> NodeId -> ExtDFA -> ExtDFA
-clone_or_queue purpose q_m q_w extDFA =
+clone_or_queue : NodeId -> NodeId -> ExtDFA -> ExtDFA
+clone_or_queue q_m q_w extDFA =
   { extDFA
     | transition_function =
         case ( IntDict.get q_w extDFA.transition_function, IntDict.get q_m extDFA.transition_function ) of
@@ -892,26 +799,18 @@ clone_or_queue purpose q_m q_w extDFA =
               )
               extDFA.transition_function
     , finals =
-        -- now, here is the trick: if I am ADDING q_w, then I add q_w to
-        -- the finals as appropriate.  However, if I am REMOVING
-        -- q_w, then none of these states becomes final; we don't stop anywhere
-        -- that q_w stops.
-        case purpose of
-          Add_Word ->
-            if Set.member q_m extDFA.finals then
-              Set.insert q_w extDFA.finals
-            else
-              extDFA.finals
-          Remove_Word ->
-            extDFA.finals
+        if Set.member q_m extDFA.finals then
+          Set.insert q_w extDFA.finals
+        else
+          extDFA.finals
    }
 
-clone_or_queue_many : Phase1Purpose -> NodeId -> NodeId -> ForwardTree -> ExtDFA -> ExtDFA
-clone_or_queue_many purpose q_m q_w tree extDFA =
+clone_or_queue_many : NodeId -> NodeId -> ForwardTree -> ExtDFA -> ExtDFA
+clone_or_queue_many q_m q_w tree extDFA =
   case tree of
     PathEnd ->
       -- we're at the end of the transitions.
-      clone_or_queue purpose q_m q_w extDFA
+      clone_or_queue q_m q_w extDFA
       |> debugExtDFA_ ("[clone_or_queue_many] end of path, (q_m = #" ++ String.fromInt q_m ++ ", q_w = #" ++ String.fromInt q_w ++ ")")
     ForwardNode dict ->
       AutoDict.foldl
@@ -921,16 +820,11 @@ clone_or_queue_many purpose q_m q_w tree extDFA =
               Debug.log "🚨 ERROR!! How can I fail to get a `w` transition via known `w`-transitions??" () |> \_ ->
               acc
             (Nothing, Just _) ->
-              case purpose of
-                Add_Word ->
-                  -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
-                  clone_or_queue purpose q_m q_w acc
-                  |> debugExtDFA_ ("[clone_or_queue_many] queued, (q_m = #" ++ String.fromInt q_m ++ ", q_w = #" ++ String.fromInt q_w ++ ")")
-                Remove_Word ->
-                  -- we don't want to or need to add q_w-specific nodes.
-                  acc
+              -- The q_m ends here, but q_w carries on. ∴ the remaining q_w must be "queued" nodes.
+              clone_or_queue q_m q_w acc
+              |> debugExtDFA_ ("[clone_or_queue_many] queued, (q_m = #" ++ String.fromInt q_m ++ ", q_w = #" ++ String.fromInt q_w ++ ")")
             (Just m_node, Just w_node) ->
-              clone_or_queue_many purpose m_node w_node subtree (clone_or_queue purpose q_m q_w acc)
+              clone_or_queue_many m_node w_node subtree (clone_or_queue q_m q_w acc)
               |> debugExtDFA_ ("[clone_or_queue_many] cloned subtree starting at m = #" ++ String.fromInt m_node ++ ", w = #" ++ String.fromInt w_node)
         )
         extDFA
@@ -1255,102 +1149,65 @@ phase_1 extDFA_orig =
   -- 3. The `queue_or_clone` list is present, and in the correct order
   --    (i.e. back-to-front node order, for checking right-language)
 
-remove_unreachable : ForwardTree -> ExtDFA -> ExtDFA
-remove_unreachable old_w_path extDFA_orig =
-  -- check: are there any incoming transitions from EXTERNAL nodes?
-  -- "external" nodes are those nodes which are not along the w-path,
-  -- as expressed by via the `w_forward_transitions` function.
-  -- This should work because
-  -- 1. We clone all nodes to a new start.  We therefore have an
-  --    old-start and a new-start that are distinct.  We should always
-  --    be able to remove the old-start (it has 0 incoming edges).
-  -- 2. We redirected all outgoing edges of the existing nodes along the
-  --    w-path, with the EXCEPTION of the w-path edges themselves.  So,
-  --    if there are any incoming edges that come to the old w-path nodes,
-  --    then they must be coming from:
-  --    (a) the old w-path nodes.
-  --    (b) non-w-path nodes.
-  -- 3. After a node is removed, we can remove the next node (if it has 0
-  --    incoming edges), and so on.  We stop whenever we have at least 1
-  --    incoming edge.  This is according to Carrasco & Forcada's algorithm.
-  --    However, if w-path nodes are recursive, then this fails, because each
-  --    will have incoming edges from the other, and we can't clean them up.
-  -- 4. So, instead, we will go for a slightly different algorithm.
-  --    Step 1: collect all the nodes along the old w-path.  Place them in a
-  --            set. 
-  --    Step 2: partition the nodes into those which have an external incoming
-  --            edge ("R"), and those which do not ("S").
-  --    Step 3: moving in w-path order, examine the nodes of S.  If a node has
-  --            an incoming node in R, add it to R and remove it from S.
-  --            In other words, this is a partition refinement.
-  --    Step 4: remove all the nodes in the S set.
-  --    This should work because we are no longer relying on each node to be
-  --    0-incoming BECAUSE of node-removal.  Instead, we are relying on each
-  --    node to be 0-incoming after checking for external references directly.
+remove_unreachable : ExtDFA -> ExtDFA
+remove_unreachable extDFA =
+  -- can I make this even simpler?
+  -- Go along the graph from the root; throw the edges into a set; stop when
+  -- we encounter an edge again.
+  -- Now get rid of all the edges that aren't in the set.
   let
-    -- Step 1
-    old_w_path_nodes =
-      forwardtree_nodes extDFA_orig.start extDFA_orig old_w_path
-    old_w_path_set =
-      Set.fromList old_w_path_nodes
-      |> Debug.log "[remove_unreachable] Nodes from the old w-path"
-    -- Step 2
-    initial_partition : (List NodeId, List NodeId)
-    initial_partition = -- ( with_external_edges, without_external_edges )
-      old_w_path_set
-      |> Set.foldl
-        (\node (external, internal_only) ->
-          let
-            has_external_edges = -- are there any external incoming edges?
-              transitions_to_dest node extDFA_orig -- incoming edges
-              |> List.map Tuple.first
-              |> List.any (\edge -> not (Set.member edge old_w_path_set)) -- externality
-          in
-            if has_external_edges then
-              (node :: external, internal_only)
-            else
-              (external, node :: internal_only)
-        )
-        ([], [])
-    -- Step 3
-    -- make the final partition
-    (_, without_external_edges) =
-      -- TODO: …this can probably be made less expensive by going the other way
-      -- and looking at the destinations of with_external_edges. Oh well!
-      let
-        partition : List NodeId -> (Set NodeId, Set NodeId) -> (Set NodeId, Set NodeId)
-        partition remaining (nodes_with_external_edges, nodes_without_external_edges) =
-          case remaining of
-            [] -> (nodes_with_external_edges, nodes_without_external_edges)
-            node::t ->
-              let
-                incoming_nodes =
-                  transitions_to_dest node extDFA_orig
-                  |> List.map Tuple.first
-                  |> Set.fromList
-              in
-                if Set.isEmpty (Set.intersect incoming_nodes nodes_with_external_edges) then
-                  partition t (nodes_with_external_edges, nodes_without_external_edges)
-                else
-                  -- there is overlap, so this is in the first partition.
-                  partition t (Set.insert node nodes_with_external_edges, Set.remove node nodes_without_external_edges)
-      in
-        partition
-          (old_w_path_nodes |> Debug.log "[remove_unreachable] checking in order") -- must check in-order
-          (Tuple.mapBoth Set.fromList Set.fromList initial_partition)
-        |> Debug.log "[remove_unreachable] (to_keep, to_remove)"
-    -- Step 4
-    purge : NodeId -> ExtDFA -> ExtDFA
-    purge q extDFA =
+    {-
+      I need to track by (src, via, dest).
+      I cannot just track by (via, dest).
+      Consider: (0, a, 1) (1, b, 2) (2, a, 1) [1]
+      Suddenly, that last transition doesn't get counted…
+    -}
+    helper : NodeId -> AutoSet.Set (Int, String, Int) (NodeId, AcceptVia, NodeId) -> AutoSet.Set (Int, String, Int) (NodeId, AcceptVia, NodeId)
+    helper current seen =
+      case IntDict.get current extDFA.transition_function of
+        Nothing -> seen
+        Just dict ->
+          AutoDict.foldl
+            (\via dest acc ->
+              if AutoSet.member (current, via, dest) seen then
+                acc -- seen it already; ignore.
+              else
+                AutoSet.union
+                  acc
+                  (helper dest (AutoSet.insert (current, via, dest) acc))
+            )
+            seen
+            dict
+    referenced_nodes =
+      helper extDFA.start (AutoSet.empty (\(a,b,c) -> ( a, acceptConditionToString b, c )))
+      |> AutoSet.foldl
+          (\(i, _, j) acc -> Set.insert i (Set.insert j acc))
+          Set.empty
+    new_extDFA =
       { extDFA
-        | states = IntDict.remove q extDFA.states
-        , transition_function = IntDict.remove q extDFA.transition_function
-        , register = Set.remove q extDFA.register
-        , finals = Set.remove q extDFA.finals
-        , queue_or_clone = List.filter ((/=) q) extDFA.queue_or_clone
+        | states =
+            IntDict.filter
+              (\id _ -> Set.member id referenced_nodes)
+              extDFA.states
+        , transition_function =
+            IntDict.filter
+              (\id _ -> Set.member id referenced_nodes)
+              extDFA.transition_function
+        , finals =
+            Set.filter
+              (\id -> Set.member id referenced_nodes)
+              extDFA.finals
+        , register =
+            Set.filter
+              (\id -> Set.member id referenced_nodes)
+              extDFA.register
+        , queue_or_clone =
+            List.filter
+              (\id -> Set.member id referenced_nodes)
+              extDFA.queue_or_clone
       }
   in
-    Set.foldl purge extDFA_orig without_external_edges
+    new_extDFA
 
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA_ =
@@ -1503,8 +1360,7 @@ union w_dfa_orig m_dfa =
   |> debugExtDFA_ "[union] extDFA creation from merged w_dfa + dfa"
   |> phase_1
   |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
-  |> (\extdfa -> remove_unreachable (w_forward_transitions extdfa) extdfa)
-  |> (\dfa -> { dfa | start = dfa.clone_start })
+  |> (\extdfa -> remove_unreachable { extdfa | start = extdfa.clone_start })
   |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
   |> replace_or_register
   |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"

@@ -94,7 +94,7 @@ decodeTest resolutionDict g =
       , expectation = expectation
       , result =
           DFA.stepThroughInitial input resolutionDict g
-          |> DFA.run g
+          |> DFA.run
       })
     (D.field "input" D.string)
     (D.field "expectation" <| D.map (\b -> if b then ExpectAccepted else ExpectRejected) D.bool)
@@ -351,10 +351,8 @@ update msg model =
                   ( Test
                       newInput
                       expectation
-                      ( Automata.Debugging.println "Whaaa"
-                        DFA.stepThroughInitial newInput resolutionDict pkg.userGraph
-                        |> Automata.Debugging.println "moo"
-                        |> DFA.run pkg.userGraph
+                      ( DFA.stepThroughInitial newInput resolutionDict pkg.userGraph
+                        |> DFA.run
                       )
                   )
                 pkg.tests

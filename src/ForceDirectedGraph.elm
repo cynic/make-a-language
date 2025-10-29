@@ -1005,12 +1005,12 @@ update msg model =
     
     Run ->
       { model
-        | execution = Maybe.map (DFA.run model.currentPackage.userGraph) model.execution
+        | execution = Maybe.map (DFA.run) model.execution
       }
 
     Step ->
       { model
-        | execution = Maybe.map (DFA.step model.currentPackage.userGraph) model.execution
+        | execution = Maybe.map (DFA.step) model.execution
       }
 
     Stop ->
@@ -1155,7 +1155,7 @@ updateModelAfterConfirmation model g =
                   { entry
                     | result =
                         DFA.stepThroughInitial entry.input resolutionDict g
-                        |> DFA.run g
+                        |> DFA.run
                   }
                 )
                 pkg.tests
