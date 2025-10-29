@@ -192,8 +192,9 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
           let
             -- ensure that every graph has at least 2 nodes in it… or 0, if you're insane.
             graph_to_graft =
+              -- I call `graft` from various places, so I do a precautionary stretch at the start.
               stretch unstretched_graph_to_graft
-              |> debugAutomatonGraph (dbg_prefix ++ "graph to graft is")
+              |> debugAutomatonGraph (dbg_prefix ++ "graph to graft (stretched if necessary) is")
             terminals = -- the terminals of the split_graph
               debugAutomatonGraph (dbg_prefix ++ "graph to graft onto is") graft_onto |> \_ ->
               Graph.fold
@@ -264,7 +265,11 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               |> Maybe.map
                 (\root_ctx -> -- this is from the quoted graph
                   { with_outbounds_linked
-                    | root = source_graph_source
+                    | root =
+                        if source_graph_source == with_outbounds_linked.root then
+                          source_graph_source -- reassign.
+                        else
+                          with_outbounds_linked.root -- stays as-is.
                     , graph =
                         Graph.update source_graph_source
                           (Maybe.map
@@ -330,7 +335,6 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                       split_graph =
                         resulting_graph
                         |> splitTerminalAndNonTerminal -- this includes a `stretch` at the end
-                        |> debugAutomatonGraph (dbg_prefix ++ "post-split, the graph to graft is")
                       new_unusedId =
                         Graph.nodeIdRange split_graph.graph
                         |> Maybe.map (Tuple.second >> (+) 1)
