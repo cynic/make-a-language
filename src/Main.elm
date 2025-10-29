@@ -1140,7 +1140,8 @@ executionText { fdg_model } =
     [ case fdg_model.currentOperation of
         Just (Executing _ result) ->
           let
-            maybeDatum = FDG.executionData result
+            maybeDatum =
+              FDG.executionData result
             showProgress : ExecutionData -> Html Msg
             showProgress datum =
               p
@@ -1148,23 +1149,24 @@ executionText { fdg_model } =
                 [ span
                     [ HA.class "computation-progress-processed" ]
                     ( datum.transitions
-                      |> List.foldl
-                        (\{matching} (seen, output) ->
-                          ( matching.via :: seen
-                          , viewInputProcessing seen
-                              ( if matching.isFinal then
-                                  ["final"]
-                                else
-                                  ["non-final"]
-                              ) :: output
-                          )
+                      |> Debug.log "Execution-data transitions"
+                      |> List.map
+                        (\{matching} ->
+                          viewInputProcessing matching.via
+                            ( if matching.isFinal then
+                                ["final"]
+                              else
+                                ["non-final"]
+                            )
                         )
-                        ([], [])
-                      |> Tuple.second
                     )
                 , span
                     [ HA.class "computation-progress-to-do" ]
-                    [ viewInputProcessing (datum.remainingData |> List.map ViaCharacter) [] ]
+                    ( datum.remainingData
+                    |> Debug.log "Execution-data remaining"
+                    |> List.map ViaCharacter
+                    |> List.map (\via -> viewInputProcessing via [])
+                    )
                 ]
           in
             p
@@ -1190,11 +1192,11 @@ executionText { fdg_model } =
           p [] [ text "🦗 Bug! K%UGFCR" ] -- eheh?! I should never be here!
     ]
 
-viewInputProcessing : List AcceptVia -> List String -> Html msg
-viewInputProcessing vias classes =
+viewInputProcessing : AcceptVia -> List String -> Html msg
+viewInputProcessing via classes =
   span
     [ HA.classList <| List.map (\v -> (v, True)) classes ]
-    [ text <| String.concat <| List.map acceptConditionToString vias ]
+    [ text <| acceptConditionToString via ]
 
 viewAddTestPanelContent : Model -> Html Msg
 viewAddTestPanelContent model =

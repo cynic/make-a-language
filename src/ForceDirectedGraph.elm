@@ -707,17 +707,18 @@ update msg model =
             Just (Dragging _) ->
               -- stop dragging.
               { model | currentOperation = Nothing }
-            Just (Executing original _) ->
-              let
-                pkg = model.currentPackage
-              in
-                { model
-                  | currentOperation = Nothing
-                  , currentPackage =
-                      { pkg
-                        | userGraph = original
-                      }
-                }
+            Just (Executing _ _) ->
+              model -- nothing to escape.
+              -- let
+              --   pkg = model.currentPackage
+              -- in
+              --   { model
+              --     | currentOperation = Nothing
+              --     , currentPackage =
+              --         { pkg
+              --           | userGraph = original
+              --         }
+              --   }
       in
       -- ooh!  What are we "escaping" from, though?
         escapery
@@ -3098,7 +3099,7 @@ view model =
               Just (Splitting _) ->
                 g [] []
               Just (Executing _ _) ->
-                bottomMsg "Executing computation. Press «Esc» to stop execution."
+                bottomMsg "Executing computation."
               Just (Dragging _) ->
                 g [] []
               Nothing ->
