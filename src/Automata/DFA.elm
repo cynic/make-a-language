@@ -2,7 +2,7 @@ module Automata.DFA exposing (..)
 import IntDict exposing (IntDict)
 import Set exposing (Set)
 import AutoSet
-import List.Extra as List
+import List.Extra as List exposing (Step(..))
 import Dict exposing (Dict)
 import AutoDict
 import Automata.Data exposing (..)
@@ -1220,85 +1220,123 @@ remove_unreachable extDFA =
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA_ =
   let
-    equiv : ExtDFA -> NodeId -> NodeId -> Bool
-    equiv extDFA p =
+    equiv : ExtDFA -> NodeId -> NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> (Bool, Dict (NodeId, NodeId) (Maybe Bool))
+    equiv extDFA p_ q_ seen_ =
+      -- KEY for EQUIVALENCE:
+      -- 1. Same finality;
+      -- 2. Same outward transitions.
+      -- …and that is all.
       let
+        equiv_finality a b = xor (Set.member a extDFA.finals) (Set.member b extDFA.finals)
         get_outgoing : NodeId -> Maybe (List (AcceptVia, NodeId))
         get_outgoing nodeid =
           IntDict.get nodeid extDFA.transition_function
           |> Maybe.map AutoDict.toList
-        p_outgoing =
-          get_outgoing p
-          -- |> Debug.log ("[replace_or_register] 'p'-outgoing for " ++ String.fromInt p ++ " is")
+        check_equiv : NodeId -> NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> Dict (NodeId, NodeId) (Maybe Bool)
+        check_equiv p q seen =
+          let
+            dbg_prefix = "[equiv (#" ++ String.fromInt p ++ ", #" ++ String.fromInt q ++ ")] "
+          in
+          case Dict.get (p, q) seen of
+            Just (Just result) ->
+              Debug.log (dbg_prefix ++ "cached result") <|
+              seen
+            Just Nothing ->
+              -- the only way that this can happen is if, in fact, we're busy going through and we run
+              -- into a cycle.  In that case, just stop the cycle here; and we'll assign later on, in
+              -- the fold that ended up calling us.
+              println (dbg_prefix ++ "indeterminate/cycle result")
+              seen
+            Nothing -> -- This is the first time that I've ever been here.
+              if not <| equiv_finality p q then
+                println (dbg_prefix ++ "not equivalent (finality differs)")
+                Dict.insert (p, q) (Just False) seen
+              else
+                case (get_outgoing p, get_outgoing q) of
+                  (Just _, Nothing) ->
+                    println (dbg_prefix ++ "not equivalent (p-outgoing > q-outgoing)")
+                    Dict.insert (p, q) (Just False) seen
+                  (Nothing, Just _) ->
+                    println (dbg_prefix ++ "not equivalent (q-outgoing > p-outgoing)")
+                    Dict.insert (p, q) (Just False) seen
+                  (Nothing, Nothing) ->
+                    println (dbg_prefix ++ "equivalent (identical (zero) outgoing)")
+                    Dict.insert (p, q) (Just True) seen
+                  (Just a_out, Just b_out) ->
+                    if a_out == b_out then
+                      println (dbg_prefix ++ "equivalent (identical outgoing)")
+                      Dict.insert (p, q) (Just True) seen
+                    else
+                      let
+                        a_transitions = List.map Tuple.first a_out
+                        b_transitions = List.map Tuple.first b_out
+                      in
+                        if a_transitions == b_transitions then
+                          let
+                            a_destinations = List.map Tuple.second a_out
+                            b_destinations = List.map Tuple.second b_out
+                            outbound_folded = -- The result is a `Dict`.
+                              println (dbg_prefix ++ " ---> determining recursively…")
+                              List.stoppableFoldl
+                                (\(out_a, out_b) state ->
+                                  let
+                                    updated_seen =
+                                      check_equiv out_a out_b (Dict.insert (out_a, out_b) Nothing state)
+                                  in
+                                    case Dict.get (out_a, out_b) updated_seen of
+                                      Nothing -> -- this should be impossible; I literally just added this above, and I never remove an entry.
+                                        Debug.todo "The impossibru has happened."
+                                      Just Nothing ->
+                                        -- this ended in a cycle.  Okay, we will also return a cycle, to be resolved later on.
+                                        Continue updated_seen
+                                      Just (Just True) ->
+                                        -- excellent! Now, we need to check the rest of them, because
+                                        -- ALL the outgoings need to match.
+                                        Continue updated_seen
+                                      Just (Just False) ->
+                                        -- nope.  We're done.
+                                        println (dbg_prefix ++ " ---> not equivalent (determined recursively)")
+                                        Stop ( Dict.insert (out_a, out_b) (Just False) updated_seen |> Dict.insert (p, q) (Just False) )
+                                )
+                                seen
+                                (List.zip a_destinations b_destinations)
+                          in
+                            -- When I am done with the outbound_fold, I should be able to tell whether or not we have equivalence.
+                            -- If I ever got a `False` result, then I would stop immediately, and I would also immediately
+                            -- set (a, b) to `False`.  And that is the only case when I would set (a, b) to anything definite.
+                            -- Now, if I am done with the fold, and I _don't_ see a `False` for (a, b), then I must have
+                            -- completed everything WITHOUT running into any issues.  So I can return a `True` instead.
+                            case Dict.get (p, q) outbound_folded of
+                              Just (Just False) ->
+                                -- ONE of the outbounds did not match.
+                                -- And every outbound which I set to `Nothing` on the way resulted
+                                -- in a cycle back to here.
+                                -- What should I do here??
+                                -- Setting all to False would be incorrect.
+                                -- Obviously, setting them to True would be nonsensical.
+                                -- Let me leave them as "I lead to a cycle", and then we can save time and not travel
+                                -- those paths again in future; and other paths will be determinative, but
+                                -- these paths will not be.
+                                outbound_folded
+                              _ ->
+                                -- by contrast…
+                                println (dbg_prefix ++ " ---> equivalent (determined recursively)")
+                                Dict.insert (p, q) (Just True) outbound_folded
+                        else
+                          -- the outward transitions do not match.
+                          Dict.insert (p, q) (Just False) seen
+        starting_check =
+          check_equiv p_ q_ seen_
       in
-        \q ->
-          if p == q then
-            -- Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q ++ "; saying \"no\", because you can't be marked as equivalent to yourself in this context.") () |> \_ ->
-            False -- you can't be equivalent to yourself
-          else if xor (Set.member p extDFA.finals) (Set.member q extDFA.finals) then
-            -- MUST have the same finality status.
-            False
-          else
-            let
-              q_outgoing =
-                get_outgoing q
-                -- |> Debug.log ("[replace_or_register] Checking against 'q'-outgoing for " ++ String.fromInt q)
-              do_comparison : Maybe (List (AcceptVia, NodeId)) -> Maybe (List (AcceptVia, NodeId)) -> NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
-              do_comparison outgoings_a outgoings_b a b handled =
-                if xor (Set.member a extDFA.finals) (Set.member b extDFA.finals) then
-                  -- MUST have the same finality status.
-                  -- Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different finality; NOT equivalent.") () |> \_ ->
-                  False
-                else
-                  case ( outgoings_a, outgoings_b ) of
-                    ( Just _, Nothing ) ->
-                      False
-                      -- |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
-                    ( Nothing, Just _ ) ->
-                      False
-                      -- |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outgoing transitions; not equivalent.")
-                    ( Nothing, Nothing ) ->
-                      True
-                      -- |> Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " both have no outgoing transitions; therefore equivalent.")
-                    ( Just a_, Just b_ ) ->
-                      if a_ == b_ then
-                        -- Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have equivalent transitions") a_ |> \_ ->
-                        True
-                      else
-                        -- okay, let's trace the computation forward, QxQ.  If we end up at the same
-                        -- node, via all the same transitions, and respecting equivalent finality on the way,
-                        -- then all is well.
-                        -- Otherwise, we can't say that we have equivalence.
-                        let
-                          vias_a = List.map Tuple.first a_
-                          vias_b = List.map Tuple.first b_
-                          new_handled = Set.insert (a, b) handled
-                        in
-                          if vias_a /= vias_b then
-                            -- Debug.log ("[replace_or_register] Nodes #" ++ String.fromInt a ++ " and #" ++ String.fromInt b ++ " have different outbound transitions; not equivalent") (vias_a, vias_b) |> \_ ->
-                            False -- not equivalent; don't have the same computational paths.
-                          else if Set.member (a, b) handled then
-                            True
-                            -- |> Debug.log ("[replace_or_register] Have already seen (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ "); avoiding cycle and returning")
-                          else
-                            -- hmm, the vias are the same.  Okay; let's push forward per-transition.
-                            -- And if we have equality of THOSE transitions, then we're good;
-                            -- (and in fact, we can join merge THOSE transitions together too.
-                            List.zip a_ b_
-                            |> List.all
-                              (\((_, a_dest), (_, b_dest)) ->
-                                -- Debug.log ("[replace_or_register] Recursing from (#" ++ String.fromInt a ++ ", #" ++ String.fromInt b ++ ") to check") (a_dest, b_dest) |> \_ ->
-                                check_equiv_recursive a_dest b_dest new_handled
-                              )
-              check_equiv_recursive : NodeId -> NodeId -> Set (NodeId, NodeId) -> Bool
-              check_equiv_recursive a b handled =
-                let
-                  outgoings_a = get_outgoing a
-                  outgoings_b = get_outgoing b
-                in
-                  do_comparison outgoings_a outgoings_b a b handled
-            in
-              do_comparison p_outgoing q_outgoing p q Set.empty
+        case Dict.get (p_, q_) starting_check of
+          Just (Just result) ->
+            ( result, starting_check )
+          Just Nothing ->
+            -- … pure cycle?!?  For now, let's call this impossible.  And we'll come back if we
+            -- ever find a counterexample…
+            Debug.todo "The impossibru Ⅲ has happened."
+          Nothing ->
+            Debug.todo "The impossibru Ⅱ has happened."
     redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source extDFA =
       -- redirect everything that goes to source, into target
@@ -1314,53 +1352,75 @@ replace_or_register extDFA_ =
             dict
         )
         extDFA.transition_function
-    process : NodeId -> ExtDFA -> ExtDFA
-    process qc_node extDFA = -- qc_node == queue/clone-node
+    process : NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA -> (ExtDFA, Dict (NodeId, NodeId) (Maybe Bool))
+    process qc_node_ seen extDFA = -- qc_node == queue/clone-node
       let
-        equiv_to_cloned_or_queued = equiv extDFA qc_node
+        -- let's look up things in the register.
+        (merge_list, updated_seen) =
+          Set.toList extDFA.register
+          |> List.foldl
+            (\other_node (to_merge, state) ->
+              case equiv extDFA qc_node_ other_node state of
+                (True, updated_state) ->
+                  ( other_node :: to_merge
+                  , updated_state
+                  )
+                (False, updated_state) ->
+                  ( to_merge
+                  , updated_state
+                  )
+            )
+            ( [], seen )
+        -- merge everything we need to merge
+        update_extDFA_with_merge qc_node found_equivalent state =
+          { state
+            | states = IntDict.remove qc_node state.states
+            , finals = Set.remove qc_node state.finals
+            , transition_function =
+                redirectInto found_equivalent qc_node state
+                |> IntDict.remove qc_node
+            , start =
+                if qc_node == state.start then
+                  found_equivalent -- replace with equivalent.
+                else
+                  state.start
+          }
+
       in
-        -- Debug.log ("[replace_or_register] Recheck triggers & targets") |> \_ ->
-        case Set.toList extDFA.register |> List.find equiv_to_cloned_or_queued of
-          Just found_equivalent ->
-            -- Debug.log ("[replace_or_register] Registering " ++ String.fromInt qc_node ++ " as equivalent to " ++ String.fromInt found_equivalent) () |> \_ ->
-              let
-                -- if this is equivalent, then we must reprocess other nodes if necessary.
-                -- But first, let's act to effect this change.
-                updated_dfa =
-                  { extDFA
-                    | states = IntDict.remove qc_node extDFA.states
-                    , finals = Set.remove qc_node extDFA.finals
-                    , transition_function =
-                        redirectInto found_equivalent qc_node extDFA
-                        |> IntDict.remove qc_node
-                    , start =
-                        if qc_node == extDFA.start then
-                          found_equivalent -- replace with equivalent.
-                        else
-                          extDFA.start
-                  }
-                -- …and now use that as the basis for a fold.
-              in
-                updated_dfa
-          Nothing ->
-            -- Debug.log ("[replace_or_register] No equivalent found for " ++ String.fromInt qc_node) () |> \_ ->
-                { extDFA
-                  | register =
-                      Set.insert qc_node extDFA.register
-                      -- |> Debug.log "[replace_or_register] Updated register"
-                }
-    continue_processing : ExtDFA -> ExtDFA
-    continue_processing extDFA =
-      case extDFA.queue_or_clone {- |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" -} of
+        case merge_list of
+          [] ->
+            ( { extDFA
+                | register =
+                    Set.insert qc_node_ extDFA.register
+                    |> Debug.log ("[replace_or_register] No equivalent for #" ++ String.fromInt qc_node_ ++ ". Updated register.")
+              }
+            , updated_seen
+            )
+          h::rest ->
+            ( List.foldl
+                (\found_equivalent (last_standing, state) ->
+                    println ("[replace_or_register] Redirecting #" ++ String.fromInt last_standing ++ " to " ++ String.fromInt found_equivalent ++ ". Updated register.")
+                    ( found_equivalent
+                    , update_extDFA_with_merge last_standing found_equivalent state
+                    )
+                )
+                ( h, extDFA )
+                rest
+              |> Tuple.second
+            , updated_seen
+            )
+    continue_processing : ExtDFA -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA
+    continue_processing extDFA seen =
+      case extDFA.queue_or_clone |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" of
         h::t ->
           let
-            updated_dfa = process h extDFA
+            (updated_dfa, updated_seen) = process h seen extDFA
           in
-            continue_processing { updated_dfa | queue_or_clone = t }
+            continue_processing { updated_dfa | queue_or_clone = t } updated_seen
         [] ->
           extDFA
   in
-    continue_processing extDFA_
+    continue_processing extDFA_ Dict.empty
 
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
