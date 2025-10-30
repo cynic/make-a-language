@@ -1239,7 +1239,7 @@ replace_or_register extDFA_ =
           in
           case Dict.get (p, q) seen of
             Just (Just result) ->
-              Debug.log (dbg_prefix ++ "cached result") <|
+              Debug.log (dbg_prefix ++ "cached result") result |> \_ ->
               seen
             Just Nothing ->
               -- the only way that this can happen is if, in fact, we're busy going through and we run
@@ -1281,7 +1281,7 @@ replace_or_register extDFA_ =
                                 (\(out_a, out_b) state ->
                                   let
                                     updated_seen =
-                                      check_equiv out_a out_b (Dict.insert (out_a, out_b) Nothing state)
+                                      check_equiv out_a out_b state
                                   in
                                     case Dict.get (out_a, out_b) updated_seen of
                                       Nothing -> -- this should be impossible; I literally just added this above, and I never remove an entry.
@@ -1328,19 +1328,22 @@ replace_or_register extDFA_ =
         starting_check =
           check_equiv p_ q_ seen_
       in
-        case Dict.get (p_, q_) starting_check of
-          Just (Just result) ->
-            ( result, starting_check )
-          Just Nothing ->
-            -- … pure cycle?!?  For now, let's call this impossible.  And we'll come back if we
-            -- ever find a counterexample…
-            Debug.todo "The impossibru Ⅲ has happened."
-          Nothing ->
-            Debug.todo "The impossibru Ⅱ has happened."
+        if p_ == q_ then
+          ( False, seen_ ) -- can't be equivalent to yourself in this context.
+        else
+          case Dict.get (p_, q_) starting_check of
+            Just (Just result) ->
+              ( result, starting_check )
+            Just Nothing ->
+              -- … pure cycle?!?  For now, let's call this impossible.  And we'll come back if we
+              -- ever find a counterexample…
+              Debug.todo "The impossibru Ⅲ has happened."
+            Nothing ->
+              Debug.todo "The impossibru Ⅱ has happened."
     redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source extDFA =
       -- redirect everything that goes to source, into target
-      println ("[replace_or_register] Redirecting all incomings from #" ++ String.fromInt source ++ " to " ++ String.fromInt target ++ " instead.")
+      println ("[replace_or_register] Redirecting all incomings from #" ++ String.fromInt source ++ " to #" ++ String.fromInt target ++ " instead.")
       IntDict.map
         (\_ dict ->
           AutoDict.map
