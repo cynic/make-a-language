@@ -1217,9 +1217,16 @@ remove_unreachable extDFA =
   in
     new_extDFA
 
+type alias RecursionState =
+  -- via, (fromP, fromQ), (toP, toQ)
+  { taken : AutoSet.Set (String, (NodeId, NodeId), (NodeId, NodeId)) (AcceptVia, (NodeId, NodeId), (NodeId, NodeId))
+  }
+
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA_ =
   let
+    takenTupleKey (via, from, to) =
+      ( acceptConditionToString via, from, to )
     equiv : ExtDFA -> NodeId -> NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> (Bool, Dict (NodeId, NodeId) (Maybe Bool))
     equiv extDFA p_ q_ seen_ =
       -- KEY for EQUIVALENCE:
@@ -1232,8 +1239,8 @@ replace_or_register extDFA_ =
         get_outgoing nodeid =
           IntDict.get nodeid extDFA.transition_function
           |> Maybe.map AutoDict.toList
-        check_equiv : NodeId -> NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> Dict (NodeId, NodeId) (Maybe Bool)
-        check_equiv p q seen =
+        check_equiv : NodeId -> NodeId -> RecursionState -> Dict (NodeId, NodeId) (Maybe Bool) -> Dict (NodeId, NodeId) (Maybe Bool)
+        check_equiv p q recursionData seen =
           let
             dbg_prefix = "[equiv (#" ++ String.fromInt p ++ ", #" ++ String.fromInt q ++ ")] "
           in
@@ -1273,19 +1280,40 @@ replace_or_register extDFA_ =
                       in
                         if a_transitions == b_transitions then
                           let
-                            a_destinations = List.map Tuple.second a_out
-                            b_destinations = List.map Tuple.second b_out
                             outbound_folded = -- The result is a `Dict`.
-                              println (dbg_prefix ++ " ---> determining recursively…")
+                              println (dbg_prefix ++ "---> determining recursively…")
                               List.stoppableFoldl
-                                (\(out_a, out_b) state ->
+                                (\((via, out_a), (_, out_b)) state ->
                                   let
+                                    takenTuple = (via, (p, q), (out_a, out_b))
                                     updated_seen =
-                                      check_equiv out_a out_b state
+                                      if AutoSet.member takenTuple recursionData.taken then
+                                        println (dbg_prefix ++ "cancelling recursion for transition " ++ acceptConditionToString via)
+                                        state
+                                      else
+                                        println (dbg_prefix ++ "---> for both, following " ++ acceptConditionToString via)
+                                        check_equiv
+                                          out_a
+                                          out_b
+                                          { recursionData
+                                            | taken =
+                                                AutoSet.insert
+                                                  (via, (p, q), (out_a, out_b))
+                                                  recursionData.taken
+                                          }
+                                          state
                                   in
                                     case Dict.get (out_a, out_b) updated_seen of
-                                      Nothing -> -- this should be impossible; I literally just added this above, and I never remove an entry.
-                                        Debug.todo "The impossibru has happened."
+                                      Nothing ->
+                                        -- So if I reach here, then it is because recursion has been cancelled.
+                                        -- Now, recursion is ONLY cancelled if I happen to have taken that exact path before;
+                                        -- and I will only end up HERE when that has happened for ALL the explorable transitions
+                                        -- in the subsequent transitions.
+                                        -- And THAT, in turn, can only happen—without a False value—when:
+                                        -- 1. All the finality matches; and
+                                        -- 2. All the transitions match.
+                                        -- … so this is—pending confirmation from other paths to be explored—potentially True!
+                                        Continue updated_seen
                                       Just Nothing ->
                                         -- this ended in a cycle.  Okay, we will also return a cycle, to be resolved later on.
                                         Continue updated_seen
@@ -1299,7 +1327,7 @@ replace_or_register extDFA_ =
                                         Stop ( Dict.insert (out_a, out_b) (Just False) updated_seen |> Dict.insert (p, q) (Just False) )
                                 )
                                 seen
-                                (List.zip a_destinations b_destinations)
+                                (List.zip a_out b_out)
                           in
                             -- When I am done with the outbound_fold, I should be able to tell whether or not we have equivalence.
                             -- If I ever got a `False` result, then I would stop immediately, and I would also immediately
@@ -1326,7 +1354,7 @@ replace_or_register extDFA_ =
                           -- the outward transitions do not match.
                           Dict.insert (p, q) (Just False) seen
         starting_check =
-          check_equiv p_ q_ seen_
+          check_equiv p_ q_ (RecursionState (AutoSet.empty takenTupleKey)) seen_
       in
         if p_ == q_ then
           ( False, seen_ ) -- can't be equivalent to yourself in this context.
