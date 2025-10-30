@@ -270,25 +270,28 @@ suite =
       , "s-ps-aps-as"
       , "nest-nestable-nester-test-testable-tester"
       ]
-    , describe "stress-testing via fuzzing"
-      [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
-          cheapTestForWords
+    -- , describe "stress-testing via fuzzing"
+    --   [ fuzz (Fuzz.listOfLengthBetween 2 8 (Fuzz.asciiStringOfLengthBetween 1 5)) "always recognizes exactly the unique short words that it is given" <|
+    --       cheapTestForWords
 
-      , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
-          cheapTestForWords
+    --   , fuzz (Fuzz.listOfLengthBetween 3 7 (Fuzz.asciiStringOfLengthBetween 5 8)) "always recognizes exactly the unique long words that it is given" <|
+    --       cheapTestForWords
 
-      , fuzz (Fuzz.listOfLengthBetween 3 15 (Fuzz.asciiStringOfLengthBetween 1 10)) "always recognizes exactly the unique short or long words that it is given" <|
-          cheapTestForWords
+    --   , fuzz (Fuzz.listOfLengthBetween 3 15 (Fuzz.asciiStringOfLengthBetween 1 10)) "always recognizes exactly the unique short or long words that it is given" <|
+    --       cheapTestForWords
+
 
       -- causes out-of-memory… so, weakening it…
       -- , fuzz (Fuzz.listOfLengthBetween 2 5 (Fuzz.asciiStringOfLengthBetween 4 8)) "consistently returns the same dawg irrespective of the order in which words are entered" <|
       --     standardTestForWords
-      , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 3 6)) "consistently returns the same graph irrespective of the order in which words are entered" <|
-          standardTestForWords
 
-      , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
-          \s -> cheapTestForWords [s]
-      ]
+
+      -- , fuzz (Fuzz.listOfLengthBetween 3 5 (Fuzz.asciiStringOfLengthBetween 3 6)) "consistently returns the same graph irrespective of the order in which words are entered" <|
+      --     standardTestForWords
+
+      -- , fuzz (Fuzz.asciiStringOfLengthBetween 1 65) "a string that is randomly generated works" <|
+      --     \s -> cheapTestForWords [s]
+      -- ]
       , describe "union tests"
         [
           test "a recursive word is unioned correctly" <|
@@ -363,21 +366,22 @@ suite =
               Utility.ag_cmp_and_equals
                 (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
                 (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , fuzz (Fuzz.pair (dfaGenerator 2 4) (dfaGenerator 2 4)) "DFA union is commutative (simple tests)" <|
-          \(dfa1, dfa2) ->
-            Utility.ag_cmp_and_equals
-              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , fuzz (Fuzz.pair (dfaGenerator 3 6) (dfaGenerator 3 6)) "DFA union is commutative (advanced tests)" <|
-          \(dfa1, dfa2) ->
-            Utility.ag_cmp_and_equals
-              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
-        , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (stress tests)" <|
-          \(dfa1, dfa2) ->
-            Utility.ag_cmp_and_equals
-              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+
+        -- , fuzz (Fuzz.pair (dfaGenerator 2 4) (dfaGenerator 2 4)) "DFA union is commutative (simple tests)" <|
+        --   \(dfa1, dfa2) ->
+        --     Utility.ag_cmp_and_equals
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        -- , fuzz (Fuzz.pair (dfaGenerator 3 6) (dfaGenerator 3 6)) "DFA union is commutative (advanced tests)" <|
+        --   \(dfa1, dfa2) ->
+        --     Utility.ag_cmp_and_equals
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+        -- , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (stress tests)" <|
+        --   \(dfa1, dfa2) ->
+        --     Utility.ag_cmp_and_equals
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
+        --       (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
         ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [

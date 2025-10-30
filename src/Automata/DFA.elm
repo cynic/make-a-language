@@ -1227,7 +1227,7 @@ replace_or_register extDFA_ =
       -- 2. Same outward transitions.
       -- …and that is all.
       let
-        equiv_finality a b = xor (Set.member a extDFA.finals) (Set.member b extDFA.finals)
+        different_finality a b = xor (Set.member a extDFA.finals) (Set.member b extDFA.finals)
         get_outgoing : NodeId -> Maybe (List (AcceptVia, NodeId))
         get_outgoing nodeid =
           IntDict.get nodeid extDFA.transition_function
@@ -1248,7 +1248,7 @@ replace_or_register extDFA_ =
               println (dbg_prefix ++ "indeterminate/cycle result")
               seen
             Nothing -> -- This is the first time that I've ever been here.
-              if not <| equiv_finality p q then
+              if different_finality p q then
                 println (dbg_prefix ++ "not equivalent (finality differs)")
                 Dict.insert (p, q) (Just False) seen
               else
@@ -1340,6 +1340,7 @@ replace_or_register extDFA_ =
     redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source extDFA =
       -- redirect everything that goes to source, into target
+      println ("[replace_or_register] Redirecting all incomings from #" ++ String.fromInt source ++ " to " ++ String.fromInt target ++ " instead.")
       IntDict.map
         (\_ dict ->
           AutoDict.map
@@ -1396,17 +1397,17 @@ replace_or_register extDFA_ =
               }
             , updated_seen
             )
-          h::rest ->
+          _ ->
             ( List.foldl
-                (\found_equivalent (last_standing, state) ->
-                    println ("[replace_or_register] Redirecting #" ++ String.fromInt last_standing ++ " to " ++ String.fromInt found_equivalent ++ ". Updated register.")
-                    ( found_equivalent
-                    , update_extDFA_with_merge last_standing found_equivalent state
+                (\target (source, state) ->
+                    ( target
+                    , update_extDFA_with_merge source target state
                     )
                 )
-                ( h, extDFA )
-                rest
+                ( qc_node_, extDFA )
+                merge_list
               |> Tuple.second
+              |> debugDFA_ ("[replace_or_register] Post-merges")
             , updated_seen
             )
     continue_processing : ExtDFA -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA
@@ -1429,9 +1430,9 @@ union w_dfa_orig m_dfa =
   |> phase_1
   -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
   |> (\extdfa -> remove_unreachable { extdfa | start = extdfa.clone_start })
-  -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
+  |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
   |> replace_or_register
-  -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
+  |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
   |> retract
 
 
