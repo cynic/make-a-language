@@ -42,6 +42,7 @@ import AutoDict
 import Random.Pcg.Extended as Random
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
+import Automata.Debugging exposing (println)
 
 type alias Model = FDG_Model
 
@@ -1548,7 +1549,6 @@ viewLink ({ currentPackage } as model) executing edge =
     userGraph = currentPackage.userGraph
     source =
       Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
-
     target =
       Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
     cardinality = identifyCardinality model edge

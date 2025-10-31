@@ -42,7 +42,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
-      |> (\(a,b) -> debugAutomatonGraph (dbg_prefix ++ "renumbered") b |> \_ -> (a, b))
+      -- |> (\(a,b) -> debugAutomatonGraph (dbg_prefix ++ "renumbered") b |> \_ -> (a, b))
     (outbounds, (source_graph_source, source_graph_dests)) =
       IntDict.get source_id source_graph_nodemap
       |> Maybe.andThen
@@ -76,8 +76,10 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             -- So I can get rid of them here.
           in
             ( outs
-            , ( ctx.node.id |> Debug.log (dbg_prefix ++ "source-graph source-node id")
-              , IntDict.keys ctx.outgoing |> Debug.log (dbg_prefix ++ "source-graph destination-node ids")
+            , ( ctx.node.id
+                -- |> Debug.log (dbg_prefix ++ "source-graph source-node id")
+              , IntDict.keys ctx.outgoing
+                -- |> Debug.log (dbg_prefix ++ "source-graph destination-node ids")
               )
             )
         )
@@ -119,7 +121,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
           , root = unusedId
           , graphIdentifier = uuid
           }
-          |> debugAutomatonGraph (mkDbg_prefix uuid ++ "character transition to AutomatonGraph")
+          -- |> debugAutomatonGraph (mkDbg_prefix uuid ++ "character transition to AutomatonGraph")
         )
     renumbered_unusedId =
       Graph.nodeIdRange renumbered.graph
@@ -143,7 +145,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               let
                 new_incoming =
                   IntDict.filter (\k _ -> k /= source_graph_source) dest_ctx.incoming
-                  |> debugLog_ (dbg_prefix ++ "Removed #" ++ String.fromInt source_graph_source ++ " incoming from dest #" ++ String.fromInt dest_ctx.node.id ++ ". Remaining incoming connections") printFan
+                  -- |> debugLog_ (dbg_prefix ++ "Removed #" ++ String.fromInt source_graph_source ++ " incoming from dest #" ++ String.fromInt dest_ctx.node.id ++ ". Remaining incoming connections") printFan
                 new_graph =
                   { g
                     | graph =
@@ -194,14 +196,14 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             graph_to_graft =
               -- I call `graft` from various places, so I do a precautionary stretch at the start.
               stretch unstretched_graph_to_graft
-              |> debugAutomatonGraph (dbg_prefix ++ "graph to graft (stretched if necessary) is")
+              -- |> debugAutomatonGraph (dbg_prefix ++ "graph to graft (stretched if necessary) is")
             terminals = -- the terminals of the split_graph
-              debugAutomatonGraph (dbg_prefix ++ "graph to graft onto is") graft_onto |> \_ ->
+              -- debugAutomatonGraph (dbg_prefix ++ "graph to graft onto is") graft_onto |> \_ ->
               Graph.fold
                 identify_terminal_nodes
                 []
                 graph_to_graft.graph
-              |> Debug.log (dbg_prefix ++ "Terminals re:graft")
+              -- |> Debug.log (dbg_prefix ++ "Terminals re:graft")
             -- now, within this context, I need to graft the split_graph
             -- into the current graph. So let's begin with Step 1.
             -- 
@@ -211,10 +213,10 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             quoted_nodes : List (NodeContext Entity Connection)
             quoted_nodes =
               if transition.isFinal then
-                println (dbg_prefix ++ "Transferring quoted-graph nodes as-is.")
+                -- println (dbg_prefix ++ "Transferring quoted-graph nodes as-is.")
                 Graph.fold (::) [] graph_to_graft.graph
               else
-                println (dbg_prefix ++ "Transferring quoted-graph nodes as non-terminals; host-dest is non-terminal.")
+                -- println (dbg_prefix ++ "Transferring quoted-graph nodes as non-terminals; host-dest is non-terminal.")
                 Graph.fold
                   (\ctx acc ->
                     -- there are no terminal transitions.
@@ -238,7 +240,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                 | graph =
                     Graph.update terminal_id
                       (Maybe.map (\ctx ->
-                        debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
+                        -- debugLog_ (dbg_prefix ++ "Linking terminal #" ++ String.fromInt terminal_id ++ " to outbounds") printFan outs |> \_ ->
                         { ctx
                           | outgoing =
                               IntDict.uniteWith
@@ -255,7 +257,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                 (link_quoted_graph_outbound)
                 quoting_graph_with_quoted_nodes
                 terminals
-              |> debugAutomatonGraph (dbg_prefix ++ "with terminals linked to outbounds")
+              -- |> debugAutomatonGraph (dbg_prefix ++ "with terminals linked to outbounds")
             -- and link all the inbounds of `source_id` to the root of `with_outbounds_linked`.
             -- We do this easily by just setting the root to be the same as the `source_graph`
             -- root; and then attaching the outbounds from our "native" root to it.
@@ -292,7 +294,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                         -- and now the native root is irrelevant. We can remove it.
                         |> Graph.remove graph_to_graft.root
                   }
-                  |> debugAutomatonGraph (dbg_prefix ++ "removed #" ++ String.fromInt graph_to_graft.root ++ " (graft-root) after unioning its inbounds & outbounds with original source #" ++ String.fromInt source_graph_source)
+                  -- |> debugAutomatonGraph (dbg_prefix ++ "removed #" ++ String.fromInt graph_to_graft.root ++ " (graft-root) after unioning its inbounds & outbounds with original source #" ++ String.fromInt source_graph_source)
                 )
                 |> Maybe.withDefault with_outbounds_linked -- NOOOOOOOOO!! SHOULD NOT BE HERE!!!
           in
@@ -313,7 +315,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             ViaGraphReference ref ->
               if AutoSet.member ref recursion_stack then
                 -- don't consider it; that would lead us to recursion.
-                println (dbg_prefix ++ "The " ++ truncate_uuid ref ++ " ref would lead to recursion; ignoring.")
+                -- println (dbg_prefix ++ "The " ++ truncate_uuid ref ++ " ref would lead to recursion; ignoring.")
                 ( unusedId
                 , this_graph
                 )
@@ -330,7 +332,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                           (AutoSet.insert renumbered.graphIdentifier recursion_stack)
                           referenced_graph.root
                           ( referenced_graph
-                            |> debugAutomatonGraph (dbg_prefix ++ "I found a referenced graph (" ++ truncate_uuid referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
+                            -- |> debugAutomatonGraph (dbg_prefix ++ "I found a referenced graph (" ++ truncate_uuid referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
                           )
                       split_graph =
                         resulting_graph
@@ -351,8 +353,8 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
         |> List.foldl
           (\transition (unusedId, g) ->
             graph_transition_to_graftable unusedId g transition
-            |> debugLog_ (dbg_prefix ++ "unused-id after grafting transition " ++ transitionToString transition) (Tuple.first)
-            |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transition " ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
+            -- |> debugLog_ (dbg_prefix ++ "unused-id after grafting transition " ++ transitionToString transition) (Tuple.first)
+            -- |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transition " ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
           )
           (unusedId_, this_graph)
     after_graft =
@@ -385,10 +387,10 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               -- Avoid removing the source node.
               ( dest_nodes_to_check
                 |> List.filter ((/=) source_graph_source)
-                |> Debug.log (dbg_prefix ++ "`dest` nodes from source-node #" ++ String.fromInt source_graph_source ++ " to check for removal are")
+                -- |> Debug.log (dbg_prefix ++ "`dest` nodes from source-node #" ++ String.fromInt source_graph_source ++ " to check for removal are")
               )
       }
-      |> debugAutomatonGraph (dbg_prefix ++ "After removing the necessary `dest` values")
+      -- |> debugAutomatonGraph (dbg_prefix ++ "After removing the necessary `dest` values")
     -- convert NFA→DFA, then minimise for the final result.
     minimised_dfa =
       -- for now, splitTerminal&NonTerminal + minimiseNodes is not sufficient to handle some cases.
@@ -406,7 +408,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       in
         renumberAutomatonGraphFrom start_id ag
         |> Tuple.second
-        |> debugAutomatonGraphXY (dbg_prefix ++ "Minimised, renumbered 'final'")
+        -- |> debugAutomatonGraphXY (dbg_prefix ++ "Minimised, renumbered 'final'")
   in
     minimised_dfa
 
@@ -418,8 +420,8 @@ expand e resolutionDict src =
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault -1 -- huh?
   in
-    debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (truncate_uuid k, printAutomatonGraph v))) resolutionDict |> \_ ->
-    debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
+    -- debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (truncate_uuid k, printAutomatonGraph v))) resolutionDict |> \_ ->
+    -- debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
     resolveTransitionFully
       unusedId
       resolutionDict
@@ -453,7 +455,7 @@ oneTransition data =
             Nothing ->
               (acc, Nothing)
             Just ctx ->
-              debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
+              -- debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
               ( TransitionTakenData ctx.node.id t :: acc
               , takeTransition t ctx.outgoing
               )
@@ -467,14 +469,18 @@ oneTransition data =
         thisMove =
           Maybe.andThen
             (\ctx ->
-                takeTransition (Transition True (ViaCharacter h)) (ctx.outgoing |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan)
+                takeTransition
+                  (Transition True (ViaCharacter h))
+                  ( ctx.outgoing
+                    -- |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan
+                  )
                 |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
                 |> Maybe.Extra.orElseLazy
                     (\() ->
                       takeTransition (Transition False (ViaCharacter h)) ctx.outgoing
                       |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
                     )
-                |> debugLog_ ("[oneTransition] this-move result") (Maybe.map <| \(t, _) -> transitionToString t)
+                -- |> debugLog_ ("[oneTransition] this-move result") (Maybe.map <| \(t, _) -> transitionToString t)
             )
             currentNode
       in
@@ -491,7 +497,7 @@ oneTransition data =
                 Just <| RequestedNodeDoesNotExist data
                 -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
               Just x ->
-                println ("[oneTransition] Searched for '" ++ String.fromChar h ++ "' but no possible transition from #" ++ String.fromInt x.node.id)
+                -- println ("[oneTransition] Searched for '" ++ String.fromChar h ++ "' but no possible transition from #" ++ String.fromInt x.node.id)
                 -- so I got up to this point, and NOW there's a problem.
                 Just <| NoPossibleTransition
                   { data
@@ -500,12 +506,12 @@ oneTransition data =
                     , computation = expanded
                   }
           Just (t, newNode) ->
-            debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
+            -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
             { data
               | transitions =
                   transitions_taken ++
                   [TransitionTakenData newNode.node.id t]
-                  |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
+                  -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
                 , remainingData = remainingData
                 , currentNode = newNode.node.id
                 , computation = expanded
@@ -1284,32 +1290,33 @@ replace_or_register extDFA_ =
           in
           case Dict.get (p, q) seen of
             Just (Just result) ->
-              Debug.log (dbg_prefix ++ "cached result") result |> \_ ->
+              -- Debug.log (dbg_prefix ++ "cached result") result |> \_ ->
               seen
             Just Nothing ->
               -- the only way that this can happen is if, in fact, we're busy going through and we run
               -- into a cycle.  In that case, just stop the cycle here; and we'll assign later on, in
               -- the fold that ended up calling us.
-              println (dbg_prefix ++ "indeterminate/cycle result")
-              seen
+              Debug.todo "Hmmmmmmmmmmmmm I should not be here!"
+              -- println (dbg_prefix ++ "indeterminate/cycle result")
+              -- seen
             Nothing -> -- This is the first time that I've ever been here.
               if different_finality p q then
-                println (dbg_prefix ++ "not equivalent (finality differs)")
+                -- println (dbg_prefix ++ "not equivalent (finality differs)")
                 Dict.insert (p, q) (Just False) seen
               else
                 case (get_outgoing p, get_outgoing q) of
                   (Just _, Nothing) ->
-                    println (dbg_prefix ++ "not equivalent (p-outgoing > q-outgoing)")
+                    -- println (dbg_prefix ++ "not equivalent (p-outgoing > q-outgoing)")
                     Dict.insert (p, q) (Just False) seen
                   (Nothing, Just _) ->
-                    println (dbg_prefix ++ "not equivalent (q-outgoing > p-outgoing)")
+                    -- println (dbg_prefix ++ "not equivalent (q-outgoing > p-outgoing)")
                     Dict.insert (p, q) (Just False) seen
                   (Nothing, Nothing) ->
-                    println (dbg_prefix ++ "equivalent (identical (zero) outgoing)")
+                    -- println (dbg_prefix ++ "equivalent (identical (zero) outgoing)")
                     Dict.insert (p, q) (Just True) seen
                   (Just a_out, Just b_out) ->
                     if a_out == b_out then
-                      println (dbg_prefix ++ "equivalent (identical outgoing)")
+                      -- println (dbg_prefix ++ "equivalent (identical outgoing)")
                       Dict.insert (p, q) (Just True) seen
                     else
                       let
@@ -1319,17 +1326,19 @@ replace_or_register extDFA_ =
                         if a_transitions == b_transitions then
                           let
                             outbound_folded = -- The result is a `Dict`.
-                              println (dbg_prefix ++ "---> determining recursively…")
+                              -- println (dbg_prefix ++ "---> determining recursively…")
                               List.stoppableFoldl
                                 (\((via, out_a), (_, out_b)) state ->
                                   let
                                     takenTuple = (via, (p, q), (out_a, out_b))
                                     updated_seen =
                                       if AutoSet.member takenTuple recursionData.taken then
-                                        println (dbg_prefix ++ "cancelling recursion for transition " ++ acceptConditionToString via)
+                                        -- I'm in a cycle. And that's fine; I've explored this path fully if I'm here.
+                                        -- So let me go back, and then we can look at others.
+                                        -- println (dbg_prefix ++ "cancelling recursion for transition " ++ acceptConditionToString via)
                                         state
                                       else
-                                        println (dbg_prefix ++ "---> for both, following " ++ acceptConditionToString via)
+                                        -- println (dbg_prefix ++ "---> for both, following " ++ acceptConditionToString via)
                                         check_equiv
                                           out_a
                                           out_b
@@ -1361,7 +1370,7 @@ replace_or_register extDFA_ =
                                         Continue updated_seen
                                       Just (Just False) ->
                                         -- nope.  We're done.
-                                        println (dbg_prefix ++ " ---> not equivalent (determined recursively)")
+                                        -- println (dbg_prefix ++ " ---> not equivalent (determined recursively)")
                                         Stop ( Dict.insert (out_a, out_b) (Just False) updated_seen |> Dict.insert (p, q) (Just False) )
                                 )
                                 seen
@@ -1386,7 +1395,7 @@ replace_or_register extDFA_ =
                                 outbound_folded
                               _ ->
                                 -- by contrast…
-                                println (dbg_prefix ++ " ---> equivalent (determined recursively)")
+                                -- println (dbg_prefix ++ " ---> equivalent (determined recursively)")
                                 Dict.insert (p, q) (Just True) outbound_folded
                         else
                           -- the outward transitions do not match.
@@ -1409,7 +1418,7 @@ replace_or_register extDFA_ =
     redirectInto : NodeId -> NodeId -> ExtDFA -> IntDict (AutoDict.Dict String AcceptVia NodeId)
     redirectInto target source extDFA =
       -- redirect everything that goes to source, into target
-      println ("[replace_or_register] Redirecting all incomings from #" ++ String.fromInt source ++ " to #" ++ String.fromInt target ++ " instead.")
+      -- println ("[replace_or_register] Redirecting all incomings from #" ++ String.fromInt source ++ " to #" ++ String.fromInt target ++ " instead.")
       IntDict.map
         (\_ dict ->
           AutoDict.map
@@ -1458,7 +1467,9 @@ replace_or_register extDFA_ =
                   )
             )
             ( [], seen )
-            (to_examine |> debugLog_ "Number of nodes to examine" List.length)
+            ( to_examine
+              -- |> debugLog_ "Number of nodes to examine" List.length
+            )
         -- merge everything we need to merge
         update_extDFA_with_merge : NodeId -> NodeId -> Dict (List String) (List NodeId) -> ExtDFA -> (ExtDFA, Dict (List String) (List NodeId))
         update_extDFA_with_merge qc_node target db_ state =
@@ -1498,7 +1509,7 @@ replace_or_register extDFA_ =
             ( { extDFA
                 | register =
                     Set.insert qc_node_ extDFA.register
-                    |> Debug.log ("[replace_or_register] No equivalent for #" ++ String.fromInt qc_node_ ++ ". Updated register.")
+                    -- |> Debug.log ("[replace_or_register] No equivalent for #" ++ String.fromInt qc_node_ ++ ". Updated register.")
               }
             , updated_seen
             , db
@@ -1517,10 +1528,16 @@ replace_or_register extDFA_ =
               )
               ( qc_node_, extDFA, db )
               merge_list
-            |> (\(_, a, b) -> (a |> debugDFA_ ("[replace_or_register] Post-merges"), updated_seen, b))              
+            |> (\(_, a, b) ->
+                  ( a
+                    -- |> debugDFA_ ("[replace_or_register] Post-merges")
+                  , updated_seen
+                  , b
+                  )
+                )              
     continue_processing : ExtDFA -> Dict (List String) (List NodeId) -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA
     continue_processing extDFA db seen =
-      case extDFA.queue_or_clone |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" of
+      case extDFA.queue_or_clone {- |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" -} of
         h::t ->
           let
             (updated_dfa, updated_seen, updated_db) = process h db seen extDFA
@@ -1538,9 +1555,9 @@ union w_dfa_orig m_dfa =
   |> phase_1
   -- |> debugExtDFA_ "[union] End of Phase 1 (clone-and-queue)"
   |> (\extdfa -> remove_unreachable { extdfa | start = extdfa.clone_start })
-  |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
+  -- |> debugExtDFA_ "[union] End of Phase 2 (remove-unreachable + switch-start)"
   |> replace_or_register
-  |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
+  -- |> debugExtDFA_ "[union] End of Phase 3 (replace-or-register)"
   |> retract
 
 
