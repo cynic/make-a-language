@@ -1225,6 +1225,44 @@ type alias RecursionState =
 replace_or_register : ExtDFA -> ExtDFA
 replace_or_register extDFA_ =
   let
+    pinpoint_key : ExtDFA -> NodeId -> List String
+    pinpoint_key extDFA node =
+      IntDict.get node extDFA.transition_function
+      |> Maybe.map (\dict -> AutoDict.keys dict |> List.map acceptConditionToString)
+      |> Maybe.withDefault [] -- empty string = no outbounds
+    pinpoint_database_orig : Dict (List String) (List NodeId)
+    pinpoint_database_orig =
+      -- this will get all the nodes that have outbounds.
+      let
+        with_outbounds =
+          extDFA_.transition_function
+          |> IntDict.toList
+          |> List.map
+            (\(source, outboundDict) ->
+              (AutoDict.keys outboundDict |> List.map acceptConditionToString, source)
+            )
+          |> List.gatherEqualsBy Tuple.first
+          |> List.map
+            (\((key, headValue), rest) ->
+              ( key
+              , headValue :: List.map Tuple.second rest
+              )
+            )
+          |> Dict.fromList
+        add_without_outbounds =
+          extDFA_.register
+          |> Set.union (Set.fromList extDFA_.queue_or_clone)
+          |> Set.toList
+          |> List.filterMap
+            (\id ->
+              if IntDict.member id extDFA_.transition_function then
+                Nothing
+              else
+                Just id
+            )
+          |> (\ids -> Dict.insert [] ids with_outbounds)
+      in
+        add_without_outbounds
     takenTupleKey (via, from, to) =
       ( acceptConditionToString via, from, to )
     equiv : ExtDFA -> NodeId -> NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> (Bool, Dict (NodeId, NodeId) (Maybe Bool))
@@ -1384,13 +1422,30 @@ replace_or_register extDFA_ =
             dict
         )
         extDFA.transition_function
-    process : NodeId -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA -> (ExtDFA, Dict (NodeId, NodeId) (Maybe Bool))
-    process qc_node_ seen extDFA = -- qc_node == queue/clone-node
+    process : NodeId -> Dict (List String) (List Int) -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA -> (ExtDFA, Dict (NodeId, NodeId) (Maybe Bool), Dict (List String) (List Int))
+    process qc_node_ db seen extDFA = -- qc_node == queue/clone-node
       let
+        -- the expensive part of this is the comparisons.
+        -- If we have 100,000 nodes in the register, and we compare against all
+        -- of them, then we're going to have a LOT of work to do, and most
+        -- comparisons will immediately fail.
+        -- So, can we use a database to pinpoint only the relevant nodes,
+        -- and compare against those?
+        -- Let's begin by finding the correct key.
+        db_key : List String
+        db_key = pinpoint_key extDFA qc_node_
+        -- and then the subset of nodes to look at are…
+        to_examine : List NodeId
+        to_examine =
+          Dict.get db_key db
+          |> Maybe.Extra.withDefaultLazy
+            (\() ->
+              Debug.log "🚨 returning DEFAULT EMPTY list for db_key; this should not happen!" db_key |> \_ ->
+              []
+            )
         -- let's look up things in the register.
         (merge_list, updated_seen) =
-          Set.toList extDFA.register
-          |> List.foldl
+          List.foldl
             (\other_node (to_merge, state) ->
               case equiv extDFA qc_node_ other_node state of
                 (True, updated_state) ->
@@ -1403,20 +1458,39 @@ replace_or_register extDFA_ =
                   )
             )
             ( [], seen )
+            (to_examine |> debugLog_ "Number of nodes to examine" List.length)
         -- merge everything we need to merge
-        update_extDFA_with_merge qc_node found_equivalent state =
-          { state
-            | states = IntDict.remove qc_node state.states
-            , finals = Set.remove qc_node state.finals
-            , transition_function =
-                redirectInto found_equivalent qc_node state
-                |> IntDict.remove qc_node
-            , start =
-                if qc_node == state.start then
-                  found_equivalent -- replace with equivalent.
-                else
-                  state.start
-          }
+        update_extDFA_with_merge : NodeId -> NodeId -> Dict (List String) (List NodeId) -> ExtDFA -> (ExtDFA, Dict (List String) (List NodeId))
+        update_extDFA_with_merge qc_node target db_ state =
+          -- the `qc_node` is removed from the graph.
+          -- All transitions that used to go to `qc_node` will now go to
+          -- `target` instead, which is the equivalent-node found in the graph.
+          ( { state
+              | states = IntDict.remove qc_node state.states
+              , finals = Set.remove qc_node state.finals
+              , transition_function =
+                  redirectInto target qc_node state
+                  |> IntDict.remove qc_node
+              , start =
+                  if qc_node == state.start then
+                    target -- replace with equivalent.
+                  else
+                    state.start
+            }
+          -- On the database side, we have a dictionary of outgoing-transitions → ids.
+          -- Note well that while `target` now has more incoming edges,
+          -- that does not mean that any other node has more outgoing edges.
+          -- All other nodes retain exactly the same set of outgoing edges,
+          -- but some of those edges are going to be redirected to `target`
+          -- instead of `qc_node`.  So, I update the database to replace
+          -- all instances of `qc_node` with `target`.
+          , Dict.map
+              (\_ ->
+                List.map (\x -> if x == qc_node then target else x)
+                >> List.unique
+              )
+              db_
+          )
 
       in
         case merge_list of
@@ -1427,32 +1501,35 @@ replace_or_register extDFA_ =
                     |> Debug.log ("[replace_or_register] No equivalent for #" ++ String.fromInt qc_node_ ++ ". Updated register.")
               }
             , updated_seen
+            , db
             )
           _ ->
-            ( List.foldl
-                (\target (source, state) ->
-                    ( target
-                    , update_extDFA_with_merge source target state
-                    )
-                )
-                ( qc_node_, extDFA )
-                merge_list
-              |> Tuple.second
-              |> debugDFA_ ("[replace_or_register] Post-merges")
-            , updated_seen
-            )
-    continue_processing : ExtDFA -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA
-    continue_processing extDFA seen =
+            List.foldl
+              (\target (source, state, db_) ->
+                let
+                  (updated_extDFA, updated_db) = 
+                    update_extDFA_with_merge source target db_ state
+                in
+                  ( target
+                  , updated_extDFA
+                  , updated_db
+                  )
+              )
+              ( qc_node_, extDFA, db )
+              merge_list
+            |> (\(_, a, b) -> (a |> debugDFA_ ("[replace_or_register] Post-merges"), updated_seen, b))              
+    continue_processing : ExtDFA -> Dict (List String) (List NodeId) -> Dict (NodeId, NodeId) (Maybe Bool) -> ExtDFA
+    continue_processing extDFA db seen =
       case extDFA.queue_or_clone |> Debug.log "[replace_or_register] Queued/Cloned nodes remaining to process" of
         h::t ->
           let
-            (updated_dfa, updated_seen) = process h seen extDFA
+            (updated_dfa, updated_seen, updated_db) = process h db seen extDFA
           in
-            continue_processing { updated_dfa | queue_or_clone = t } updated_seen
+            continue_processing { updated_dfa | queue_or_clone = t } updated_db updated_seen
         [] ->
           extDFA
   in
-    continue_processing extDFA_ Dict.empty
+    continue_processing extDFA_ pinpoint_database_orig Dict.empty
 
 union : DFARecord a -> DFARecord a -> DFARecord {}
 union w_dfa_orig m_dfa =
