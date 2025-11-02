@@ -34,7 +34,7 @@ import Random.Pcg.Extended exposing (initialSeed)
   - `source_id`: the node-id of the node from which the transition leaves.
   - `source_graph`: the graph containing the `source_id`.
 -}
-resolveTransitionFully : NodeId -> AutoDict.Dict String Uuid AutomatonGraph -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
+resolveTransitionFully : NodeId -> ResolutionDict -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
 resolveTransitionFully start_id resolutionDict scope recursion_stack source_id source_graph =
   let
     mkDbg_prefix uuid = "[resolveTransitionFully " ++ (truncate_uuid uuid) ++ "] "
@@ -412,7 +412,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
   in
     minimised_dfa
 
-expand : AutomatonGraph -> AutoDict.Dict String Uuid AutomatonGraph -> NodeId -> AutomatonGraph
+expand : AutomatonGraph -> ResolutionDict -> NodeId -> AutomatonGraph
 expand e resolutionDict src =
   let
     unusedId =
@@ -583,15 +583,11 @@ run r =
   in
     execute r
 
-stepThroughInitial : String -> AutoDict.Dict String Uuid AutomatonGraph -> AutomatonGraph -> ExecutionResult
-stepThroughInitial s resolutionDict g =
-  let
-    upcomingAcceptConditions =
-      String.toList
-  in
+load : String -> ResolutionDict -> AutomatonGraph -> ExecutionResult
+load s resolutionDict g =
   step
     (CanContinue <| Rejected <|
-      ExecutionData [] (upcomingAcceptConditions s) g.root g resolutionDict
+      ExecutionData [] (String.toList s) g.root g resolutionDict
     )
 
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph

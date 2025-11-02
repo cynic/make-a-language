@@ -10,7 +10,7 @@ import ForceDirectedGraph exposing (Msg(..))
 import Automata.Data exposing (Connection, NodeEffect(..))
 import Automata.Debugging exposing (debugAutomatonGraph)
 import ForceDirectedGraph exposing (updateLink_graphchange)
-import ForceDirectedGraph exposing (removeLink_graphchange)
+import GraphEditor exposing (removeLink_graphchange)
 import Automata.DFA exposing (renumberAutomatonGraph)
 import Dict
 import AutoSet
@@ -88,7 +88,7 @@ ag s_ =
 -- very thin convenience wrapper to get rid of the "x" and "y" components
 newnode_change : NodeId -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_change src conn g =
-  ForceDirectedGraph.newnode_graphchange src 0 0 conn g
+  GraphEditor.newnode_graphchange src 0 0 conn g
 
 check_remove : NodeId -> NodeId -> String -> String -> Expect.Expectation
 check_remove src dest s_ag s_expected =

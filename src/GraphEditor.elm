@@ -1,4 +1,4 @@
-module ForceDirectedGraph exposing (..)
+module GraphEditor exposing (..)
 import Browser.Events
 import Color
 import Force
@@ -44,39 +44,8 @@ import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
 
-type alias Model = FDG_Model
+type alias Model = GraphView
 
-type Msg
-  = DragStart NodeId
-  | DragEnd
-  | Tick
-  | ViewportUpdated (Float, Float)
-  | MouseMove Float Float
-  | Pan Float Float
-  | Zoom Float
-  | ResetView
-  | SelectNode NodeId
-  | ToggleSelectedTransition AcceptVia
-  | SetMouseOver
-  | SetMouseOut
-  | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
-  | CreateNewNodeAt ( Float, Float )
-  | Escape -- the universal "No! Go Back!" key & command
-  | Confirm -- the universal "Yeah! Let's Go!" key & command
-  | EditTransition NodeId NodeId Connection
-  | Reheat
-  | SwitchVia AcceptChoice
-  | Undo
-  | Redo
-  | StartSplit NodeId
-  | Load String
-  | Run
-  | Step
-  | Stop
-  | SwitchToNextComputation
-  | SwitchToPreviousComputation
-  | Seconded Time.Posix
-  | UpdateCurrentPackage GraphPackage
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
 
@@ -84,28 +53,26 @@ type Msg
 
 
 {-| The buffer from the edges within which panning occurs -}
-panBuffer : Float
-panBuffer = 40
+panBufferAmount : (Float, Float) -> Float
+panBufferAmount (w, h) =
+  let
+    minBuffer = 15 -- minimum comfortable target: 20-40px (WCAG). Mouse precision @ 15-25px.
+    -- Fitts' Law says edges are infinite, but there's no guarantee that the edge of the
+    -- window will be a *real* edge.
+    maxBuffer = 40
+    bufferRatio = 0.025 -- 2.5%.  Perhaps ≈3% would be even better; let's see.
+    -- but also, a more consistent buffer-size might be simpler and better for users to
+    -- build muscle-memory.  So let's see.
+  in
+    clamp
+      minBuffer
+      maxBuffer
+      (bufferRatio * min w h)
 
-initializeNode : Node -> NodeContext Entity Connection
-initializeNode ctx =
-  { node =
-    { label =
-        entity ctx.node.id NoEffect
-    , id = ctx.node.id
-    }
-  , incoming = ctx.incoming
-  , outgoing = ctx.outgoing
-  }
-
-canExecute : Model -> Bool
-canExecute model =
-  List.isEmpty model.currentPackage.undoBuffer
-
-viewportForces : (Float, Float) -> Graph Entity Connection -> List (Force.Force NodeId)
-viewportForces (w, h) _ =
-  [ Force.center (w / 2) (h / 2)
-  ]
+{-| This is the force that pulls all node to the 'center' of the viewport -}
+viewportForce : (Float, Float) -> Force.Force NodeId
+viewportForce (w, h) =
+  Force.center (w / 2) (h / 2)
 
 makeLinkForces : Graph Entity Connection -> Force.Force NodeId
 makeLinkForces graph =
@@ -156,16 +123,27 @@ basicForces g height =
 
 toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
-  { graph = Graph.mapContexts initializeNode g.graph
-  , graphIdentifier = g.graphIdentifier
-  , root = g.root
-  }
+  let
+    initializeNode : Node -> NodeContext Entity Connection
+    initializeNode ctx =
+      { node =
+        { label =
+            entity ctx.node.id NoEffect
+        , id = ctx.node.id
+        }
+      , incoming = ctx.incoming
+      , outgoing = ctx.outgoing
+      }
+  in
+    { graph = Graph.mapContexts initializeNode g.graph
+    , graphIdentifier = g.graphIdentifier
+    , root = g.root
+    }
 
 type alias ComputeGraphResult =
   { simulation : Force.State NodeId
   , solvedGraph : AutomatonGraph
-  , basicForces : List (Force.Force NodeId)
-  , viewportForces : List (Force.Force NodeId)
+  , forces : List (Force.Force NodeId)
   }
 
 computeGraphFully : (Float, Float) -> AutomatonGraph -> ComputeGraphResult
@@ -174,11 +152,10 @@ computeGraphFully (w, h) g =
     forceGraph =
       toForceGraph (g {- |> Automata.Debugging.debugAutomatonGraph "Graph as received" -})
       -- |> Automata.Debugging.debugAutomatonGraph "After toForceGraph"
-    basic = basicForces forceGraph (round h)
-    viewport = viewportForces (w, h) forceGraph.graph
+    forces = viewportForce (w, h) :: basicForces forceGraph (round h)
     nodes = Graph.nodes forceGraph.graph
     simulation =
-      Force.simulation (basic ++ viewport)
+      Force.simulation forces
     shiftedNodes =
       Force.computeSimulation
         simulation
@@ -191,72 +168,15 @@ computeGraphFully (w, h) g =
     -- no changes to node-ids are made; only the spatial positions change.
     { solvedGraph = resultingGraph
     , simulation = simulation
-    , basicForces = basic
-    , viewportForces = viewport
+    , forces = forces
     }
     -- |> Automata.Debugging.debugAutomatonGraph "After sim"
-
-createNewPackage : Uuid.Uuid -> Time.Posix -> (Float, Float) -> AutomatonGraph -> GraphPackage
-createNewPackage testUuid currentTime dimensions g = -- `dimensions` is the width & height of the panel
-  { userGraph = g
-  , dimensions = dimensions
-  , description = Nothing
-  , created = currentTime
-  , currentTestKey = testUuid
-  , tests = AutoDict.empty Uuid.toString
-  , undoBuffer = []
-  , redoBuffer = []
-  }
-
-init : (Float, Float) -> Time.Posix -> Random.Seed -> AutoDict.Dict String Uuid GraphPackage -> Model
-init (w, h) currentTime randomSeed packages =
-  let
-    (uuid, newSeed) = Random.step Uuid.generator randomSeed
-    g =
-      DFA.empty
-        { effect = NoEffect
-        , x = 0
-        , y = 0
-        , vx = 0
-        , vy = 0
-        , id = 0
-        }
-      |> toAutomatonGraph uuid
-    (uuid2, newSeed2) = Random.step Uuid.generator newSeed
-    computed = computeGraphFully (w, h) g
-  in
-    { currentOperation = Nothing
-    , currentPackage =
-        createNewPackage
-          uuid2
-          currentTime
-          (w, h)
-          computed.solvedGraph
-    , packages = packages
-    , simulation = computed.simulation
-    , dimensions = (w, h)
-    , basicForces = computed.basicForces
-    , viewportForces = computed.viewportForces
-    , specificForces = IntDict.empty
-    , zoom = 1.0
-    , mouseCoords = ( w/2, h/2 )
-    , pan = ( 0, 0)
-    , mouseIsHere = False
-    , disconnectedNodes = Set.empty
-    , currentTime = currentTime
-    , uuidSeed = newSeed2
-    }
-
-reInitialize : Model -> Model
-reInitialize model =
-  init model.dimensions model.currentTime model.uuidSeed model.packages
 
 updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 updateNode (offsetX, offsetY) (x, y) nodeCtx =
   updateContextWithValue
     nodeCtx
     ( setXY (x + offsetX) (y + offsetY) nodeCtx.node.label )
-
 
 updateContextWithValue : NodeContext Entity Connection -> Entity -> NodeContext Entity Connection
 updateContextWithValue nodeCtx value =
@@ -265,7 +185,6 @@ updateContextWithValue nodeCtx value =
       nodeCtx.node
   in
     { nodeCtx | node = { node | label = value } }
-
 
 updateGraphWithList : Graph Entity Connection -> List Entity -> Graph Entity Connection
 updateGraphWithList =
@@ -276,8 +195,8 @@ updateGraphWithList =
     List.foldr (\node graph -> Graph.update node.id (graphUpdater node) graph)
 
 {-| What is the amount to pan by, given the x-coordinate of the mouse? -}
-xPanAt : Float -> Float -> Float
-xPanAt width x =
+xPanAt : Float -> Float -> Float -> Float
+xPanAt width panBuffer x =
   if x >= ( width - panBuffer ) then
     1
   else if x <= panBuffer then
@@ -285,8 +204,8 @@ xPanAt width x =
   else
     0
 
-yPanAt : Float -> Float -> Float
-yPanAt height y =
+yPanAt : Float -> Float -> Float -> Float
+yPanAt height panBuffer y =
   if y >= ( height - panBuffer ) then
     1
   else if y <= panBuffer then
@@ -416,7 +335,7 @@ splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
               conn
           )
           (IntDict.empty, IntDict.empty)
-    ag = model.currentPackage.userGraph
+    ag = model.package.userGraph
     id = maxId ag + 1
     newUserGraph =
       { ag
@@ -446,794 +365,6 @@ splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
       }
   in
     newUserGraph
-
-mapCorrespondingPair : (a -> b -> c) -> (a, a) -> (b, b) -> (c, c)
-mapCorrespondingPair f (a1, a2) (b1, b2) =
-  (f a1 b1, f a2 b2)
-
-update : Msg -> Model -> Model
-update msg model =
-  case msg of
-    Tick ->
-      let
-        pkg = model.currentPackage
-        g = pkg.userGraph
-        ( newState, list ) =
-          Force.tick model.simulation <| List.map .label <| Graph.nodes g.graph
-      in
-        { model
-          | currentPackage =
-              { pkg
-                | userGraph =
-                  { g | graph = updateGraphWithList g.graph list }
-              }
-          , simulation = newState
-        }
-
-    ViewportUpdated dim ->
-      let
-        -- the center of the viewport may change.
-        viewport = viewportForces dim model.currentPackage.userGraph.graph
-        basic = basicForces model.currentPackage.userGraph (round <| Tuple.second dim)
-      in
-      { model
-        | dimensions = dim
-        , viewportForces = viewport
-        , basicForces = basic
-        , simulation =
-            Force.simulation
-              ( basic ++
-                viewport ++
-                List.concat (IntDict.values model.specificForces)
-              )
-      }
-
-    DragStart nodeId ->
-      { model
-      | currentOperation = Just <| Dragging nodeId
-      -- , simulation = Force.reheat model.simulation
-      }
-
-    DragEnd ->
-      case model.currentOperation of
-        Just (Dragging nodeId) ->
-          let
-            ( x, y ) =
-              mapCorrespondingPair (+) model.pan model.mouseCoords
-            nearby =
-              nearby_nodes nearby_node_repulsionDistance model
-              -- |> Debug.log "Nearby nodes at end of drag"
-            sf =
-              IntDict.insert nodeId
-                [ Force.towardsX [{ node = nodeId, strength = 2, target = x }]
-                , Force.towardsY [{ node = nodeId, strength = 2, target = y }]
-                , Force.customLinks 2
-                    ( List.map
-                        (\node ->
-                            { source = nodeId
-                            , target = node.id
-                            -- in other words, 8 radii will separate the centers.
-                            -- This should be sufficient for directional arrows to show up correctly.
-                            , distance = nodeRadius * 10
-                            , strength = Just 1
-                            }
-                        )
-                        nearby
-                    )
-                ]
-                model.specificForces
-            pkg = model.currentPackage
-            g = pkg.userGraph
-            newGraph =
-              Graph.update nodeId
-                ( Maybe.map (updateNode (x,y) model.pan) )
-                g.graph
-          in
-            { model
-              | currentOperation = Nothing
-              , currentPackage =
-                  { pkg
-                    | userGraph =
-                        { g | graph = newGraph }
-                        |> debugAutomatonGraphXY ("Dragging #" ++ String.fromInt nodeId ++ " ended with updated node")
-                  }
-              , specificForces = sf
-              , simulation = Force.simulation (List.concat (IntDict.values sf))
-            }
-
-        _ ->
-          model
-
-    Zoom amount ->
-      let
-        zoomAmount = if amount < 0 then 0.05 else -0.05
-        newZoom = clamp 0.5 2.5 (model.zoom + zoomAmount)
-      in
-        if newZoom == model.zoom then
-          model
-        else
-          { model | zoom = newZoom }
-
-    ResetView ->
-      { model | zoom = 1.0, pan = ( 0, 0 ) }
-
-    Seconded t ->
-      { model | currentTime = t }
-
-    MouseMove x y ->
-      let
-        pkg = model.currentPackage
-        ug = pkg.userGraph
-        newGraph =
-          case model.currentOperation of
-            Just (Dragging nodeId) ->
-              { ug
-                | graph =
-                    Graph.update nodeId
-                      (Maybe.map
-                        (\ctx ->
-                          let
-                            node = ctx.node
-                            l = node.label
-                            ( node_x, node_y ) =
-                              mapCorrespondingPair (+) model.pan ( x, y )
-                          in
-                            { ctx
-                            | node =
-                              { node
-                              | label = l |> setXY node_x node_y
-                              }
-                            }
-                        )
-                      )
-                      ug.graph
-              }
-            _ ->
-              ug
-      in
-        { model
-          | mouseCoords = (x, y) -- |> Debug.log "Set mouse-coords"
-          , currentPackage = { pkg | userGraph = newGraph }
-        }
-
-    UpdateCurrentPackage updated ->
-      if updated.userGraph.graphIdentifier /= model.currentPackage.userGraph.graphIdentifier then
-        -- I don't care; ignore this!
-        model
-      else
-        { model
-          | currentPackage = updated
-          , packages =
-              AutoDict.insert
-                updated.userGraph.graphIdentifier
-                updated
-                model.packages
-        }
-    
-    Pan xAmount yAmount ->
-      let
-        ( xPan, yPan ) = model.pan
-      in
-        { model
-        | pan =
-            case model.currentOperation of
-              Just (ModifyingGraph _ { dest }) ->
-                case dest of
-                  NoDestination ->
-                    ( xPan + xAmount, yPan + yAmount )
-                  _ ->
-                    model.pan
-              Nothing ->
-                ( xPan + xAmount, yPan + yAmount )
-              Just (Dragging _) ->
-                ( xPan + xAmount, yPan + yAmount )
-              Just (AlteringConnection _ _) ->
-                model.pan
-              Just (Splitting _) ->
-                model.pan
-              Just (Executing _ _) ->
-                ( xPan + xAmount, yPan + yAmount )
-        }
-
-    SelectNode index ->
-      { model | currentOperation = Just <| ModifyingGraph ChooseCharacter <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
-
-    SetMouseOver ->
-      { model | mouseIsHere = True }
-
-    SetMouseOut ->
-      { model | mouseIsHere = False }
-
-    CreateOrUpdateLinkTo dest ->
-      case model.currentOperation of
-        Just (ModifyingGraph _ { source }) ->
-          let
-            transitions =
-              Graph.get dest model.currentPackage.userGraph.graph
-              |> Maybe.map (\node ->
-                case IntDict.get source node.incoming of
-                  Just conn ->
-                    conn
-                  Nothing -> -- no link to this node, at present.
-                    AutoSet.empty transitionToString
-              )
-              |> Maybe.withDefault (AutoSet.empty transitionToString)
-          in
-            { model
-              | currentOperation =
-                  Just <| ModifyingGraph ChooseCharacter <| GraphModification source (ExistingNode dest) transitions
-            }
-        _ ->
-          model
-
-    CreateNewNodeAt ( x, y ) ->
-      case model.currentOperation of
-        Just (ModifyingGraph _ { source, transitions }) ->
-          { model
-            | currentOperation =
-                Just <| ModifyingGraph ChooseCharacter <| GraphModification source (NewNode ( x, y )) transitions
-          }
-        _ ->
-          model
-
-    Escape ->
-      let
-        escapery =
-          case model.currentOperation of
-            Just (ModifyingGraph via { source, dest, transitions }) ->
-              case dest of
-                NoDestination ->
-                  -- I must be escaping from something earlier.
-                  { model | currentOperation = Nothing }
-                _ ->
-                  { model
-                    | currentOperation =
-                        Just <| ModifyingGraph via <| GraphModification source NoDestination transitions
-                  }
-            Just (Splitting _) ->
-              { model | currentOperation = Nothing }
-            Just (AlteringConnection _ _) ->
-              { model | currentOperation = Nothing }
-            Nothing ->
-              model
-            Just (Dragging _) ->
-              -- stop dragging.
-              { model | currentOperation = Nothing }
-            Just (Executing _ _) ->
-              model -- nothing to escape.
-              -- let
-              --   pkg = model.currentPackage
-              -- in
-              --   { model
-              --     | currentOperation = Nothing
-              --     , currentPackage =
-              --         { pkg
-              --           | userGraph = original
-              --         }
-              --   }
-      in
-      -- ooh!  What are we "escaping" from, though?
-        escapery
-
-    Confirm ->
-      -- What am I confirming?
-      let
-        commit_change : AutomatonGraph -> Model -> Model
-        commit_change updatedGraph model_ =
-          let
-            basic =
-              basicForces updatedGraph (round <| Tuple.second model_.dimensions)
-            viewport =
-              viewportForces model_.dimensions updatedGraph.graph
-            pkg = model_.currentPackage
-          in
-            { model_
-            | currentOperation = Nothing
-            , currentPackage =
-                { pkg
-                  | userGraph = updatedGraph
-                  , undoBuffer = model.currentPackage.userGraph :: model_.currentPackage.undoBuffer
-                  , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-                }
-                    -- NOTE ⬇ WELL! This isn't a typo!
-            , basicForces = basic
-            , viewportForces = viewport
-            , simulation = Force.simulation (basic ++ viewport)
-            , disconnectedNodes =
-                identifyDisconnectedNodes updatedGraph
-            }
-        
-        createNewNode : NodeId -> Connection -> Float -> Float -> Model
-        createNewNode src conn x y =
-          newnode_graphchange src x y conn model.currentPackage.userGraph
-          |> \newGraph -> commit_change newGraph model
-
-        updateExistingNode src dest conn =
-          updateLink_graphchange src dest conn model.currentPackage.userGraph
-          |> \newGraph -> commit_change newGraph model
-
-        removeLink : NodeId -> NodeId -> Model
-        removeLink src dest =
-          removeLink_graphchange src dest model.currentPackage.userGraph
-          |> \newGraph -> commit_change newGraph model
-
-      in
-        case model.currentOperation of
-          Just (ModifyingGraph _ { source, dest, transitions }) ->
-            case dest of
-              ( NewNode ( x, y ) ) ->
-                -- create a totally new node, never before seen!
-                createNewNode source transitions x y
-              ( ExistingNode destination ) ->
-                if AutoSet.isEmpty transitions then
-                  removeLink source destination
-                else
-                  updateExistingNode source destination transitions
-              ( NoDestination ) ->
-                -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
-                model
-          Just (AlteringConnection _ { source, dest, transitions }) ->
-                if AutoSet.isEmpty transitions then
-                  removeLink source dest
-                else
-                  updateExistingNode source dest transitions
-          Just (Splitting { to_split, left, right }) ->
-            if AutoSet.isEmpty left || AutoSet.isEmpty right then
-              { model | currentOperation = Nothing }
-            else
-              Graph.get to_split model.currentPackage.userGraph.graph
-              |> Maybe.map (\node ->
-                splitNode node left right model
-                |> \g -> commit_change g model
-              )
-              |> Maybe.withDefault model
-          Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
-            case model.currentPackage.undoBuffer of
-              [] -> -- no changes are proposed, so…
-                model -- …there is nothing for me to do!
-              _ ->
-                confirmChanges model
-          Just (Dragging _) ->
-            model -- confirmation does nothing for this (visual) operation.
-          Just (Executing _ _) ->
-            model -- confirmation does nothing for execution
-
-    ToggleSelectedTransition acceptCondition ->
-      let
-        alterTransitions : Connection -> Connection
-        alterTransitions conn =
-          AutoSet.foldl
-            (\t (seen, state) ->
-              if t.via == acceptCondition then
-                -- I've found the right transition.  Now, update or remove or…?
-                if t.isFinal then
-                  ( True
-                  , state -- skip it; i.e., remove it.
-                  )
-                else
-                  ( True
-                  , AutoSet.insert
-                      ( { t
-                        | isFinal = True -- make it final.
-                        }
-                      )
-                      state
-                  )
-              else
-                (seen, AutoSet.insert t state)
-            )
-            (False, AutoSet.empty transitionToString)
-            conn
-          |>  (\(seen, resultSet) ->
-                if seen then
-                  resultSet -- I've handled this above.
-                else
-                  -- need to insert it.
-                  AutoSet.insert
-                    (Transition
-                      False
-                      acceptCondition
-                    )
-                    resultSet
-              )
-      in
-        case model.currentOperation of
-          Just (ModifyingGraph via ({ transitions } as mod)) ->
-            { model
-              | currentOperation =
-                  Just <| ModifyingGraph via <|
-                    { mod
-                      | transitions = alterTransitions transitions
-                    }
-            }
-          Just (AlteringConnection via ({ transitions } as mod)) ->
-            { model
-              | currentOperation =
-                  Just <| AlteringConnection
-                    via
-                    { mod
-                      | transitions = alterTransitions transitions
-                    }
-            }
-          Just (Splitting { to_split, left, right }) ->
-            let
-              tr finality =
-                Transition
-                  finality
-                  acceptCondition
-              onLeft_0 = AutoSet.member (tr False) left
-              onLeft_1 = AutoSet.member (tr True) left
-              onRight_0 = AutoSet.member (tr False) right
-              onRight_1 = AutoSet.member (tr True) right
-              pushToRight t =
-                ( AutoSet.remove t left, AutoSet.insert t right )
-              pushToLeft t =
-                ( AutoSet.insert t left, AutoSet.remove t right )
-              ( newLeft, newRight ) =
-                if onLeft_0 && onLeft_1 then
-                  -- push the non-terminal to the right.
-                  pushToRight (tr False)
-                else if onLeft_1 then
-                  -- push the terminal to the right
-                  pushToRight (tr True)
-                else if onRight_0 && onRight_1 then
-                  -- push the non-terminal to the left
-                  pushToLeft (tr False)
-                else if onRight_1 then
-                  pushToLeft (tr True)
-                else if onLeft_0 then
-                  pushToRight (tr False)
-                else if onRight_0 then
-                  pushToLeft (tr False)
-                else
-                  ( left, right )
-            in
-              { model
-                | currentOperation =
-                    Just <| Splitting <| Split to_split newLeft newRight
-              }
-          _ ->
-            model
-
-    EditTransition src dest conn ->
-      { model
-        | currentOperation =
-            Just <| AlteringConnection ChooseCharacter (ConnectionAlteration src dest conn)
-      }
-
-    Reheat ->
-      -- If I'm not doing anything else, permit auto-layout
-      case model.currentOperation of
-        Nothing ->
-          { model
-          | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
-          , specificForces = IntDict.empty -- cancel moves that were made before
-          }
-        _ ->
-          model
-
-    SwitchVia newChosen ->
-      case model.currentOperation of
-        Just (ModifyingGraph _ d) ->
-          { model | currentOperation = Just <| ModifyingGraph newChosen d }
-        Just (AlteringConnection _ d) ->
-          { model | currentOperation = Just <| AlteringConnection newChosen d }
-        _ -> model
-
-    SwitchToNextComputation ->
-      case model.currentOperation of
-        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
-        Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
-        _ ->
-          model
-
-    SwitchToPreviousComputation ->
-      case model.currentOperation of
-        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| max 0 (idx - 1)) d }
-        Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
-        _ ->
-          model
-
-    StartSplit nodeId ->
-      Graph.get nodeId model.currentPackage.userGraph.graph
-      |> Maybe.map
-        (\node ->
-          { model
-            | currentOperation =
-                Just <| Splitting <|
-                  Split
-                    node.node.id
-                    ( IntDict.foldl
-                        (\k v acc ->
-                            if k /= node.node.id then
-                              AutoSet.union v acc
-                            else
-                              acc
-                        )
-                        (AutoSet.empty transitionToString)
-                        node.incoming
-                    )
-                    (AutoSet.empty transitionToString)
-          }
-        )
-      |> Maybe.withDefault model
-
-    Undo ->
-      case (model.currentOperation, model.currentPackage.undoBuffer) of
-        (_, []) ->
-          model
-        (Just _, _) ->
-          model -- do not permit undo/redo while I'm performing any operation.
-        (Nothing, h::t) ->
-          let
-            pkg = model.currentPackage
-          in
-            { model
-              | currentPackage =
-                  { pkg
-                    | undoBuffer = t
-                    , redoBuffer = model.currentPackage.userGraph :: model.currentPackage.redoBuffer
-                    , userGraph = h
-                  }
-              , disconnectedNodes = identifyDisconnectedNodes h
-            }
-
-    Redo ->
-      case (model.currentOperation, model.currentPackage.redoBuffer) of
-        (_, []) ->
-          model
-        (Just _, _) ->
-          model -- do not permit undo/redo while I'm performing any operation.
-        (Nothing, h::t) ->
-          let
-            pkg = model.currentPackage
-          in
-          { model
-            | currentPackage =
-                { pkg
-                  | redoBuffer = t
-                  , undoBuffer = model.currentPackage.userGraph :: model.currentPackage.undoBuffer
-                  , userGraph = h
-                }
-            , disconnectedNodes = identifyDisconnectedNodes h
-          }
-    
-    Load s ->
-      let
-        resolutionDict =
-          AutoDict.map (\_ -> .userGraph) model.packages
-        g = model.currentPackage.userGraph
-      in
-        -- first, can we?
-        case model.currentPackage.undoBuffer of
-          [] ->
-            { model
-              | currentOperation =
-                  Just <| Executing model.currentPackage.userGraph (DFA.stepThroughInitial s resolutionDict g)
-            }
-          _ ->
-            model -- nothing to do!
-    
-    Run ->
-      let
-        pkg = model.currentPackage
-      in
-        case model.currentOperation of
-          Just (Executing original executionResult) ->
-            { model
-              | currentOperation = Just <| Executing original (DFA.run executionResult)
-              , currentPackage =
-                  { pkg
-                    | userGraph =
-                        executionResultAutomatonGraph executionResult
-                        |> Maybe.withDefault pkg.userGraph
-                  }
-            }
-          _ ->
-            model -- 'run' isn't valid in any other context.
-
-    Step ->
-      let
-        pkg = model.currentPackage
-      in
-        case model.currentOperation of
-          Just (Executing original executionResult) ->
-            { model
-              | currentOperation = Just <| Executing original (DFA.step executionResult)
-              , currentPackage =
-                  { pkg
-                    | userGraph =
-                        executionResultAutomatonGraph executionResult
-                        |> Maybe.withDefault pkg.userGraph
-                  }
-            }
-          _ ->
-            model -- 'step' isn't valid in any other context.
-
-    Stop ->
-      let
-        pkg = model.currentPackage
-      in
-        case model.currentOperation of
-          Just (Executing original _) ->
-            { model
-              | currentOperation = Nothing
-              , currentPackage =
-                  { pkg
-                    | userGraph = original
-                  }
-            }
-          _ ->
-            model -- 'stop' isn't valid in any other context.
-
-subscriptions : Model -> Sub Msg
-subscriptions model =
-  let
-    ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
-    ( width, height ) = model.dimensions
-    panSubscription =
-      let
-        xPan = xPanAt width xCoord
-        yPan = yPanAt height yCoord
-      in
-        if model.mouseIsHere && (xPan /= 0 || yPan /= 0) then
-          Time.every 20 (\_ -> Pan xPan yPan {- |> Debug.log "Pan request" -})
-        else
-          Sub.none
-    keyboardSubscription =
-      if model.mouseIsHere then
-        Browser.Events.onKeyDown
-          ( D.map2
-              (\key ctrlPressed -> ( key, ctrlPressed ))
-              (D.field "key" D.string)
-              (D.field "ctrlKey" D.bool)
-            |> D.andThen
-              (\v ->
-                case v of
-                  ( "1", True ) ->
-                    -- Debug.log "yup" v |> \_ ->
-                    D.succeed ResetView
-                  ( "Enter", False ) ->
-                    D.succeed Confirm
-                  ( "Escape", False ) ->
-                    D.succeed Escape
-                  ( "Tab", False) ->
-                    D.succeed Reheat
-                  ( "z", True) ->
-                    D.succeed Undo
-                  ( "Z", True) ->
-                    D.succeed Undo
-                  ( "y", True) ->
-                    D.succeed Redo
-                  ( "Y", True) ->
-                    D.succeed Redo
-                  ( ch, _ ) ->
-                    let
-                      decodeChar =
-                        case String.toList ch of
-                          [char] ->
-                            D.succeed (ToggleSelectedTransition <| ViaCharacter char)
-                          _ ->
-                            D.fail "Not a character key"
-                    in
-                    case model.currentOperation of
-                      Just (ModifyingGraph ChooseCharacter { dest }) ->
-                        case dest of
-                          NoDestination ->
-                            D.fail "Not a recognized key combination"
-                          _ ->
-                            decodeChar
-                      Just (ModifyingGraph (ChooseGraphReference _) _) ->
-                        D.fail "Not choosing characters"
-                      Just (AlteringConnection ChooseCharacter _) ->
-                        decodeChar
-                      Just (AlteringConnection (ChooseGraphReference _) _) ->
-                        D.fail "Not choosing characters"
-                      Just (Splitting _) ->
-                        decodeChar
-                      _ ->
-                        D.fail "Not a recognized key combination"
-              )
-          )
-      else
-        Sub.none
-    currentTimeSubscription = -- used for created-time for AutomatonGraphs
-      Time.every 25000 -- 'sup, homie Nyquist? All good?
-        ( Time.posixToMillis
-          >> (\v -> (v // (1000 * 60)) * (1000 * 60))
-          >> Time.millisToPosix
-          >> Seconded
-        )
-  in
-    if Force.isCompleted model.simulation then
-      Sub.batch
-        [ keyboardSubscription
-        , panSubscription
-        , currentTimeSubscription
-        ]
-    else
-      Sub.batch
-        [ keyboardSubscription
-        , panSubscription
-        , currentTimeSubscription
-        , Browser.Events.onAnimationFrame (always Tick)
-        ]
-
-applyChangesToGraph : AutomatonGraph -> AutomatonGraph
-applyChangesToGraph g =
-  Debugging.debugAutomatonGraph "Initial from user" g |> \_ ->
-  { g
-    | graph =
-        -- first, actually remove all disconnected nodes.
-        identifyDisconnectedNodes g
-        |> Set.foldl Graph.remove g.graph
-  }
-  |> Debugging.debugAutomatonGraph "After removing disconnected"
-  |> (fromAutomatonGraph >> toAutomatonGraph g.graphIdentifier)
-
-recreateGraphInModel : Model -> AutomatonGraph -> Model
-recreateGraphInModel model g =
-  let
-    (w, h)  = model.dimensions
-    forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
-    basic = basicForces forceGraph (round h)
-    viewport = viewportForces (w, h) forceGraph.graph
-    pkg = model.currentPackage
-  in
-    { model -- make sure we are referencing the correct Model!
-      | simulation = Force.simulation (basic ++ viewport)
-      , basicForces = basic
-      , currentPackage = { pkg | userGraph = forceGraph }
-      , viewportForces = viewport
-      , specificForces = IntDict.empty
-    }
-
-updateModelAfterConfirmation : Model -> AutomatonGraph -> Model
-updateModelAfterConfirmation model g =
-  let
-    pkg = model.currentPackage
-    resolutionDict =
-      AutoDict.map (\_ -> .userGraph) model.packages
-    newPackages =
-      AutoDict.insert pkg.userGraph.graphIdentifier
-        { pkg
-          | userGraph = g
-          , dimensions = model.dimensions
-          , tests =
-              AutoDict.map
-                (\_ entry ->
-                  { entry
-                    | result =
-                        DFA.stepThroughInitial entry.input resolutionDict g
-                        |> DFA.run
-                  }
-                )
-                pkg.tests
-        }
-        model.packages
-    newModel =
-      { model
-        | currentPackage =
-            { pkg
-              | undoBuffer = []
-              , redoBuffer = []
-            }
-        , packages = newPackages
-        -- we are committing, so we want to update the packages.
-      }
-  in
-    recreateGraphInModel
-      newModel
-      g
-
-confirmChanges : Model -> Model
-confirmChanges model =
-  applyChangesToGraph model.currentPackage.userGraph
-  |> updateModelAfterConfirmation model
 
 textChar : Char -> String
 textChar ch =
@@ -1303,7 +434,7 @@ type LinkType
 linkExistsInGraph : Model -> NodeId -> NodeId -> Bool
 linkExistsInGraph model from to =
   -- does a link exist from `from` to `to`?
-  Graph.get from model.currentPackage.userGraph.graph
+  Graph.get from model.package.userGraph.graph
   |> Maybe.map (.outgoing >> IntDict.member to)
   |> Maybe.withDefault False
 
@@ -1543,10 +674,10 @@ viewGraphReference uuid x_ y_ =
           )
       )
 
-viewLink : Model -> Dict (NodeId, NodeId) (Int, AcceptVia) -> Edge Connection -> Svg Msg
-viewLink ({ currentPackage } as model) executing edge =
+viewLink : Model -> Dict (NodeId, NodeId) (Int, AcceptVia) -> Edge Connection -> Svg GraphView_Msg
+viewLink ({ package } as model) executing edge =
   let
-    userGraph = currentPackage.userGraph
+    userGraph = package.userGraph
     source =
       Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
     target =
@@ -1556,7 +687,7 @@ viewLink ({ currentPackage } as model) executing edge =
       path_between source target cardinality 7 7
     font_size = 16.0 -- this is the default, if not otherwise set
     executionClass =
-      Dict.get (edge.from, edge.to) executing
+      Dict.get (edge.from, edge.to) (executing |> Debug.log "executing")
       |> Maybe.map (\(recency, _) -> [ "executed", "recent-" ++ String.fromInt recency ])
       |> Maybe.withDefault []
     labelText =
@@ -1651,10 +782,10 @@ viewLink ({ currentPackage } as model) executing edge =
 nodeRadius : Float
 nodeRadius = 7
 
-viewNode : Model -> Graph.Node Entity -> Svg Msg
-viewNode { currentPackage, currentOperation, disconnectedNodes, pan, mouseCoords } { label, id } =
+viewNode : Model -> (Float, Float) -> Graph.Node Entity -> Svg GraphView_Msg
+viewNode { package, currentOperation, disconnectedNodes, pan } mouseCoords { label, id } =
   let
-    userGraph = currentPackage.userGraph
+    userGraph = package.userGraph
     selectableClass =
       case currentOperation of
         Just (ModifyingGraph _ { source }) ->
@@ -1702,7 +833,7 @@ viewNode { currentPackage, currentOperation, disconnectedNodes, pan, mouseCoords
         { stopPropagation = True, preventDefault = True }
         (\e ->
           if e.keys.shift then
-            DragStart id
+            NodeDragStart id
           else if e.keys.ctrl && splittable then
             StartSplit id
           else
@@ -1833,11 +964,11 @@ nearby_node_repulsionDistance =
   nodeRadius * 12
 
 {-| Used by nearby_node and nearby_nodes. Not for other use. -}
-nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Model -> b
-nearby_node_func f distance { currentPackage, pan, mouseCoords } =
+nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> (Float, Float) -> Model -> b
+nearby_node_func f distance mouseCoords { package, pan } =
   -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
   let
-    userGraph = currentPackage.userGraph
+    userGraph = package.userGraph
     ( xPan, yPan ) = pan
     ( mouse_x, mouse_y ) =
       mouseCoords -- |> Debug.log "Mousecoords"
@@ -1856,15 +987,15 @@ nearby_node_func f distance { currentPackage, pan, mouseCoords } =
       )
       (Graph.nodes userGraph.graph)
 
-nearby_node : Float -> Model -> Maybe (Graph.Node Entity)
+nearby_node : Float -> (Float, Float) -> Model -> Maybe (Graph.Node Entity)
 nearby_node =
   nearby_node_func List.find
 
-nearby_nodes : Float -> Model -> List (Graph.Node Entity)
+nearby_nodes : Float -> (Float, Float) -> Model -> List (Graph.Node Entity)
 nearby_nodes =
   nearby_node_func List.filter
 
-viewPhantomSvg : { x : Float, y : Float } -> PathBetweenReturn -> Svg Msg
+viewPhantomSvg : { x : Float, y : Float } -> PathBetweenReturn -> Svg GraphView_Msg
 viewPhantomSvg target positioning =
   let
     radius = 9
@@ -1929,18 +1060,18 @@ viewPhantomSvg target positioning =
     This function is called when the user is still choosing.
     `viewPhantomChosen` is called when the user has chosen.
 -}
-viewPhantomChoosing : Model -> NodeContext Entity Connection -> Svg Msg
-viewPhantomChoosing model sourceNode =
+viewPhantomChoosing : Model -> (Float, Float) -> NodeContext Entity Connection -> Svg GraphView_Msg
+viewPhantomChoosing model mouseCoords sourceNode =
   let
     ( xPan, yPan ) =
       model.pan
-    nearby = nearby_node nearby_node_lockOnDistance model
+    nearby = nearby_node nearby_node_lockOnDistance mouseCoords model
     ( center_x, center_y) =
       -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
       -- But if the mouse is anywhere else, just use the mouse coordinates.
       nearby
       |> Maybe.map (\node -> (node.label.x - xPan, node.label.y - yPan))
-      |> Maybe.withDefault model.mouseCoords
+      |> Maybe.withDefault mouseCoords
     target =
       { x = center_x + xPan
       , y = center_y + yPan
@@ -1967,7 +1098,7 @@ viewPhantomChoosing model sourceNode =
     This function is called when the user has chosen their
     phantom move.
 -}
-viewPhantomChosen : Model -> NodeContext Entity Connection -> (Float, Float) -> Cardinality -> Svg Msg
+viewPhantomChosen : Model -> NodeContext Entity Connection -> (Float, Float) -> Cardinality -> Svg GraphView_Msg
 viewPhantomChosen model sourceNode (dest_x, dest_y) cardinality =
   let
     ( xPan, yPan ) =
@@ -1983,8 +1114,8 @@ viewPhantomChosen model sourceNode (dest_x, dest_y) cardinality =
 
 {-| A "phantom move" that the user MIGHT make, or might not.
 -}
-viewPhantom : Model -> NodeContext Entity Connection -> Svg Msg
-viewPhantom model sourceNode =
+viewPhantom : Model -> (Float, Float) -> NodeContext Entity Connection -> Svg GraphView_Msg
+viewPhantom model mouseCoords sourceNode =
   let
     cardinalityOf nodeId =
       if nodeId == sourceNode.node.id then
@@ -1996,7 +1127,7 @@ viewPhantom model sourceNode =
           Nothing ->
             Unidirectional
     nodeCoordinates id =
-      Graph.get id model.currentPackage.userGraph.graph
+      Graph.get id model.package.userGraph.graph
       |> Maybe.map
           (\ctx -> ( ctx.node.label.x, ctx.node.label.y ))
       |> Maybe.withDefaultLazy
@@ -2006,7 +1137,7 @@ viewPhantom model sourceNode =
       Just (ModifyingGraph _ { dest }) ->
         case dest of
           NoDestination ->
-            viewPhantomChoosing model sourceNode
+            viewPhantomChoosing model mouseCoords sourceNode
           ExistingNode id ->
             viewPhantomChosen model sourceNode
               (nodeCoordinates id)
@@ -2061,7 +1192,7 @@ transition_spacing : Float
 transition_spacing = 15
 
 -- https://ishadeed.com/article/target-size/
-viewSingleKey : Char -> Connection -> (Int, Int) -> Float -> Svg Msg
+viewSingleKey : Char -> Connection -> (Int, Int) -> Float -> Svg GraphView_Msg
 viewSingleKey ch conn (gridX, gridY) y_offset =
   let
     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
@@ -2106,7 +1237,7 @@ viewSingleKey ch conn (gridX, gridY) y_offset =
         [ text <| String.fromChar ch ]
     ]
 
-viewSvgCharacterChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
+viewSvgCharacterChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg GraphView_Msg, Float)
 viewSvgCharacterChooser conn y_offset w =
   let
     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
@@ -2140,203 +1271,203 @@ viewSvgCharacterChooser conn y_offset w =
   in
     ( chooser_svg, my_height )
 
-viewSvgGraphRefChooser : Int -> Model -> AutoSet.Set String Transition -> Float -> Float -> (Svg Msg, Float)
-viewSvgGraphRefChooser focusedIndex model conn y_offset panelWidth =
-  let
-    -- this is the width of each thumbnail.
-    -- and it is ALSO the center position in the panel.
-    packages = model.packages
-    panelCenter = panelWidth / 2
-    width = panelWidth / 2
-    height = thumbnailHeight width
-    -- and here, confusingly, I use the meanings in both ways ^_^!
-    x_start = panelCenter - (width / 2)
-    y_start =
-      2 + -- the stroke-width
-      5 + -- the padding (top)
-      10 + -- margin (top)
-      y_offset
-    -- now, one of the thumbnails are going to be in-frame, and others will not be.
-    -- there will be a half-thumbnail to the left and to the right.
-    -- … with a gap between, too, so a bit less then a half.
-    gap_between = panelWidth * 0.05 -- the gap is 5% of the width
-    -- with extra margin at the bottom
-    thumbnailPosition idx =
-      x_start + (toFloat idx * (gap_between + width))
-    my_height = 4 + 10 + 40 + height + 90
-    makeThumbnail pkg =
-      viewComputationThumbnail (panelWidth / 2) model pkg
-    keys_and_thumbs =
-      AutoDict.toList packages
-      |> List.map (\(ref, v) -> (ref, makeThumbnail v))
-    thumbnail_carousel =
-      g
-        [ transform
-            [ Translate
-                (-1 * (thumbnailPosition focusedIndex - width/2))
-                0
-            ]
-        , class [ "thumbnail-carousel" ]
-        ]
-        ( List.indexedMap
-            (\i (ref, thumb) ->
-              let
-                tr finality = Transition finality (ViaGraphReference ref)
-                isSelected =
-                  AutoSet.member (tr True) conn || AutoSet.member (tr False) conn
-                scale = height / 5
-              in
-                g
-                  [ transform [ Translate (thumbnailPosition i) y_start ]
-                  ]
-                  [ -- give it a background
-                    rect
-                      [ x 0
-                      , y 0
-                      , TypedSvg.Attributes.InPx.width <| width
-                      , TypedSvg.Attributes.InPx.height <| height
-                      , fill <| Paint <|
-                          if isSelected then Color.rgb 0.596 0.984 0.596 else Color.rgb 1 1 0.941
-                      , rx 15
-                      , ry 15
-                      ]
-                      []
-                    -- there is nothing interactable in the thumbnail, so this is
-                    -- really just for getting the types to line up sensibly.
-                  , thumb |> Svg.map (\_ -> Tick)
-                  , -- cover it with a "top" which is interactable
-                    rect
-                      [ x -5
-                      , y -5
-                      , TypedSvg.Attributes.InPx.width <| width + 10
-                      , TypedSvg.Attributes.InPx.height <| height + 10
-                      , fill <| Paint <| Color.rgba 1 1 1 0.1
-                      , rx 15
-                      , ry 15
-                      , strokeWidth 2
-                      , stroke <| Paint <|
-                          if isSelected then Color.green else Color.black
-                      , cursor CursorPointer
-                      , onClick <| ToggleSelectedTransition (ViaGraphReference ref)
-                      ]
-                      []
-                  , -- if the item is selected, then put on a UI for things that can be
-                    -- changed about it.
-                    -- first up, a big checkbox to say "Yes! You're selected!"
-                    if isSelected then
-                      -- REMEMBER: I'm already translated! So everything is relative
-                      -- to the "frame" of this particular thumbnail.
-                      -- …which certainly is convenient in some respects…!
-                      g
-                        []
-                        [ circle
-                            [ cx <| width / 2
-                            , cy <| height - height / 5
-                            , r <| scale / 2
-                            , fill <| Paint <| if AutoSet.member (tr False) conn then Color.white else paletteColors.transition.final
-                            ]
-                            []
-                        , text_
-                            [ x <| width / 2
-                            , y <| height - height / 5 + 5
-                            , fill <| Paint <| Color.green
-                            , fontSize scale
-                            , dominantBaseline DominantBaselineMiddle
-                            -- , alignmentBaseline AlignmentCentral
-                            , textAnchor AnchorMiddle
-                            ]
-                            [ text "✔" ]
-                        ]
-                    else
-                      g [][]
-                  ]
-            )
-            keys_and_thumbs
-        )
-    with_ui =
-      g
-        []
-        [ thumbnail_carousel
-          -- the static UI. Must place this after the thumbnails so
-          -- that it appears on top; and must place it outside of
-          -- the transformed group, so it is relative to the screen.
-          -- move right, if such a thing is possible
-        , if focusedIndex < AutoDict.size packages - 1 then
-            g
-              []
-              [ rect
-                  [ x <| panelCenter + 30
-                  , y <| y_offset + height + 30
-                  , Px.width 60
-                  , Px.height 60
-                  , Px.rx 5
-                  , Px.ry 5
-                  , class [ "transition-chooser-key" ]
-                  , strokeWidth 2
-                  , stroke <| Paint <| Color.white
-                  , onClick SwitchToNextComputation
-                  ]
-                  []
-              , text_
-                  [ x <| panelCenter + 60
-                  , y <| y_offset + height + 60
-                  , fontSize 40
-                  , rx 15
-                  , ry 15
-                  , strokeWidth 0
-                  , textAnchor AnchorMiddle
-                  , alignmentBaseline AlignmentCentral
-                  , dominantBaseline DominantBaselineMiddle
-                  , pointerEvents "none"
-                  ]
-                  [ text <| "→" ]
-              , title
-                  []
-                  [ text "Next computation" ]
-              ]
-          else
-            g [] []
-        , if focusedIndex > 0 then
-            g
-              []
-              [ rect
-                  [ x <| panelCenter - 60
-                  , y <| y_offset + height + 30
-                  , Px.width 60
-                  , Px.height 60
-                  , Px.rx 5
-                  , Px.ry 5
-                  , class [ "transition-chooser-key" ]
-                  , strokeWidth 2
-                  , stroke <| Paint <| Color.white
-                  , onClick SwitchToPreviousComputation
-                  ]
-                  []
-              , text_
-                  [ x <| panelCenter - 30
-                  , y <| y_offset + height + 60
-                  , fontSize 40
-                  , rx 15
-                  , ry 15
-                  , strokeWidth 0
-                  , textAnchor AnchorMiddle
-                  , alignmentBaseline AlignmentCentral
-                  , dominantBaseline DominantBaselineMiddle
-                  , pointerEvents "none"
-                  ]
-                  [ text <| "←" ]
-              , title
-                  []
-                  [ text "Previous computation" ]
-              ]
-          else
-            g [] []
-        ]
+-- viewSvgGraphRefChooser : Int -> Model -> AutoSet.Set String Transition -> Float -> Float -> (Svg GraphView_Msg, Float)
+-- viewSvgGraphRefChooser focusedIndex model conn y_offset panelWidth =
+--   let
+--     -- this is the width of each thumbnail.
+--     -- and it is ALSO the center position in the panel.
+--     packages = model.packages
+--     panelCenter = panelWidth / 2
+--     width = panelWidth / 2
+--     height = thumbnailHeight width
+--     -- and here, confusingly, I use the meanings in both ways ^_^!
+--     x_start = panelCenter - (width / 2)
+--     y_start =
+--       2 + -- the stroke-width
+--       5 + -- the padding (top)
+--       10 + -- margin (top)
+--       y_offset
+--     -- now, one of the thumbnails are going to be in-frame, and others will not be.
+--     -- there will be a half-thumbnail to the left and to the right.
+--     -- … with a gap between, too, so a bit less then a half.
+--     gap_between = panelWidth * 0.05 -- the gap is 5% of the width
+--     -- with extra margin at the bottom
+--     thumbnailPosition idx =
+--       x_start + (toFloat idx * (gap_between + width))
+--     my_height = 4 + 10 + 40 + height + 90
+--     makeThumbnail pkg =
+--       viewComputationThumbnail (panelWidth / 2) model pkg
+--     keys_and_thumbs =
+--       AutoDict.toList packages
+--       |> List.map (\(ref, v) -> (ref, makeThumbnail v))
+--     thumbnail_carousel =
+--       g
+--         [ transform
+--             [ Translate
+--                 (-1 * (thumbnailPosition focusedIndex - width/2))
+--                 0
+--             ]
+--         , class [ "thumbnail-carousel" ]
+--         ]
+--         ( List.indexedMap
+--             (\i (ref, thumb) ->
+--               let
+--                 tr finality = Transition finality (ViaGraphReference ref)
+--                 isSelected =
+--                   AutoSet.member (tr True) conn || AutoSet.member (tr False) conn
+--                 scale = height / 5
+--               in
+--                 g
+--                   [ transform [ Translate (thumbnailPosition i) y_start ]
+--                   ]
+--                   [ -- give it a background
+--                     rect
+--                       [ x 0
+--                       , y 0
+--                       , TypedSvg.Attributes.InPx.width <| width
+--                       , TypedSvg.Attributes.InPx.height <| height
+--                       , fill <| Paint <|
+--                           if isSelected then Color.rgb 0.596 0.984 0.596 else Color.rgb 1 1 0.941
+--                       , rx 15
+--                       , ry 15
+--                       ]
+--                       []
+--                     -- there is nothing interactable in the thumbnail, so this is
+--                     -- really just for getting the types to line up sensibly.
+--                   , thumb |> Svg.map (\_ -> Tick)
+--                   , -- cover it with a "top" which is interactable
+--                     rect
+--                       [ x -5
+--                       , y -5
+--                       , TypedSvg.Attributes.InPx.width <| width + 10
+--                       , TypedSvg.Attributes.InPx.height <| height + 10
+--                       , fill <| Paint <| Color.rgba 1 1 1 0.1
+--                       , rx 15
+--                       , ry 15
+--                       , strokeWidth 2
+--                       , stroke <| Paint <|
+--                           if isSelected then Color.green else Color.black
+--                       , cursor CursorPointer
+--                       , onClick <| ToggleSelectedTransition (ViaGraphReference ref)
+--                       ]
+--                       []
+--                   , -- if the item is selected, then put on a UI for things that can be
+--                     -- changed about it.
+--                     -- first up, a big checkbox to say "Yes! You're selected!"
+--                     if isSelected then
+--                       -- REMEMBER: I'm already translated! So everything is relative
+--                       -- to the "frame" of this particular thumbnail.
+--                       -- …which certainly is convenient in some respects…!
+--                       g
+--                         []
+--                         [ circle
+--                             [ cx <| width / 2
+--                             , cy <| height - height / 5
+--                             , r <| scale / 2
+--                             , fill <| Paint <| if AutoSet.member (tr False) conn then Color.white else paletteColors.transition.final
+--                             ]
+--                             []
+--                         , text_
+--                             [ x <| width / 2
+--                             , y <| height - height / 5 + 5
+--                             , fill <| Paint <| Color.green
+--                             , fontSize scale
+--                             , dominantBaseline DominantBaselineMiddle
+--                             -- , alignmentBaseline AlignmentCentral
+--                             , textAnchor AnchorMiddle
+--                             ]
+--                             [ text "✔" ]
+--                         ]
+--                     else
+--                       g [][]
+--                   ]
+--             )
+--             keys_and_thumbs
+--         )
+--     with_ui =
+--       g
+--         []
+--         [ thumbnail_carousel
+--           -- the static UI. Must place this after the thumbnails so
+--           -- that it appears on top; and must place it outside of
+--           -- the transformed group, so it is relative to the screen.
+--           -- move right, if such a thing is possible
+--         , if focusedIndex < AutoDict.size packages - 1 then
+--             g
+--               []
+--               [ rect
+--                   [ x <| panelCenter + 30
+--                   , y <| y_offset + height + 30
+--                   , Px.width 60
+--                   , Px.height 60
+--                   , Px.rx 5
+--                   , Px.ry 5
+--                   , class [ "transition-chooser-key" ]
+--                   , strokeWidth 2
+--                   , stroke <| Paint <| Color.white
+--                   , onClick SwitchToNextComputation
+--                   ]
+--                   []
+--               , text_
+--                   [ x <| panelCenter + 60
+--                   , y <| y_offset + height + 60
+--                   , fontSize 40
+--                   , rx 15
+--                   , ry 15
+--                   , strokeWidth 0
+--                   , textAnchor AnchorMiddle
+--                   , alignmentBaseline AlignmentCentral
+--                   , dominantBaseline DominantBaselineMiddle
+--                   , pointerEvents "none"
+--                   ]
+--                   [ text <| "→" ]
+--               , title
+--                   []
+--                   [ text "Next computation" ]
+--               ]
+--           else
+--             g [] []
+--         , if focusedIndex > 0 then
+--             g
+--               []
+--               [ rect
+--                   [ x <| panelCenter - 60
+--                   , y <| y_offset + height + 30
+--                   , Px.width 60
+--                   , Px.height 60
+--                   , Px.rx 5
+--                   , Px.ry 5
+--                   , class [ "transition-chooser-key" ]
+--                   , strokeWidth 2
+--                   , stroke <| Paint <| Color.white
+--                   , onClick SwitchToPreviousComputation
+--                   ]
+--                   []
+--               , text_
+--                   [ x <| panelCenter - 30
+--                   , y <| y_offset + height + 60
+--                   , fontSize 40
+--                   , rx 15
+--                   , ry 15
+--                   , strokeWidth 0
+--                   , textAnchor AnchorMiddle
+--                   , alignmentBaseline AlignmentCentral
+--                   , dominantBaseline DominantBaselineMiddle
+--                   , pointerEvents "none"
+--                   ]
+--                   [ text <| "←" ]
+--               , title
+--                   []
+--                   [ text "Previous computation" ]
+--               ]
+--           else
+--             g [] []
+--         ]
         
-  in
-    ( with_ui, my_height )
+--   in
+--     ( with_ui, my_height )
 
-viewSvgTransitionChooser : AcceptChoice -> Model -> Svg Msg
+viewSvgTransitionChooser : AcceptChoice -> Model -> Svg GraphView_Msg
 viewSvgTransitionChooser via model =
   let
     ( w, _ ) = model.dimensions
@@ -2355,7 +1486,8 @@ viewSvgTransitionChooser via model =
         ChooseCharacter ->
           viewSvgCharacterChooser conn category_chooser_space w
         ChooseGraphReference idx ->
-          viewSvgGraphRefChooser idx model conn category_chooser_space w
+          g [] []
+          -- viewSvgGraphRefChooser idx model conn category_chooser_space w
     chooserButtonSize = 30
   in
   g
@@ -2514,7 +1646,7 @@ viewSvgTransitionChooser via model =
     , chooser_svg
     ]
 
-viewSvgTransitionSplitter : Connection -> Connection -> Model -> Svg Msg
+viewSvgTransitionSplitter : Connection -> Connection -> Model -> Svg GraphView_Msg
 viewSvgTransitionSplitter left right model =
   let
     ( w, _ ) = model.dimensions
@@ -2605,13 +1737,13 @@ viewSvgTransitionSplitter left right model =
   --   []
 
 viewUndoRedoVisualisation : Model -> Svg a
-viewUndoRedoVisualisation { currentPackage, dimensions } =
+viewUndoRedoVisualisation { package, dimensions } =
   let
     (_, h) = dimensions
     rect_width = 30
     rect_height = 10
     rect_spacing = 3
-    num_undo = List.length currentPackage.undoBuffer
+    num_undo = List.length package.undoBuffer
     idxToY idx =
       h - (toFloat (40 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
 
@@ -2649,7 +1781,7 @@ viewUndoRedoVisualisation { currentPackage, dimensions } =
                 ]
                 []
             )
-            currentPackage.undoBuffer
+            package.undoBuffer
         )
         ++
         ( List.indexedMap
@@ -2664,7 +1796,7 @@ viewUndoRedoVisualisation { currentPackage, dimensions } =
                 ]
                 []
             )
-            currentPackage.redoBuffer
+            package.redoBuffer
         )
       )
 
@@ -2702,10 +1834,10 @@ matrixFromZoom (panX, panY) factor (pointerX, pointerY) =
     ( (1 - factor) * pointerY - panY )
   -- |> Debug.log "matrix transform applied"
 
-viewMainSvgContent : Model -> Svg Msg
-viewMainSvgContent model =
+viewMainSvgContent : Model -> (Float, Float) -> Svg GraphView_Msg
+viewMainSvgContent model mouseCoords =
   g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-  [ transform [ matrixFromZoom model.pan model.zoom model.mouseCoords ]
+  [ transform [ matrixFromZoom model.pan model.zoom mouseCoords ]
   , case model.currentOperation of
       Just (Dragging _) ->
         -- disable pointer-events.
@@ -2716,7 +1848,7 @@ viewMainSvgContent model =
         class []
   ]
   [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
-  , Graph.edges model.currentPackage.userGraph.graph
+  , Graph.edges model.package.userGraph.graph
     |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
     |> List.map
       (viewLink
@@ -2729,13 +1861,13 @@ viewMainSvgContent model =
         )
       )
     |> g [ class [ "links" ] ]
-  , Graph.nodes model.currentPackage.userGraph.graph
-    |> List.map (viewNode model)
+  , Graph.nodes model.package.userGraph.graph
+    |> List.map (viewNode model mouseCoords)
     |> g [ class [ "nodes" ] ]
   , case model.currentOperation of
       Just (ModifyingGraph _ { source }) ->
-        Graph.get source model.currentPackage.userGraph.graph
-        |> Maybe.map (viewPhantom model)
+        Graph.get source model.package.userGraph.graph
+        |> Maybe.map (viewPhantom model mouseCoords)
         |> Maybe.withDefault (g [] [])
       _ ->
         g [] []
@@ -2820,8 +1952,8 @@ breakStringBadly fcc px width text =
   in
     break (String.toList text) 0 [] []
 
-viewComputationThumbnail : Float -> Model -> GraphPackage -> Svg Msg
-viewComputationThumbnail width m { dimensions, userGraph, description } =
+viewComputationThumbnail : Float -> Model -> (Float, Float) -> GraphPackage -> Svg GraphView_Msg
+viewComputationThumbnail width m mouseCoords { dimensions, userGraph, description } =
   let
     height = thumbnailHeight width
     ( m_w, m_h ) = dimensions
@@ -2851,7 +1983,7 @@ viewComputationThumbnail width m { dimensions, userGraph, description } =
       height -
         (toFloat (List.length brokenString - 1) * (toFloat fontSize * lineSpacing) )
         - 0.5 * fontSize
-    pkg = m.currentPackage
+    pkg = m.package
   in
     -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
     -- so, since I can nest a SVG inside a SVG, let me just abuse that a bit…
@@ -2872,14 +2004,15 @@ viewComputationThumbnail width m { dimensions, userGraph, description } =
         , TypedSvg.Attributes.pointerEvents "none"
         ]
         [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
-          viewMainSvgContent <|
+          viewMainSvgContent
             { m
-              | currentPackage =
+              | package =
                   { pkg
                     | userGraph = .solvedGraph (computeGraphFully (m_w, m_h) userGraph)
                   }
               , currentOperation = Nothing
             }
+            mouseCoords
         ]
       , TypedSvg.g
           []
@@ -2905,55 +2038,61 @@ viewComputationThumbnail width m { dimensions, userGraph, description } =
           )
       ]
 
-view : Model -> Svg Msg
-view model =
+view : Model -> (Float, Float) -> Svg GraphView_Msg
+view model mouseCoords =
   let
     ( width, height ) = model.dimensions
-    ( mouse_x, mouse_y ) = model.mouseCoords
-    permit_scroll =
-      onMouseScroll
-        (\n ->
-          case model.currentOperation of
-            Just (ModifyingGraph (ChooseGraphReference _) _) ->
-              if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
-            Just (AlteringConnection (ChooseGraphReference _) _) ->
-              if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
-            _ ->
-              Zoom n
-        )
-    permit_pan =
-      [ onMouseMove MouseMove
-      , cursor <|
-          -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
-          case ( 1 + round (xPanAt width mouse_x), 1 + round (yPanAt height mouse_y) ) of
-            ( 2, 2 ) -> CursorSEResize
-            ( 0, 2 ) -> CursorSWResize
-            ( 2, 0 ) -> CursorNEResize
-            ( 0, 0 ) -> CursorNWResize
-            ( 1, 2 ) -> CursorNResize
-            ( 0, 1 ) -> CursorWResize
-            ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
-            ( 2, 1 ) -> CursorEResize
-            _ -> CursorDefault
-      ]
-    permit_click =
-      Mouse.onWithOptions
-        "mousedown"
-        { stopPropagation = True, preventDefault = True }
-        (\_ ->
-          case model.currentOperation of
-            Just (ModifyingGraph _ _) ->
-              case nearby_node nearby_node_lockOnDistance model of
-                Just node -> -- in this case, the UI would show it being "locked-on"
-                  CreateOrUpdateLinkTo node.id
-                Nothing ->
-                  CreateNewNodeAt model.mouseCoords
-            _ ->
-              Escape
-        )
-    permit_stopdrag =
-      Mouse.onUp (\_ -> DragEnd)
-    interactivity =
+    ( mouse_x, mouse_y ) = mouseCoords
+    -- permit_scroll : Svg Main_Msg
+    -- permit_scroll =
+    --   onMouseScroll
+    --     (\n ->
+    --       case model.currentOperation of
+    --         Just (ModifyingGraph (ChooseGraphReference _) _) ->
+    --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
+    --         Just (AlteringConnection (ChooseGraphReference _) _) ->
+    --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
+    --         _ ->
+    --           Zoom n
+    --     )
+    panBuffer = panBufferAmount model.dimensions
+    -- permit_pan : List (Svg GraphView_Msg)
+    -- permit_pan =
+    --   [ onMouseMove MouseMove
+    --   , cursor <|
+    --       -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
+    --       case ( 1 + round (xPanAt width panBuffer mouse_x), 1 + round (yPanAt height panBuffer mouse_y) ) of
+    --         ( 2, 2 ) -> CursorSEResize
+    --         ( 0, 2 ) -> CursorSWResize
+    --         ( 2, 0 ) -> CursorNEResize
+    --         ( 0, 0 ) -> CursorNWResize
+    --         ( 1, 2 ) -> CursorNResize
+    --         ( 0, 1 ) -> CursorWResize
+    --         ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
+    --         ( 2, 1 ) -> CursorEResize
+    --         _ -> CursorDefault
+    --   ]
+    -- permit_click : Svg GraphView_Msg
+    -- permit_click =
+    --   Mouse.onWithOptions
+    --     "mousedown"
+    --     { stopPropagation = True, preventDefault = True }
+    --     (\_ ->
+    --       case model.currentOperation of
+    --         Just (ModifyingGraph _ _) ->
+    --           case nearby_node nearby_node_lockOnDistance mouseCoords model of
+    --             Just node -> -- in this case, the UI would show it being "locked-on"
+    --               CreateOrUpdateLinkTo node.id
+    --             Nothing ->
+    --               CreateNewNodeAt mouseCoords
+    --         _ ->
+    --           Escape
+    --     )
+    -- permit_stopdrag : Svg GraphView_Msg
+    -- permit_stopdrag =
+    --   Mouse.onUp (\_ -> NodeDragEnd)
+    -- interactivity : List (Svg GraphView_Msg)
+    -- interactivity =
       -- don't permit panning if:
       -- 1. I'm splitting a node
       -- 2. I'm editing a transition/connection
@@ -2967,41 +2106,41 @@ view model =
       -- CHECK THIS!
       -- Usability: should a "mis-click" result in Escape??
       -- Let's see.
-      case model.currentOperation of
-        Just (Splitting _) ->
-          [ permit_click ]
-        Just (AlteringConnection (ChooseGraphReference _) _) ->
-          [ permit_scroll ]
-        Just (ModifyingGraph (ChooseGraphReference _) _) ->
-          [ permit_scroll ]
-        Just (ModifyingGraph _ { dest }) ->
-          case dest of
-            NewNode _ ->
-              []
-            ExistingNode _ ->
-              []
-            _ ->
-              permit_click :: permit_scroll :: permit_pan
-        Just (AlteringConnection _ _) ->
-          []
-        Just (Executing _ _) ->
-          permit_pan
-        Just (Dragging _) ->
-          -- must have permit_pan (for mouse-movement)
-          -- must have permit_stopdrag
-          -- ignore click (we only care about stop-drag right now)
-          permit_stopdrag :: permit_scroll :: permit_pan
-        Nothing ->
-          permit_click :: permit_scroll :: permit_pan
+      -- case model.currentOperation of
+      --   Just (Splitting _) ->
+      --     [ permit_click ]
+      --   Just (AlteringConnection (ChooseGraphReference _) _) ->
+      --     [ permit_scroll ]
+      --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
+      --     [ permit_scroll ]
+      --   Just (ModifyingGraph _ { dest }) ->
+      --     case dest of
+      --       NewNode _ ->
+      --         []
+      --       ExistingNode _ ->
+      --         []
+      --       _ ->
+      --         permit_click :: permit_scroll :: permit_pan
+      --   Just (AlteringConnection _ _) ->
+      --     []
+      --   Just (Executing _ _) ->
+      --     permit_pan
+      --   Just (Dragging _) ->
+      --     -- must have permit_pan (for mouse-movement)
+      --     -- must have permit_stopdrag
+      --     -- ignore click (we only care about stop-drag right now)
+      --     permit_stopdrag :: permit_scroll :: permit_pan
+      --   Nothing ->
+      --     permit_click :: permit_scroll :: permit_pan
   in
     svg
       ([ viewBox 0 0 width height
-      , Mouse.onOver (\_ -> SetMouseOver)
-      , Mouse.onOut (\_ -> SetMouseOut)
-      ] ++ interactivity)
+      -- , Mouse.onOver (\_ -> SetMouseOver model.id True)
+      -- , Mouse.onOut (\_ -> SetMouseOver model.id False)
+      ] {- ++ interactivity -})
       [ -- this stuff is in the background.
         viewUndoRedoVisualisation model
-      , viewMainSvgContent model -- this is the "main" interactive frame, which will be zoomed, panned, etc.
+      , viewMainSvgContent model mouseCoords -- this is the "main" interactive frame, which will be zoomed, panned, etc.
       , case model.currentOperation of
           Just (ModifyingGraph via { dest }) ->
             case dest of
@@ -3012,7 +2151,7 @@ view model =
           Just (AlteringConnection via _) ->
             viewSvgTransitionChooser via model
           Just (Splitting { to_split, left, right }) ->
-            Graph.get to_split model.currentPackage.userGraph.graph
+            Graph.get to_split model.package.userGraph.graph
             |> Maybe.map (\_ -> -- ignore node, we have all the info already
               viewSvgTransitionSplitter left right model
             )
@@ -3094,7 +2233,7 @@ view model =
               Just (Dragging _) ->
                 g [] []
               Nothing ->
-                case model.currentPackage.undoBuffer of
+                case model.package.undoBuffer of
                   [] ->
                     g [] []
                   _ ->
@@ -3132,21 +2271,21 @@ debugModel_ message model =
         Nothing -> "(no op)"
     graph =
       Automata.Debugging.printAutomatonGraph
-        model.currentPackage.userGraph
+        model.package.userGraph
     screen =
       "(" ++ String.fromFloat (Tuple.first model.dimensions) ++ ", " ++ String.fromFloat (Tuple.second model.dimensions) ++
       " : " ++ panToString model.pan ++ ")"
     buffers =
-      String.fromInt (List.length model.currentPackage.undoBuffer) ++ " / " ++ String.fromInt (List.length model.currentPackage.redoBuffer) ++ " undo/redo"
+      String.fromInt (List.length model.package.undoBuffer) ++ " / " ++ String.fromInt (List.length model.package.redoBuffer) ++ " undo/redo"
     disconnected =
       "{ " ++ (Set.map String.fromInt model.disconnectedNodes |> Set.toList |> String.join ", ") ++ " }"
     pending =
       "Undobuffer: " ++
-      ( case model.currentPackage.undoBuffer of
+      ( case model.package.undoBuffer of
           [] -> "nothing"
           _ ->
             "\n" ++
-            ( model.currentPackage.undoBuffer
+            ( model.package.undoBuffer
               |> List.map (DFA.encodeAutomatonGraph >> Debug.toString >> String.padLeft 4 ' ')
               |> String.join "\n"
             )

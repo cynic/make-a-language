@@ -1,12 +1,12 @@
 module Main exposing (..)
 import Browser
-import Browser.Events as BE
+import Browser.Events
 import Html.Styled exposing
   (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text)
 import Html.Styled.Events exposing (onClick, onInput, onMouseDown)
 import Json.Encode as E
 import Json.Decode as D
-import ForceDirectedGraph as FDG
+import GraphEditor exposing (..)
 import Automata.Data exposing (..)
 import Platform.Cmd as Cmd
 import Html.Styled.Attributes as HA
@@ -29,7 +29,13 @@ import Html.Styled exposing (h2, h4)
 import AutoSet
 import AutoDict
 import Uuid exposing (Uuid)
+import Basics.Extra as Basics
 import Automata.Debugging
+import IntDict
+import Set
+import Graph
+import Force
+import Automata.Debugging exposing (debugAutomatonGraph)
 
 {-
 Quality / technology requirements:
@@ -41,31 +47,66 @@ Quality / technology requirements:
    explain why that is the case.
 -}
 
-type Msg
-  = ForceDirectedMsg FDG.Msg
-  | OnResize (Float, Float)
-  | SetMouseOver Bool
-  | ClickIcon LeftPanelIcon
-  | StartDraggingHorizontalSplitter
-  | StartDraggingVerticalSplitter
-  | StopDragging
-  | MouseMove Float Float
-  | ToggleBottomPanel
-  | UpdateTestPanelContent String TestExpectation
-  | UpdateDescriptionPanelContent String
-  | UpdateRightTopDimensions Float Float
-  | RunExecution
-  | ResetExecution
-  | StepThroughExecution
-  | SelectBottomPanel BottomPanel
-  | CreateNewPackage
-  | SelectPackage Uuid
-  | DeletePackage Uuid
-  | SelectTest Uuid
-  | DeleteTest Uuid
-  | CreateNewTest
-
+type alias Msg = Main_Msg
 type alias Model = Main_Model
+
+canExecute : Model -> Uuid -> Bool
+canExecute { graph_views } uuid =
+  AutoDict.get uuid graph_views
+  |> Maybe.map (.package >> .undoBuffer >> List.isEmpty)
+  |> Maybe.withDefault False
+
+getUuid : Model -> (Uuid, Model)
+getUuid model =
+  let
+    (v, newSeed) =
+      Random.step
+      --(Random.int Basics.minSafeInteger Basics.maxSafeInteger)
+      Uuid.generator
+      model.randomSeed
+    updatedModel =
+      { model | randomSeed = newSeed }
+  in
+    ( v, updatedModel )
+
+{-| Creates a new GraphView from a GraphPackage. -}
+viewFromPackage : (Float, Float) -> Uuid -> Model -> (Maybe GraphView, Model)
+viewFromPackage (w, h) uuid model =
+  let
+    (id, model_) = getUuid model
+  in
+    AutoDict.get uuid model.packages
+    |> Maybe.map
+      (\pkg ->
+        let
+          computed = GraphEditor.computeGraphFully (w, h) pkg.userGraph
+          view : GraphView
+          view =
+            { id = id
+            , currentOperation = Nothing
+            , package = pkg
+            , simulation = computed.simulation
+            , dimensions = (w, h)
+            , forces = computed.forces
+            , specificForces = IntDict.empty
+            , zoom = 1.0
+            , pan = ( 0, 0)
+            , disconnectedNodes = Set.empty
+            , properties =
+                { isFrozen = False
+                , tickCount = 0
+                }
+            }
+        in
+          ( Just view
+          , { model_
+              | graph_views =
+                  AutoDict.insert id view model_.graph_views
+            }
+          )
+      )
+    |> Maybe.withDefault
+      (Nothing, model)
 
 -- MAIN
 
@@ -86,14 +127,14 @@ encodeTest { input, expectation } =
     -- do not store the result. It must be recalculated each time.
     ]
 
-decodeTest : AutoDict.Dict String Uuid AutomatonGraph -> AutomatonGraph -> D.Decoder Test
+decodeTest : ResolutionDict -> AutomatonGraph -> D.Decoder Test
 decodeTest resolutionDict g =
   D.map2
     (\input expectation ->
       { input = input
       , expectation = expectation
       , result =
-          DFA.stepThroughInitial input resolutionDict g
+          DFA.load input resolutionDict g
           |> DFA.run
       })
     (D.field "input" D.string)
@@ -115,7 +156,7 @@ encodeGraphPackage pkg =
     , ("currentTestKey", Uuid.encode pkg.currentTestKey)
     ]
 
-decodeGraphPackage : AutoDict.Dict String Uuid AutomatonGraph -> D.Decoder GraphPackage
+decodeGraphPackage : ResolutionDict -> D.Decoder GraphPackage
 decodeGraphPackage resolutionDict =
   D.field "graph" DFA.decodeAutomatonGraph
   |> D.andThen
@@ -157,6 +198,18 @@ decodeFlags =
         )
     )
 
+createNewPackage : Uuid.Uuid -> Time.Posix -> (Float, Float) -> AutomatonGraph -> GraphPackage
+createNewPackage testUuid currentTime dimensions g = -- `dimensions` is the width & height of the panel
+  { userGraph = g
+  , dimensions = dimensions
+  , description = Nothing
+  , created = currentTime
+  , currentTestKey = testUuid
+  , tests = AutoDict.empty Uuid.toString
+  , undoBuffer = []
+  , redoBuffer = []
+  }
+
 init : E.Value -> (Model, Cmd Msg)
 init flags =
   let
@@ -173,17 +226,17 @@ init flags =
       -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
       |> List.map (\v -> ( v.userGraph.graphIdentifier, v ))
       |> AutoDict.fromList Uuid.toString
-  in
-    ( { fdg_model =
-          FDG.init
-            (initialRightTopWidth, initialRightTopHeight)
-            decoded.startTime
-            initialSeed
-            packages
+    -- for the initial graph, choose the most recent graph.
+    -- if one doesn't exist, then let's make one and see how we go.
+    model : Model
+    model =
+      { graph_views =
+          AutoDict.empty Uuid.toString
       , mainPanelDimensions =
           ( decoded.width - 4 -- 2px border all around main-container
           , decoded.height - 4 -- same border as above
           )
+      , packages = packages
       , leftPanelOpen = False
       , selectedIcon = Nothing
       , leftPanelWidth = 250
@@ -194,9 +247,13 @@ init flags =
       , isDraggingVerticalSplitter = False
       , executionStage = Ready
       , selectedBottomPanel = AddTestPanel
+      , currentTime = decoded.startTime
+      , randomSeed = initialSeed
+      , mainGraph = Nothing
+      , mouseCoords = (0, 0)
       }
-    , Cmd.none
-    )
+  in
+    ( model , Cmd.none )
 
 -- UPDATE
 
@@ -210,41 +267,711 @@ persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
 
+updateGraphViewsOnTick : Model -> Model
+updateGraphViewsOnTick model =
+  let
+    updateView : GraphView -> GraphView
+    updateView v =
+      let
+        props = v.properties
+      in
+        if props.tickCount <= 300 && not props.isFrozen then
+          let
+            ( newSimulationState, list ) =
+                Graph.nodes v.package.userGraph.graph
+                |> List.map .label
+                |> Force.tick v.simulation
+            pkg : GraphPackage
+            pkg = v.package
+            g : AutomatonGraph
+            g = pkg.userGraph
+            newGraph =
+              updateGraphWithList g.graph list
+          in
+          { v
+            | properties =
+                { props | tickCount = props.tickCount + 1 }
+            , simulation = newSimulationState
+            , package =
+                { pkg
+                  | userGraph =
+                      { g | graph = newGraph }
+                }
+          }
+        else
+          v
+  in
+  { model
+    | graph_views =
+        AutoDict.map
+          (\_ -> updateView)
+          model.graph_views
+  }
+
+updateGraphInView : AutomatonGraph -> GraphView -> GraphView
+updateGraphInView g v =
+  let
+    (w, h)  = v.dimensions
+    forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
+    forces = viewportForce (w, h) :: basicForces forceGraph (round h)
+    pkg = v.package
+  in
+    { v -- make sure we are referencing the correct Model!
+      | simulation = Force.simulation forces
+      , package = { pkg | userGraph = forceGraph }
+      , forces = forces
+      , specificForces = IntDict.empty
+    }
+
+clearUndoBuffers : GraphPackage -> GraphPackage
+clearUndoBuffers pkg =
+  { pkg
+    | undoBuffer = []
+    , redoBuffer = []
+  }
+
+updateTestResultsFor : ResolutionDict -> GraphPackage -> GraphPackage
+updateTestResultsFor resolutionDict pkg =
+  { pkg
+    | tests =
+        AutoDict.map
+          (\_ entry ->
+            { entry
+              | result =
+                  DFA.load entry.input resolutionDict pkg.userGraph
+                  |> DFA.run
+            }
+          )
+          pkg.tests
+  }
+
+updateViewAfterConfirmation : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
+updateViewAfterConfirmation g resolutionDict v =
+  updateGraphInView g v
+  |>  ( \v_ ->
+        { v_
+          | package =
+              v.package
+              |> updateTestResultsFor resolutionDict
+              |> clearUndoBuffers
+        }
+      )
+
+applyChangesToGraph : AutomatonGraph -> AutomatonGraph
+applyChangesToGraph g =
+  debugAutomatonGraph "Initial from user" g |> \_ ->
+  { g
+    | graph =
+        -- first, actually remove all disconnected nodes.
+        identifyDisconnectedNodes g
+        |> Set.foldl Graph.remove g.graph
+  }
+  |> debugAutomatonGraph "After removing disconnected"
+  |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
+
+confirmChanges : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
+confirmChanges g resolutionDict graphView =
+  updateViewAfterConfirmation
+    (applyChangesToGraph g)
+    resolutionDict
+    graphView
+
+updateGraphView : GraphView_Msg -> Model -> Model
+updateGraphView msg model =
+  case msg of
+    ViewportUpdated dim ->
+      let
+        -- the center of the viewport may change.
+        viewport = viewportForces dim model.currentPackage.userGraph.graph
+        basic = basicForces model.currentPackage.userGraph (round <| Tuple.second dim)
+      in
+      { model
+        | dimensions = dim
+        , viewportForces = viewport
+        , basicForces = basic
+        , simulation =
+            Force.simulation
+              ( basic ++
+                viewport ++
+                List.concat (IntDict.values model.specificForces)
+              )
+      }
+
+    DragStart nodeId ->
+      { model
+      | currentOperation = Just <| Dragging nodeId
+      -- , simulation = Force.reheat model.simulation
+      }
+
+    DragEnd ->
+      case model.currentOperation of
+        Just (Dragging nodeId) ->
+          let
+            ( x, y ) =
+              mapCorrespondingPair (+) model.pan model.mouseCoords
+            nearby =
+              nearby_nodes nearby_node_repulsionDistance model
+              -- |> Debug.log "Nearby nodes at end of drag"
+            sf =
+              IntDict.insert nodeId
+                [ Force.towardsX [{ node = nodeId, strength = 2, target = x }]
+                , Force.towardsY [{ node = nodeId, strength = 2, target = y }]
+                , Force.customLinks 2
+                    ( List.map
+                        (\node ->
+                            { source = nodeId
+                            , target = node.id
+                            -- in other words, 8 radii will separate the centers.
+                            -- This should be sufficient for directional arrows to show up correctly.
+                            , distance = nodeRadius * 10
+                            , strength = Just 1
+                            }
+                        )
+                        nearby
+                    )
+                ]
+                model.specificForces
+            pkg = model.currentPackage
+            g = pkg.userGraph
+            newGraph =
+              Graph.update nodeId
+                ( Maybe.map (updateNode (x,y) model.pan) )
+                g.graph
+          in
+            { model
+              | currentOperation = Nothing
+              , currentPackage =
+                  { pkg
+                    | userGraph =
+                        { g | graph = newGraph }
+                        |> debugAutomatonGraphXY ("Dragging #" ++ String.fromInt nodeId ++ " ended with updated node")
+                  }
+              , specificForces = sf
+              , simulation = Force.simulation (List.concat (IntDict.values sf))
+            }
+
+        _ ->
+          model
+
+    Zoom amount ->
+      let
+        zoomAmount = if amount < 0 then 0.05 else -0.05
+        newZoom = clamp 0.5 2.5 (model.zoom + zoomAmount)
+      in
+        if newZoom == model.zoom then
+          model
+        else
+          { model | zoom = newZoom }
+
+    ResetView ->
+      { model | zoom = 1.0, pan = ( 0, 0 ) }
+
+    MouseMove x y ->
+      let
+        pkg = model.currentPackage
+        ug = pkg.userGraph
+        newGraph =
+          case model.currentOperation of
+            Just (Dragging nodeId) ->
+              { ug
+                | graph =
+                    Graph.update nodeId
+                      (Maybe.map
+                        (\ctx ->
+                          let
+                            node = ctx.node
+                            l = node.label
+                            ( node_x, node_y ) =
+                              mapCorrespondingPair (+) model.pan ( x, y )
+                          in
+                            { ctx
+                            | node =
+                              { node
+                              | label = l |> setXY node_x node_y
+                              }
+                            }
+                        )
+                      )
+                      ug.graph
+              }
+            _ ->
+              ug
+      in
+        { model
+          | mouseCoords = (x, y) -- |> Debug.log "Set mouse-coords"
+          , currentPackage = { pkg | userGraph = newGraph }
+        }
+
+    UpdateCurrentPackage updated ->
+      if updated.userGraph.graphIdentifier /= model.currentPackage.userGraph.graphIdentifier then
+        -- I don't care; ignore this!
+        model
+      else
+        { model
+          | currentPackage = updated
+          , packages =
+              AutoDict.insert
+                updated.userGraph.graphIdentifier
+                updated
+                model.packages
+        }
+    
+    Pan xAmount yAmount ->
+      let
+        ( xPan, yPan ) = model.pan
+      in
+        { model
+        | pan =
+            case model.currentOperation of
+              Just (ModifyingGraph _ { dest }) ->
+                case dest of
+                  NoDestination ->
+                    ( xPan + xAmount, yPan + yAmount )
+                  _ ->
+                    model.pan
+              Nothing ->
+                ( xPan + xAmount, yPan + yAmount )
+              Just (Dragging _) ->
+                ( xPan + xAmount, yPan + yAmount )
+              Just (AlteringConnection _ _) ->
+                model.pan
+              Just (Splitting _) ->
+                model.pan
+              Just (Executing _ _) ->
+                ( xPan + xAmount, yPan + yAmount )
+        }
+
+    SelectNode index ->
+      { model | currentOperation = Just <| ModifyingGraph ChooseCharacter <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
+
+    SetMouseOver ->
+      { model | mouseIsHere = True }
+
+    SetMouseOut ->
+      { model | mouseIsHere = False }
+
+    CreateOrUpdateLinkTo dest ->
+      case model.currentOperation of
+        Just (ModifyingGraph _ { source }) ->
+          let
+            transitions =
+              Graph.get dest model.currentPackage.userGraph.graph
+              |> Maybe.map (\node ->
+                case IntDict.get source node.incoming of
+                  Just conn ->
+                    conn
+                  Nothing -> -- no link to this node, at present.
+                    AutoSet.empty transitionToString
+              )
+              |> Maybe.withDefault (AutoSet.empty transitionToString)
+          in
+            { model
+              | currentOperation =
+                  Just <| ModifyingGraph ChooseCharacter <| GraphModification source (ExistingNode dest) transitions
+            }
+        _ ->
+          model
+
+    CreateNewNodeAt ( x, y ) ->
+      case model.currentOperation of
+        Just (ModifyingGraph _ { source, transitions }) ->
+          { model
+            | currentOperation =
+                Just <| ModifyingGraph ChooseCharacter <| GraphModification source (NewNode ( x, y )) transitions
+          }
+        _ ->
+          model
+
+    Escape ->
+      let
+        escapery =
+          case model.currentOperation of
+            Just (ModifyingGraph via { source, dest, transitions }) ->
+              case dest of
+                NoDestination ->
+                  -- I must be escaping from something earlier.
+                  { model | currentOperation = Nothing }
+                _ ->
+                  { model
+                    | currentOperation =
+                        Just <| ModifyingGraph via <| GraphModification source NoDestination transitions
+                  }
+            Just (Splitting _) ->
+              { model | currentOperation = Nothing }
+            Just (AlteringConnection _ _) ->
+              { model | currentOperation = Nothing }
+            Nothing ->
+              model
+            Just (Dragging _) ->
+              -- stop dragging.
+              { model | currentOperation = Nothing }
+            Just (Executing _ _) ->
+              model -- nothing to escape.
+              -- let
+              --   pkg = model.currentPackage
+              -- in
+              --   { model
+              --     | currentOperation = Nothing
+              --     , currentPackage =
+              --         { pkg
+              --           | userGraph = original
+              --         }
+              --   }
+      in
+      -- ooh!  What are we "escaping" from, though?
+        escapery
+
+    Confirm ->
+      -- What am I confirming?
+      let
+        commit_change : AutomatonGraph -> Model -> Model
+        commit_change updatedGraph model_ =
+          let
+            basic =
+              basicForces updatedGraph (round <| Tuple.second model_.dimensions)
+            viewport =
+              viewportForces model_.dimensions updatedGraph.graph
+            pkg = model_.currentPackage
+          in
+            { model_
+            | currentOperation = Nothing
+            , currentPackage =
+                { pkg
+                  | userGraph = updatedGraph
+                  , undoBuffer = model.currentPackage.userGraph :: model_.currentPackage.undoBuffer
+                  , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+                }
+                    -- NOTE ⬇ WELL! This isn't a typo!
+            , basicForces = basic
+            , viewportForces = viewport
+            , simulation = Force.simulation (basic ++ viewport)
+            , disconnectedNodes =
+                identifyDisconnectedNodes updatedGraph
+            }
+        
+        createNewNode : NodeId -> Connection -> Float -> Float -> Model
+        createNewNode src conn x y =
+          newnode_graphchange src x y conn model.currentPackage.userGraph
+          |> \newGraph -> commit_change newGraph model
+
+        updateExistingNode src dest conn =
+          updateLink_graphchange src dest conn model.currentPackage.userGraph
+          |> \newGraph -> commit_change newGraph model
+
+        removeLink : NodeId -> NodeId -> Model
+        removeLink src dest =
+          removeLink_graphchange src dest model.currentPackage.userGraph
+          |> \newGraph -> commit_change newGraph model
+
+      in
+        case model.currentOperation of
+          Just (ModifyingGraph _ { source, dest, transitions }) ->
+            case dest of
+              ( NewNode ( x, y ) ) ->
+                -- create a totally new node, never before seen!
+                createNewNode source transitions x y
+              ( ExistingNode destination ) ->
+                if AutoSet.isEmpty transitions then
+                  removeLink source destination
+                else
+                  updateExistingNode source destination transitions
+              ( NoDestination ) ->
+                -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
+                model
+          Just (AlteringConnection _ { source, dest, transitions }) ->
+                if AutoSet.isEmpty transitions then
+                  removeLink source dest
+                else
+                  updateExistingNode source dest transitions
+          Just (Splitting { to_split, left, right }) ->
+            if AutoSet.isEmpty left || AutoSet.isEmpty right then
+              { model | currentOperation = Nothing }
+            else
+              Graph.get to_split model.currentPackage.userGraph.graph
+              |> Maybe.map (\node ->
+                splitNode node left right model
+                |> \g -> commit_change g model
+              )
+              |> Maybe.withDefault model
+          Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
+            case model.currentPackage.undoBuffer of
+              [] -> -- no changes are proposed, so…
+                model -- …there is nothing for me to do!
+              _ ->
+                confirmChanges model
+          Just (Dragging _) ->
+            model -- confirmation does nothing for this (visual) operation.
+          Just (Executing _ _) ->
+            model -- confirmation does nothing for execution
+
+    ToggleSelectedTransition acceptCondition ->
+      let
+        alterTransitions : Connection -> Connection
+        alterTransitions conn =
+          AutoSet.foldl
+            (\t (seen, state) ->
+              if t.via == acceptCondition then
+                -- I've found the right transition.  Now, update or remove or…?
+                if t.isFinal then
+                  ( True
+                  , state -- skip it; i.e., remove it.
+                  )
+                else
+                  ( True
+                  , AutoSet.insert
+                      ( { t
+                        | isFinal = True -- make it final.
+                        }
+                      )
+                      state
+                  )
+              else
+                (seen, AutoSet.insert t state)
+            )
+            (False, AutoSet.empty transitionToString)
+            conn
+          |>  (\(seen, resultSet) ->
+                if seen then
+                  resultSet -- I've handled this above.
+                else
+                  -- need to insert it.
+                  AutoSet.insert
+                    (Transition
+                      False
+                      acceptCondition
+                    )
+                    resultSet
+              )
+      in
+        case model.currentOperation of
+          Just (ModifyingGraph via ({ transitions } as mod)) ->
+            { model
+              | currentOperation =
+                  Just <| ModifyingGraph via <|
+                    { mod
+                      | transitions = alterTransitions transitions
+                    }
+            }
+          Just (AlteringConnection via ({ transitions } as mod)) ->
+            { model
+              | currentOperation =
+                  Just <| AlteringConnection
+                    via
+                    { mod
+                      | transitions = alterTransitions transitions
+                    }
+            }
+          Just (Splitting { to_split, left, right }) ->
+            let
+              tr finality =
+                Transition
+                  finality
+                  acceptCondition
+              onLeft_0 = AutoSet.member (tr False) left
+              onLeft_1 = AutoSet.member (tr True) left
+              onRight_0 = AutoSet.member (tr False) right
+              onRight_1 = AutoSet.member (tr True) right
+              pushToRight t =
+                ( AutoSet.remove t left, AutoSet.insert t right )
+              pushToLeft t =
+                ( AutoSet.insert t left, AutoSet.remove t right )
+              ( newLeft, newRight ) =
+                if onLeft_0 && onLeft_1 then
+                  -- push the non-terminal to the right.
+                  pushToRight (tr False)
+                else if onLeft_1 then
+                  -- push the terminal to the right
+                  pushToRight (tr True)
+                else if onRight_0 && onRight_1 then
+                  -- push the non-terminal to the left
+                  pushToLeft (tr False)
+                else if onRight_1 then
+                  pushToLeft (tr True)
+                else if onLeft_0 then
+                  pushToRight (tr False)
+                else if onRight_0 then
+                  pushToLeft (tr False)
+                else
+                  ( left, right )
+            in
+              { model
+                | currentOperation =
+                    Just <| Splitting <| Split to_split newLeft newRight
+              }
+          _ ->
+            model
+
+    EditTransition src dest conn ->
+      { model
+        | currentOperation =
+            Just <| AlteringConnection ChooseCharacter (ConnectionAlteration src dest conn)
+      }
+
+    Reheat ->
+      -- If I'm not doing anything else, permit auto-layout
+      case model.currentOperation of
+        Nothing ->
+          { model
+          | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
+          , specificForces = IntDict.empty -- cancel moves that were made before
+          }
+        _ ->
+          model
+
+    SwitchVia newChosen ->
+      case model.currentOperation of
+        Just (ModifyingGraph _ d) ->
+          { model | currentOperation = Just <| ModifyingGraph newChosen d }
+        Just (AlteringConnection _ d) ->
+          { model | currentOperation = Just <| AlteringConnection newChosen d }
+        _ -> model
+
+    SwitchToNextComputation ->
+      case model.currentOperation of
+        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
+        Just (AlteringConnection (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
+        _ ->
+          model
+
+    SwitchToPreviousComputation ->
+      case model.currentOperation of
+        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| max 0 (idx - 1)) d }
+        Just (AlteringConnection (ChooseGraphReference idx) d) ->
+          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
+        _ ->
+          model
+
+    StartSplit nodeId ->
+      Graph.get nodeId model.currentPackage.userGraph.graph
+      |> Maybe.map
+        (\node ->
+          { model
+            | currentOperation =
+                Just <| Splitting <|
+                  Split
+                    node.node.id
+                    ( IntDict.foldl
+                        (\k v acc ->
+                            if k /= node.node.id then
+                              AutoSet.union v acc
+                            else
+                              acc
+                        )
+                        (AutoSet.empty transitionToString)
+                        node.incoming
+                    )
+                    (AutoSet.empty transitionToString)
+          }
+        )
+      |> Maybe.withDefault model
+
+    Undo ->
+      case (model.currentOperation, model.currentPackage.undoBuffer) of
+        (_, []) ->
+          model
+        (Just _, _) ->
+          model -- do not permit undo/redo while I'm performing any operation.
+        (Nothing, h::t) ->
+          let
+            pkg = model.currentPackage
+          in
+            { model
+              | currentPackage =
+                  { pkg
+                    | undoBuffer = t
+                    , redoBuffer = model.currentPackage.userGraph :: model.currentPackage.redoBuffer
+                    , userGraph = h
+                  }
+              , disconnectedNodes = identifyDisconnectedNodes h
+            }
+
+    Redo ->
+      case (model.currentOperation, model.currentPackage.redoBuffer) of
+        (_, []) ->
+          model
+        (Just _, _) ->
+          model -- do not permit undo/redo while I'm performing any operation.
+        (Nothing, h::t) ->
+          let
+            pkg = model.currentPackage
+          in
+          { model
+            | currentPackage =
+                { pkg
+                  | redoBuffer = t
+                  , undoBuffer = model.currentPackage.userGraph :: model.currentPackage.undoBuffer
+                  , userGraph = h
+                }
+            , disconnectedNodes = identifyDisconnectedNodes h
+          }
+        
+    Run ->
+      let
+        pkg = model.currentPackage
+      in
+        case model.currentOperation of
+          Just (Executing original executionResult) ->
+            { model
+              | currentOperation = Just <| Executing original (DFA.run executionResult)
+              , currentPackage =
+                  { pkg
+                    | userGraph =
+                        executionResultAutomatonGraph executionResult
+                        |> Maybe.withDefault pkg.userGraph
+                  }
+            }
+          _ ->
+            model -- 'run' isn't valid in any other context.
+
+    Step ->
+      let
+        pkg = model.currentPackage
+      in
+        case model.currentOperation of
+          Just (Executing original executionResult) ->
+            { model
+              | currentOperation = Just <| Executing original (DFA.step executionResult)
+              , currentPackage =
+                  { pkg
+                    | userGraph =
+                        executionResultAutomatonGraph executionResult
+                        |> Maybe.withDefault pkg.userGraph
+                        |> debugAutomatonGraph "After step"
+                  }
+            }
+          _ ->
+            model -- 'step' isn't valid in any other context.
+
+    Stop ->
+      let
+        pkg = model.currentPackage
+      in
+        case model.currentOperation of
+          Just (Executing original _) ->
+            { model
+              | currentOperation = Nothing
+              , currentPackage =
+                  { pkg
+                    | userGraph = original
+                  }
+            }
+          _ ->
+            model -- 'stop' isn't valid in any other context.
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
-    ForceDirectedMsg fdMsg ->
-      let
-        newFdModel =
-          FDG.update fdMsg model.fdg_model
-          -- |> \v ->
-          --   if fdMsg /= FDG.Tick then
-          --     Debug.log "msg" fdMsg |> \_ ->
-          --     FDG.debugModel_ "updated" v
-          --   else
-          --     v
-        preUpdateChangeCount =
-          List.length model.fdg_model.currentPackage.undoBuffer
-        isCommitlike =
-          preUpdateChangeCount > 0 && newFdModel.currentPackage.undoBuffer == []
-      in
-      ( { model
-          | executionStage =
-              if FDG.canExecute newFdModel then
-                if model.executionStage == NotReady then
-                  Ready
-                else
-                  model.executionStage
-              else
-                NotReady
-          , fdg_model = newFdModel
-        }
-      , if isCommitlike then
-          persistPackage model.fdg_model.currentPackage
-        else
-          Cmd.none
-      )
-
+    Tick ->
+      updateGraphViewsOnTick model
+    Seconded t ->
+      { model | currentTime = t }
+    GraphViewMsg uuid submsg ->
+      AutoDict.get uuid model.graph_views
+      |> Maybe.map (updateGraphView submsg)
+      |> Maybe.withDefault ( model, Cmd.none )
     OnResize (width, height) ->
       let
         newModel =
@@ -264,9 +991,6 @@ update msg model =
         }
       , Cmd.none
       )
-
-    SetMouseOver _ ->
-      ( model, Cmd.none )
 
     ClickIcon icon ->
       let
@@ -301,7 +1025,7 @@ update msg model =
       , Cmd.none
       )
 
-    MouseMove x y ->
+    MouseMoveDrag x y ->
       if model.isDraggingHorizontalSplitter then
         let
           (viewportWidth, _) = model.mainPanelDimensions
@@ -354,7 +1078,7 @@ update msg model =
                   ( Test
                       newInput
                       expectation
-                      ( DFA.stepThroughInitial newInput resolutionDict pkg.userGraph
+                      ( DFA.load newInput resolutionDict pkg.userGraph
                         |> DFA.run
                       )
                   )
@@ -390,49 +1114,19 @@ update msg model =
     UpdateRightTopDimensions width height ->
       ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
 
-    RunExecution ->
-      -- for this and StepThrough, if the FDG.canExecute is false, then
-      -- the 'Run' and 'Step' buttons on the UI will be disabled.
-      -- Therefore, I don't need to handle those cases here, and can
-      -- assume that when I get this message, the precondition of
-      -- a 'Ready' state has already been met.
-      ( { model 
-        | executionStage = Ready
-        , fdg_model =
-            FDG.update
-              ( FDG.Load
-                  ( AutoDict.get model.fdg_model.currentPackage.currentTestKey model.fdg_model.currentPackage.tests
-                    |> Maybe.map .input
-                    |> Maybe.withDefault ""
-                  )
-              )
-              model.fdg_model
-            |> FDG.update FDG.Run
-        }
-      , Cmd.none
-      )
-
-    ResetExecution ->
-      ( { model 
-        | executionStage = Ready
-        , fdg_model = FDG.update FDG.Stop model.fdg_model
-        }
-      , Cmd.none
-      )
-
     StepThroughExecution ->
       let
+        inputString =
+          AutoDict.get model.fdg_model.currentPackage.currentTestKey model.fdg_model.currentPackage.tests
+          |> Maybe.map .input
+          |> Maybe.withDefault ""
         newFdModel =
           if model.executionStage /= StepThrough then
             -- this is the first click of stepping, so do a load first.
-            FDG.update
-              ( FDG.Load
-                  ( AutoDict.get model.fdg_model.currentPackage.currentTestKey model.fdg_model.currentPackage.tests
-                    |> Maybe.map .input
-                    |> Maybe.withDefault ""
-                  )
-              )
-              model.fdg_model
+            DFA.load
+              inputString
+              (AutoDict.map (\_ -> .userGraph) model.fdg_model.packages) -- resolution-dict
+              model.fdg_model.currentPackage.userGraph
           else
             FDG.update FDG.Step model.fdg_model
       in
@@ -1407,10 +2101,86 @@ getStatusMessage state =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
+  let
+    ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
+    -- ( width, height ) = model.dimensions
+    -- panSubscription =
+    --   let
+    --     xPan = xPanAt width xCoord
+    --     yPan = yPanAt height yCoord
+    --   in
+    --     if model.mouseIsHere && (xPan /= 0 || yPan /= 0) then
+    --       Time.every 20 (\_ -> Pan xPan yPan {- |> Debug.log "Pan request" -})
+    --     else
+    --       Sub.none
+
+    -- keyboardSubscription =
+    --   Browser.Events.onKeyDown
+    --     ( D.map2
+    --         (\key ctrlPressed -> ( key, ctrlPressed ))
+    --         (D.field "key" D.string)
+    --         (D.field "ctrlKey" D.bool)
+    --       |> D.andThen
+    --         (\v ->
+    --           case v of
+    --             ( "1", True ) ->
+    --               -- Debug.log "yup" v |> \_ ->
+    --               D.succeed ResetView
+    --             ( "Enter", False ) ->
+    --               D.succeed Confirm
+    --             ( "Escape", False ) ->
+    --               D.succeed Escape
+    --             ( "Tab", False) ->
+    --               D.succeed Reheat
+    --             ( "z", True) ->
+    --               D.succeed Undo
+    --             ( "Z", True) ->
+    --               D.succeed Undo
+    --             ( "y", True) ->
+    --               D.succeed Redo
+    --             ( "Y", True) ->
+    --               D.succeed Redo
+    --             ( ch, _ ) ->
+    --               case String.toList ch of
+    --                 [char] ->
+    --                   D.succeed (KeyPressed char)
+    --                 _ ->
+    --                   D.fail "Not a character key"
+    --               -- in
+    --               -- case model.currentOperation of
+    --               --   Just (ModifyingGraph ChooseCharacter { dest }) ->
+    --               --     case dest of
+    --               --       NoDestination ->
+    --               --         D.fail "Not a recognized key combination"
+    --               --       _ ->
+    --               --         decodeChar
+    --               --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
+    --               --     D.fail "Not choosing characters"
+    --               --   Just (AlteringConnection ChooseCharacter _) ->
+    --               --     decodeChar
+    --               --   Just (AlteringConnection (ChooseGraphReference _) _) ->
+    --               --     D.fail "Not choosing characters"
+    --               --   Just (Splitting _) ->
+    --               --     decodeChar
+    --               --   _ ->
+    --               --     D.fail "Not a recognized key combination"
+    --         )
+    --     )
+    --   else
+    --     Sub.none
+    currentTimeSubscription = -- used for created-time for AutomatonGraphs
+      Time.every 25000 -- 'sup, homie Nyquist? All good?
+        ( Time.posixToMillis
+          >> (\v -> (v // (1000 * 60)) * (1000 * 60))
+          >> Time.millisToPosix
+          >> Seconded
+        )
+  in
   Sub.batch
-    [ FDG.subscriptions
-        model.fdg_model
-      |> Sub.map ForceDirectedMsg
+    [ -- , keyboardSubscription
+    -- , panSubscription
+      currentTimeSubscription
+    , Browser.Events.onAnimationFrame (always Tick)
     , BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     , if model.isDraggingHorizontalSplitter || model.isDraggingVerticalSplitter then
         Sub.batch

@@ -37,6 +37,89 @@ type BottomPanel
   = AddTestPanel
   | EditDescriptionPanel
 
+type alias Flags =
+  { width : Float
+  , height : Float
+  , initialSeed : Int
+  , extendedSeeds : List Int
+  , startTime : Time.Posix
+  , packages : List GraphPackage
+  }
+
+type GraphView_Msg
+  = NodeDragStart NodeId
+  | NodeDragEnd
+  | ViewportUpdated (Float, Float)
+  | MouseMove Float Float
+  | Pan Float Float
+  | Zoom Float
+  | ResetView
+  | SelectNode NodeId
+  | ToggleSelectedTransition AcceptVia
+  | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
+  | CreateNewNodeAt ( Float, Float )
+  | Escape -- the universal "No! Go Back!" key & command
+  | Confirm -- the universal "Yeah! Let's Go!" key & command
+  | EditTransition NodeId NodeId Connection
+  | Reheat
+  | SwitchVia AcceptChoice
+  | Undo
+  | Redo
+  | StartSplit NodeId
+  | RunComputation
+  | StepExecution
+  | StopExecution
+  | SwitchToNextComputation
+  | SwitchToPreviousComputation
+  | UpdateCurrentPackage GraphPackage
+
+type Main_Msg
+  = GraphViewMsg Uuid GraphView_Msg
+  | OnResize (Float, Float)
+  | SetMouseOver Uuid Bool
+  | ClickIcon LeftPanelIcon
+  | Tick
+  | Seconded Time.Posix
+  | StartDraggingHorizontalSplitter
+  | StartDraggingVerticalSplitter
+  | KeyPressed Char
+  | StopDragging
+  | MouseMoveDrag Float Float
+  | ToggleBottomPanel
+  | UpdateTestPanelContent String TestExpectation
+  | UpdateDescriptionPanelContent String
+  | UpdateRightTopDimensions Float Float
+  | RunExecution
+  | ResetExecution
+  | StepThroughExecution
+  | SelectBottomPanel BottomPanel
+  | CreateNewPackage
+  | SelectPackage Uuid
+  | DeletePackage Uuid
+  | SelectTest Uuid
+  | DeleteTest Uuid
+  | CreateNewTest
+
+type alias Main_Model =
+  { graph_views : AutoDict.Dict String Uuid GraphView
+  , mainPanelDimensions : ( Float, Float )
+  , leftPanelOpen : Bool
+  , selectedIcon : Maybe LeftPanelIcon
+  , leftPanelWidth : Float
+  , rightBottomPanelOpen : Bool
+  , rightBottomPanelHeight : Float
+  , rightTopPanelDimensions : ( Float, Float )
+  , mainGraph : Maybe Uuid
+  , isDraggingHorizontalSplitter : Bool
+  , isDraggingVerticalSplitter : Bool
+  , executionStage : ExecutionStage
+  , packages : AutoDict.Dict String Uuid GraphPackage
+  , selectedBottomPanel : BottomPanel
+  , currentTime : Time.Posix
+  , randomSeed : Random.Seed
+  , mouseCoords : ( Float, Float )
+  }
+
 type alias GraphPackage =
   { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
   , dimensions : ( Float, Float )
@@ -46,30 +129,6 @@ type alias GraphPackage =
   , tests : AutoDict.Dict String Uuid Test
   , undoBuffer : List (AutomatonGraph)
   , redoBuffer : List (AutomatonGraph)
-  }
-
-type alias Main_Model =
-  { fdg_model : FDG_Model
-  , mainPanelDimensions : ( Float, Float )
-  , leftPanelOpen : Bool
-  , selectedIcon : Maybe LeftPanelIcon
-  , leftPanelWidth : Float
-  , rightBottomPanelOpen : Bool
-  , rightBottomPanelHeight : Float
-  , rightTopPanelDimensions : ( Float, Float )
-  , isDraggingHorizontalSplitter : Bool
-  , isDraggingVerticalSplitter : Bool
-  , executionStage : ExecutionStage
-  , selectedBottomPanel : BottomPanel
-  }
-
-type alias Flags =
-  { width : Float
-  , height : Float
-  , initialSeed : Int
-  , extendedSeeds : List Int
-  , startTime : Time.Posix
-  , packages : List GraphPackage
   }
 
 {-------------------------------------------------------
@@ -88,9 +147,15 @@ type AcceptChoice
   -- the first parameter is the thumbnail index to focus on
   | ChooseGraphReference Int
 
-type alias FDG_Model =
-  { currentOperation : Maybe UserOperation
-  , currentPackage : GraphPackage
+type alias GraphViewProperties =
+  { tickCount : Int
+  , isFrozen : Bool
+  }
+
+type alias GraphView =
+  { id : Uuid
+  , currentOperation : Maybe UserOperation
+  , package : GraphPackage
     -- Instead of repeating here, I could just supply a Uuid -> GraphPackage
     -- "resolver" function. But I choose to repeat, because such a function
     -- would be totally opaque to any tools, and if something ever goes wrong
@@ -99,26 +164,23 @@ type alias FDG_Model =
     --
     -- No, I'll take the ability to examine the internals over that future
     -- morass.
-  , packages : AutoDict.Dict String Uuid GraphPackage
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
-  , basicForces : List (Force.Force NodeId) -- EXCLUDING the "center" force.
-  , viewportForces : List (Force.Force NodeId)
+    -- `forces` includes:
+    -- - graph forces of attraction and repulsion
+    -- - node forces to pull the root towards the center
+    -- - viewport forces to center the graph
+  , forces : List (Force.Force NodeId)
   , specificForces : IntDict.IntDict (List (Force.Force NodeId))
   , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
-  , mouseCoords : ( Float, Float )
-  , mouseIsHere : Bool
   , disconnectedNodes : Set NodeId
-  , currentTime : Time.Posix
-  , uuidSeed : Random.Seed
+  , properties : GraphViewProperties
   }
 
 {-------------------------------------------------------
   Other
 --------------------------------------------------------}
-type alias RequestedChangePath = List Transition -- transitions going from the start to the node.
-
 type LinkDestination
   = NoDestination
   | ExistingNode NodeId
@@ -306,12 +368,15 @@ type alias TransitionTakenData =
   , matching : Transition
   }
 
+type alias ResolutionDict =
+  AutoDict.Dict String Uuid AutomatonGraph
+
 type alias ExecutionData =
   { transitions : List TransitionTakenData
   , remainingData : List Char
   , currentNode : NodeId
   , computation : AutomatonGraph
-  , resolutionDict : AutoDict.Dict String Uuid AutomatonGraph
+  , resolutionDict : ResolutionDict
   }
 
 type ExecutionState
@@ -788,3 +853,7 @@ charToUuid ch =
   Binary.fromStringAsUtf8 (String.fromChar ch)
   |> SHA.sha256
   |> uuidFromHash
+
+mapCorrespondingPair : (a -> b -> c) -> (a, a) -> (b, b) -> (c, c)
+mapCorrespondingPair f (a1, a2) (b1, b2) =
+  (f a1 b1, f a2 b2)

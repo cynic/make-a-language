@@ -6,7 +6,7 @@ import Automata.DFA exposing
   , expand
   )
 import Utility exposing (ag, dfa, ag_equals, dfa_equals, mkAutomatonGraphWithUuid, uuid_from_int)
-import ForceDirectedGraph exposing (applyChangesToGraph)
+import GraphEditor exposing (applyChangesToGraph)
 import AutoDict
 import Uuid
 
