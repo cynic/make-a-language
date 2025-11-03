@@ -87,7 +87,7 @@
 }
 
 .navigation-bar {
-  width: 48px; // VS Code's exact width
+  // width: 48px; // VS Code's exact width
   background-color: var(--background);
   border-right: 1px solid var(--comment);
   display: flex;
@@ -97,10 +97,11 @@
 }
 
 .sidebar {
-  width: 300px; // Adjustable width
+  // width: 300px; // Adjustable width, set in code.
   background-color: var(--background-darker);
   display: flex;
   flex-direction: column;
+  transition: width 0s;
   // This would be hidden/collapsed when sidebar is closed
 }
 
@@ -158,5 +159,178 @@
   
   &.search-view {
     // Search interface styles  
+  }
+}
+
+// ===== SIDEBAR SEPARATOR WITH CIRCULAR BUTTON =====
+
+.sidebar-separator {
+  width: 8px;
+  position: relative;
+  background: transparent;
+  &.draggable {
+    transition: background-color 0.2s ease;
+    cursor: col-resize;
+    
+    // Expand the hover area slightly for better discovery
+    &:hover {
+      background-color: rgba(var(--purple-rgb), 0.05);
+      
+      .collapse-button {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+      }
+    }
+    
+    // Visual feedback during drag
+    &.dragging {
+      background-color: rgba(var(--purple-rgb), 0.1);
+      
+      .collapse-button {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1.1);
+        background-color: var(--pink);
+      }
+    }
+  }
+}
+
+.collapse-button {
+  // Size and shape
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  
+  // Positioning - centered in separator
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.8);
+  
+  // Visual styling
+  background: var(--purple);
+  border: 1.5px solid var(--background);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  
+  // Initial state (hidden)
+  opacity: 0;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  
+  // Content
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  // Interaction states
+  &:hover {
+    // background: var(--pink);
+    filter: saturate(150%);
+    transform: translate(-50%, -50%) scale(1.1);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+  }
+  
+  &:active {
+    transform: translate(-50%, -50%) scale(0.95);
+    transition-duration: 0.1s;
+  }
+  
+  // ===== COLLAPSED STATE =====
+  // When sidebar is collapsed, the button becomes persistent but translucent
+  .sidebar-collapsed & {
+    // Reposition to left edge when collapsed
+    left: 12px; // Half of 24px width to peek from edge
+    transform: translateY(-50%) scale(0.9);
+    opacity: 0.4;
+    background: var(--cyan);
+    
+    &:hover {
+      opacity: 1;
+      transform: translateY(-50%) scale(1);
+      background: var(--cyan);
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+    }
+  }
+}
+
+// Arrow icon with smooth rotation
+.collapse-icon {
+  width: 12px;
+  height: 12px;
+  fill: var(--background);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  
+  // Point left when sidebar is open (collapsing would hide sidebar)
+  .sidebar:not(.sidebar-collapsed) & {
+    transform: rotate(0deg); // ←
+  }
+  
+  // Point right when sidebar is collapsed (expanding would show sidebar)  
+  .sidebar-collapsed & {
+    transform: rotate(180deg); // →
+  }
+}
+
+.separator-handle {
+  width: 1px;
+  height: 100%;
+  background-color: var(--comment); // #6272a4 - subtle but visible
+  transition: all 0.2s ease;
+  position: absolute;
+  left: 3px;
+  
+  .sidebar-separator:hover & {
+    background-color: var(--purple);
+    width: 2px; // Becomes more prominent on hover
+  }
+  
+  .sidebar-separator.dragging & {
+    background-color: var(--pink);
+    width: 2px;
+  }
+}
+
+// ===== BOTTOM PANEL SEPARATOR (For Future Use) =====
+// Same pattern but rotated for horizontal placement
+.bottom-panel-separator {
+  height: 8px;
+  cursor: row-resize;
+  position: relative;
+  
+  .collapse-button {
+    left: 50%;
+    top: 50%;
+    
+    .bottom-panel-collapsed & {
+      top: -12px; // Position above when panel is collapsed
+      transform: translateX(-50%) rotate(90deg) scale(0.9);
+    }
+  }
+  
+  .collapse-icon {
+    .bottom-panel:not(.bottom-panel-collapsed) & {
+      transform: rotate(0deg); // ↑
+    }
+    
+    .bottom-panel-collapsed & {
+      transform: rotate(180deg); // ↓
+    }
+  }
+}
+
+// ===== ACCESSIBILITY ENHANCEMENTS =====
+// Support reduced motion preferences
+@media (prefers-reduced-motion: reduce) {
+  .collapse-button,
+  .collapse-icon {
+    transition-duration: 0.1s;
+  }
+}
+
+// High contrast mode support
+@media (prefers-contrast: high) {
+  .collapse-button {
+    border-width: 2px;
+    box-shadow: 0 0 0 1px var(--foreground);
   }
 }

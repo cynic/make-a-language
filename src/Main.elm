@@ -1,9 +1,9 @@
 module Main exposing (..)
 import Browser
-import Browser.Events
+import Browser.Events as BE
 import Html.Styled exposing
   (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button)
-import Html.Styled.Events exposing (onClick, onInput, onMouseDown)
+import Html.Styled.Events as HE
 import Json.Encode as E
 import Json.Decode as D
 -- import GraphEditor exposing (..)
@@ -36,6 +36,9 @@ import Set
 import Graph
 import Force
 import Automata.Debugging exposing (debugAutomatonGraph)
+import Svg.Styled exposing (svg)
+import Svg.Styled.Attributes
+import Automata.Debugging exposing (println)
 
 {-
 Quality / technology requirements:
@@ -231,15 +234,21 @@ init flags =
     constants : UIConstants
     constants =
       { splitterWidth = 15 -- minimum size in px for easy mouse targeting
+      , sideBarWidth =
+          { min = 150
+          , max = decoded.width / 2
+          , initial = clamp 150 (decoded.width / 2) 300
+          }
+      , navigationBarWidth = 48 -- same as VS Code
       }
     state : UIState
     state =
       { dimensions =
-          { sideBar = ( 200, decoded.height )
-          , activityBar = ( 50, decoded.height )
-          , bottomPanel = ( decoded.width - 200, 200 )
-          , tabBar = ( decoded.width - 200, 50 )
-          , mainEditor = ( decoded.width - 200, decoded.height - 200 )
+          { sideBar = ( constants.sideBarWidth.initial, decoded.height )
+          , activityBar = ( constants.navigationBarWidth, decoded.height )
+          , bottomPanel = ( decoded.width - constants.sideBarWidth.initial, 200 )
+          , tabBar = ( decoded.width - constants.sideBarWidth.initial, 50 )
+          , mainEditor = ( decoded.width - constants.sideBarWidth.initial, decoded.height - 200 )
           }
       , open =
           { bottomPanel = True
@@ -261,6 +270,7 @@ init flags =
       , currentTime = decoded.startTime
       , randomSeed = initialSeed
       , mouseCoords = (0, 0)
+      , currentOperation = Nothing
       }
   in
     ( model , Cmd.none )
@@ -985,11 +995,70 @@ updateGraphView uuid msg model =
             model -- 'stop' isn't valid in any other context.
 -}
 
+dragSplitter : Float -> DragTarget -> UIConstants -> UIState -> UIState
+dragSplitter coord what constants ({dimensions} as ui) =
+  { ui
+    | dimensions =
+        { dimensions
+          | sideBar =
+              if what == DragHorizontalSplitter then
+                (clamp constants.sideBarWidth.min constants.sideBarWidth.max coord, Tuple.second dimensions.sideBar)
+              else
+                dimensions.sideBar
+          , bottomPanel =
+              if what == DragVerticalSplitter then
+                (Tuple.first dimensions.bottomPanel, coord)
+              else
+                dimensions.bottomPanel
+        }
+  }
+
+toggleAreaVisibility : AreaUITarget -> UIState -> UIState
+toggleAreaVisibility where_ ({open} as ui) =
+  { ui
+    | open =
+        { open
+          | sideBar =
+              if where_ == NavigatorsArea then not open.sideBar else open.sideBar
+          , bottomPanel =
+              if where_ == ToolsArea then not open.bottomPanel else open.bottomPanel
+        }
+  }
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     UIMsg ui_msg ->
       case ui_msg of
+        ToggleAreaVisibility where_ ->
+          ( { model
+              | uiState = toggleAreaVisibility where_ model.uiState
+            }
+          , Cmd.none
+          )
+        StartDragging what ->
+          case model.currentOperation of
+            Nothing ->
+              -- println "Starting dragging"
+              ( { model | currentOperation = Just (Dragging what) }
+              , Cmd.none
+              )
+            _ ->
+              println "🚨 Requested to start dragging, but already doing a different operation; ignoring!"
+              ( model, Cmd.none )
+        DragSplitter shouldStop coord ->
+          case model.currentOperation of
+            Just (Dragging what) ->
+              ( { model
+                  | currentOperation =
+                      if shouldStop then Nothing else model.currentOperation
+                  , uiState =
+                      dragSplitter coord what model.uiConstants model.uiState
+                }
+              , Cmd.none
+              )
+            _ ->
+              ( model, Cmd.none )
         SelectNavigation item ->
           Debug.todo "branch 'SelectNavigationItem item' not implemented"
 
@@ -1391,34 +1460,82 @@ view model =
     []
     [ div
         [ HA.class "sidebar-container" ]
-        [ div
-            [ HA.class "navigation-bar" ]
-            [ button
-                [ HA.classList
-                    [ ("navigation-icon", True)
-                    , ("active", model.uiState.selected.sideBar == ComputationsIcon)
-                    ]
-                , HA.title "Computations"
+        [ if not model.uiState.open.sideBar then
+            div [] []
+          else
+            div
+              [ HA.class "navigation-bar"
+              , HA.css
+                  [ Css.width <| Css.px <| model.uiConstants.navigationBarWidth ]
+              ]
+              [ button
+                  [ HA.classList
+                      [ ("navigation-icon", True)
+                      , ("active", model.uiState.selected.sideBar == ComputationsIcon)
+                      ]
+                  , HA.title "Computations"
+                  ]
+                  [ text "📁"]
+              , button
+                  [ HA.classList
+                      [ ("navigation-icon", True)
+                      , ("active", model.uiState.selected.sideBar == TestsIcon)
+                      ]
+                  , HA.title "Tests"
+                  ]
+                  [ text "🧪" ]
+              ]
+        , if not model.uiState.open.sideBar then
+            div [] []
+          else
+            div
+              [ HA.class "sidebar"
+              , HA.css
+                  [ Css.width <| Css.px <|
+                      if model.uiState.open.sideBar then
+                        Automata.Data.width model.uiState.dimensions.sideBar
+                      else
+                        0
+                  ]
+              ]
+              [ div
+                  [ HA.class "sidebar-content" ]
+                  [ text "Hello world" ]
+              ]
+        , div
+            [ HA.classList
+                [ ("sidebar-separator", True)
+                , ("dragging", model.currentOperation == Just (Dragging DragHorizontalSplitter))
+                , ("draggable", model.currentOperation == Nothing && model.uiState.open.sideBar)
+                , ("sidebar-collapsed", not model.uiState.open.sideBar)
                 ]
-                [ text "📁"]
+            , HA.css
+                [ Css.width <| Css.px <| model.uiConstants.splitterWidth ]
+            , HE.onMouseDown (UIMsg <| StartDragging DragHorizontalSplitter)
+            ]
+            [ if not model.uiState.open.sideBar then
+                div [] []
+              else
+                div
+                  [ HA.class "separator-handle" ]
+                  []
             , button
                 [ HA.classList
-                    [ ("navigation-icon", True)
-                    , ("active", model.uiState.selected.sideBar == TestsIcon)
+                    [ ("collapse-button", True)
                     ]
-                , HA.title "Tests"
+                , HA.title "Toggle sidebar"
+                , HE.onClick (UIMsg <| ToggleAreaVisibility NavigatorsArea)
                 ]
-                [ text "🧪" ]
+                [ svg
+                    [ Svg.Styled.Attributes.class "collapse-icon"
+                    , Svg.Styled.Attributes.viewBox "4 4 10 8"
+                    ]
+                    [ Svg.Styled.path
+                        [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
+                        []
+                    ]
+                ]
             ]
-        , div
-            [ HA.class "sidebar" ]
-            [ div
-                [ HA.class "sidebar-content" ]
-                [ text "Hello world" ]
-            ]
-        , div
-            [ HA.class "sidebar-separator" ]
-            []
         ]
     ]
 
@@ -2297,6 +2414,22 @@ subscriptions model =
     --       >> Seconded
     --     )
   in
+    case model.currentOperation of
+      Just (Dragging DragHorizontalSplitter) ->
+        let
+          offset = -(model.uiConstants.navigationBarWidth + model.uiConstants.splitterWidth / 2)
+        in
+          Sub.batch
+            [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))
+            , BE.onMouseUp (D.map ((+) offset >> DragSplitter True >> UIMsg) (D.field "clientX" D.float))
+            ]
+      Just (Dragging DragVerticalSplitter) ->
+        Sub.batch
+          [ BE.onMouseMove (D.map (DragSplitter False >> UIMsg) (D.field "clientY" D.float))
+          , BE.onMouseUp (D.map (DragSplitter True >> UIMsg) (D.field "clientY" D.float))
+          ]
+      _ ->
+        Sub.none
   -- Sub.batch
   --   [ -- , keyboardSubscription
   --   -- , panSubscription
@@ -2309,5 +2442,5 @@ subscriptions model =
   --         , BE.onMouseUp (D.succeed StopDragging)
   --         ]
   --     else
-        Sub.none
+        -- Sub.none
     -- ]

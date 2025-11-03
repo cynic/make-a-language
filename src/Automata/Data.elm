@@ -62,6 +62,10 @@ type UIMsg
   | SelectTool ToolIcon
   | MouseMove Float Float
   | OnResize (Float, Float)
+  | StartDragging DragTarget
+  | DragSplitter Bool Float -- stop-dragging, amount
+  | ToggleAreaVisibility AreaUITarget
+  -- | StartDraggingHorizontalSplitter
 
 type Main_Msg
   = UIMsg UIMsg
@@ -91,6 +95,12 @@ type Main_Msg
 
 type alias UIConstants =
   { splitterWidth : Float
+  , sideBarWidth :
+      { min : Float
+      , max : Float
+      , initial : Float
+      }
+  , navigationBarWidth : Float -- same as VS Code's
   }
 {-
   The `Side Bar` on the left contains the `Tool View`s.
@@ -145,6 +155,7 @@ type alias Main_Model =
   , currentTime : Time.Posix
   , randomSeed : Random.Seed
   , mouseCoords : ( Float, Float )
+  , currentOperation : Maybe UserOperation
   }
 
 type alias GraphPackage =
@@ -166,6 +177,10 @@ type DragTarget
   = DragNode Uuid NodeId
   | DragHorizontalSplitter
   | DragVerticalSplitter
+
+type AreaUITarget
+  = NavigatorsArea
+  | ToolsArea
 
 type ConnectionEditing
 {-
@@ -236,7 +251,6 @@ type alias GraphView =
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
   , properties : GraphViewProperties
-  , currentOperation : Maybe UserOperation
   }
 
 {-------------------------------------------------------
