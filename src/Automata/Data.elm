@@ -46,45 +46,36 @@ type alias Flags =
   , packages : List GraphPackage
   }
 
-type GraphView_Msg
-  = NodeDragStart NodeId
-  | NodeDragEnd
-  | ViewportUpdated (Float, Float)
-  | MouseMove Float Float
-  | Pan Float Float
-  | Zoom Float
-  | ResetView
-  | SelectNode NodeId
-  | ToggleSelectedTransition AcceptVia
-  | CreateOrUpdateLinkTo NodeId -- this is for an already-existing node.
-  | CreateNewNodeAt ( Float, Float )
-  | Escape -- the universal "No! Go Back!" key & command
-  | Confirm -- the universal "Yeah! Let's Go!" key & command
-  | EditTransition NodeId NodeId Connection
-  | Reheat
-  | SwitchVia AcceptChoice
-  | Undo
-  | Redo
-  | StartSplit NodeId
-  | RunComputation
-  | StepExecution
-  | StopExecution
-  | SwitchToNextComputation
-  | SwitchToPreviousComputation
-  | UpdateCurrentPackage GraphPackage
+-- type GraphView_Msg
+  -- | SwitchVia AcceptChoice
+
+  -- | RunComputation
+  -- | StepExecution
+  -- | StopExecution
+  -- | SwitchToNextComputation
+  -- | SwitchToPreviousComputation
+  -- | UpdateCurrentPackage GraphPackage
 
 type Main_Msg
-  = GraphViewMsg Uuid GraphView_Msg
+  -- graph-view messages
+  = SelectNode Uuid NodeId
+  | Pan Uuid Float Float
+  | Zoom Uuid Float
+  | Undo Uuid
+  | Redo Uuid
+  | StartSplit Uuid NodeId
+  | ResetView Uuid
+  -- more general messages
+  | Escape -- the universal "No! Go Back!" key & command
+  | Confirm -- the universal "Yeah! Let's Go!" key & command
   | OnResize (Float, Float)
   | SetMouseOver Uuid Bool
   | ClickIcon LeftPanelIcon
   | Tick
   | Seconded Time.Posix
-  | StartDraggingHorizontalSplitter
-  | StartDraggingVerticalSplitter
   | KeyPressed Char
-  | StopDragging
-  | MouseMoveDrag Float Float
+  | MouseUp
+  | MouseMove Float Float
   | ToggleBottomPanel
   | UpdateTestPanelContent String TestExpectation
   | UpdateDescriptionPanelContent String
@@ -118,6 +109,7 @@ type alias Main_Model =
   , currentTime : Time.Posix
   , randomSeed : Random.Seed
   , mouseCoords : ( Float, Float )
+  , currentOperation : Maybe UserOperation
   }
 
 type alias GraphPackage =
@@ -135,11 +127,45 @@ type alias GraphPackage =
   ForceDirectedGraph.elm
 --------------------------------------------------------}
 
+type DragTarget
+  = DragNode Uuid NodeId
+  | DragHorizontalSplitter
+  | DragVerticalSplitter
+
+type ConnectionEditing
+{-
+  We can:
+  1. Create a new node, then…
+  2. Toggle selected transitions
+  3. CONFIRM or CANCEL
+  
+  OR
+
+  1. Create a link to an existing node
+  2. Toggle selected transitions
+  3. CONFIRM or CANCEL
+
+  OR
+
+  1. Edit an existing link
+  2. Toggle selected transitions
+  3. CONFIRM or CANCEL
+-}
+  = CreatingNewNode ConnectionAlteration ( Float, Float )
+  | CreateNewLink ConnectionAlteration -- this is for an already-existing node.
+  | EditExistingConnection ConnectionAlteration
+
+type alias ConnectionAlteration =
+  { source : NodeId
+  , dest : NodeId
+  , connection : Connection
+  , picker : AcceptChoice
+  }
+
 type UserOperation
   = Splitting Split -- split a node into two, so I can work on the parts separately
-  | Dragging NodeId -- move a node around (visually)
-  | ModifyingGraph AcceptChoice GraphModification -- add a new link + node / new link between existing nodes
-  | AlteringConnection AcceptChoice ConnectionAlteration
+  | Dragging DragTarget -- move a node around (visually)
+  | ModifyConnection ConnectionEditing
   | Executing AutomatonGraph ExecutionResult
 
 type AcceptChoice
@@ -154,7 +180,6 @@ type alias GraphViewProperties =
 
 type alias GraphView =
   { id : Uuid
-  , currentOperation : Maybe UserOperation
   , package : GraphPackage
     -- Instead of repeating here, I could just supply a Uuid -> GraphPackage
     -- "resolver" function. But I choose to repeat, because such a function
@@ -181,22 +206,6 @@ type alias GraphView =
 {-------------------------------------------------------
   Other
 --------------------------------------------------------}
-type LinkDestination
-  = NoDestination
-  | ExistingNode NodeId
-  | NewNode ( Float, Float ) -- with X and Y coordinates
-
-type alias GraphModification =
-  { source : NodeId
-  , dest : LinkDestination
-  , transitions : Connection
-  }
-
-type alias ConnectionAlteration =
-  { source : NodeId
-  , dest : NodeId
-  , transitions : Connection
-  }
 
 type alias Split =
   { to_split : NodeId

@@ -69,11 +69,6 @@ panBufferAmount (w, h) =
       maxBuffer
       (bufferRatio * min w h)
 
-{-| This is the force that pulls all node to the 'center' of the viewport -}
-viewportForce : (Float, Float) -> Force.Force NodeId
-viewportForce (w, h) =
-  Force.center (w / 2) (h / 2)
-
 makeLinkForces : Graph Entity Connection -> Force.Force NodeId
 makeLinkForces graph =
   Graph.fold
@@ -84,12 +79,12 @@ makeLinkForces graph =
       in
         IntDict.toList outs
         |> List.foldl
-          (\(k, v) forces ->
+          (\(k, v) forces_ ->
             { source = ctx.node.id
             , target = k
             , distance = 10 + 30.0 * toFloat (AutoSet.size v) -- 35-40 seems like a good distance
             , strength = Just 0.7 -- * (toFloat <| Set.size v)
-            } :: forces
+            } :: forces_
           )
           acc
     )
@@ -97,29 +92,14 @@ makeLinkForces graph =
     graph
   |> Force.customLinks 3
 
-basicForces : AutomatonGraph -> Int -> List (Force.Force NodeId)
-basicForces g height =
+forces : AutomatonGraph -> (Int, Int) -> List (Force.Force NodeId)
+forces g (width, height) =
   [ makeLinkForces g.graph -- the springs
   , Force.manyBodyStrength -2000.0 (List.map .id <| Graph.nodes g.graph) -- the repulsion
-  , Force.towardsX <|
-      List.filterMap
-        (\n ->
-          if n.id == g.root then
-            Just { node = g.root, strength = 0.1, target = 0 }
-          else
-            Nothing
-        )
-        (Graph.nodes g.graph)
-  , Force.towardsY <|
-      List.filterMap
-        (\n ->
-          if n.id == g.root then
-            Just { node = n.id, strength = 0.8, target = toFloat (height // 2) }
-          else
-            Nothing
-        )
-        (Graph.nodes g.graph)
-  ]  
+  , Force.towardsX [ { node = g.root, strength = 0.1, target = 0 } ]
+  , Force.towardsY [ { node = g.root, strength = 0.8, target = toFloat (height // 2) } ]
+  , Force.center (toFloat width / 2) (toFloat height / 2)
+  ]
 
 toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
@@ -152,10 +132,10 @@ computeGraphFully (w, h) g =
     forceGraph =
       toForceGraph (g {- |> Automata.Debugging.debugAutomatonGraph "Graph as received" -})
       -- |> Automata.Debugging.debugAutomatonGraph "After toForceGraph"
-    forces = viewportForce (w, h) :: basicForces forceGraph (round h)
+    forces_ = forces forceGraph (round w, round h)
     nodes = Graph.nodes forceGraph.graph
     simulation =
-      Force.simulation forces
+      Force.simulation forces_
     shiftedNodes =
       Force.computeSimulation
         simulation
@@ -168,7 +148,7 @@ computeGraphFully (w, h) g =
     -- no changes to node-ids are made; only the spatial positions change.
     { solvedGraph = resultingGraph
     , simulation = simulation
-    , forces = forces
+    , forces = forces_
     }
     -- |> Automata.Debugging.debugAutomatonGraph "After sim"
 
