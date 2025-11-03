@@ -1506,12 +1506,20 @@ view model =
             [ HA.classList
                 [ ("sidebar-separator", True)
                 , ("dragging", model.currentOperation == Just (Dragging DragHorizontalSplitter))
-                , ("draggable", model.currentOperation == Nothing && model.uiState.open.sideBar)
+                , ( "draggable"
+                  , ( model.currentOperation == Nothing ||
+                      model.currentOperation == Just (Dragging DragHorizontalSplitter)
+                    )
+                    && model.uiState.open.sideBar
+                  )
                 , ("sidebar-collapsed", not model.uiState.open.sideBar)
                 ]
             , HA.css
                 [ Css.width <| Css.px <| model.uiConstants.splitterWidth ]
-            , HE.onMouseDown (UIMsg <| StartDragging DragHorizontalSplitter)
+            , if model.uiState.open.sideBar then
+                HE.onMouseDown (UIMsg <| StartDragging DragHorizontalSplitter)
+              else
+                HE.on "dummy" (D.fail "dummy event")
             ]
             [ if not model.uiState.open.sideBar then
                 div [] []
