@@ -20,22 +20,12 @@ import SHA
   Main.elm
 --------------------------------------------------------}
 
-type LeftPanelIcon
-  = ComputationsIcon
-  | SearchIcon
-  | GitIcon
-  | TestsIcon
-  | ExtensionsIcon
-
 type ExecutionStage
   = Ready
   | NotReady
   | ExecutionComplete
   | StepThrough
 
-type BottomPanel
-  = AddTestPanel
-  | EditDescriptionPanel
 
 type alias Flags =
   { width : Float
@@ -56,60 +46,105 @@ type alias Flags =
   -- | SwitchToPreviousComputation
   -- | UpdateCurrentPackage GraphPackage
 
-type Main_Msg
-  -- graph-view messages
-  = SelectNode Uuid NodeId
-  | Pan Uuid Float Float
-  | Zoom Uuid Float
-  | Undo Uuid
-  | Redo Uuid
-  | StartSplit Uuid NodeId
-  | ResetView Uuid
-  -- more general messages
-  | Escape -- the universal "No! Go Back!" key & command
-  | Confirm -- the universal "Yeah! Let's Go!" key & command
-  | OnResize (Float, Float)
-  | SetMouseOver Uuid Bool
-  | ClickIcon LeftPanelIcon
-  | Tick
-  | Seconded Time.Posix
-  | KeyPressed Char
-  | MouseUp
+type NavigatorIcon
+  = ComputationsIcon
+  | SearchIcon
+  | GitIcon
+  | TestsIcon
+  | ExtensionsIcon
+
+type ToolIcon
+  = AddTestIcon
+  | EditDescriptionIcon
+
+type UIMsg
+  = SelectNavigation NavigatorIcon
+  | SelectTool ToolIcon
   | MouseMove Float Float
-  | ToggleBottomPanel
-  | UpdateTestPanelContent String TestExpectation
-  | UpdateDescriptionPanelContent String
-  | UpdateRightTopDimensions Float Float
-  | RunExecution
-  | ResetExecution
-  | StepThroughExecution
-  | SelectBottomPanel BottomPanel
-  | CreateNewPackage
-  | SelectPackage Uuid
-  | DeletePackage Uuid
-  | SelectTest Uuid
-  | DeleteTest Uuid
-  | CreateNewTest
+  | OnResize (Float, Float)
+
+type Main_Msg
+  = UIMsg UIMsg
+  -- graph-view messages
+  -- = SelectNode Uuid NodeId
+  -- | Pan Uuid Float Float
+  -- | Zoom Uuid Float
+  -- | Undo Uuid
+  -- | Redo Uuid
+  -- | StartSplit Uuid NodeId
+  -- | ResetView Uuid
+  -- more general messages
+  -- | Escape -- the universal "No! Go Back!" key & command
+  -- | Confirm -- the universal "Yeah! Let's Go!" key & command
+  -- | SetMouseOver Uuid Bool
+  -- | Tick
+  -- | Seconded Time.Posix
+  -- | KeyPressed Char
+  -- | MouseUp
+  -- | UpdateTestPanelContent String TestExpectation
+  -- | UpdateDescriptionPanelContent String
+  -- | RunExecution
+  -- | ResetExecution
+  -- | StepThroughExecution
+  -- | CreateNewPackage
+
+
+type alias UIConstants =
+  { splitterWidth : Float
+  }
+{-
+  The `Side Bar` on the left contains the `Tool View`s.
+-}
+type alias Dimensions = ( Float, Float )
+
+width : Dimensions -> Float
+width (v, _) = v
+
+height : Dimensions -> Float
+height (_, v) = v
+
+type alias UIState =
+  { dimensions :
+    { -- the part that slides out on the left
+      sideBar : Dimensions
+      -- the strip that contains the Selector items for
+      -- the different "navigators" (file-view, test,
+      -- version control, search, etc etc)
+    , activityBar : Dimensions
+      -- this is the area at the bottom-right.  This area
+      -- hosts "tools" or "outputs".  I think that, for
+      -- generality (🧨), I should call these "tools".
+    , bottomPanel : Dimensions
+      -- this is the area on top of the bottom-panel, which
+      -- allows us to select which "tool" we want to see. 
+    , tabBar : Dimensions
+      -- this is the "main" editor area
+    , mainEditor : Dimensions
+    }
+  , open :
+    -- a panel can be open or closed.
+    { bottomPanel : Bool
+    , sideBar : Bool
+    }
+  , selected :
+    -- independent of being open or closed, a selection is
+    -- made.  That selection is preserved across open/close
+    -- operations.
+    { bottomPanel : ToolIcon
+    , sideBar : NavigatorIcon
+    }
+  }
 
 type alias Main_Model =
   { graph_views : AutoDict.Dict String Uuid GraphView
-  , mainPanelDimensions : ( Float, Float )
-  , leftPanelOpen : Bool
-  , selectedIcon : Maybe LeftPanelIcon
-  , leftPanelWidth : Float
-  , rightBottomPanelOpen : Bool
-  , rightBottomPanelHeight : Float
-  , rightTopPanelDimensions : ( Float, Float )
   , mainGraph : Maybe Uuid
-  , isDraggingHorizontalSplitter : Bool
-  , isDraggingVerticalSplitter : Bool
-  , executionStage : ExecutionStage
+  -- , executionStage : ExecutionStage -- this SHOULD be in a Tool.
   , packages : AutoDict.Dict String Uuid GraphPackage
-  , selectedBottomPanel : BottomPanel
+  , uiState : UIState
+  , uiConstants : UIConstants
   , currentTime : Time.Posix
   , randomSeed : Random.Seed
   , mouseCoords : ( Float, Float )
-  , currentOperation : Maybe UserOperation
   }
 
 type alias GraphPackage =
@@ -201,6 +236,7 @@ type alias GraphView =
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
   , properties : GraphViewProperties
+  , currentOperation : Maybe UserOperation
   }
 
 {-------------------------------------------------------
