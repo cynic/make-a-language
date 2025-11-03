@@ -2,7 +2,7 @@ module Main exposing (..)
 import Browser
 import Browser.Events
 import Html.Styled exposing
-  (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text)
+  (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button)
 import Html.Styled.Events exposing (onClick, onInput, onMouseDown)
 import Json.Encode as E
 import Json.Decode as D
@@ -1373,9 +1373,54 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
+{-
+<div class="sidebar-container">
+  <div class="activity-bar">
+    <button class="activity-icon active">📁</button>
+    <button class="activity-icon">🔍</button>
+    <button class="activity-icon">🐙</button>
+  </div>
+  <div class="sidebar">
+    <div class="sidebar-content explorer-view">
+      <!-- File tree goes here -->
+    </div>
+  </div>
+</div>-}
+
   div 
     []
-    [text "hello world"]
+    [ div
+        [ HA.class "sidebar-container" ]
+        [ div
+            [ HA.class "navigation-bar" ]
+            [ button
+                [ HA.classList
+                    [ ("navigation-icon", True)
+                    , ("active", model.uiState.selected.sideBar == ComputationsIcon)
+                    ]
+                , HA.title "Computations"
+                ]
+                [ text "📁"]
+            , button
+                [ HA.classList
+                    [ ("navigation-icon", True)
+                    , ("active", model.uiState.selected.sideBar == TestsIcon)
+                    ]
+                , HA.title "Tests"
+                ]
+                [ text "🧪" ]
+            ]
+        , div
+            [ HA.class "sidebar" ]
+            [ div
+                [ HA.class "sidebar-content" ]
+                [ text "Hello world" ]
+            ]
+        , div
+            [ HA.class "sidebar-separator" ]
+            []
+        ]
+    ]
 
 -- viewLeftSection : Model -> Html Msg
 -- viewLeftSection model =
