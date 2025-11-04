@@ -275,11 +275,11 @@
   // Visual styling
   background: var(--purple);
   border: 1.5px solid var(--background);
-  // box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   cursor: pointer;
   
   // Initial state (hidden)
-  // opacity: 0;
+  opacity: 0;
   transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   
   // Content
@@ -295,10 +295,10 @@
     box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
   }
   
-  // &:active {
+  &:active {
   //   transform: translate(-50%, -50%) scale(0.95);
-  //   transition-duration: 0.1s;
-  // }
+    transition-duration: 0.1s;
+  }
   
   // ===== COLLAPSED STATE =====
   // When sidebar is collapsed, the button becomes persistent but translucent
