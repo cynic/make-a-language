@@ -54,8 +54,8 @@ type NavigatorIcon
   | ExtensionsIcon
 
 type ToolIcon
-  = AddTestIcon
-  | EditDescriptionIcon
+  = TestingToolIcon
+  | MetadataToolIcon
 
 type UIMsg
   = SelectNavigation NavigatorIcon
@@ -100,7 +100,13 @@ type alias UIConstants =
       , max : Float
       , initial : Float
       }
-  , navigationBarWidth : Float -- same as VS Code's
+  , toolsPanelHeight :
+      { min : Float
+      , max : Float
+      , initial : Float
+      }
+  , navigationBarWidth : Float
+  , toolsBarWidth : Float
   }
 {-
   The `Side Bar` on the left contains the `Tool View`s.
@@ -130,6 +136,8 @@ type alias UIState =
     , tabBar : Dimensions
       -- this is the "main" editor area
     , mainEditor : Dimensions
+      -- this is the viewport
+    , viewport : Dimensions
     }
   , open :
     -- a panel can be open or closed.
@@ -175,8 +183,8 @@ type alias GraphPackage =
 
 type DragTarget
   = DragNode Uuid NodeId
-  | DragHorizontalSplitter
-  | DragVerticalSplitter
+  | DragLeftRightSplitter
+  | DragUpDownSplitter
 
 type AreaUITarget
   = NavigatorsArea

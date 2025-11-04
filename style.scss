@@ -138,13 +138,13 @@
   border-radius: 4px;
   position: relative;
   transition: all 0.2s ease;
+  cursor: pointer;
   
   &:not(.active):hover {
     color: var(--foreground);
     background-color: var(--purple); // Use one of Dracula's accent colors
     font-size: 120%;
     // transform: scale(1.05); // Subtle "pop" effect
-    cursor: pointer;
   }
   
   &.active {
@@ -183,13 +183,24 @@
 
 // ===== SIDEBAR SEPARATOR WITH CIRCULAR BUTTON =====
 
-.sidebar-separator {
-  width: 8px;
+.splitter-separator {
+  &.leftright {
+    width: 8px;
+    &.draggable {
+      cursor: col-resize;
+    }
+  }
+  &.updown {
+    height: 8px;
+    &.draggable {
+      cursor: row-resize;
+    }
+  }
+  flex-shrink: 0;
   position: relative;
   background: transparent;
   &.draggable {
     transition: background-color 0.2s ease;
-    cursor: col-resize;
     
     // Expand the hover area slightly for better discovery
     &:hover {
@@ -210,6 +221,35 @@
         transform: translate(-50%, -50%) scale(1.1);
         background-color: var(--pink);
       }
+    }
+  }
+
+  // this is the line that you click on to drag.
+  .separator-handle {
+    &.leftright {
+      width: 2px;
+      height: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    &.updown {
+      width: 100%;
+      height: 2px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    background-color: var(--comment); // #6272a4 - subtle but visible
+    transition: all 0.2s ease;
+    position: absolute;
+    
+    .sidebar-separator:hover & {
+      background-color: var(--purple);
+      width: 2px; // Becomes more prominent on hover
+    }
+    
+    .sidebar-separator.dragging & {
+      background-color: var(--pink);
+      width: 2px;
     }
   }
 }
@@ -256,10 +296,28 @@
   
   // ===== COLLAPSED STATE =====
   // When sidebar is collapsed, the button becomes persistent but translucent
-  .sidebar-collapsed & {
+  .collapsed &.leftright {
     // Reposition to left edge when collapsed
     left: 12px; // Half of 24px width to peek from edge
     transform: translateY(-50%) scale(0.9);
+    &:hover {
+      opacity: 1;
+      transform: translateY(-50%) scale(1);
+    }
+  }
+
+  .collapsed &.updown {
+    position: fixed;
+    left: 50vw; // Half of 24px width to peek from edge
+    top: calc(100vh - 24px);
+    transform: translateY(-50%) scale(0.9);
+    &:hover {
+      opacity: 1;
+      transform: translateY(-50%) scale(1);
+    }
+  }
+
+  .collapsed & {
     opacity: 0.4;
     background: var(--cyan);
     
@@ -280,60 +338,122 @@
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   
   // Point left when sidebar is open (collapsing would hide sidebar)
-  .sidebar:not(.sidebar-collapsed) & {
+  &.leftright:not(.collapsed) {
     transform: rotate(0deg); // ←
   }
   
-  // Point right when sidebar is collapsed (expanding would show sidebar)  
-  .sidebar-collapsed & {
+    // Point right when sidebar is collapsed (expanding would show sidebar)  
+  .collapsed &.leftright {
     transform: rotate(180deg); // →
   }
-}
 
-.separator-handle {
-  width: 1px;
-  height: 100%;
-  background-color: var(--comment); // #6272a4 - subtle but visible
-  transition: all 0.2s ease;
-  position: absolute;
-  left: 3px;
-  
-  .sidebar-separator:hover & {
-    background-color: var(--purple);
-    width: 2px; // Becomes more prominent on hover
+  &.updown:not(.collapsed) {
+    transform: rotate(270deg); // ↓
   }
-  
-  .sidebar-separator.dragging & {
-    background-color: var(--pink);
-    width: 2px;
+
+  .collapsed &.updown {
+    transform: rotate(90deg); // ↑
   }
 }
 
-// ===== BOTTOM PANEL SEPARATOR (For Future Use) =====
-// Same pattern but rotated for horizontal placement
-.bottom-panel-separator {
-  height: 8px;
-  cursor: row-resize;
+.editor-frame {
+  display: flex;
+}
+
+.editor-and-tools-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-main {
+  flex-grow: 1;
+}
+
+
+
+
+
+// VS Code-style Layout Structure
+.tools-container {
+  display: flex;
+  width: 100%;
+  background-color: var(--background);
+  flex-grow: 0;
+}
+
+.tools-bar {
+  // width: 48px; // VS Code's exact width
+  background-color: var(--background);
+  border-right: 1px solid var(--comment);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0px 0;
+}
+
+.tools-area {
+  // width: 300px; // Adjustable width, set in code.
+  background-color: var(--background-darker);
+  display: flex;
+  flex-direction: column;
+  transition: width 0s;
+  // This would be hidden/collapsed when sidebar is closed
+}
+
+// Left-bar icons that open "Navigators"
+.tool-icon {
+  width: 32px;
+  height: 32px ;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--comment);
+  border: none;
+  background: none;
+  margin: 4px 0;
+  border-radius: 4px;
   position: relative;
+  transition: all 0.2s ease;
+  cursor: pointer;
   
-  .collapse-button {
-    left: 50%;
-    top: 50%;
-    
-    .bottom-panel-collapsed & {
-      top: -12px; // Position above when panel is collapsed
-      transform: translateX(-50%) rotate(90deg) scale(0.9);
-    }
+  &:not(.active):hover {
+    color: var(--foreground);
+    background-color: var(--purple); // Use one of Dracula's accent colors
+    font-size: 120%;
+    // transform: scale(1.05); // Subtle "pop" effect
   }
   
-  .collapse-icon {
-    .bottom-panel:not(.bottom-panel-collapsed) & {
-      transform: rotate(0deg); // ↑
-    }
+  &.active {
+    color: var(--foreground);
+    background-color: var(--background-lighter);
+    border-radius: 0;
+    font-size: 130%;
     
-    .bottom-panel-collapsed & {
-      transform: rotate(180deg); // ↓
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 42px;
+      background-color: var(--purple);
+      border-radius: 0 2px 2px 0;
     }
+  }
+}
+
+// Sidebar content areas
+.tool-content {
+  flex: 1;
+  padding: 10px;
+  
+  &.explorer-view {
+    // File tree specific styles
+  }
+  
+  &.search-view {
+    // Search interface styles  
   }
 }
 

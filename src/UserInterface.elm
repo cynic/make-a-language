@@ -60,6 +60,10 @@ viewNavigatorsArea model =
                   , ("active", model.uiState.selected.sideBar == ComputationsIcon)
                   ]
               , HA.title "Computations"
+              -- , if model.uiState.selected.sideBar == ComputationsIcon then
+              --     HE.onClick (UIMsg <| ToggleAreaVisibility NavigatorsArea)
+              --   else
+              --     HE.on "dummy" (D.fail "dummy event")
               ]
               [ text "📁"]
           , button
@@ -89,46 +93,109 @@ viewNavigatorsArea model =
               [ HA.class "sidebar-content" ]
               [ text "Hello world" ]
           ]
-    , div
-        [ HA.classList
-            [ ("sidebar-separator", True)
-            , ("dragging", model.currentOperation == Just (Dragging DragHorizontalSplitter))
-            , ( "draggable"
-              , ( model.currentOperation == Nothing ||
-                  model.currentOperation == Just (Dragging DragHorizontalSplitter)
-                )
-                && model.uiState.open.sideBar
-              )
-            , ("sidebar-collapsed", not model.uiState.open.sideBar)
-            ]
-        , HA.css
-            [ Css.width <| Css.px <| model.uiConstants.splitterWidth ]
-        , if model.uiState.open.sideBar then
-            HE.onMouseDown (UIMsg <| StartDragging DragHorizontalSplitter)
-          else
-            HE.on "dummy" (D.fail "dummy event")
-        ]
-        [ if not model.uiState.open.sideBar then
-            div [] []
-          else
-            div
-              [ HA.class "separator-handle" ]
-              []
-        , button
-            [ HA.classList
-                [ ("collapse-button", True)
-                ]
-            , HA.title "Toggle sidebar"
-            , HE.onClick (UIMsg <| ToggleAreaVisibility NavigatorsArea)
-            ]
-            [ svg
-                [ Svg.Styled.Attributes.class "collapse-icon"
-                , Svg.Styled.Attributes.viewBox "4 4 10 8"
-                ]
-                [ Svg.Styled.path
-                    [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
-                    []
-                ]
-            ]
-        ]
+    ]
+
+type SplitterMovement = LeftRight | UpDown
+
+viewSplitter : SplitterMovement -> Maybe UserOperation -> Bool -> Html Main_Msg
+viewSplitter movement currentOperation areaOpen =
+  let
+    (dragTarget, movementClass, targetArea) =
+      case movement of
+        LeftRight ->
+          ( DragLeftRightSplitter, "leftright", NavigatorsArea )
+        UpDown ->
+          ( DragUpDownSplitter, "updown", ToolsArea )
+    isDragging = currentOperation == Just (Dragging dragTarget)
+    draggable = (currentOperation == Nothing || isDragging) && areaOpen
+  in
+    div
+      [ HA.classList
+          [ ("splitter-separator " ++ movementClass, True)
+          , ("dragging", isDragging)
+          , ( "draggable", draggable)
+          , ("collapsed", not areaOpen)
+          ]
+      , if areaOpen then
+          HE.onMouseDown (UIMsg <| StartDragging dragTarget)
+        else
+          HE.on "dummy" (D.fail "dummy event")
+      ]
+      [ if not areaOpen then
+          div [] []
+        else
+          div
+            [ HA.class <| "separator-handle " ++ movementClass ]
+            []
+      , button
+          [ HA.classList
+              [ ("collapse-button " ++ movementClass, True)
+              ]
+          , HA.title <| if  areaOpen then "Collapse" else "Expand"
+          , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+          ]
+          [ svg
+              [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
+              , Svg.Styled.Attributes.viewBox "4 4 10 8"
+              ]
+              [ Svg.Styled.path
+                  [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
+                  []
+              ]
+          ]
+      ]
+
+viewToolsArea : Model -> Html Msg
+viewToolsArea model =
+  div
+    [ HA.class "tools-container" ]
+    [ if not model.uiState.open.bottomPanel then
+        div [] []
+      else
+        div
+          [ HA.class "tools-bar"
+          , HA.css
+              [ Css.width <| Css.px <| model.uiConstants.toolsBarWidth ]
+          ]
+          [ debugWidth model.uiConstants.toolsBarWidth
+          , button
+              [ HA.classList
+                  [ ("tool-icon", True)
+                  , ("active", model.uiState.selected.bottomPanel == TestingToolIcon)
+                  ]
+              , HA.title "Testing"
+              ]
+              [ text "🔬"]
+          , button
+              [ HA.classList
+                  [ ("tool-icon", True)
+                  , ("active", model.uiState.selected.bottomPanel == MetadataToolIcon)
+                  ]
+              , HA.title "Tests"
+              ]
+              [ text "📝" ]
+          ]
+    , if not model.uiState.open.bottomPanel then
+        div [] []
+      else
+        div
+          [ HA.class "tools-area"
+          , HA.css
+              [ Css.height <| Css.px <|
+                  if model.uiState.open.bottomPanel then
+                    Automata.Data.height model.uiState.dimensions.bottomPanel
+                  else
+                    0
+              , Css.width <| Css.px <|
+                  if model.uiState.open.bottomPanel then
+                    Automata.Data.width model.uiState.dimensions.bottomPanel
+                  else
+                    0
+              ]
+          ]
+          [ debugDimensions model.uiState.dimensions.bottomPanel
+          , div
+              [ HA.class "tool-content" ]
+              [ text "Hello world" ]
+          ]
     ]

@@ -222,8 +222,6 @@ init flags =
       |> Result.mapError (\err -> Debug.log "OH NO! FLAGS WAS NOT PARSED CORRECTLY!!" err)
       |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0) [])
     
-    initialRightTopWidth = decoded.width - 60 - 4 - 1 - 2  -- 60px for icon bar, 2px border each side, 1px icon-bar border + 1px each side top-right border
-    initialRightTopHeight = decoded.height - 218  -- 185px bottom panel + 1px border each side + 8px splitter + 30px status bar + 1px status-bar border
     initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
     packages =
       decoded.packages
@@ -234,13 +232,19 @@ init flags =
     -- if one doesn't exist, then let's make one and see how we go.
     constants : UIConstants
     constants =
-      { splitterWidth = 15 -- minimum size in px for easy mouse targeting
+      { splitterWidth = 15 -- minimum size in px for easier mouse targeting
       , sideBarWidth =
           { min = 150
           , max = decoded.width / 2
           , initial = clamp 150 (decoded.width / 2) 300
           }
+      , toolsPanelHeight =
+          { min = 150
+          , max = decoded.height / 2
+          , initial = clamp 150 (decoded.height / 2) 300
+          }
       , navigationBarWidth = 48 -- same as VS Code
+      , toolsBarWidth = 36
       }
     state : UIState
     state =
@@ -250,13 +254,14 @@ init flags =
           , bottomPanel = ( decoded.width - constants.sideBarWidth.initial, 200 )
           , tabBar = ( decoded.width - constants.sideBarWidth.initial, 50 )
           , mainEditor = ( decoded.width - constants.sideBarWidth.initial, decoded.height - 200 )
+          , viewport = ( decoded.width, decoded.height )
           }
       , open =
           { bottomPanel = True
           , sideBar = True
           }
       , selected =
-        { bottomPanel = AddTestIcon
+        { bottomPanel = TestingToolIcon
         , sideBar = ComputationsIcon
         }
       }
@@ -1002,13 +1007,14 @@ dragSplitter coord what constants ({dimensions} as ui) =
     | dimensions =
         { dimensions
           | sideBar =
-              if what == DragHorizontalSplitter then
+              if what == DragLeftRightSplitter then
                 (clamp constants.sideBarWidth.min constants.sideBarWidth.max coord, Tuple.second dimensions.sideBar)
               else
                 dimensions.sideBar
           , bottomPanel =
-              if what == DragVerticalSplitter then
-                (Tuple.first dimensions.bottomPanel, coord)
+              if what == DragUpDownSplitter then
+                ( Tuple.first dimensions.bottomPanel
+                , clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Automata.Data.height dimensions.viewport - 8 - coord))
               else
                 dimensions.bottomPanel
         }
@@ -1444,8 +1450,24 @@ update msg model =
 view : Model -> Html Msg
 view model =
   div 
-    []
+    [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
+    , viewSplitter
+        LeftRight
+        (model.currentOperation)
+        (model.uiState.open.sideBar)
+    , div
+        [ HA.class "editor-and-tools-panel" ]
+        [ div
+            [ HA.class "editor-main"
+            ]
+            []
+        , viewSplitter
+            UpDown
+            model.currentOperation
+            model.uiState.open.bottomPanel
+        , viewToolsArea model
+        ]
     ]
 
 -- viewLeftSection : Model -> Html Msg
@@ -2324,7 +2346,7 @@ subscriptions model =
     --     )
   in
     case model.currentOperation of
-      Just (Dragging DragHorizontalSplitter) ->
+      Just (Dragging DragLeftRightSplitter) ->
         let
           offset = -(model.uiConstants.navigationBarWidth + model.uiConstants.splitterWidth / 2)
         in
@@ -2332,7 +2354,7 @@ subscriptions model =
             [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))
             , BE.onMouseUp (D.map ((+) offset >> DragSplitter True >> UIMsg) (D.field "clientX" D.float))
             ]
-      Just (Dragging DragVerticalSplitter) ->
+      Just (Dragging DragUpDownSplitter) ->
         Sub.batch
           [ BE.onMouseMove (D.map (DragSplitter False >> UIMsg) (D.field "clientY" D.float))
           , BE.onMouseUp (D.map (DragSplitter True >> UIMsg) (D.field "clientY" D.float))
