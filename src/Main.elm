@@ -39,6 +39,7 @@ import Automata.Debugging exposing (debugAutomatonGraph)
 import Svg.Styled exposing (svg)
 import Svg.Styled.Attributes
 import Automata.Debugging exposing (println)
+import UserInterface exposing (..)
 
 {-
 Quality / technology requirements:
@@ -1442,109 +1443,9 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-{-
-<div class="sidebar-container">
-  <div class="activity-bar">
-    <button class="activity-icon active">📁</button>
-    <button class="activity-icon">🔍</button>
-    <button class="activity-icon">🐙</button>
-  </div>
-  <div class="sidebar">
-    <div class="sidebar-content explorer-view">
-      <!-- File tree goes here -->
-    </div>
-  </div>
-</div>-}
-
   div 
     []
-    [ div
-        [ HA.class "sidebar-container" ]
-        [ if not model.uiState.open.sideBar then
-            div [] []
-          else
-            div
-              [ HA.class "navigation-bar"
-              , HA.css
-                  [ Css.width <| Css.px <| model.uiConstants.navigationBarWidth ]
-              ]
-              [ button
-                  [ HA.classList
-                      [ ("navigation-icon", True)
-                      , ("active", model.uiState.selected.sideBar == ComputationsIcon)
-                      ]
-                  , HA.title "Computations"
-                  ]
-                  [ text "📁"]
-              , button
-                  [ HA.classList
-                      [ ("navigation-icon", True)
-                      , ("active", model.uiState.selected.sideBar == TestsIcon)
-                      ]
-                  , HA.title "Tests"
-                  ]
-                  [ text "🧪" ]
-              ]
-        , if not model.uiState.open.sideBar then
-            div [] []
-          else
-            div
-              [ HA.class "sidebar"
-              , HA.css
-                  [ Css.width <| Css.px <|
-                      if model.uiState.open.sideBar then
-                        Automata.Data.width model.uiState.dimensions.sideBar
-                      else
-                        0
-                  ]
-              ]
-              [ div
-                  [ HA.class "sidebar-content" ]
-                  [ text "Hello world" ]
-              ]
-        , div
-            [ HA.classList
-                [ ("sidebar-separator", True)
-                , ("dragging", model.currentOperation == Just (Dragging DragHorizontalSplitter))
-                , ( "draggable"
-                  , ( model.currentOperation == Nothing ||
-                      model.currentOperation == Just (Dragging DragHorizontalSplitter)
-                    )
-                    && model.uiState.open.sideBar
-                  )
-                , ("sidebar-collapsed", not model.uiState.open.sideBar)
-                ]
-            , HA.css
-                [ Css.width <| Css.px <| model.uiConstants.splitterWidth ]
-            , if model.uiState.open.sideBar then
-                HE.onMouseDown (UIMsg <| StartDragging DragHorizontalSplitter)
-              else
-                HE.on "dummy" (D.fail "dummy event")
-            ]
-            [ if not model.uiState.open.sideBar then
-                div [] []
-              else
-                div
-                  [ HA.class "separator-handle" ]
-                  []
-            , button
-                [ HA.classList
-                    [ ("collapse-button", True)
-                    ]
-                , HA.title "Toggle sidebar"
-                , HE.onClick (UIMsg <| ToggleAreaVisibility NavigatorsArea)
-                ]
-                [ svg
-                    [ Svg.Styled.Attributes.class "collapse-icon"
-                    , Svg.Styled.Attributes.viewBox "4 4 10 8"
-                    ]
-                    [ Svg.Styled.path
-                        [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
-                        []
-                    ]
-                ]
-            ]
-        ]
+    [ viewNavigatorsArea model
     ]
 
 -- viewLeftSection : Model -> Html Msg

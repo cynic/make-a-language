@@ -77,7 +77,26 @@
     color: var(--foreground);
   }
 
+.debug-parent {
+  position: relative;
+  height: 0;
+  top: 50%;
+}
+.debug-dimensions {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  line-height: 0.8;
+  left: 50%;
 
+  &.width {
+    border-top: 1px solid red;
+  }
+
+  &.height {
+    border-left: 1px solid red;
+  }
+}
 
   // VS Code-style Layout Structure
 .sidebar-container {
