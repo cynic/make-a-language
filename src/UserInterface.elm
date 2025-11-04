@@ -49,12 +49,8 @@ viewNavigatorsArea model =
         div [] []
       else
         div
-          [ HA.class "navigation-bar"
-          , HA.css
-              [ Css.width <| Css.px <| model.uiConstants.navigationBarWidth ]
-          ]
-          [ debugWidth model.uiConstants.navigationBarWidth
-          , button
+          [ HA.class "navigation-bar" ]
+          [ button
               [ HA.classList
                   [ ("navigation-icon", True)
                   , ("active", model.uiState.selected.sideBar == ComputationsIcon)
@@ -97,8 +93,8 @@ viewNavigatorsArea model =
 
 type SplitterMovement = LeftRight | UpDown
 
-viewSplitter : SplitterMovement -> Maybe UserOperation -> Bool -> Html Main_Msg
-viewSplitter movement currentOperation areaOpen =
+viewSplitter : Int -> SplitterMovement -> Maybe UserOperation -> Bool -> Html Main_Msg
+viewSplitter zIdx movement currentOperation areaOpen =
   let
     (dragTarget, movementClass, targetArea) =
       case movement of
@@ -108,42 +104,49 @@ viewSplitter movement currentOperation areaOpen =
           ( DragUpDownSplitter, "updown", ToolsArea )
     isDragging = currentOperation == Just (Dragging dragTarget)
     draggable = (currentOperation == Nothing || isDragging) && areaOpen
-  in
-    div
-      [ HA.classList
-          [ ("splitter-separator " ++ movementClass, True)
-          , ("dragging", isDragging)
-          , ( "draggable", draggable)
-          , ("collapsed", not areaOpen)
-          ]
-      , if areaOpen then
-          HE.onMouseDown (UIMsg <| StartDragging dragTarget)
-        else
-          HE.on "dummy" (D.fail "dummy event")
-      ]
-      [ if not areaOpen then
-          div [] []
-        else
-          div
-            [ HA.class <| "separator-handle " ++ movementClass ]
+    collapseIcon =
+      svg
+        [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
+        , Svg.Styled.Attributes.viewBox "4 4 10 8"
+        ]
+        [ Svg.Styled.path
+            [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
             []
-      , button
-          [ HA.classList
-              [ ("collapse-button " ++ movementClass, True)
-              ]
-          , HA.title <| if  areaOpen then "Collapse" else "Expand"
-          , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
-          ]
-          [ svg
-              [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
-              , Svg.Styled.Attributes.viewBox "4 4 10 8"
-              ]
-              [ Svg.Styled.path
-                  [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
-                  []
-              ]
-          ]
-      ]
+        ]
+  in
+    if areaOpen then
+      div
+        [ HA.classList
+            [ ("splitter-separator " ++ movementClass, True)
+            , ("dragging", isDragging)
+            , ( "draggable", draggable)
+            ]
+        , HA.css
+            [ Css.zIndex (Css.int zIdx)
+            ]
+        , HE.onMouseDown (UIMsg <| StartDragging dragTarget)
+        ]
+        [ div
+            [ HA.class <| "separator-handle " ++ movementClass ]
+            [ button
+                [ HA.class <| "collapse-button " ++ movementClass
+                , HA.title "Collapse"
+                , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+                ]
+                [ collapseIcon ]
+            ]
+        ]
+    else
+      button
+        [ HA.class <| "collapse-button " ++ movementClass ++ " collapsed"
+        , HA.title "Expand"
+        , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+        , HA.css
+            [ Css.zIndex (Css.int <| zIdx * 10)
+            ]
+        ]
+        [ collapseIcon ]
+
 
 viewToolsArea : Model -> Html Msg
 viewToolsArea model =
@@ -153,12 +156,8 @@ viewToolsArea model =
         div [] []
       else
         div
-          [ HA.class "tools-bar"
-          , HA.css
-              [ Css.width <| Css.px <| model.uiConstants.toolsBarWidth ]
-          ]
-          [ debugWidth model.uiConstants.toolsBarWidth
-          , button
+          [ HA.class "tools-bar" ]
+          [ button
               [ HA.classList
                   [ ("tool-icon", True)
                   , ("active", model.uiState.selected.bottomPanel == TestingToolIcon)

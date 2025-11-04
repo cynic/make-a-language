@@ -232,27 +232,22 @@ init flags =
     -- if one doesn't exist, then let's make one and see how we go.
     constants : UIConstants
     constants =
-      { splitterWidth = 15 -- minimum size in px for easier mouse targeting
-      , sideBarWidth =
+      { sideBarWidth =
           { min = 150
-          , max = decoded.width / 2
-          , initial = clamp 150 (decoded.width / 2) 300
+          , max = decoded.width / 2 - 60
+          , initial = clamp 150 (decoded.width / 2 - 60) 300
           }
       , toolsPanelHeight =
           { min = 150
-          , max = decoded.height / 2
-          , initial = clamp 150 (decoded.height / 2) 300
+          , max = decoded.height / 2 - 40
+          , initial = clamp 150 (decoded.height / 2 - 40) 300
           }
-      , navigationBarWidth = 48 -- same as VS Code
-      , toolsBarWidth = 36
       }
     state : UIState
     state =
       { dimensions =
           { sideBar = ( constants.sideBarWidth.initial, decoded.height )
-          , activityBar = ( constants.navigationBarWidth, decoded.height )
           , bottomPanel = ( decoded.width - constants.sideBarWidth.initial, 200 )
-          , tabBar = ( decoded.width - constants.sideBarWidth.initial, 50 )
           , mainEditor = ( decoded.width - constants.sideBarWidth.initial, decoded.height - 200 )
           , viewport = ( decoded.width, decoded.height )
           }
@@ -1001,24 +996,56 @@ updateGraphView uuid msg model =
             model -- 'stop' isn't valid in any other context.
 -}
 
-dragSplitter : Float -> DragTarget -> UIConstants -> UIState -> UIState
-dragSplitter coord what constants ({dimensions} as ui) =
+recalculate_uistate : UIState -> UIState
+recalculate_uistate ({dimensions} as ui) =
+  let
+    sidebar_width =
+        Tuple.first dimensions.sideBar
+    panel_height =
+        Tuple.second dimensions.bottomPanel
+    visible_sidebar_width_plus_splitter =
+      if ui.open.sideBar then sidebar_width + 8 else 0
+    visible_panel_height_plus_splitter =
+      if ui.open.bottomPanel then panel_height + 8 else 0
+  in
   { ui
     | dimensions =
         { dimensions
-          | sideBar =
-              if what == DragLeftRightSplitter then
-                (clamp constants.sideBarWidth.min constants.sideBarWidth.max coord, Tuple.second dimensions.sideBar)
-              else
-                dimensions.sideBar
-          , bottomPanel =
-              if what == DragUpDownSplitter then
-                ( Tuple.first dimensions.bottomPanel
-                , clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Automata.Data.height dimensions.viewport - 8 - coord))
-              else
-                dimensions.bottomPanel
+          | bottomPanel =
+              ( Tuple.first dimensions.viewport - visible_sidebar_width_plus_splitter
+              , panel_height
+              )
+          , mainEditor =
+              ( Tuple.first dimensions.viewport - visible_sidebar_width_plus_splitter
+              , Tuple.second dimensions.viewport - visible_panel_height_plus_splitter
+              )
         }
   }
+
+dragSplitter : Float -> DragTarget -> UIConstants -> UIState -> UIState
+dragSplitter coord what constants ({dimensions} as ui) =
+  let
+    sidebar_width =
+      if what == DragLeftRightSplitter then
+        clamp constants.sideBarWidth.min constants.sideBarWidth.max coord
+      else
+        Tuple.first dimensions.sideBar
+    panel_height =
+      if what == DragUpDownSplitter then
+        clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Automata.Data.height dimensions.viewport - 8 - coord)
+      else
+        Tuple.second dimensions.bottomPanel
+  in
+    { ui
+      | dimensions =
+          { dimensions
+            | sideBar =
+                ( sidebar_width, Tuple.second dimensions.sideBar )
+            , bottomPanel =
+                ( Tuple.first dimensions.bottomPanel, panel_height )
+          }
+    }
+    |> recalculate_uistate
 
 toggleAreaVisibility : AreaUITarget -> UIState -> UIState
 toggleAreaVisibility where_ ({open} as ui) =
@@ -1031,6 +1058,7 @@ toggleAreaVisibility where_ ({open} as ui) =
               if where_ == ToolsArea then not open.bottomPanel else open.bottomPanel
         }
   }
+  |> recalculate_uistate
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -1453,7 +1481,7 @@ view model =
     [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
     , viewSplitter
-        LeftRight
+        5 LeftRight
         (model.currentOperation)
         (model.uiState.open.sideBar)
     , div
@@ -1461,9 +1489,9 @@ view model =
         [ div
             [ HA.class "editor-main"
             ]
-            []
+            [ UserInterface.debugDimensions model.uiState.dimensions.mainEditor ]
         , viewSplitter
-            UpDown
+            4 UpDown
             model.currentOperation
             model.uiState.open.bottomPanel
         , viewToolsArea model
@@ -2348,7 +2376,8 @@ subscriptions model =
     case model.currentOperation of
       Just (Dragging DragLeftRightSplitter) ->
         let
-          offset = -(model.uiConstants.navigationBarWidth + model.uiConstants.splitterWidth / 2)
+          -- navigatorbarwidth + splitterwidth/2
+          offset = -(48 + 8 / 2)
         in
           Sub.batch
             [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))

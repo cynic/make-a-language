@@ -94,8 +94,7 @@ type Main_Msg
 
 
 type alias UIConstants =
-  { splitterWidth : Float
-  , sideBarWidth :
+  { sideBarWidth :
       { min : Float
       , max : Float
       , initial : Float
@@ -105,8 +104,6 @@ type alias UIConstants =
       , max : Float
       , initial : Float
       }
-  , navigationBarWidth : Float
-  , toolsBarWidth : Float
   }
 {-
   The `Side Bar` on the left contains the `Tool View`s.
@@ -125,15 +122,18 @@ type alias UIState =
       sideBar : Dimensions
       -- the strip that contains the Selector items for
       -- the different "navigators" (file-view, test,
-      -- version control, search, etc etc)
-    , activityBar : Dimensions
-      -- this is the area at the bottom-right.  This area
-      -- hosts "tools" or "outputs".  I think that, for
-      -- generality (🧨), I should call these "tools".
+      -- version control, search, etc etc) has a fixed
+      -- size: 48px.
+      --
+      -- the area at the bottom-right hosts "tools" or
+      -- "outputs".  (I think that, for generality (🧨),
+      -- I should call these "tools").
     , bottomPanel : Dimensions
-      -- this is the area on top of the bottom-panel, which
-      -- allows us to select which "tool" we want to see. 
-    , tabBar : Dimensions
+      -- this is the area on left of the bottom-panel, which
+      -- allows us to select which "tool" we want to see.
+      -- Just like the strip for selecting "navigators", this
+      -- is a fixed size: 36px.
+      -- 
       -- this is the "main" editor area
     , mainEditor : Dimensions
       -- this is the viewport
