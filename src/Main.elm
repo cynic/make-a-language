@@ -233,14 +233,14 @@ init flags =
     constants : UIConstants
     constants =
       { sideBarWidth =
-          { min = 150
+          { min = 50
           , max = decoded.width / 2 - 60
-          , initial = clamp 150 (decoded.width / 2 - 60) 300
+          , initial = clamp 50 (decoded.width / 2 - 60) 300
           }
       , toolsPanelHeight =
-          { min = 150
+          { min = 80
           , max = decoded.height / 2 - 40
-          , initial = clamp 150 (decoded.height / 2 - 40) 300
+          , initial = clamp 80 (decoded.height / 2 - 40) 300
           }
       }
     state : UIState
@@ -1060,6 +1060,47 @@ toggleAreaVisibility where_ ({open} as ui) =
   }
   |> recalculate_uistate
 
+resizeViewport : (Float, Float) -> Model -> Model
+resizeViewport (w, h) ({uiState, uiConstants} as model) =
+  let
+    dim =
+      uiState.dimensions
+    constants : UIConstants
+    constants =
+      { sideBarWidth =
+          { min = 50
+          , max = w / 2 - 60
+          , initial = clamp 50 (w / 2 - 60) (Tuple.first dim.sideBar)
+          }
+      , toolsPanelHeight =
+          { min = 80
+          , max = h / 2 - 40
+          , initial = clamp 80 (h / 2 - 40) (Tuple.second dim.bottomPanel)
+          }
+      }
+    
+    state : UIState
+    state =
+      { uiState
+        | dimensions =
+            { dim
+              | viewport = ( w, h )
+              , sideBar =
+                  ( clamp constants.sideBarWidth.min constants.sideBarWidth.max (Tuple.first dim.sideBar)
+                  , Tuple.second dim.sideBar
+                  )
+              , bottomPanel =
+                  ( Tuple.first dim.bottomPanel
+                  , clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Tuple.second dim.bottomPanel)
+                  )
+            }
+      }
+  in
+    { model
+      | uiState = state |> recalculate_uistate
+      , uiConstants = constants
+    }
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -1103,8 +1144,11 @@ update msg model =
         MouseMove _ _ ->
           Debug.todo "branch 'MouseMove _ _' not implemented"
 
-        OnResize _ ->
-          Debug.todo "branch 'OnResize _' not implemented"
+        OnResize dims ->
+          ( resizeViewport dims model
+          , Cmd.none
+          )
+
     -- Tick ->
     --   updateGraphViewsOnTick model
     -- Seconded t ->
@@ -2372,24 +2416,27 @@ subscriptions model =
     --       >> Time.millisToPosix
     --       >> Seconded
     --     )
-  in
-    case model.currentOperation of
-      Just (Dragging DragLeftRightSplitter) ->
-        let
-          -- navigatorbarwidth + splitterwidth/2
-          offset = -(48 + 8 / 2)
-        in
-          Sub.batch
+    resizeSubscription =
+      BE.onResize (\w h -> UIMsg <| OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
+    splitterSubscriptions =
+      case model.currentOperation of
+        Just (Dragging DragLeftRightSplitter) ->
+          let
+            -- navigatorbarwidth + splitterwidth/2
+            offset = -(48 + 8 / 2)
+          in
             [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))
             , BE.onMouseUp (D.map ((+) offset >> DragSplitter True >> UIMsg) (D.field "clientX" D.float))
             ]
-      Just (Dragging DragUpDownSplitter) ->
-        Sub.batch
+        Just (Dragging DragUpDownSplitter) ->
           [ BE.onMouseMove (D.map (DragSplitter False >> UIMsg) (D.field "clientY" D.float))
           , BE.onMouseUp (D.map (DragSplitter True >> UIMsg) (D.field "clientY" D.float))
           ]
-      _ ->
-        Sub.none
+        _ ->
+          []
+  in
+    Sub.batch
+      ( resizeSubscription :: splitterSubscriptions )
   -- Sub.batch
   --   [ -- , keyboardSubscription
   --   -- , panSubscription
