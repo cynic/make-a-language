@@ -155,12 +155,11 @@ type alias UIState =
 
 type alias Main_Model =
   { graph_views : AutoDict.Dict String Uuid GraphView
-  , mainGraph : Maybe Uuid
+  , mainGraphView : Uuid
   -- , executionStage : ExecutionStage -- this SHOULD be in a Tool.
   , packages : AutoDict.Dict String Uuid GraphPackage
   , uiState : UIState
   , uiConstants : UIConstants
-  , currentTime : Time.Posix
   , randomSeed : Random.Seed
   , mouseCoords : ( Float, Float )
   , currentOperation : Maybe UserOperation

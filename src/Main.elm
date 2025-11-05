@@ -40,6 +40,7 @@ import Svg.Styled exposing (svg)
 import Svg.Styled.Attributes
 import Automata.Debugging exposing (println)
 import UserInterface exposing (..)
+import GraphEditor
 
 {-
 Quality / technology requirements:
@@ -73,44 +74,48 @@ getUuid model =
   in
     ( v, updatedModel )
 
-{-| Creates a new GraphView from a GraphPackage. -}
--- viewFromPackage : (Float, Float) -> Uuid -> Model -> (Maybe GraphView, Model)
--- viewFromPackage (w, h) uuid model =
---   let
---     (id, model_) = getUuid model
---   in
---     AutoDict.get uuid model.packages
---     |> Maybe.map
---       (\pkg ->
---         let
---           computed = GraphEditor.computeGraphFully (w, h) pkg.userGraph
---           view : GraphView
---           view =
---             { id = id
---             , currentOperation = Nothing
---             , package = pkg
---             , simulation = computed.simulation
---             , dimensions = (w, h)
---             , forces = computed.forces
---             , specificForces = IntDict.empty
---             , zoom = 1.0
---             , pan = ( 0, 0)
---             , disconnectedNodes = Set.empty
---             , properties =
---                 { isFrozen = False
---                 , tickCount = 0
---                 }
---             }
---         in
---           ( Just view
---           , { model_
---               | graph_views =
---                   AutoDict.insert id view model_.graph_views
---             }
---           )
---       )
---     |> Maybe.withDefault
---       (Nothing, model)
+{-| Creates a new GraphView from a GraphPackage within the `packages`
+    dictionary, and adds it to the `graph_views` dictionary in the `Model`.
+
+    If there is no such `GraphPackage`, then nothing is done and no
+    `GraphView` is returned.
+-}
+viewFromPackage : (Float, Float) -> Uuid -> Model -> (Maybe GraphView, Model)
+viewFromPackage (w, h) package_uuid model =
+  let
+    (id, model_) = getUuid model
+  in
+    AutoDict.get package_uuid model.packages
+    |> Maybe.map
+      (\pkg ->
+        let
+          computed = GraphEditor.computeGraphFully (w, h) pkg.userGraph
+          graph_view : GraphView
+          graph_view =
+            { id = id
+            , package = pkg
+            , simulation = computed.simulation
+            , dimensions = (w, h)
+            , forces = computed.forces
+            , specificForces = IntDict.empty
+            , zoom = 1.0
+            , pan = ( 0, 0)
+            , disconnectedNodes = Set.empty
+            , properties =
+                { isFrozen = False
+                , tickCount = 0
+                }
+            }
+        in
+          ( Just graph_view
+          , { model_
+              | graph_views =
+                  AutoDict.insert id graph_view model_.graph_views
+            }
+          )
+      )
+    |> Maybe.withDefault
+      (Nothing, model)
 
 -- MAIN
 
@@ -222,14 +227,40 @@ init flags =
       |> Result.mapError (\err -> Debug.log "OH NO! FLAGS WAS NOT PARSED CORRECTLY!!" err)
       |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0) [])
     
-    initialSeed = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
-    packages =
-      decoded.packages
-      -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
-      |> List.map (\v -> ( v.userGraph.graphIdentifier, v ))
-      |> AutoDict.fromList Uuid.toString
-    -- for the initial graph, choose the most recent graph.
-    -- if one doesn't exist, then let's make one and see how we go.
+    (packages, mainPackage, initialSeed) =
+      let
+        seed0 = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
+        allPackagesList =
+          decoded.packages
+          -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
+          |> List.map (\v -> ( v.userGraph.graphIdentifier, v ))
+        allPackagesDict =
+          AutoDict.fromList Uuid.toString allPackagesList
+          -- for the initial graph, choose the most recent graph.
+          -- if one doesn't exist, then let's make one and see how we go.
+      in
+        case List.sortBy (.created >> Time.posixToMillis >> (*) -1) decoded.packages |> List.head of
+          Nothing -> -- ooh. No packages exist!
+            -- I'd better make a new one.
+            let
+              (testUuid, seed1) = Random.step Uuid.generator seed0
+              (mainUuid, seed2) = Random.step Uuid.generator seed1
+              pkg =
+                createNewPackage
+                  testUuid
+                  decoded.startTime
+                  (decoded.width, decoded.height)
+                  (Automata.Data.empty mainUuid)
+            in
+              ( AutoDict.insert mainUuid pkg allPackagesDict
+              , pkg
+              , seed2
+              )
+          Just pkg ->
+            ( allPackagesDict
+            , pkg
+            , seed0
+            )
     constants : UIConstants
     constants =
       { sideBarWidth =
@@ -266,19 +297,34 @@ init flags =
         , sideBar = ComputationsIcon
         }
       }
-    model : Model
-    model =
+    model_excl_views : Model
+    model_excl_views =
       { graph_views =
           AutoDict.empty Uuid.toString
-      , mainGraph = Nothing
+      , mainGraphView = mainPackage.userGraph.graphIdentifier -- this is—temporarily—the wrong value!
       , packages = packages
       , uiState = state
       , uiConstants = constants
-      , currentTime = decoded.startTime
       , randomSeed = initialSeed
       , mouseCoords = (0, 0)
       , currentOperation = Nothing
       }
+    model =
+      -- I _know_ that this will succeed, because I've added this
+      -- exact 
+      let
+        (v, model_with_viewDict) =
+          viewFromPackage
+            state.dimensions.viewport
+            mainPackage.userGraph.graphIdentifier
+            model_excl_views
+      in
+        case v of
+          Nothing ->
+            Debug.log "🚨 FAILURE! GraphView could not be created. `mainGraphView` WILL be incorrect!"
+            model_with_viewDict
+          Just v_ ->
+            { model_with_viewDict | mainGraphView = v_.id }
   in
     ( model , Cmd.none )
 
