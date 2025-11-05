@@ -41,6 +41,7 @@ import Svg.Styled.Attributes
 import Automata.Debugging exposing (println)
 import UserInterface exposing (..)
 import GraphEditor
+import Dict
 
 {-
 Quality / technology requirements:
@@ -105,6 +106,10 @@ viewFromPackage (w, h) package_uuid model =
                 { isFrozen = False
                 , tickCount = 0
                 }
+            , drawingData =
+                { link_drawing = Dict.empty
+                , node_drawing = Dict.empty
+                }
             }
         in
           ( Just graph_view
@@ -153,12 +158,12 @@ encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
     [ ("graph", DFA.encodeAutomatonGraph pkg.userGraph)
-    , ("dimensions",
-        E.object
-          [ ("w", E.float <| Tuple.first pkg.dimensions)
-          , ("h", E.float <| Tuple.second pkg.dimensions)
-          ]
-      )
+    -- , ("dimensions",
+    --     E.object
+    --       [ ("w", E.float <| Tuple.first pkg.dimensions)
+    --       , ("h", E.float <| Tuple.second pkg.dimensions)
+    --       ]
+    --   )
     , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
     , ("created", E.int (Time.posixToMillis pkg.created))
     , ("tests", DFA.encodeAutoDict Uuid.toString encodeTest pkg.tests)
@@ -170,15 +175,15 @@ decodeGraphPackage resolutionDict =
   D.field "graph" DFA.decodeAutomatonGraph
   |> D.andThen
     (\graph ->
-      D.map5
-        (\dimensions description created testKey tests ->
-            GraphPackage graph dimensions description created testKey tests [] []
+      D.map4
+        (\description created testKey tests ->
+            GraphPackage graph description created testKey tests [] []
         )
-        ( D.map2
-            (\w h -> (w, h))
-            (D.at ["dimensions", "w"] D.float)
-            (D.at ["dimensions", "h"] D.float)
-        )
+        -- ( D.map2
+        --     (\w h -> (w, h))
+        --     (D.at ["dimensions", "w"] D.float)
+        --     (D.at ["dimensions", "h"] D.float)
+        -- )
         (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
         (D.field "created" <| D.map Time.millisToPosix D.int)
         (D.field "currentTestKey" Uuid.decoder)
@@ -210,7 +215,7 @@ decodeFlags =
 createNewPackage : Uuid.Uuid -> Time.Posix -> (Float, Float) -> AutomatonGraph -> GraphPackage
 createNewPackage testUuid currentTime dimensions g = -- `dimensions` is the width & height of the panel
   { userGraph = g
-  , dimensions = dimensions
+  -- , dimensions = dimensions
   , description = Nothing
   , created = currentTime
   , currentTestKey = testUuid
@@ -306,7 +311,7 @@ init flags =
       , uiState = state
       , uiConstants = constants
       , randomSeed = initialSeed
-      , mouseCoords = (0, 0)
+      -- , mouseCoords = (0, 0)
       , currentOperation = Nothing
       }
     model =
@@ -315,7 +320,7 @@ init flags =
       let
         (v, model_with_viewDict) =
           viewFromPackage
-            state.dimensions.viewport
+            state.dimensions.mainEditor
             mainPackage.userGraph.graphIdentifier
             model_excl_views
       in
@@ -1048,6 +1053,9 @@ updateGraphView uuid msg model =
             model -- 'stop' isn't valid in any other context.
 -}
 
+{-| When either the sidebar or the bottom-panel have changed dimensions, this should be
+    called to figure out what changes need to be made to any of the other dimensions.
+-}
 recalculate_uistate : UIState -> UIState
 recalculate_uistate ({dimensions} as ui) =
   let
@@ -1074,6 +1082,8 @@ recalculate_uistate ({dimensions} as ui) =
         }
   }
 
+{-| Drag a specified splitter to a specified coordinate. Returns an updated `UIState`.
+-}
 dragSplitter : Float -> DragTarget -> UIConstants -> UIState -> UIState
 dragSplitter coord what constants ({dimensions} as ui) =
   let
@@ -1099,6 +1109,9 @@ dragSplitter coord what constants ({dimensions} as ui) =
     }
     |> recalculate_uistate
 
+{-| Collapse or expand an area (i.e. either sidebar or bottom-panel).
+    Returns the updated `UIState` with correct dimensions.
+-}
 toggleAreaVisibility : AreaUITarget -> UIState -> UIState
 toggleAreaVisibility where_ ({open} as ui) =
   { ui
@@ -1115,19 +1128,21 @@ toggleAreaVisibility where_ ({open} as ui) =
 resizeViewport : (Float, Float) -> Model -> Model
 resizeViewport (w, h) ({uiState, uiConstants} as model) =
   let
-    dim =
-      uiState.dimensions
+    dim = uiState.dimensions
     constants : UIConstants
     constants =
-      { sideBarWidth =
-          { min = 50
-          , max = w / 2 - 60
-          , initial = clamp 50 (w / 2 - 60) (Tuple.first dim.sideBar)
-          }
+      { uiConstants
+        | sideBarWidth =
+            let sbw = uiConstants.sideBarWidth in
+            { sbw
+              | max = w / 2 - 60
+              , initial = clamp sbw.min (w / 2 - 60) (Tuple.first dim.sideBar)
+            }
       , toolsPanelHeight =
-          { min = 80
-          , max = h / 2 - 40
-          , initial = clamp 80 (h / 2 - 40) (Tuple.second dim.bottomPanel)
+          let tph = uiConstants.toolsPanelHeight in
+          { tph
+            | max = h / 2 - 40
+            , initial = clamp tph.min (h / 2 - 40) (Tuple.second dim.bottomPanel)
           }
       }
     
@@ -1573,7 +1588,7 @@ update msg model =
 
 view : Model -> Html Msg
 view model =
-  div 
+  div
     [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
     , viewSplitter
@@ -1585,7 +1600,12 @@ view model =
         [ div
             [ HA.class "editor-main"
             ]
-            [ UserInterface.debugDimensions model.uiState.dimensions.mainEditor ]
+            [ UserInterface.debugDimensions model.uiState.dimensions.mainEditor
+            , AutoDict.get model.mainGraphView model.graph_views
+              |> Maybe.map (GraphEditor.viewGraph >> Html.Styled.fromUnstyled)
+              |> Maybe.withDefault
+                (div [ HA.class "error graph-not-loaded" ] [ text "⚠ Graph to load was not found!" ]) -- erk! say what now?!
+            ]
         , viewSplitter
             4 UpDown
             model.currentOperation
@@ -2395,7 +2415,7 @@ view model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
   let
-    ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
+    -- ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
     -- ( width, height ) = model.dimensions
     -- panSubscription =
     --   let

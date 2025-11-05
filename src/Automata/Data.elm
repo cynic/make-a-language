@@ -13,6 +13,7 @@ import Random.Pcg.Extended as Random
 import Force
 import Binary
 import SHA
+import Dict exposing (Dict)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -161,13 +162,13 @@ type alias Main_Model =
   , uiState : UIState
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
-  , mouseCoords : ( Float, Float )
+  -- , mouseCoords : ( Float, Float )
   , currentOperation : Maybe UserOperation
   }
 
 type alias GraphPackage =
   { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
-  , dimensions : ( Float, Float )
+  -- , dimensions : ( Float, Float )
   , description : Maybe String
   , created : Time.Posix -- for ordering
   , currentTestKey : Uuid
@@ -235,6 +236,56 @@ type alias GraphViewProperties =
   , isFrozen : Bool
   }
 
+type Cardinality
+  = Bidirectional
+  | Unidirectional
+  | Recursive
+
+type alias PathBetweenReturn =
+  { pathString : String
+  , transition_coordinates : { x : Float, y : Float }
+  , length : Float
+  , control_point : { x : Float, y : Float }
+  , source_connection_point : { x : Float, y : Float }
+  , target_connection_point : { x : Float, y : Float }
+  }
+
+type alias LinkDrawingData =
+  { cardinality : Cardinality
+  , pathBetween : PathBetweenReturn
+  , executionData :
+      { executed : Bool
+      , smallest_recency : Int
+        -- map of chosen-transition → recency
+      , chosen : AutoDict.Dict String AcceptVia Int
+      }
+  , label : Connection
+  }
+
+type ExclusiveNodeAttributes
+  = DrawSelected
+  | DrawCurrentExecutionNode
+  | DrawDisconnected
+  | DrawPhantom
+
+type alias NodeDrawingData =
+  { exclusiveAttributes : ExclusiveNodeAttributes
+  , isSplittable : Bool
+  , isTerminal : Bool
+  , coordinates : (Float, Float)
+  , isRoot : Bool
+  }
+
+type alias DrawingData =
+  { -- these are the nodes to allow interaction on.
+    -- allow_interaction :
+    --   { nodes : List NodeId
+    --   , edges : List (NodeId, NodeId, Cardinality)
+    --   }
+    link_drawing : Dict (NodeId, NodeId) LinkDrawingData
+  , node_drawing : Dict NodeId NodeDrawingData
+  }
+
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
@@ -258,6 +309,7 @@ type alias GraphView =
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
   , properties : GraphViewProperties
+  , drawingData : DrawingData
   }
 
 {-------------------------------------------------------
@@ -547,6 +599,11 @@ isTerminalNode node =
     False
     (node.incoming)
   )
+
+classList : List (String, Bool) -> List String
+classList =
+  List.filterMap
+    (\(s, b) -> if b then Just s else Nothing)
 
 isTerminal : NodeId -> Graph x Connection -> Bool
 isTerminal id graph =

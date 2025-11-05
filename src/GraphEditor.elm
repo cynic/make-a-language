@@ -45,6 +45,7 @@ import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
 
 type alias Model = GraphView
+type alias Msg = Main_Msg
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -342,43 +343,43 @@ updateGraphWithList =
 --   in
 --     newUserGraph
 
--- textChar : Char -> String
--- textChar ch =
---   case ch of
---     ' ' ->
---       "└┘"
---     _ ->
---       String.fromChar ch
+textChar : Char -> String
+textChar ch =
+  case ch of
+    ' ' ->
+      "└┘"
+    _ ->
+      String.fromChar ch
 
--- transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
--- transitionToTextSpan transition otherClasses =
---   case transition.via of
---     ViaCharacter ch ->
---       tspan
---         [ class <|
---             (if .isFinal transition then "final" else "nonfinal")
---             :: otherClasses transition.via
---         ]
---         [ text <| textChar ch ]
---     ViaGraphReference ref ->
---       tspan
---         [ class <|
---             (if .isFinal transition then "final" else "nonfinal")
---             :: otherClasses transition.via
---         ]
---         [ text "Ω"
---         , title [] [ text <| Uuid.toString ref ]
---         ]
+transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
+transitionToTextSpan transition otherClasses =
+  case transition.via of
+    ViaCharacter ch ->
+      tspan
+        [ class <|
+            (if .isFinal transition then "final" else "nonfinal")
+            :: otherClasses transition.via
+        ]
+        [ text <| textChar ch ]
+    ViaGraphReference ref ->
+      tspan
+        [ class <|
+            (if .isFinal transition then "final" else "nonfinal")
+            :: otherClasses transition.via
+        ]
+        [ text "Ω"
+        , title [] [ text <| Uuid.toString ref ]
+        ]
 
--- connectionToSvgText : Connection -> List (Svg msg)
--- connectionToSvgText =
---   AutoSet.toList
---   >> List.map (\t -> transitionToTextSpan t (\_ -> []))
+connectionToSvgText : Connection -> List (Svg msg)
+connectionToSvgText =
+  AutoSet.toList
+  >> List.map (\t -> transitionToTextSpan t (\_ -> []))
 
--- connectionToSvgTextHighlightingChars : Connection -> (AcceptVia -> List String) -> List (Svg msg)
--- connectionToSvgTextHighlightingChars conn highlightFunction =
---   AutoSet.toList conn
---   |> List.map (\t -> transitionToTextSpan t highlightFunction)
+connectionToSvgTextHighlightingChars : Connection -> (AcceptVia -> List String) -> List (Svg msg)
+connectionToSvgTextHighlightingChars conn highlightFunction =
+  AutoSet.toList conn
+  |> List.map (\t -> transitionToTextSpan t highlightFunction)
 
 -- paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
 -- paletteColors =
@@ -396,10 +397,6 @@ updateGraphWithList =
 --   , background = Color.grey -- for painting a surrounding stroke
 --   }
 
--- type Cardinality
---   = Bidirectional
---   | Unidirectional
---   | Recursive
 
 -- type LinkType
 --   = Confirmed Cardinality -- in the confirmed graph.
@@ -422,15 +419,6 @@ updateGraphWithList =
 --     Bidirectional
 --   else
 --     Unidirectional
-
--- type alias PathBetweenReturn =
---   { pathString : String
---   , transition_coordinates : { x : Float, y : Float }
---   , length : Float
---   , control_point : { x : Float, y : Float }
---   , source_connection_point : { x : Float, y : Float }
---   , target_connection_point : { x : Float, y : Float }
---   }
 
 -- path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
 -- path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
@@ -650,287 +638,248 @@ updateGraphWithList =
 --           )
 --       )
 
--- viewLink : Model -> Dict (NodeId, NodeId) (Int, AcceptVia) -> Edge Connection -> Svg GraphView_Msg
--- viewLink ({ package } as model) executing edge =
---   let
---     userGraph = package.userGraph
---     source =
---       Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.from userGraph.graph
---     target =
---       Maybe.withDefault (entity 0 NoEffect) <| Maybe.map (.node >> .label) <| Graph.get edge.to userGraph.graph
---     cardinality = identifyCardinality model edge
---     positioning =
---       path_between source target cardinality 7 7
---     font_size = 16.0 -- this is the default, if not otherwise set
---     executionClass =
---       Dict.get (edge.from, edge.to) (executing |> Debug.log "executing")
---       |> Maybe.map (\(recency, _) -> [ "executed", "recent-" ++ String.fromInt recency ])
---       |> Maybe.withDefault []
---     labelText =
---       case Dict.get (edge.from, edge.to) executing of
---         Nothing ->
---           connectionToSvgText edge.label
---         Just (_, chosen_via) ->
---           connectionToSvgTextHighlightingChars
---             edge.label
---             (\via ->
---               if via == chosen_via then
---                 executionClass
---               else
---                 []
---             )
---   in
---     g
---       []
---       [
---         path
---           [ d positioning.pathString
---           , noFill
---           , class [ "link", "background" ]
---           ]
---           [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
---       , path
---           [ strokeWidth 3
---           , stroke <| Paint <| paletteColors.edge
---           , d positioning.pathString
---           , markerEnd "url(#arrowhead)"
---           , noFill
---           , class ("link" :: executionClass)
---           ]
---           [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
---       , text_
---           [ x <| positioning.transition_coordinates.x
---           , y <| positioning.transition_coordinates.y
---           , fontFamily ["sans-serif"]
---           , fontSize font_size
---           , fontWeight FontWeightNormal
---           , textAnchor AnchorMiddle
---           , alignmentBaseline AlignmentCentral
---           , Html.Attributes.attribute "paint-order" "stroke fill markers"
---           , class [ "link" ]
---           , onClick (EditTransition edge.from edge.to edge.label)
---           ]
---           ( title [] [ text "Click to modify" ] :: labelText 
---           )
---       -- , rect
---       --     [ x <| positioning.transition_coordinates.x
---       --     , y <| positioning.transition_coordinates.y - 70
---       --     , width 28
---       --     , height 16
---       --     , rx 2
---       --     , ry 2
---       --     , fill <| Paint <| Color.black
---       --     ]
---       --     []
---       -- , rect
---       --     [ x <| positioning.transition_coordinates.x + 4
---       --     , y <| positioning.transition_coordinates.y - 70 + 4
---       --     , width 4
---       --     , height 4
---       --     , fill <| Paint <| Color.white
---       --     ]
---       --     []
+viewLink : (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
+viewLink (from, to) drawing_data =
+      let
+        font_size = 16.0 -- this is the default, if not otherwise set
+        labelText =
+          if drawing_data.executionData.executed then
+            connectionToSvgTextHighlightingChars
+              drawing_data.label
+              (\via ->
+                AutoDict.get via drawing_data.executionData.chosen
+                |> Maybe.map (\recency ->
+                  [ "executed", "recent-" ++ String.fromInt recency ]
+                )
+                |> Maybe.withDefault []
+              )
+          else
+            connectionToSvgText drawing_data.label
+        linkClass =
+          if drawing_data.executionData.executed then
+            [ "link", "executed", "recent-" ++ String.fromInt drawing_data.executionData.smallest_recency ]
+          else
+            [ "link" ]
+      in
+        g
+          []
+          [
+            path
+              [ d drawing_data.pathBetween.pathString
+              , noFill
+              , class [ "link", "background" ]
+              ]
+              [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
+          , path
+              [ d drawing_data.pathBetween.pathString
+              , class linkClass
+              ]
+              [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
+          , text_
+              [ x <| drawing_data.pathBetween.transition_coordinates.x
+              , y <| drawing_data.pathBetween.transition_coordinates.y
+              , fontFamily ["sans-serif"]
+              , fontSize font_size
+              , fontWeight FontWeightNormal
+              , textAnchor AnchorMiddle
+              , alignmentBaseline AlignmentCentral
+              , Html.Attributes.attribute "paint-order" "stroke fill markers"
+              , class [ "link" ]
+              -- , onClick (EditTransition edge.from edge.to edge.label)
+              ]
+              ( title [] [ text "Click to modify" ] :: labelText 
+              )
+          -- , rect
+          --     [ x <| positioning.transition_coordinates.x
+          --     , y <| positioning.transition_coordinates.y - 70
+          --     , width 28
+          --     , height 16
+          --     , rx 2
+          --     , ry 2
+          --     , fill <| Paint <| Color.black
+          --     ]
+          --     []
+          -- , rect
+          --     [ x <| positioning.transition_coordinates.x + 4
+          --     , y <| positioning.transition_coordinates.y - 70 + 4
+          --     , width 4
+          --     , height 4
+          --     , fill <| Paint <| Color.white
+          --     ]
+          --     []
 
---       -- for debugging the paths.
---       -- , circle
---       --     [ cx <| positioning.control_point.x
---       --     , cy <| positioning.control_point.y
---       --     , r 3
---       --     , fill <| Paint <| Color.red
---       --     ]
---       --     []
---       -- , circle
---       --     [ cx <| positioning.source_connection_point.x
---       --     , cy <| positioning.source_connection_point.y
---       --     , r 3
---       --     , fill <| Paint <| Color.black
---       --     ]
---       --     []
---       -- , circle
---       --     [ cx <| positioning.target_connection_point.x
---       --     , cy <| positioning.target_connection_point.y
---       --     , r 3
---       --     , fill <| Paint <| Color.yellow
---       --     ]
---       --     []
---       ]
+          -- for debugging the paths.
+          -- , circle
+          --     [ cx <| positioning.control_point.x
+          --     , cy <| positioning.control_point.y
+          --     , r 3
+          --     , fill <| Paint <| Color.red
+          --     ]
+          --     []
+          -- , circle
+          --     [ cx <| positioning.source_connection_point.x
+          --     , cy <| positioning.source_connection_point.y
+          --     , r 3
+          --     , fill <| Paint <| Color.black
+          --     ]
+          --     []
+          -- , circle
+          --     [ cx <| positioning.target_connection_point.x
+          --     , cy <| positioning.target_connection_point.y
+          --     , r 3
+          --     , fill <| Paint <| Color.yellow
+          --     ]
+          --     []
+          ]
 
--- nodeRadius : Float
--- nodeRadius = 7
+nodeRadius : Float
+nodeRadius = 7
 
--- viewNode : Model -> (Float, Float) -> Graph.Node Entity -> Svg GraphView_Msg
--- viewNode { package, currentOperation, disconnectedNodes, pan } mouseCoords { label, id } =
---   let
---     userGraph = package.userGraph
---     selectableClass =
---       case currentOperation of
---         Just (ModifyingGraph _ { source }) ->
---           if source == id then
---             "selected"
---           else
---             ""
---         Just (Executing _ executionResult) ->
---           executionData executionResult
---           |> Maybe.map
---             (\{ currentNode } ->
---               if id == currentNode then
---                 "current-node"
---               else
---                 ""
---             )
---           |> Maybe.withDefault ""
---         _ ->
---           if Set.member id disconnectedNodes then
---             "disconnected"
---           else
---             ""
---     graphNode =
---       Graph.get id userGraph.graph
---     splittable =
---       Maybe.map
---         (\node ->
---           let
---             nonRecursive = IntDict.filter (\k _ -> k /= id) node.incoming
---           in
---           IntDict.size nonRecursive > 1 ||
---           ( IntDict.findMin nonRecursive
---             |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
---             |> Maybe.withDefault False
---           )
---         )
---         graphNode
---       |> Maybe.withDefault False
---     thisNodeIsTerminal =
---       Maybe.map (isTerminalNode) graphNode
---       |> Maybe.withDefault False
---     permit_node_reselection =
---       Mouse.onWithOptions
---         "mousedown"
---         { stopPropagation = True, preventDefault = True }
---         (\e ->
---           if e.keys.shift then
---             NodeDragStart id
---           else if e.keys.ctrl && splittable then
---             StartSplit id
---           else
---             case currentOperation of
---               Just (ModifyingGraph _ _) ->
---                 -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
---                 CreateOrUpdateLinkTo id
---               _ ->
---                 SelectNode id
---         )
+viewNode : NodeId -> NodeDrawingData -> Svg Msg
+viewNode id data =
+    -- splittable =
+    --   Maybe.map
+    --     (\node ->
+    --       let
+    --         nonRecursive = IntDict.filter (\k _ -> k /= id) node.incoming
+    --       in
+    --       IntDict.size nonRecursive > 1 ||
+    --       ( IntDict.findMin nonRecursive
+    --         |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
+    --         |> Maybe.withDefault False
+    --       )
+    --     )
+    --     graphNode
+    --   |> Maybe.withDefault False
+    -- thisNodeIsTerminal =
+    --   Maybe.map (isTerminalNode) graphNode
+    --   |> Maybe.withDefault False
 
---     interactivity =
---       case currentOperation of
---         Just (ModifyingGraph _ { dest }) ->
---           case dest of
---             NoDestination ->
---               [ permit_node_reselection ]
---             _ ->
---               []
---         _ ->
---           if Set.member id disconnectedNodes then
---             []
---           else
---             [ permit_node_reselection ]
+    -- permit_node_reselection =
+    --   Mouse.onWithOptions
+    --     "mousedown"
+    --     { stopPropagation = True, preventDefault = True }
+    --     (\e ->
+    --       if e.keys.shift then
+    --         NodeDragStart id
+    --       else if e.keys.ctrl && splittable then
+    --         StartSplit id
+    --       else
+    --         case currentOperation of
+    --           Just (ModifyingGraph _ _) ->
+    --             -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
+    --             CreateOrUpdateLinkTo id
+    --           _ ->
+    --             SelectNode id
+    --     )
 
---     titleText =
---       (if thisNodeIsTerminal && id == userGraph.root then
---         "Start AND end of computation\n"
---       else if thisNodeIsTerminal then
---         "End of computation\n"
---       else if id == userGraph.root then
---         "Start of computation\n"
---       else
---         "")
---       ++ "Shift-drag to reposition" ++
---       (Maybe.map
---         (\_ ->
---           if splittable then
---             "\nCtrl-click to split transitions"
---           else
---             ""
---         ) graphNode
---       |> Maybe.withDefault "")
---       ++ "\nClick to create or link a new transition"
---       ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING
---     ( node_x, node_y ) =
---       let
---         nodeCoords = ( label.x, label.y )
---       in
---       case currentOperation of
---         Just (Dragging nodeId) ->
---           if nodeId == id then
---             mapCorrespondingPair (+) pan mouseCoords
---           else
---             nodeCoords
---         _ ->
---           nodeCoords
---   in
---     g
---       ( class ["state-node", selectableClass]
---       ::interactivity
---       )
---       [ circle
---           [ r nodeRadius
---           , strokeWidth 2
---           , cx node_x
---           , cy node_y
---           , class
---               ( if id == userGraph.root then [ "start" ] else [] )
---           ]
---           []
---        ,  if thisNodeIsTerminal && id == userGraph.root then
---             text_
---               [ x <| node_x
---               , y <| (node_y + 1)
---               , fontFamily ["sans-serif"]
---               , fontSize 14
---               , fontWeight FontWeightNormal
---               , textAnchor AnchorMiddle
---               , alignmentBaseline AlignmentBaseline
---               , dominantBaseline DominantBaselineMiddle
---               , Html.Attributes.attribute "paint-order" "stroke fill markers"
---               ]
---               [ text "💥"
---               , title [] [text titleText]
---               ]
---           else if thisNodeIsTerminal then
---             text_
---               [ x <| node_x
---               , y <| (node_y + 1)
---               , fontFamily ["sans-serif"]
---               , fontSize 14
---               , fontWeight FontWeightNormal
---               , textAnchor AnchorMiddle
---               , alignmentBaseline AlignmentBaseline
---               , dominantBaseline DominantBaselineMiddle
---               , Html.Attributes.attribute "paint-order" "stroke fill markers"
---               ]
---               [ text "🎯"
---               , title [] [text titleText]
---               ]
---           else if id == userGraph.root then
---             text_
---               [ x <| node_x
---               , y <| (node_y + 1)
---               , fontFamily ["sans-serif"]
---               , fontSize 12
---               , fontWeight FontWeightNormal
---               , textAnchor AnchorMiddle
---               , alignmentBaseline AlignmentBaseline
---               , dominantBaseline DominantBaselineMiddle
---               , Html.Attributes.attribute "paint-order" "stroke fill markers"
---               , fill <| Paint <| Color.grey
---               ]
---               [ text "⭐"
---               , title [] [text titleText]
---               ]
---           else
---             g [] []
---       , title [] [text titleText]
---       ]
+    -- interactivity =
+    --   case currentOperation of
+    --     Just (ModifyingGraph _ { dest }) ->
+    --       case dest of
+    --         NoDestination ->
+    --           [ permit_node_reselection ]
+    --         _ ->
+    --           []
+    --     _ ->
+    --       if Set.member id disconnectedNodes then
+    --         []
+    --       else
+    --         [ permit_node_reselection ]
+  let
+    nodeClass =
+      classList
+        [ ("node", True)
+        , ("selected", data.exclusiveAttributes == DrawSelected)
+        , ("current-node", data.exclusiveAttributes == DrawCurrentExecutionNode)
+        , ("disconnected", data.exclusiveAttributes == DrawDisconnected)
+        , ("phantom", data.exclusiveAttributes == DrawPhantom)
+        , ("start", data.isRoot)
+        , ("splittable", data.isSplittable)
+        ]
+
+    titleText =
+      (if data.isTerminal && data.isRoot then
+        "Start AND end of computation\n"
+      else if data.isTerminal then
+        "End of computation\n"
+      else if data.isRoot then
+        "Start of computation\n"
+      else
+        "")
+      ++ "Shift-drag to reposition" ++
+      (if data.isSplittable then
+            "\nCtrl-click to split transitions"
+          else
+            ""
+      )
+      ++ "\nClick to create or link a new transition"
+      ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING          
+    ( node_x, node_y ) =
+      data.coordinates
+  in
+    g
+      [ class nodeClass
+      -- ::interactivity
+      ]
+      [ circle
+          [ r nodeRadius
+          , strokeWidth 2
+          , cx node_x
+          , cy node_y
+          , class nodeClass
+          ]
+          []
+      -- ,  if data.isTerminal && data.isRoot then
+      --       text_
+      --         [ x <| node_x
+      --         , y <| (node_y + 1)
+      --         , fontFamily ["sans-serif"]
+      --         , fontSize 14
+      --         , fontWeight FontWeightNormal
+      --         , textAnchor AnchorMiddle
+      --         , alignmentBaseline AlignmentBaseline
+      --         , dominantBaseline DominantBaselineMiddle
+      --         , Html.Attributes.attribute "paint-order" "stroke fill markers"
+      --         ]
+      --         [ text "💥"
+      --         , title [] [text titleText]
+      --         ]
+      --     else if data.isTerminal then
+      --       text_
+      --         [ x <| node_x
+      --         , y <| (node_y + 1)
+      --         , fontFamily ["sans-serif"]
+      --         , fontSize 14
+      --         , fontWeight FontWeightNormal
+      --         , textAnchor AnchorMiddle
+      --         , alignmentBaseline AlignmentBaseline
+      --         , dominantBaseline DominantBaselineMiddle
+      --         , Html.Attributes.attribute "paint-order" "stroke fill markers"
+      --         ]
+      --         [ text "🎯"
+      --         , title [] [text titleText]
+      --         ]
+      --     else if data.isRoot then
+      --       text_
+      --         [ x <| node_x
+      --         , y <| (node_y + 1)
+      --         , fontFamily ["sans-serif"]
+      --         , fontSize 12
+      --         , fontWeight FontWeightNormal
+      --         , textAnchor AnchorMiddle
+      --         , alignmentBaseline AlignmentBaseline
+      --         , dominantBaseline DominantBaselineMiddle
+      --         , Html.Attributes.attribute "paint-order" "stroke fill markers"
+      --         , fill <| Paint <| Color.grey
+      --         ]
+      --         [ text "⭐"
+      --         , title [] [text titleText]
+      --         ]
+      --     else
+      --       g [] []
+      , title [] [text titleText]
+      ]
 
 -- nearby_node_lockOnDistance : Float
 -- nearby_node_lockOnDistance = nodeRadius + 9
@@ -1123,43 +1072,45 @@ updateGraphWithList =
 --       _ ->
 --         g [] []
 
--- arrowheadMarker : Svg msg
--- arrowheadMarker =
---   marker
---     [ id "arrowhead"
---     , viewBox 0 0 10 10
---     , refX "0"
---     , refY "5"
---     , orient "auto-start-reverse"
---     , markerWidth 5
---     , markerHeight 5
---     , fill <| Paint <| paletteColors.edge
---     ]
---     [ path
---         [ d "M 0 0 L 10 5 L 0 10 z" ]
---         []
---     ]
+arrowheadMarker : Svg msg
+arrowheadMarker =
+  marker
+    [ id "arrowhead"
+    , viewBox 0 0 10 10
+    , refX "0"
+    , refY "5"
+    , orient "auto-start-reverse"
+    , markerWidth 5
+    , markerHeight 5
+    , class [ "arrowhead" ]
+      --fill <| Paint <| paletteColors.edge
+    ]
+    [ path
+        [ d "M 0 0 L 10 5 L 0 10 z" ]
+        []
+    ]
 
--- phantomArrowheadMarker : Svg msg
--- phantomArrowheadMarker =
---   marker
---     [ id "phantom-arrowhead"
---     , viewBox 0 0 10 10
---     , refX "0"
---     , refY "5"
---     , orient "auto-start-reverse"
---     , markerWidth 5
---     , markerHeight 5
---     , strokeWidth 1.5
---     , strokeDasharray "1.5 2"
---     , strokeLinecap StrokeLinecapRound
---     , stroke <| Paint <| Color.rgb255 102 102 102
---     , noFill
---     ]
---     [ path
---         [ d "M 0 0 L 10 5 L 0 10 z" ]
---         []
---     ]
+phantomArrowheadMarker : Svg msg
+phantomArrowheadMarker =
+  marker
+    [ id "phantom-arrowhead"
+    , viewBox 0 0 10 10
+    , refX "0"
+    , refY "5"
+    , orient "auto-start-reverse"
+    , markerWidth 5
+    , markerHeight 5
+    , strokeWidth 1.5
+    , strokeDasharray "1.5 2"
+    , strokeLinecap StrokeLinecapRound
+    , class [ "phantom-arrowhead" ]
+      -- stroke <| Paint <| Color.rgb255 102 102 102
+      -- , noFill
+    ]
+    [ path
+        [ d "M 0 0 L 10 5 L 0 10 z" ]
+        []
+    ]
 
 -- transition_buttonSize : Float
 -- transition_buttonSize = 55
@@ -1712,142 +1663,132 @@ updateGraphWithList =
 --   --   ]
 --   --   []
 
--- viewUndoRedoVisualisation : Model -> Svg a
--- viewUndoRedoVisualisation { package, dimensions } =
---   let
---     (_, h) = dimensions
---     rect_width = 30
---     rect_height = 10
---     rect_spacing = 3
---     num_undo = List.length package.undoBuffer
---     idxToY idx =
---       h - (toFloat (40 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
+viewUndoRedoVisualisation : GraphView -> Svg a
+viewUndoRedoVisualisation { package, dimensions } =
+  let
+    (_, h) = dimensions
+    rect_width = 30
+    rect_height = 10
+    rect_spacing = 3
+    num_undo = List.length package.undoBuffer
+    idxToY idx =
+      h - (toFloat (40 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
 
---     worst = Color.rgb255 0xfe 0x00 0x02 -- fire
---     scale =
---       [ Color.rgb255 0x00 0xf0 0xa8 -- spring
---       , Color.rgb255 0x50 0xc8 0x78 -- emerald
---       , Color.rgb255 0x00 0xa8 0x6b -- jade
---       , Color.rgb255 0x00 0x9e 0x60 -- shamrock
---       , Color.rgb255 0x80 0xf9 0xad -- sea foam
---       , Color.rgb255 0x98 0xfb 0x98 -- mint
---       , Color.rgb255 0xdf 0xff 0x00 -- chartreuse
---       , Color.rgb255 0xff 0xff 0x00 -- yellow
---       , Color.rgb255 0xff 0xd7 0x00 -- gold
---       , Color.rgb255 0xff 0xa6 0x00 -- cheese
---       , Color.rgb255 0xff 0x80 0x00 -- orange
---       , Color.rgb255 0xfc 0x4c 0x02 -- tangelo
---       , Color.rgb255 0xff 0x24 0x00 -- scarlet
---       , worst
---       ]
---   in
---     g
---       []
---       (
---         ( List.indexedMap
---             (\idx _ ->
---               rect
---                 [ width rect_width
---                 , height rect_height
---                 , fill <| Paint (List.getAt idx scale |> Maybe.withDefault worst)
---                 , ry 2
---                 , x 15
---                 , y <| idxToY idx
---                 , class ["undo", if num_undo - 1 == idx then "current" else ""]
---                 ]
---                 []
---             )
---             package.undoBuffer
---         )
---         ++
---         ( List.indexedMap
---             (\idx _ ->
---               rect
---                 [ width rect_width
---                 , height rect_height
---                 , ry 2
---                 , x 15
---                 , y <| idxToY (idx + num_undo)
---                 , class ["redo"]
---                 ]
---                 []
---             )
---             package.redoBuffer
---         )
---       )
+    worst = Color.rgb255 0xfe 0x00 0x02 -- fire
+    scale =
+      [ Color.rgb255 0x00 0xf0 0xa8 -- spring
+      , Color.rgb255 0x50 0xc8 0x78 -- emerald
+      , Color.rgb255 0x00 0xa8 0x6b -- jade
+      , Color.rgb255 0x00 0x9e 0x60 -- shamrock
+      , Color.rgb255 0x80 0xf9 0xad -- sea foam
+      , Color.rgb255 0x98 0xfb 0x98 -- mint
+      , Color.rgb255 0xdf 0xff 0x00 -- chartreuse
+      , Color.rgb255 0xff 0xff 0x00 -- yellow
+      , Color.rgb255 0xff 0xd7 0x00 -- gold
+      , Color.rgb255 0xff 0xa6 0x00 -- cheese
+      , Color.rgb255 0xff 0x80 0x00 -- orange
+      , Color.rgb255 0xfc 0x4c 0x02 -- tangelo
+      , Color.rgb255 0xff 0x24 0x00 -- scarlet
+      , worst
+      ]
+  in
+    g
+      []
+      (
+        ( List.indexedMap
+            (\idx _ ->
+              rect
+                [ TypedSvg.Attributes.InPx.width rect_width
+                , TypedSvg.Attributes.InPx.height rect_height
+                , fill <| Paint (List.getAt idx scale |> Maybe.withDefault worst)
+                , ry 2
+                , x 15
+                , y <| idxToY idx
+                , class ["undo", if num_undo - 1 == idx then "current" else ""]
+                ]
+                []
+            )
+            package.undoBuffer
+        )
+        ++
+        ( List.indexedMap
+            (\idx _ ->
+              rect
+                [ TypedSvg.Attributes.InPx.width rect_width
+                , TypedSvg.Attributes.InPx.height rect_height
+                , ry 2
+                , x 15
+                , y <| idxToY (idx + num_undo)
+                , class ["redo"]
+                ]
+                []
+            )
+            package.redoBuffer
+        )
+      )
 
--- panToString : (Float, Float) -> String
--- panToString pan =
---   case Tuple.mapBoth round round pan of
---     ( 0, 0 ) -> "centered"
---     ( x, y) ->
---       let
---         xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
---         yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
---       in
---       ("(" ++ xString ++ ", " ++ yString ++ ")")
+panToString : (Float, Float) -> String
+panToString pan =
+  case Tuple.mapBoth round round pan of
+    ( 0, 0 ) -> "centered"
+    ( x, y) ->
+      let
+        xString = if x > 0 then "+" ++ String.fromInt x else String.fromInt x
+        yString = if y > 0 then "+" ++ String.fromInt y else String.fromInt y
+      in
+      ("(" ++ xString ++ ", " ++ yString ++ ")")
 
--- matrixFromZoom : (Float, Float) -> Float -> ( Float, Float ) -> Transform
--- matrixFromZoom (panX, panY) factor (pointerX, pointerY) =
--- {- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
+matrixFromZoom : (Float, Float) -> Float -> {- ( Float, Float ) -> -} Transform
+matrixFromZoom (panX, panY) factor {- (pointerX, pointerY) -} =
+{- https://www.petercollingridge.co.uk/tutorials/svg/interactive/pan-and-zoom/
 
---   The matrix is the "usual":
+  The matrix is the "usual":
 
---   ⎾ a c e ⏋ ⎾ x ⏋
---   | b d f | | y |
---   ⎿ 0 0 1 ⏌ ⎿ 1 ⏌
+  ⎾ a c e ⏋ ⎾ x ⏋
+  | b d f | | y |
+  ⎿ 0 0 1 ⏌ ⎿ 1 ⏌
 
---   - the new x-coordinate of each element is a・x + c・y + e
---   - the new y-coordinate of each element is b・x + d・y + f
--- -}
+  - the new x-coordinate of each element is a・x + c・y + e
+  - the new y-coordinate of each element is b・x + d・y + f
+-}
 
---   Matrix
---     factor
---     0
---     0
---     factor
---     ( (1 - factor) * pointerX - panX )
---     ( (1 - factor) * pointerY - panY )
---   -- |> Debug.log "matrix transform applied"
+  Matrix
+    factor
+    0
+    0
+    factor
+    ( (1 - factor) {- * pointerX -} - panX )
+    ( (1 - factor) {- * pointerY -} - panY )
+  -- |> Debug.log "matrix transform applied"
 
--- viewMainSvgContent : Model -> (Float, Float) -> Svg GraphView_Msg
--- viewMainSvgContent model mouseCoords =
---   g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
---   [ transform [ matrixFromZoom model.pan model.zoom mouseCoords ]
---   , case model.currentOperation of
---       Just (Dragging _) ->
---         -- disable pointer-events.
---         -- This is to stop elements from getting in the way of
---         -- registering mouse-movement.
---         pointerEvents "none"
---       _ ->
---         class []
---   ]
---   [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
---   , Graph.edges model.package.userGraph.graph
---     |> List.filter (\edge -> not (AutoSet.isEmpty edge.label))
---     |> List.map
---       (viewLink
---         model
---         ( case model.currentOperation of
---             Just (Executing _ executionResult) ->
---               executing_edges executionResult
---             _ -> -- this is fine, because this is only relevant for execution + currentpackage??
---               Dict.empty
---         )
---       )
---     |> g [ class [ "links" ] ]
---   , Graph.nodes model.package.userGraph.graph
---     |> List.map (viewNode model mouseCoords)
---     |> g [ class [ "nodes" ] ]
---   , case model.currentOperation of
---       Just (ModifyingGraph _ { source }) ->
---         Graph.get source model.package.userGraph.graph
---         |> Maybe.map (viewPhantom model mouseCoords)
---         |> Maybe.withDefault (g [] [])
---       _ ->
---         g [] []
---   ]
+viewMainSvgContent : GraphView -> Svg Msg
+viewMainSvgContent graph_view =
+  g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
+    [ transform [ matrixFromZoom graph_view.pan graph_view.zoom ]
+    -- , case graph_view.currentOperation of
+    --     Just (Dragging _) ->
+    --       -- disable pointer-events.
+    --       -- This is to stop elements from getting in the way of
+    --       -- registering mouse-movement.
+    --       pointerEvents "none"
+    --     _ ->
+    --       class []
+    ]
+    [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
+    , Dict.toList graph_view.drawingData.link_drawing
+      |> List.map (\((from, to), data) -> viewLink (from, to) data)
+      |> g [ class [ "links" ] ]
+    , Dict.toList graph_view.drawingData.node_drawing
+      |> List.map (\(nodeId, data) -> viewNode nodeId data)
+      |> g [ class [ "nodes" ] ]
+    -- , case graph_view.currentOperation of
+    --     Just (ModifyingGraph _ { source }) ->
+    --       Graph.get source graph_view.package.userGraph.graph
+    --       |> Maybe.map (viewPhantom graph_view mouseCoords)
+    --       |> Maybe.withDefault (g [] [])
+    --     _ ->
+    --       g [] []
+    ]
 
 -- {-| Given a width, get the correct height for a thumbnail -}
 -- thumbnailHeight : Float -> Float
@@ -2014,208 +1955,208 @@ updateGraphWithList =
 --           )
 --       ]
 
--- view : Model -> (Float, Float) -> Svg GraphView_Msg
--- view model mouseCoords =
---   let
---     ( width, height ) = model.dimensions
---     ( mouse_x, mouse_y ) = mouseCoords
---     -- permit_scroll : Svg Main_Msg
---     -- permit_scroll =
---     --   onMouseScroll
---     --     (\n ->
---     --       case model.currentOperation of
---     --         Just (ModifyingGraph (ChooseGraphReference _) _) ->
---     --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
---     --         Just (AlteringConnection (ChooseGraphReference _) _) ->
---     --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
---     --         _ ->
---     --           Zoom n
---     --     )
---     panBuffer = panBufferAmount model.dimensions
---     -- permit_pan : List (Svg GraphView_Msg)
---     -- permit_pan =
---     --   [ onMouseMove MouseMove
---     --   , cursor <|
---     --       -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
---     --       case ( 1 + round (xPanAt width panBuffer mouse_x), 1 + round (yPanAt height panBuffer mouse_y) ) of
---     --         ( 2, 2 ) -> CursorSEResize
---     --         ( 0, 2 ) -> CursorSWResize
---     --         ( 2, 0 ) -> CursorNEResize
---     --         ( 0, 0 ) -> CursorNWResize
---     --         ( 1, 2 ) -> CursorNResize
---     --         ( 0, 1 ) -> CursorWResize
---     --         ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
---     --         ( 2, 1 ) -> CursorEResize
---     --         _ -> CursorDefault
---     --   ]
---     -- permit_click : Svg GraphView_Msg
---     -- permit_click =
---     --   Mouse.onWithOptions
---     --     "mousedown"
---     --     { stopPropagation = True, preventDefault = True }
---     --     (\_ ->
---     --       case model.currentOperation of
---     --         Just (ModifyingGraph _ _) ->
---     --           case nearby_node nearby_node_lockOnDistance mouseCoords model of
---     --             Just node -> -- in this case, the UI would show it being "locked-on"
---     --               CreateOrUpdateLinkTo node.id
---     --             Nothing ->
---     --               CreateNewNodeAt mouseCoords
---     --         _ ->
---     --           Escape
---     --     )
---     -- permit_stopdrag : Svg GraphView_Msg
---     -- permit_stopdrag =
---     --   Mouse.onUp (\_ -> NodeDragEnd)
---     -- interactivity : List (Svg GraphView_Msg)
---     -- interactivity =
---       -- don't permit panning if:
---       -- 1. I'm splitting a node
---       -- 2. I'm editing a transition/connection
---       --
---       -- don't permit zooming under the same circumstances as above.
---       --
---       -- don't permit clicking if:
---       -- 1. I'm modifying the graph, and have already selected/created a node
---       --
---       -- but clicking has a default of Escape, so we can usually allow it.
---       -- CHECK THIS!
---       -- Usability: should a "mis-click" result in Escape??
---       -- Let's see.
---       -- case model.currentOperation of
---       --   Just (Splitting _) ->
---       --     [ permit_click ]
---       --   Just (AlteringConnection (ChooseGraphReference _) _) ->
---       --     [ permit_scroll ]
---       --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
---       --     [ permit_scroll ]
---       --   Just (ModifyingGraph _ { dest }) ->
---       --     case dest of
---       --       NewNode _ ->
---       --         []
---       --       ExistingNode _ ->
---       --         []
---       --       _ ->
---       --         permit_click :: permit_scroll :: permit_pan
---       --   Just (AlteringConnection _ _) ->
---       --     []
---       --   Just (Executing _ _) ->
---       --     permit_pan
---       --   Just (Dragging _) ->
---       --     -- must have permit_pan (for mouse-movement)
---       --     -- must have permit_stopdrag
---       --     -- ignore click (we only care about stop-drag right now)
---       --     permit_stopdrag :: permit_scroll :: permit_pan
---       --   Nothing ->
---       --     permit_click :: permit_scroll :: permit_pan
---   in
---     svg
---       ([ viewBox 0 0 width height
---       -- , Mouse.onOver (\_ -> SetMouseOver model.id True)
---       -- , Mouse.onOut (\_ -> SetMouseOver model.id False)
---       ] {- ++ interactivity -})
---       [ -- this stuff is in the background.
---         viewUndoRedoVisualisation model
---       , viewMainSvgContent model mouseCoords -- this is the "main" interactive frame, which will be zoomed, panned, etc.
---       , case model.currentOperation of
---           Just (ModifyingGraph via { dest }) ->
---             case dest of
---               NoDestination ->
---                 g [] []
---               _ ->
---                 viewSvgTransitionChooser via model
---           Just (AlteringConnection via _) ->
---             viewSvgTransitionChooser via model
---           Just (Splitting { to_split, left, right }) ->
---             Graph.get to_split model.package.userGraph.graph
---             |> Maybe.map (\_ -> -- ignore node, we have all the info already
---               viewSvgTransitionSplitter left right model
---             )
---             |> Maybe.withDefault (g [] [])
---           Just (Executing _ _) ->
---             g [] [] -- no overlay needed. (but if I *DO* put in some overlay at some point, it'd go here!!)
---           Nothing ->
---             g [] []
---           Just (Dragging _) ->
---             g [] []
---       ,
---         let
---           bottomMsg message =
---             text_
---               [ Px.x 15
---               , Px.y <| height - 15
---               , fill <| Paint <| Color.black
---               , fontFamily ["sans-serif"]
---               , fontSize 14
---               , textAnchor AnchorStart
---               , alignmentBaseline AlignmentCentral
---               , dominantBaseline DominantBaselineCentral
---               , pointerEvents "none"
---               ]
---               [ text message ]
---         in
---         g
---           [ ]
---           [ --rect
---               -- [ x (Tuple.first model.dimensions - 121)
---               -- , y (Tuple.second model.dimensions - 30)
---               -- , Px.width 120
---               -- , Px.height 30
---               -- , stroke <| Paint <| Color.black
---               -- , strokeWidth 1
---               -- , Px.rx 5
---               -- , Px.ry 5
---               -- ]
---               -- []
---             text_
---               [ x <| width - 15
---               , y <| height - 15
---               , fill <| Paint <| Color.black
---               , fontFamily ["sans-serif"]
---               , fontSize 14
---               , textAnchor AnchorEnd
---               , alignmentBaseline AlignmentCentral
---               , dominantBaseline DominantBaselineCentral
---               , pointerEvents "none"
---               ]
---               [ text (" 🔍 " ++ String.fromInt (round <| model.zoom * 100) ++ "%") ]
---           , text_
---               [ x <| width - 90
---               , y <| height - 15
---               , fill <| Paint <| Color.black
---               , fontFamily ["sans-serif"]
---               , fontSize 14
---               , textAnchor AnchorEnd
---               , alignmentBaseline AlignmentCentral
---               , dominantBaseline DominantBaselineCentral
---               , pointerEvents "none"
---               ]
---               [ text (" 🧭 " ++ panToString model.pan) ]
---           , case model.currentOperation of
---               Just (ModifyingGraph _ { dest }) ->
---                 case dest of
---                   NoDestination ->
---                     bottomMsg "Press «Esc» to cancel link creation"
---                   ExistingNode _ ->
---                     bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
---                   NewNode _ ->
---                     bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
---               Just (AlteringConnection _ _) ->
---                 bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
---               Just (Splitting _) ->
---                 g [] []
---               Just (Executing _ _) ->
---                 bottomMsg "Executing computation."
---               Just (Dragging _) ->
---                 g [] []
---               Nothing ->
---                 case model.package.undoBuffer of
---                   [] ->
---                     g [] []
---                   _ ->
---                     bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
---           ]
---       ]
+viewGraph : GraphView -> Svg Msg
+viewGraph graphView =
+  let
+    ( width, height ) = graphView.dimensions
+    -- ( mouse_x, mouse_y ) = mouseCoords
+    -- permit_scroll : Svg Main_Msg
+    -- permit_scroll =
+    --   onMouseScroll
+    --     (\n ->
+    --       case model.currentOperation of
+    --         Just (ModifyingGraph (ChooseGraphReference _) _) ->
+    --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
+    --         Just (AlteringConnection (ChooseGraphReference _) _) ->
+    --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
+    --         _ ->
+    --           Zoom n
+    --     )
+    panBuffer = panBufferAmount graphView.dimensions
+    -- permit_pan : List (Svg GraphView_Msg)
+    -- permit_pan =
+    --   [ onMouseMove MouseMove
+    --   , cursor <|
+    --       -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
+    --       case ( 1 + round (xPanAt width panBuffer mouse_x), 1 + round (yPanAt height panBuffer mouse_y) ) of
+    --         ( 2, 2 ) -> CursorSEResize
+    --         ( 0, 2 ) -> CursorSWResize
+    --         ( 2, 0 ) -> CursorNEResize
+    --         ( 0, 0 ) -> CursorNWResize
+    --         ( 1, 2 ) -> CursorNResize
+    --         ( 0, 1 ) -> CursorWResize
+    --         ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
+    --         ( 2, 1 ) -> CursorEResize
+    --         _ -> CursorDefault
+    --   ]
+    -- permit_click : Svg GraphView_Msg
+    -- permit_click =
+    --   Mouse.onWithOptions
+    --     "mousedown"
+    --     { stopPropagation = True, preventDefault = True }
+    --     (\_ ->
+    --       case model.currentOperation of
+    --         Just (ModifyingGraph _ _) ->
+    --           case nearby_node nearby_node_lockOnDistance mouseCoords model of
+    --             Just node -> -- in this case, the UI would show it being "locked-on"
+    --               CreateOrUpdateLinkTo node.id
+    --             Nothing ->
+    --               CreateNewNodeAt mouseCoords
+    --         _ ->
+    --           Escape
+    --     )
+    -- permit_stopdrag : Svg GraphView_Msg
+    -- permit_stopdrag =
+    --   Mouse.onUp (\_ -> NodeDragEnd)
+    -- interactivity : List (Svg GraphView_Msg)
+    -- interactivity =
+      -- don't permit panning if:
+      -- 1. I'm splitting a node
+      -- 2. I'm editing a transition/connection
+      --
+      -- don't permit zooming under the same circumstances as above.
+      --
+      -- don't permit clicking if:
+      -- 1. I'm modifying the graph, and have already selected/created a node
+      --
+      -- but clicking has a default of Escape, so we can usually allow it.
+      -- CHECK THIS!
+      -- Usability: should a "mis-click" result in Escape??
+      -- Let's see.
+      -- case model.currentOperation of
+      --   Just (Splitting _) ->
+      --     [ permit_click ]
+      --   Just (AlteringConnection (ChooseGraphReference _) _) ->
+      --     [ permit_scroll ]
+      --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
+      --     [ permit_scroll ]
+      --   Just (ModifyingGraph _ { dest }) ->
+      --     case dest of
+      --       NewNode _ ->
+      --         []
+      --       ExistingNode _ ->
+      --         []
+      --       _ ->
+      --         permit_click :: permit_scroll :: permit_pan
+      --   Just (AlteringConnection _ _) ->
+      --     []
+      --   Just (Executing _ _) ->
+      --     permit_pan
+      --   Just (Dragging _) ->
+      --     -- must have permit_pan (for mouse-movement)
+      --     -- must have permit_stopdrag
+      --     -- ignore click (we only care about stop-drag right now)
+      --     permit_stopdrag :: permit_scroll :: permit_pan
+      --   Nothing ->
+      --     permit_click :: permit_scroll :: permit_pan
+  in
+    svg
+      ([ viewBox 0 0 width height
+      -- , Mouse.onOver (\_ -> SetMouseOver model.id True)
+      -- , Mouse.onOut (\_ -> SetMouseOver model.id False)
+      ] {- ++ interactivity -})
+      [ -- this stuff is in the background.
+        viewUndoRedoVisualisation graphView
+      , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
+      -- , case graphView.currentOperation of
+      --     Just (ModifyingGraph via { dest }) ->
+      --       case dest of
+      --         NoDestination ->
+      --           g [] []
+      --         _ ->
+      --           viewSvgTransitionChooser via graphView
+      --     Just (AlteringConnection via _) ->
+      --       viewSvgTransitionChooser via graphView
+      --     Just (Splitting { to_split, left, right }) ->
+      --       Graph.get to_split graphView.package.userGraph.graph
+      --       |> Maybe.map (\_ -> -- ignore node, we have all the info already
+      --         viewSvgTransitionSplitter left right graphView
+      --       )
+      --       |> Maybe.withDefault (g [] [])
+      --     Just (Executing _ _) ->
+      --       g [] [] -- no overlay needed. (but if I *DO* put in some overlay at some point, it'd go here!!)
+      --     Nothing ->
+      --       g [] []
+      --     Just (Dragging _) ->
+      --       g [] []
+      ,
+        let
+          bottomMsg message =
+            text_
+              [ Px.x 15
+              , Px.y <| height - 15
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorStart
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text message ]
+        in
+        g
+          [ ]
+          [ --rect
+              -- [ x (Tuple.first model.dimensions - 121)
+              -- , y (Tuple.second model.dimensions - 30)
+              -- , Px.width 120
+              -- , Px.height 30
+              -- , stroke <| Paint <| Color.black
+              -- , strokeWidth 1
+              -- , Px.rx 5
+              -- , Px.ry 5
+              -- ]
+              -- []
+            text_
+              [ x <| width - 15
+              , y <| height - 15
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorEnd
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
+          , text_
+              [ x <| width - 90
+              , y <| height - 15
+              , fill <| Paint <| Color.black
+              , fontFamily ["sans-serif"]
+              , fontSize 14
+              , textAnchor AnchorEnd
+              , alignmentBaseline AlignmentCentral
+              , dominantBaseline DominantBaselineCentral
+              , pointerEvents "none"
+              ]
+              [ text (" 🧭 " ++ panToString graphView.pan) ]
+          -- , case graphView.currentOperation of
+          --     Just (ModifyingGraph _ { dest }) ->
+          --       case dest of
+          --         NoDestination ->
+          --           bottomMsg "Press «Esc» to cancel link creation"
+          --         ExistingNode _ ->
+          --           bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
+          --         NewNode _ ->
+          --           bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+          --     Just (AlteringConnection _ _) ->
+          --       bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+          --     Just (Splitting _) ->
+          --       g [] []
+          --     Just (Executing _ _) ->
+          --       bottomMsg "Executing computation."
+          --     Just (Dragging _) ->
+          --       g [] []
+          --     Nothing ->
+          --       case graphView.package.undoBuffer of
+          --         [] ->
+          --           g [] []
+          --         _ ->
+          --           bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
+          ]
+      ]
 
 -- onMouseScroll : (Float -> msg) -> Html.Attribute msg
 -- onMouseScroll msg =
