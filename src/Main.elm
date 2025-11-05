@@ -240,15 +240,21 @@ init flags =
       , toolsPanelHeight =
           { min = 80
           , max = decoded.height / 2 - 40
-          , initial = clamp 80 (decoded.height / 2 - 40) 300
+          , initial = clamp 80 (decoded.height / 2 - 40) 200
           }
       }
     state : UIState
     state =
       { dimensions =
           { sideBar = ( constants.sideBarWidth.initial, decoded.height )
-          , bottomPanel = ( decoded.width - constants.sideBarWidth.initial, 200 )
-          , mainEditor = ( decoded.width - constants.sideBarWidth.initial, decoded.height - 200 )
+          , bottomPanel =
+              ( decoded.width - constants.sideBarWidth.initial
+              , constants.toolsPanelHeight.initial
+              )
+          , mainEditor =
+              ( decoded.width - constants.sideBarWidth.initial - 8
+              , decoded.height - constants.toolsPanelHeight.initial - 8
+              )
           , viewport = ( decoded.width, decoded.height )
           }
       , open =
