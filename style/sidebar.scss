@@ -1,0 +1,86 @@
+@use './theme';
+
+// VS Code-style Layout Structure
+.sidebar-container {
+  display: flex;
+  height: 100vh;
+  background-color: var(--background);
+  position: relative;
+  z-index: 4;
+}
+
+.navigation-bar {
+  width: 48px; // VS Code's exact width
+  background-color: var(--background);
+  border-right: 1px solid var(--comment);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0px 0;
+}
+
+.sidebar {
+  // width: 300px; // Adjustable width, set in code.
+  background-color: var(--background-darker);
+  display: flex;
+  flex-direction: column;
+  transition: width 0s;
+  // This would be hidden/collapsed when sidebar is closed
+}
+
+// Left-bar icons that open "Navigators"
+.navigation-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--comment);
+  border: none;
+  background: none;
+  margin: 4px 0;
+  border-radius: 4px;
+  position: relative;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  
+  &:not(.active):hover {
+    color: var(--foreground);
+    background-color: var(--purple); // Use one of Dracula's accent colors
+    font-size: 120%;
+    // transform: scale(1.05); // Subtle "pop" effect
+  }
+  
+  &.active {
+    color: var(--foreground);
+    background-color: var(--background-lighter);
+    border-radius: 0;
+    font-size: 130%;
+    
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 42px;
+      background-color: var(--purple);
+      border-radius: 0 2px 2px 0;
+    }
+  }
+}
+
+// Sidebar content areas
+.sidebar-content {
+  flex: 1;
+  padding: 10px;
+  
+  &.explorer-view {
+    // File tree specific styles
+  }
+  
+  &.search-view {
+    // Search interface styles  
+  }
+}
