@@ -404,151 +404,135 @@ connectionToSvgTextHighlightingChars conn highlightFunction =
 --   | New Cardinality -- user has clicked, but entirety isn't approved yet.
 --                     -- When it is approved, we'll see it under Confirmed.
 
--- linkExistsInGraph : Model -> NodeId -> NodeId -> Bool
--- linkExistsInGraph model from to =
---   -- does a link exist from `from` to `to`?
---   Graph.get from model.package.userGraph.graph
---   |> Maybe.map (.outgoing >> IntDict.member to)
---   |> Maybe.withDefault False
-
--- identifyCardinality : Model -> Edge Connection -> Cardinality
--- identifyCardinality model { to, from } =
---   if to == from then
---     Recursive
---   else if linkExistsInGraph model to from then
---     Bidirectional
---   else
---     Unidirectional
-
--- path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
--- path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
---   {- we're doing a curved line, using a quadratic path.
---       So, let's make a triangle. The two points at the "base" are the
---       start and end of the connection ("source" and "target").  Now,
---       take two lines at an angle Θ from both sides, and where they
---       meet is our control point.  We can then adjust the angle "up" and
---       "down" until we are satisfied with the look.
+path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
+path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
+  {- we're doing a curved line, using a quadratic path.
+      So, let's make a triangle. The two points at the "base" are the
+      start and end of the connection ("source" and "target").  Now,
+      take two lines at an angle Θ from both sides, and where they
+      meet is our control point.  We can then adjust the angle "up" and
+      "down" until we are satisfied with the look.
       
---       Of course, because the angles are equal, the length of the lines is
---       also equal.  So another equivalent way of going about it is by getting
---       the midpoint and then pushing a line "up", orthogonal to that midpoint,
---       and saying that this is the control point.  As the length of the line
---       increases, the angle increases too.
---   --}
---   let
---     sourceXY =
---       case cardinality of
---         Recursive ->
---           { x = sourceXY_orig.x - nodeRadius
---           , y = sourceXY_orig.y
---           }
---         _ ->
---           { x = sourceXY_orig.x, y = sourceXY_orig.y }
---     destXY =
---       case cardinality of
---         Recursive ->
---           { x = sourceXY_orig.x + nodeRadius
---           , y = sourceXY_orig.y
---           }
---         _ ->
---           { x = destXY_orig.x, y = destXY_orig.y }
---     d_y = sourceXY.y - destXY.y
---     d_x = sourceXY.x - destXY.x
---     orig_line_len = sqrt (d_x * d_x + d_y * d_y)
---     curvature =
---       case cardinality of
---         Bidirectional ->
---           1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
---         Unidirectional ->
---           0
---         Recursive ->
---           e
---     orthogonal_len =
---       curvature * orig_line_len
---     orthogonal_vector =
---       -- normalised
---       { x = (destXY.y - sourceXY.y) / orig_line_len
---       , y = (destXY.x - sourceXY.x) / orig_line_len
---       }
---     parametric_direction_vector =
---       -- normalised
---       { y = (destXY.y - sourceXY.y) / orig_line_len
---       , x = (destXY.x - sourceXY.x) / orig_line_len
---       }
---     half_len = orig_line_len / 2
---     midPoint =
---       -- I can do this early because the midpoint should remain the midpoint,
---       -- no matter how I place the actual targets
---       { x = destXY.x - half_len * parametric_direction_vector.x
---       , y = destXY.y - half_len * parametric_direction_vector.y
---       }
---     -- with the midpoint, I can work out the control points.
---     control_point =
---       { x = midPoint.x + orthogonal_len * orthogonal_vector.x
---       , y = midPoint.y - orthogonal_len * orthogonal_vector.y
---       }
---     hypotenuse_len =
---       sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
---     -- now, with the control point, I can make the source & target hypotenuse vectors
---     source_hypotenuse_vector =
---       -- normalised
---       { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
---       , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
---       }
---     dest_hypotenuse_vector =
---       { x = -( control_point.x - destXY.x ) / hypotenuse_len
---       , y = -( control_point.y - destXY.y ) / hypotenuse_len
---       }
---     shorten_source =
---       { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
---       , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
---       }
---     shorten_target =
---       -- the extra addition is for the stroke-width (which is 3px)
---       { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
---       , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
---       }
---     line_len =
---       let
---         dx = shorten_target.x - shorten_source.x
---         dy = shorten_target.y - shorten_source.y
---       in
---         sqrt (dx * dx + dy * dy)
---     -- control_point =
---     --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
---     --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
---     --   }
---     linePath =
---       case cardinality of
---         Recursive ->
---           "M " ++ String.fromFloat (shorten_source.x)
---           ++ " " ++ String.fromFloat (shorten_source.y)
---           ++ " c -14,-14 28,-14 " ++ String.fromFloat (nodeRadius * 2) ++ ",0"
---           --      ^    ^  ^   ^
---           --      a    b  c   d
---           -- to "raise" it, increase the numerical values of b and d (e.g. to -25 and -25).
---           -- to "widen" it, increase the numerical values of a and c (e.g. to -21 and 35).
---           -- increase/decrease numbers by the same amount to maintain symmetry.
---           -- the last two numbers give the offset for the destination.
---         _ ->
---           "M " ++ String.fromFloat (shorten_source.x)
---           ++ " " ++ String.fromFloat (shorten_source.y)
---           ++ " Q " ++ String.fromFloat control_point.x
---           ++ " " ++ String.fromFloat control_point.y
---           ++ " " ++ String.fromFloat (shorten_target.x)
---           ++ " " ++ String.fromFloat (shorten_target.y)
---     transition_coordinates =
---       { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
---       , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
---       }
---   in
---     { pathString = linePath
---     , transition_coordinates = transition_coordinates
---     , length = line_len
---     , control_point = control_point
---     , source_connection_point = shorten_source
---     , target_connection_point = shorten_target
---     }
+      Of course, because the angles are equal, the length of the lines is
+      also equal.  So another equivalent way of going about it is by getting
+      the midpoint and then pushing a line "up", orthogonal to that midpoint,
+      and saying that this is the control point.  As the length of the line
+      increases, the angle increases too.
+  --}
+  let
+    sourceXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x - nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = sourceXY_orig.x, y = sourceXY_orig.y }
+    destXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x + nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = destXY_orig.x, y = destXY_orig.y }
+    d_y = sourceXY.y - destXY.y
+    d_x = sourceXY.x - destXY.x
+    orig_line_len = sqrt (d_x * d_x + d_y * d_y)
+    curvature =
+      case cardinality of
+        Bidirectional ->
+          1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
+        Unidirectional ->
+          0
+        Recursive ->
+          e
+    orthogonal_len =
+      curvature * orig_line_len
+    orthogonal_vector =
+      -- normalised
+      { x = (destXY.y - sourceXY.y) / orig_line_len
+      , y = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    parametric_direction_vector =
+      -- normalised
+      { y = (destXY.y - sourceXY.y) / orig_line_len
+      , x = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    half_len = orig_line_len / 2
+    midPoint =
+      -- I can do this early because the midpoint should remain the midpoint,
+      -- no matter how I place the actual targets
+      { x = destXY.x - half_len * parametric_direction_vector.x
+      , y = destXY.y - half_len * parametric_direction_vector.y
+      }
+    -- with the midpoint, I can work out the control points.
+    control_point =
+      { x = midPoint.x + orthogonal_len * orthogonal_vector.x
+      , y = midPoint.y - orthogonal_len * orthogonal_vector.y
+      }
+    hypotenuse_len =
+      sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
+    -- now, with the control point, I can make the source & target hypotenuse vectors
+    source_hypotenuse_vector =
+      -- normalised
+      { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
+      , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
+      }
+    dest_hypotenuse_vector =
+      { x = -( control_point.x - destXY.x ) / hypotenuse_len
+      , y = -( control_point.y - destXY.y ) / hypotenuse_len
+      }
+    shorten_source =
+      { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
+      , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
+      }
+    shorten_target =
+      -- the extra addition is for the stroke-width (which is 3px)
+      { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
+      , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
+      }
+    line_len =
+      let
+        dx = shorten_target.x - shorten_source.x
+        dy = shorten_target.y - shorten_source.y
+      in
+        sqrt (dx * dx + dy * dy)
+    -- control_point =
+    --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
+    --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
+    --   }
+    linePath =
+      case cardinality of
+        Recursive ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " c -14,-14 28,-14 " ++ String.fromFloat (nodeRadius * 2) ++ ",0"
+          --      ^    ^  ^   ^
+          --      a    b  c   d
+          -- to "raise" it, increase the numerical values of b and d (e.g. to -25 and -25).
+          -- to "widen" it, increase the numerical values of a and c (e.g. to -21 and 35).
+          -- increase/decrease numbers by the same amount to maintain symmetry.
+          -- the last two numbers give the offset for the destination.
+        _ ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " Q " ++ String.fromFloat control_point.x
+          ++ " " ++ String.fromFloat control_point.y
+          ++ " " ++ String.fromFloat (shorten_target.x)
+          ++ " " ++ String.fromFloat (shorten_target.y)
+    transition_coordinates =
+      { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
+      , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
+      }
+  in
+    { pathString = linePath
+    , transition_coordinates = transition_coordinates
+    , length = line_len
+    , control_point = control_point
+    , source_connection_point = shorten_source
+    , target_connection_point = shorten_target
+    }
 
 executionData : ExecutionResult -> Maybe ExecutionData
 executionData r =
@@ -662,7 +646,7 @@ viewLink (from, to) drawing_data =
             [ "link" ]
       in
         g
-          []
+          [ ]
           [
             path
               [ d drawing_data.pathBetween.pathString
@@ -684,7 +668,7 @@ viewLink (from, to) drawing_data =
               , textAnchor AnchorMiddle
               , alignmentBaseline AlignmentCentral
               , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              , class [ "link" ]
+              , class [ "link", "text" ]
               -- , onClick (EditTransition edge.from edge.to edge.label)
               ]
               ( title [] [ text "Click to modify" ] :: labelText 
@@ -1086,8 +1070,6 @@ arrowheadMarker =
     , orient "auto-start-reverse"
     , markerWidth 5
     , markerHeight 5
-    , class [ "arrowhead" ]
-      --fill <| Paint <| paletteColors.edge
     ]
     [ path
         [ d "M 0 0 L 10 5 L 0 10 z" ]

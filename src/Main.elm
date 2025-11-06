@@ -43,6 +43,7 @@ import UserInterface exposing (..)
 import GraphEditor
 import Dict exposing (Dict)
 import Jsonify exposing (..)
+import Graph exposing (Graph)
 
 {-
 Quality / technology requirements:
@@ -77,7 +78,7 @@ getUuid model =
     ( v, updatedModel )
 
 nodeDrawingForPackage : GraphPackage -> Uuid -> Model -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package graphView_uuid model =
+nodeDrawingForPackage package graphView_uuid {currentOperation} =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -102,7 +103,7 @@ nodeDrawingForPackage package graphView_uuid model =
         in
           ( node.id
           , { exclusiveAttributes =
-                case model.currentOperation of
+                case currentOperation of
                   Just (Dragging (DragNode gv_uuid node_id)) ->
                     maybe_fromBool
                       (gv_uuid == graphView_uuid && node.id == node_id)
@@ -131,7 +132,7 @@ nodeDrawingForPackage package graphView_uuid model =
                     Maybe.map isSplittable nodeContext
                     |> Maybe.withDefault False
                 , canSelect =
-                    case model.currentOperation of
+                    case currentOperation of
                       Just (ModifyConnection (CreatingNewNode _ _)) ->
                         True
                       Nothing ->
@@ -143,6 +144,56 @@ nodeDrawingForPackage package graphView_uuid model =
           )
       )
     |> Dict.fromList
+
+linkDrawingForPackage : GraphPackage -> Dict (NodeId, NodeId) LinkDrawingData
+linkDrawingForPackage package =
+  Graph.edges package.userGraph.graph
+  |> List.filterMap
+      (\edge ->
+        Maybe.map2
+          (\f t -> { sourceNode = f, destNode = t, label = edge.label })
+          (Graph.get edge.from package.userGraph.graph)
+          (Graph.get edge.to package.userGraph.graph)
+      )
+  |> List.map
+      (\{sourceNode, destNode, label} ->
+        let
+          linkExistsInGraph : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Bool
+          linkExistsInGraph from to =
+            -- does a link exist from `from` to `to`?
+            IntDict.member to.node.id from.outgoing
+
+          identifyCardinality : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Cardinality
+          identifyCardinality to from =
+            if to.node.id == from.node.id then
+              Recursive
+            else if linkExistsInGraph to from then
+              Bidirectional
+            else
+              Unidirectional
+          cardinality : Cardinality
+          cardinality =
+            identifyCardinality sourceNode destNode
+        in
+          ( (sourceNode.node.id, destNode.node.id)
+          , { cardinality = cardinality
+            , executionData =
+                { executed = False
+                , smallest_recency = -1
+                , chosen = AutoDict.empty acceptConditionToString
+                }
+            , label = label
+            , pathBetween =
+                GraphEditor.path_between
+                  sourceNode.node.label
+                  destNode.node.label
+                  cardinality
+                  7 9
+            }
+          )
+    )
+  |> Dict.fromList
+  
 
 {-| Creates a new GraphView from a GraphPackage within the `packages`
     dictionary, and adds it to the `graph_views` dictionary in the `Model`.
@@ -176,7 +227,7 @@ viewFromPackage (w, h) package_uuid model =
                 , tickCount = 0
                 }
             , drawingData =
-                { link_drawing = Dict.empty
+                { link_drawing = linkDrawingForPackage pkg
                 , node_drawing = nodeDrawingForPackage pkg id model
                 }
             }

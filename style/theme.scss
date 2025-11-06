@@ -2,6 +2,13 @@
 // ========================================
 
 // Theme Definitions
+
+$font-family-system: -apple-system, BlinkMacSystemFont, 
+                     'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+                     'Open Sans', 'Helvetica Neue', sans-serif;
+$font-family-monospace: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', 
+                     Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+
 :root, [data-theme="dracula"] {
   // Dracula Theme
   --background: #282a36;
@@ -9,6 +16,7 @@
   --foreground: #f8f8f2;
   --comment: #6272a4;
   --cyan: #8be9fd;
+  --cyan-light: lighten(#8be9fd, 10%);
   --green: #50fa7b;
   --orange: #ffb86c;
   --pink: #ff79c6;
@@ -29,6 +37,7 @@
   --foreground: #e6e6e6;
   --comment: #5a5e7a;
   --cyan: #78c9d4;
+  --cyan-light: lighten(#78c9d4, 10%);
   --green: #45d869;
   --orange: #e6a861;
   --pink: #e66ab3;
@@ -59,4 +68,80 @@ html, body {
   line-height: 1.4;
   overflow: hidden;
   transition: background-color 0.3s ease, color 0.3s ease; // Smooth theme switching
+}
+
+
+// Typography Hierarchy
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 0.5em;
+}
+
+h1 { font-size: 1.6em; color: var(--pink); }
+h2 { font-size: 1.4em; color: var(--purple); }
+h3 { font-size: 1.2em; color: var(--cyan); }
+h4 { font-size: 1.1em; color: var(--green); }
+h5 { font-size: 1em; color: var(--yellow); }
+h6 { font-size: 0.9em; color: var(--orange); }
+
+// Text Elements
+p {
+  margin-bottom: 1em;
+}
+
+a {
+  color: var(--cyan);
+  text-decoration: none;
+  
+  &:hover {
+    color: var(--cyan-light);
+    text-decoration: underline;
+  }
+}
+
+code, pre {
+  font-family: $font-family-monospace;
+  font-size: 0.9em;
+}
+
+code {
+  background-color: var(--current-line);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  color: var(--yellow);
+}
+
+pre {
+  background-color: var(--current-line);
+  padding: 1em;
+  border-radius: 5px;
+  overflow-x: auto;
+  margin: 1em 0;
+  
+  code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: var(--foreground);
+  }
+}
+
+// Utility Classes
+.text-muted {
+  color: var(--comment);
+}
+
+.text-success { color: var(--green); }
+.text-warning { color: var(--yellow); }
+.text-error { color: var(--red); }
+.text-info { color: var(--cyan); }
+
+// Selection
+::selection {
+  background-color: rgba(var(--purple), 0.3);
+}
+
+::-moz-selection {
+  background-color: rgba(var(--purple), 0.3);
 }
