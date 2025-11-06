@@ -789,12 +789,13 @@ viewNode id data =
   let
     nodeClass =
       classList
-        [ ("node", True)
+        [ ("graph-node", True)
         , ("selected", data.exclusiveAttributes == Just DrawSelected)
-        , ("current-node", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
+        , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
         , ("phantom", data.exclusiveAttributes == Just DrawPhantom)
         , ("disconnected", data.isDisconnected)
         , ("start", data.isRoot)
+        , ("terminal", data.isTerminal)
         ]
 
     titleText =
@@ -826,9 +827,9 @@ viewNode id data =
       -- ::interactivity
       ]
       [ circle
-          [ r nodeRadius
-          , strokeWidth 2
-          , cx node_x
+          [ --r nodeRadius
+          --, strokeWidth 2
+            cx node_x
           , cy node_y
           , class nodeClass
           ]
