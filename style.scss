@@ -316,6 +316,7 @@ rect.redo {
     stroke-linecap: round;
     stroke-linejoin: round;
     opacity: 0.8;
+    // pointer-events: none; // NEW
   }
   
   // The main visible path
@@ -325,109 +326,94 @@ rect.redo {
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: all 0.2s ease;
-    
     // Arrowhead styling
     marker-end: url(#arrowhead);
+    // pointer-events: none; // NEW
   }
-  
+
   // Hover state for entire edge
-  &:hover {
-    &:not(.background) {
-      stroke: var(--cyan);
+  // &:hover {
+  //   &:not(.background) {
+  //     stroke: var(--cyan);
+  //     stroke-width: 3px;
+  //     filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
+  //   }
+    
+  //   // Make the background path slightly wider on hover for better contrast
+  //   &.background {
+  //     stroke-width: 8px;
+  //   }
+  // }
+
+  // Edge label styling
+  &.text {
+    fill: var(--foreground);
+    font-family: theme.$font-family-system;
+    font-size: 16px; // larger for better click target
+    font-weight: 500; // NEW
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: all;
+    user-select: none;
+    
+    // Background for better readability
+    paint-order: stroke fill markers;
+    stroke: var(--background);
+    stroke-width: 6px; // MUCH thicker for better click-target
+    stroke-linecap: round;
+    stroke-linejoin: round;
+
+    cursor: pointer; // NEW
+    // transition: all 0.2s ease; // NEW
+
+    .link.current & {
+      fill: var(--pink);
+      font-weight: 600;
+      animation: text-pulse 1s ease-in-out infinite;
+    }
+
+    &:hover {
+      // stroke: var(--cyan);
       stroke-width: 3px;
       filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
-    }
-    
-    // Make the background path slightly wider on hover for better contrast
-    &.background {
-      stroke-width: 8px;
+      fill: var(--cyan);
+      // font-weight: 600;
+      font-size: 24px; // grow on hover, better target
+      // stroke-width: 8px; // same
+
+      ~ * { // .link:not(.background) {
+        stroke:var(--cyan);
+        stroke-width: 3px;
+      }
     }
   }
 }
 
-// Special edge states
-.link {
-  // Highlighted edge (for traversal, selection, etc.)
-  &.highlighted {
-    &:not(.background) {
-      stroke: var(--purple);
-      stroke-width: 3px;
-      filter: drop-shadow(0 0 3px rgba(189, 147, 249, 0.5));
-      
-      // Optional: animation for active traversal
-      animation: edge-pulse 1.5s ease-in-out infinite;
-    }
-    
-    &.background {
-      stroke-width: 8px;
-      stroke: var(--background);
-    }
-  }
-  
-  // Current edge (the one being traversed right now)
-  &.current {
-    &:not(.background) {
-      stroke: var(--pink);
-      stroke-width: 4px;
-      filter: drop-shadow(0 0 4px rgba(255, 121, 198, 0.6));
-      animation: current-edge-pulse 1s ease-in-out infinite;
-    }
-    
-    &.background {
-      stroke-width: 10px;
-    }
-  }
-  
-  // Disabled or inactive edges
-  &.inactive {
-    &:not(.background) {
-      stroke: var(--comment);
-      stroke-width: 1px;
-      opacity: 0.4;
-      marker-end: none; // Remove arrowheads for inactive edges
-    }
-    
-    &.background {
-      stroke-width: 4px;
-      opacity: 0.3;
-    }
-  }
+.link-group:has(.link.text:hover) path:not(.background) {
+  stroke: var(--cyan);
+  marker-end: url(#hover-arrowhead);
 }
 
-// Edge label styling
-.link.text {
-  fill: var(--foreground);
-  font-family: theme.$font-family-monospace;
-  font-size: 11px;
-  text-anchor: middle;
-  dominant-baseline: central;
-  pointer-events: none;
-  user-select: none;
+// Group hover state - simplified
+// .link-group:hover {
+//   .link:not(.background):not(text) {
+//     stroke: var(--pink);
+//     stroke-width: 3px;
+
+//     & #arrowhead {
+//       fill: var(--pink);
+//     }
+//   }
   
-  // Background for better readability
-  paint-order: stroke;
-  stroke: var(--background);
-  stroke-width: 3px;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+//   // .link.background {
+//   //   stroke-width: 8px;
+//   // }
   
-  // Special states for labels
-  .link.highlighted & {
-    fill: var(--purple);
-    font-weight: 600;
-  }
-  
-  .link.current & {
-    fill: var(--pink);
-    font-weight: 600;
-    animation: text-pulse 1s ease-in-out infinite;
-  }
-  
-  .link.inactive & {
-    fill: var(--comment);
-    opacity: 0.5;
-  }
-}
+//   .link.text {
+//     // fill: var(--cyan);
+//     font-weight: 600;
+//   }
+// }
 
 // Animations
 @keyframes edge-pulse {
@@ -466,21 +452,8 @@ rect.redo {
 #arrowhead {
   fill: var(--comment);
   stroke: none;
-  
-  .link:hover & {
-    fill: var(--cyan);
-  }
-  
-  .link.highlighted & {
-    fill: var(--purple);
-  }
-  
-  .link.current & {
-    fill: var(--pink);
-  }
-  
-  .link.inactive & {
-    fill: var(--comment);
-    opacity: 0.4;
-  }
+}
+
+#hover-arrowhead {
+  fill: var(--cyan);
 }

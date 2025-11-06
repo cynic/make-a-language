@@ -164,7 +164,7 @@ linkDrawingForPackage package =
             IntDict.member to.node.id from.outgoing
 
           identifyCardinality : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Cardinality
-          identifyCardinality to from =
+          identifyCardinality from to =
             if to.node.id == from.node.id then
               Recursive
             else if linkExistsInGraph to from then
@@ -188,7 +188,7 @@ linkDrawingForPackage package =
                   sourceNode.node.label
                   destNode.node.label
                   cardinality
-                  7 9
+                  7 5
             }
           )
     )

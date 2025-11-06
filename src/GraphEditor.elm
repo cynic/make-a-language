@@ -646,11 +646,11 @@ viewLink (from, to) drawing_data =
             [ "link" ]
       in
         g
-          [ ]
+          [ class [ "link-group" ] ]
           [
             path
               [ d drawing_data.pathBetween.pathString
-              , noFill
+              -- , noFill
               , class [ "link", "background" ]
               ]
               [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
@@ -662,12 +662,7 @@ viewLink (from, to) drawing_data =
           , text_
               [ x <| drawing_data.pathBetween.transition_coordinates.x
               , y <| drawing_data.pathBetween.transition_coordinates.y
-              , fontFamily ["sans-serif"]
-              , fontSize font_size
-              , fontWeight FontWeightNormal
-              , textAnchor AnchorMiddle
-              , alignmentBaseline AlignmentCentral
-              , Html.Attributes.attribute "paint-order" "stroke fill markers"
+              -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , class [ "link", "text" ]
               -- , onClick (EditTransition edge.from edge.to edge.label)
               ]
@@ -721,24 +716,6 @@ nodeRadius = 7
 
 viewNode : NodeId -> NodeDrawingData -> Svg Msg
 viewNode id data =
-    -- splittable =
-    --   Maybe.map
-    --     (\node ->
-    --       let
-    --         nonRecursive = IntDict.filter (\k _ -> k /= id) node.incoming
-    --       in
-    --       IntDict.size nonRecursive > 1 ||
-    --       ( IntDict.findMin nonRecursive
-    --         |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
-    --         |> Maybe.withDefault False
-    --       )
-    --     )
-    --     graphNode
-    --   |> Maybe.withDefault False
-    -- thisNodeIsTerminal =
-    --   Maybe.map (isTerminalNode) graphNode
-    --   |> Maybe.withDefault False
-
     -- permit_node_reselection =
     --   Mouse.onWithOptions
     --     "mousedown"
@@ -1060,10 +1037,10 @@ viewNode id data =
 --       _ ->
 --         g [] []
 
-arrowheadMarker : Svg msg
-arrowheadMarker =
+mkArrowhead : String -> List (TypedSvg.Core.Attribute msg) -> Svg msg
+mkArrowhead id_ attrs =
   marker
-    [ id "arrowhead"
+    [ id id_
     , viewBox 0 0 10 10
     , refX "0"
     , refY "5"
@@ -1072,31 +1049,24 @@ arrowheadMarker =
     , markerHeight 5
     ]
     [ path
-        [ d "M 0 0 L 10 5 L 0 10 z" ]
-        []
+      [ d "M 0 0 L 10 5 L 0 10 z" ]
+      []
     ]
+
+arrowheadMarker : Svg msg
+arrowheadMarker =
+  mkArrowhead "arrowhead" []
 
 phantomArrowheadMarker : Svg msg
 phantomArrowheadMarker =
-  marker
-    [ id "phantom-arrowhead"
-    , viewBox 0 0 10 10
-    , refX "0"
-    , refY "5"
-    , orient "auto-start-reverse"
-    , markerWidth 5
-    , markerHeight 5
-    , strokeWidth 1.5
-    , strokeDasharray "1.5 2"
-    , strokeLinecap StrokeLinecapRound
-    , class [ "phantom-arrowhead" ]
-      -- stroke <| Paint <| Color.rgb255 102 102 102
-      -- , noFill
-    ]
-    [ path
-        [ d "M 0 0 L 10 5 L 0 10 z" ]
-        []
-    ]
+  mkArrowhead "phantom-arrowhead" []
+    --strokeWidth 1.5
+    -- , strokeDasharray "1.5 2"
+    -- , strokeLinecap StrokeLinecapRound
+
+hoverArrowheadMarker : Svg msg
+hoverArrowheadMarker =
+  mkArrowhead "hover-arrowhead" []
 
 -- transition_buttonSize : Float
 -- transition_buttonSize = 55
@@ -1760,10 +1730,10 @@ viewMainSvgContent graph_view =
     --     _ ->
     --       class []
     ]
-    [ defs [] [ arrowheadMarker, phantomArrowheadMarker ]
+    [ defs [] [ arrowheadMarker, phantomArrowheadMarker, hoverArrowheadMarker ]
     , Dict.toList graph_view.drawingData.link_drawing
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
-      |> g [ class [ "links" ] ]
+      |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
       |> List.map (\(nodeId, data) -> viewNode nodeId data)
       |> g [ class [ "nodes" ] ]
