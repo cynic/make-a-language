@@ -33,7 +33,7 @@ import Basics.Extra as Basics
 import Automata.Debugging
 import IntDict
 import Set
-import Graph
+import Graph exposing (NodeId)
 import Force
 import Automata.Debugging exposing (debugAutomatonGraph)
 import Svg.Styled exposing (svg)
@@ -41,7 +41,7 @@ import Svg.Styled.Attributes
 import Automata.Debugging exposing (println)
 import UserInterface exposing (..)
 import GraphEditor
-import Dict
+import Dict exposing (Dict)
 import Jsonify exposing (..)
 
 {-
@@ -76,6 +76,74 @@ getUuid model =
   in
     ( v, updatedModel )
 
+nodeDrawingForPackage : GraphPackage -> Uuid -> Model -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage package graphView_uuid model =
+  let
+    disconnectedNodes =
+      GraphEditor.identifyDisconnectedNodes package.userGraph
+    isSplittable : Graph.NodeContext Entity Connection -> Bool
+    isSplittable graphNode =
+      let
+        nonRecursive =
+          IntDict.filter (\k _ -> k /= graphNode.node.id) graphNode.incoming
+      in
+      IntDict.size nonRecursive > 1 ||
+      ( IntDict.findMin nonRecursive
+        |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
+        |> Maybe.withDefault False
+      )
+  in
+    Graph.nodes package.userGraph.graph
+    |> List.map
+      (\node ->
+        let
+          nodeContext =
+            Graph.get node.id package.userGraph.graph
+        in
+          ( node.id
+          , { exclusiveAttributes =
+                case model.currentOperation of
+                  Just (Dragging (DragNode gv_uuid node_id)) ->
+                    maybe_fromBool
+                      (gv_uuid == graphView_uuid && node.id == node_id)
+                      DrawSelected
+                  Just (Executing _ result) ->
+                    maybe_fromBool
+                      ( GraphEditor.executionData result
+                        |> Maybe.map (.currentNode >> (==) node.id)
+                        |> Maybe.withDefault False
+                      )
+                      DrawCurrentExecutionNode
+                  Just (ModifyConnection (CreatingNewNode {dest} _)) ->
+                    maybe_fromBool
+                      (node.id == dest)
+                      DrawPhantom
+                  _ ->
+                    Nothing
+            , isDisconnected = Set.member node.id disconnectedNodes
+            , isTerminal =
+                Maybe.map isTerminalNode nodeContext
+                |> Maybe.withDefault False
+            , coordinates = ( node.label.x, node.label.y )
+            , isRoot = node.id == package.userGraph.root
+            , interactivity =
+                { canSplit =
+                    Maybe.map isSplittable nodeContext
+                    |> Maybe.withDefault False
+                , canSelect =
+                    case model.currentOperation of
+                      Just (ModifyConnection (CreatingNewNode _ _)) ->
+                        True
+                      Nothing ->
+                        True
+                      _ ->
+                        False
+                }
+            }
+          )
+      )
+    |> Dict.fromList
+
 {-| Creates a new GraphView from a GraphPackage within the `packages`
     dictionary, and adds it to the `graph_views` dictionary in the `Model`.
 
@@ -109,7 +177,7 @@ viewFromPackage (w, h) package_uuid model =
                 }
             , drawingData =
                 { link_drawing = Dict.empty
-                , node_drawing = Dict.empty
+                , node_drawing = nodeDrawingForPackage pkg id model
                 }
             }
         in

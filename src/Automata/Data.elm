@@ -27,7 +27,6 @@ type ExecutionStage
   | ExecutionComplete
   | StepThrough
 
-
 type alias Flags =
   { width : Float
   , height : Float
@@ -193,21 +192,26 @@ type AreaUITarget
 type ConnectionEditing
 {-
   We can:
-  1. Create a new node, then…
-  2. Toggle selected transitions
-  3. CONFIRM or CANCEL
+  (A) 1. Create a new node, then…
+      2. Toggle selected transitions
+      3. CONFIRM or CANCEL
   
   OR
 
-  1. Create a link to an existing node
-  2. Toggle selected transitions
-  3. CONFIRM or CANCEL
+  (B) 1. Create a link to an existing node
+      2. Toggle selected transitions
+      3. CONFIRM or CANCEL
 
   OR
 
-  1. Edit an existing link
-  2. Toggle selected transitions
-  3. CONFIRM or CANCEL
+  (C) 1. Edit an existing link
+      2. Toggle selected transitions
+      3. CONFIRM or CANCEL
+
+  Now, if one starts with (A.1), and then
+  selects an EXISTING node—rather than
+  clicking on empty space—then one will end
+  up in (C.1) or (B.1), depending.
 -}
   = CreatingNewNode ConnectionAlteration ( Float, Float )
   | CreateNewLink ConnectionAlteration -- this is for an already-existing node.
@@ -265,15 +269,18 @@ type alias LinkDrawingData =
 type ExclusiveNodeAttributes
   = DrawSelected
   | DrawCurrentExecutionNode
-  | DrawDisconnected
   | DrawPhantom
 
 type alias NodeDrawingData =
-  { exclusiveAttributes : ExclusiveNodeAttributes
-  , isSplittable : Bool
+  { exclusiveAttributes : Maybe ExclusiveNodeAttributes
   , isTerminal : Bool
+  , isDisconnected : Bool
   , coordinates : (Float, Float)
   , isRoot : Bool
+  , interactivity :
+      { canSplit : Bool
+      , canSelect : Bool
+      }
   }
 
 type alias DrawingData =
@@ -599,6 +606,10 @@ isTerminalNode node =
     False
     (node.incoming)
   )
+
+maybe_fromBool : Bool -> a -> Maybe a
+maybe_fromBool b v =
+  if b then Just v else Nothing
 
 classList : List (String, Bool) -> List String
 classList =

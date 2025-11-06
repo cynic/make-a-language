@@ -190,24 +190,24 @@ updateGraphWithList =
 --   else
 --     0
 
--- identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
--- identifyDisconnectedNodes g =
---   Graph.mapContexts
---     (\ctx ->
---       { ctx
---         | incoming = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.incoming
---         , outgoing = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.outgoing
---       }
---     )
---     g.graph
---   |> Graph.guidedDfs
---     Graph.alongOutgoingEdges
---     (\_ acc -> (acc, identity))
---     [g.root]
---     ()
---   |> Tuple.second
---   |> Graph.nodeIds
---   |> Set.fromList
+identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
+identifyDisconnectedNodes g =
+  Graph.mapContexts
+    (\ctx ->
+      { ctx
+        | incoming = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.incoming
+        , outgoing = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.outgoing
+      }
+    )
+    g.graph
+  |> Graph.guidedDfs
+    Graph.alongOutgoingEdges
+    (\_ acc -> (acc, identity))
+    [g.root]
+    ()
+  |> Tuple.second
+  |> Graph.nodeIds
+  |> Set.fromList
 
 
 -- newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
@@ -550,21 +550,21 @@ connectionToSvgTextHighlightingChars conn highlightFunction =
 --     , target_connection_point = shorten_target
 --     }
 
--- executionData : ExecutionResult -> Maybe ExecutionData
--- executionData r =
---   let
---     getData s =
---       case s of
---         Accepted d -> d
---         Rejected d -> d
---         RequestedNodeDoesNotExist d -> d
---         NoPossibleTransition d -> d
---   in
---   case r of
---     InternalError -> Nothing
---     EndOfInput s -> Just <| getData s
---     EndOfComputation s -> Just <| getData s
---     CanContinue s -> Just <| getData s
+executionData : ExecutionResult -> Maybe ExecutionData
+executionData r =
+  let
+    getData s =
+      case s of
+        Accepted d -> d
+        Rejected d -> d
+        RequestedNodeDoesNotExist d -> d
+        NoPossibleTransition d -> d
+  in
+  case r of
+    InternalError -> Nothing
+    EndOfInput s -> Just <| getData s
+    EndOfComputation s -> Just <| getData s
+    CanContinue s -> Just <| getData s
 
 -- executionResultAutomatonGraph : ExecutionResult -> Maybe AutomatonGraph
 -- executionResultAutomatonGraph executionResult =
@@ -790,12 +790,11 @@ viewNode id data =
     nodeClass =
       classList
         [ ("node", True)
-        , ("selected", data.exclusiveAttributes == DrawSelected)
-        , ("current-node", data.exclusiveAttributes == DrawCurrentExecutionNode)
-        , ("disconnected", data.exclusiveAttributes == DrawDisconnected)
-        , ("phantom", data.exclusiveAttributes == DrawPhantom)
+        , ("selected", data.exclusiveAttributes == Just DrawSelected)
+        , ("current-node", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
+        , ("phantom", data.exclusiveAttributes == Just DrawPhantom)
+        , ("disconnected", data.isDisconnected)
         , ("start", data.isRoot)
-        , ("splittable", data.isSplittable)
         ]
 
     titleText =
@@ -808,12 +807,16 @@ viewNode id data =
       else
         "")
       ++ "Shift-drag to reposition" ++
-      (if data.isSplittable then
+      (if data.interactivity.canSplit then
             "\nCtrl-click to split transitions"
           else
             ""
+      ) ++
+      (if data.interactivity.canSelect then
+        "\nClick to create or link a new transition"
+      else
+        ""
       )
-      ++ "\nClick to create or link a new transition"
       ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING          
     ( node_x, node_y ) =
       data.coordinates
