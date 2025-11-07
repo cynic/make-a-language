@@ -625,7 +625,6 @@ executionData r =
 viewLink : (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
 viewLink (from, to) drawing_data =
       let
-        font_size = 16.0 -- this is the default, if not otherwise set
         labelText =
           if drawing_data.executionData.executed then
             connectionToSvgTextHighlightingChars
@@ -786,6 +785,8 @@ viewNode id data =
     g
       [ class nodeClass
       -- ::interactivity
+      , data.interactivity.canSelect
+        |> thenPermitInteraction (onClick <| SelectNode data.view_uuid id (node_x, node_y))
       ]
       [ circle
           [ --r nodeRadius
@@ -1037,8 +1038,8 @@ viewNode id data =
 --       _ ->
 --         g [] []
 
-mkArrowhead : String -> List (TypedSvg.Core.Attribute msg) -> Svg msg
-mkArrowhead id_ attrs =
+mkArrowhead : String -> Svg msg
+mkArrowhead id_ =
   marker
     [ id id_
     , viewBox 0 0 10 10
@@ -1055,18 +1056,18 @@ mkArrowhead id_ attrs =
 
 arrowheadMarker : Svg msg
 arrowheadMarker =
-  mkArrowhead "arrowhead" []
+  mkArrowhead "arrowhead"
 
 phantomArrowheadMarker : Svg msg
 phantomArrowheadMarker =
-  mkArrowhead "phantom-arrowhead" []
+  mkArrowhead "phantom-arrowhead"
     --strokeWidth 1.5
     -- , strokeDasharray "1.5 2"
     -- , strokeLinecap StrokeLinecapRound
 
 hoverArrowheadMarker : Svg msg
 hoverArrowheadMarker =
-  mkArrowhead "hover-arrowhead" []
+  mkArrowhead "hover-arrowhead"
 
 -- transition_buttonSize : Float
 -- transition_buttonSize = 55

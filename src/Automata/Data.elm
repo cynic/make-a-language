@@ -14,6 +14,9 @@ import Force
 import Binary
 import SHA
 import Dict exposing (Dict)
+import Html.Events
+import Json.Decode
+import Html
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -69,7 +72,9 @@ type UIMsg
 
 type Main_Msg
   = UIMsg UIMsg
-  -- graph-view messages
+  | SelectNode Uuid NodeId ( Float, Float )
+  | MoveNode Uuid NodeId ( Float, Float )
+   -- graph-view messages
   -- = SelectNode Uuid NodeId
   -- | Pan Uuid Float Float
   -- | Zoom Uuid Float
@@ -213,7 +218,7 @@ type ConnectionEditing
   clicking on empty space—then one will end
   up in (C.1) or (B.1), depending.
 -}
-  = CreatingNewNode ConnectionAlteration ( Float, Float )
+  = CreatingNewNode ConnectionAlteration
   | CreateNewLink ConnectionAlteration -- this is for an already-existing node.
   | EditExistingConnection ConnectionAlteration
 
@@ -225,10 +230,10 @@ type alias ConnectionAlteration =
   }
 
 type UserOperation
-  = Splitting Split -- split a node into two, so I can work on the parts separately
+  = Splitting Uuid Split -- split a node into two, so I can work on the parts separately
   | Dragging DragTarget -- move a node around (visually)
-  | ModifyConnection ConnectionEditing
-  | Executing AutomatonGraph ExecutionResult
+  | ModifyConnection Uuid ConnectionEditing
+  | Executing Uuid ExecutionResult
 
 type AcceptChoice
   = ChooseCharacter
@@ -281,6 +286,7 @@ type alias NodeDrawingData =
       { canSplit : Bool
       , canSelect : Bool
       }
+  , view_uuid : Uuid
   }
 
 type alias DrawingData =
@@ -552,6 +558,13 @@ acceptConditionToString v =
       String.fromChar ch
     ViaGraphReference uuid ->
       Uuid.toString uuid
+
+thenPermitInteraction : Html.Attribute a -> Bool -> Html.Attribute a
+thenPermitInteraction event cond =
+  if cond then
+    event
+  else
+    Html.Events.on "dummy" (Json.Decode.fail "dummy event")
 
 {-| Convert an AcceptVia to a printable-for-output string. -}
 printableAcceptCondition : AcceptVia -> String

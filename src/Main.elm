@@ -115,9 +115,9 @@ nodeDrawingForPackage package graphView_uuid {currentOperation} =
                         |> Maybe.withDefault False
                       )
                       DrawCurrentExecutionNode
-                  Just (ModifyConnection (CreatingNewNode {dest} _)) ->
+                  Just (ModifyConnection gv_uuid (CreatingNewNode {dest})) ->
                     maybe_fromBool
-                      (node.id == dest)
+                      (gv_uuid == graphView_uuid && node.id == dest)
                       DrawPhantom
                   _ ->
                     Nothing
@@ -133,13 +133,14 @@ nodeDrawingForPackage package graphView_uuid {currentOperation} =
                     |> Maybe.withDefault False
                 , canSelect =
                     case currentOperation of
-                      Just (ModifyConnection (CreatingNewNode _ _)) ->
-                        True
+                      Just (ModifyConnection gv_uuid (CreatingNewNode _)) ->
+                        gv_uuid == graphView_uuid
                       Nothing ->
                         True
                       _ ->
                         False
                 }
+            , view_uuid = graphView_uuid
             }
           )
       )
@@ -1209,53 +1210,142 @@ resizeViewport (w, h) ({uiState, uiConstants} as model) =
       , uiConstants = constants
     }
 
+update_ui : UIMsg -> Model -> ( Model, Cmd Msg)
+update_ui ui_msg model =
+  case ui_msg of
+    ToggleAreaVisibility where_ ->
+      ( { model
+          | uiState = toggleAreaVisibility where_ model.uiState
+        }
+      , Cmd.none
+      )
+    StartDragging what ->
+      case model.currentOperation of
+        Nothing ->
+          -- println "Starting dragging"
+          ( { model | currentOperation = Just (Dragging what) }
+          , Cmd.none
+          )
+        _ ->
+          println "🚨 Requested to start dragging, but already doing a different operation; ignoring!"
+          ( model, Cmd.none )
+    DragSplitter shouldStop coord ->
+      case model.currentOperation of
+        Just (Dragging what) ->
+          ( { model
+              | currentOperation =
+                  if shouldStop then Nothing else model.currentOperation
+              , uiState =
+                  dragSplitter coord what model.uiConstants model.uiState
+            }
+          , Cmd.none
+          )
+        _ ->
+          ( model, Cmd.none )
+    SelectNavigation item ->
+      Debug.todo "branch 'SelectNavigationItem item' not implemented"
+
+    SelectTool _ ->
+      Debug.todo "branch 'SelectTool _' not implemented"
+
+    MouseMove _ _ ->
+
+      Debug.todo "branch 'MouseMove _ _' not implemented"
+
+    OnResize dims ->
+      ( resizeViewport dims model
+      , Cmd.none
+      )
+
+selectNodeInView : Model -> Uuid -> NodeId -> (Float, Float) -> Model
+selectNodeInView model view_uuid node_id coordinates =
+  AutoDict.get view_uuid model.graph_views
+  |> Maybe.map
+    (\graph_view ->
+      let
+        newNodeId =
+          Graph.nodeIdRange graph_view.package.userGraph.graph
+          |> Maybe.map (Tuple.second >> (+) 1)
+          |> Maybe.withDefault 0
+      in
+        { model
+          | currentOperation =
+              Just
+                ( ModifyConnection
+                  view_uuid
+                  ( CreatingNewNode
+                      { source = node_id
+                      , dest = newNodeId
+                      , connection = AutoSet.empty transitionToString
+                      , picker = ChooseCharacter
+                      }
+                  )
+                )
+          -- and now modify that view
+          , graph_views =
+              AutoDict.insert view_uuid
+                { graph_view
+                  | drawingData =
+                      let drawingData = graph_view.drawingData in
+                      { drawingData
+                        | node_drawing =
+                            Dict.insert newNodeId
+                              { exclusiveAttributes = Just DrawPhantom
+                              , isTerminal = True
+                              , isDisconnected = False
+                              , coordinates = coordinates
+                              , isRoot = False
+                              , interactivity =
+                                  { canSplit = False
+                                  , canSelect = False
+                                  }
+                              , view_uuid = view_uuid
+                              }
+                              drawingData.node_drawing
+                      }
+                }
+                model.graph_views
+        }
+    )
+  |> Maybe.withDefault model
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     UIMsg ui_msg ->
-      case ui_msg of
-        ToggleAreaVisibility where_ ->
-          ( { model
-              | uiState = toggleAreaVisibility where_ model.uiState
-            }
-          , Cmd.none
-          )
-        StartDragging what ->
-          case model.currentOperation of
-            Nothing ->
-              -- println "Starting dragging"
-              ( { model | currentOperation = Just (Dragging what) }
-              , Cmd.none
-              )
-            _ ->
-              println "🚨 Requested to start dragging, but already doing a different operation; ignoring!"
-              ( model, Cmd.none )
-        DragSplitter shouldStop coord ->
-          case model.currentOperation of
-            Just (Dragging what) ->
-              ( { model
-                  | currentOperation =
-                      if shouldStop then Nothing else model.currentOperation
-                  , uiState =
-                      dragSplitter coord what model.uiConstants model.uiState
-                }
-              , Cmd.none
-              )
-            _ ->
-              ( model, Cmd.none )
-        SelectNavigation item ->
-          Debug.todo "branch 'SelectNavigationItem item' not implemented"
-
-        SelectTool _ ->
-          Debug.todo "branch 'SelectTool _' not implemented"
-
-        MouseMove _ _ ->
-          Debug.todo "branch 'MouseMove _ _' not implemented"
-
-        OnResize dims ->
-          ( resizeViewport dims model
-          , Cmd.none
-          )
+      update_ui ui_msg model
+    
+    SelectNode view_uuid node_id (x, y) ->
+      ( selectNodeInView model view_uuid node_id (x, y)
+      , Cmd.none
+      )
+    
+    MoveNode view_uuid node_id (x, y) ->
+      ( { model
+          | graph_views =
+              AutoDict.update view_uuid
+                (Maybe.map
+                  (\graph_view ->
+                      { graph_view
+                        | drawingData =
+                            let drawingData = graph_view.drawingData in
+                            { drawingData
+                              | node_drawing =
+                                  Dict.update node_id
+                                    (Maybe.map
+                                      (\phantom_node ->
+                                          { phantom_node | coordinates = (x, y) }
+                                      )
+                                    )
+                                    drawingData.node_drawing
+                            }
+                      }
+                  )
+                )
+                model.graph_views
+        }
+      , Cmd.none
+      )
 
     -- Tick ->
     --   updateGraphViewsOnTick model
@@ -2547,9 +2637,27 @@ subscriptions model =
           ]
         _ ->
           []
+    nodeMoveSubscription =
+      case model.currentOperation of
+        Just (ModifyConnection view_uuid (CreatingNewNode {dest})) ->
+          AutoDict.get view_uuid model.graph_views
+          |> Maybe.map
+            (\graph_view ->
+              BE.onMouseMove
+                ( D.map2
+                    (\x y ->
+                      MoveNode view_uuid dest (x, y)
+                    )
+                    (D.field "clientX" D.float)
+                    (D.field "clientY" D.float)
+                )
+            )
+          |> Maybe.withDefault Sub.none
+        _ ->
+          Sub.none
   in
     Sub.batch
-      ( resizeSubscription :: splitterSubscriptions )
+      ( resizeSubscription :: nodeMoveSubscription :: splitterSubscriptions )
   -- Sub.batch
   --   [ -- , keyboardSubscription
   --   -- , panSubscription
