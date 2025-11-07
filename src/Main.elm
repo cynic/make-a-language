@@ -1124,6 +1124,22 @@ recalculate_uistate ({dimensions} as ui) =
         }
   }
 
+updateMainEditorDimensions : Model -> Model
+updateMainEditorDimensions ({uiState} as model) =
+  -- On resize, I must update the dimensions for the graph view that
+  -- is displayed in the "main" editor section as well.
+  { model
+    | graph_views =
+        AutoDict.update model.mainGraphView
+          (Maybe.map
+            (\graph_view ->
+              { graph_view | dimensions = uiState.dimensions.mainEditor }
+            )
+          >> Maybe.Extra.orElseLazy (\() -> Debug.todo "PUNT")
+          )
+          model.graph_views
+  }
+
 {-| Drag a specified splitter to a specified coordinate. Returns an updated `UIState`.
 -}
 dragSplitter : Float -> DragTarget -> UIConstants -> UIState -> UIState
@@ -1204,9 +1220,10 @@ resizeViewport (w, h) ({uiState, uiConstants} as model) =
                   )
             }
       }
+      |> recalculate_uistate
   in
     { model
-      | uiState = state |> recalculate_uistate
+      | uiState = state
       , uiConstants = constants
     }
 
@@ -1217,6 +1234,7 @@ update_ui ui_msg model =
       ( { model
           | uiState = toggleAreaVisibility where_ model.uiState
         }
+        |> updateMainEditorDimensions
       , Cmd.none
       )
     StartDragging what ->
@@ -1238,6 +1256,7 @@ update_ui ui_msg model =
               , uiState =
                   dragSplitter coord what model.uiConstants model.uiState
             }
+            |> updateMainEditorDimensions
           , Cmd.none
           )
         _ ->
