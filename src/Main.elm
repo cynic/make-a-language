@@ -1328,6 +1328,23 @@ selectNodeInView model view_uuid node_id coordinates =
     )
   |> Maybe.withDefault model
 
+moveNode : NodeId -> (Float, Float) -> GraphView -> GraphView
+moveNode node_id (x, y) graph_view =
+  { graph_view
+    | drawingData =
+        let drawingData = graph_view.drawingData in
+        { drawingData
+          | node_drawing =
+              Dict.update node_id
+                (Maybe.map
+                  (\phantom_node ->
+                      { phantom_node | coordinates = (x, y) }
+                  )
+                )
+                drawingData.node_drawing
+        }
+  }
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -1344,25 +1361,34 @@ update msg model =
           | graph_views =
               AutoDict.update view_uuid
                 (Maybe.map
-                  (\graph_view ->
+                  (moveNode node_id (x, y))
+                )
+                model.graph_views
+        }
+      , Cmd.none
+      )
+
+    Escape ->
+      ( case model.currentOperation of
+          Just (ModifyConnection graph_uuid (CreatingNewNode {dest})) ->
+            { model
+              | currentOperation = Nothing
+              , graph_views =
+                  AutoDict.update graph_uuid
+                    (Maybe.map (\graph_view ->
                       { graph_view
                         | drawingData =
                             let drawingData = graph_view.drawingData in
                             { drawingData
                               | node_drawing =
-                                  Dict.update node_id
-                                    (Maybe.map
-                                      (\phantom_node ->
-                                          { phantom_node | coordinates = (x, y) }
-                                      )
-                                    )
-                                    drawingData.node_drawing
+                                  Dict.remove dest drawingData.node_drawing
                             }
                       }
-                  )
-                )
-                model.graph_views
-        }
+                    ))
+                    model.graph_views
+            }
+          _ ->
+            model
       , Cmd.none
       )
 
@@ -2577,6 +2603,61 @@ subscriptions model =
     --     else
     --       Sub.none
 
+    keyboardSubscription =
+      BE.onKeyDown
+        ( D.map2
+            (\key ctrlPressed -> ( key, ctrlPressed ))
+            (D.field "key" D.string)
+            (D.field "ctrlKey" D.bool)
+          |> D.andThen
+            (\v ->
+              case v of
+                -- ( "1", True ) ->
+                --   -- Debug.log "yup" v |> \_ ->
+                --   D.succeed ResetView
+                -- ( "Enter", False ) ->
+                --   D.succeed Confirm
+                ( "Escape", False ) ->
+                  D.succeed Escape
+                -- ( "Tab", False) ->
+                --   D.succeed Reheat
+                -- ( "z", True) ->
+                --   D.succeed Undo
+                -- ( "Z", True) ->
+                --   D.succeed Undo
+                -- ( "y", True) ->
+                --   D.succeed Redo
+                -- ( "Y", True) ->
+                --   D.succeed Redo
+                -- ( ch, _ ) ->
+                --   case String.toList ch of
+                --     [char] ->
+                --       D.succeed (KeyPressed char)
+                --     _ ->
+                --       D.fail "Not a character key"
+                _ ->
+                  D.fail "Untrapped"
+                  -- in
+                  -- case model.currentOperation of
+                  --   Just (ModifyingGraph ChooseCharacter { dest }) ->
+                  --     case dest of
+                  --       NoDestination ->
+                  --         D.fail "Not a recognized key combination"
+                  --       _ ->
+                  --         decodeChar
+                  --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
+                  --     D.fail "Not choosing characters"
+                  --   Just (AlteringConnection ChooseCharacter _) ->
+                  --     decodeChar
+                  --   Just (AlteringConnection (ChooseGraphReference _) _) ->
+                  --     D.fail "Not choosing characters"
+                  --   Just (Splitting _) ->
+                  --     decodeChar
+                  --   _ ->
+                  --     D.fail "Not a recognized key combination"
+            )
+        )
+
     -- keyboardSubscription =
     --   Browser.Events.onKeyDown
     --     ( D.map2
@@ -2676,7 +2757,11 @@ subscriptions model =
           Sub.none
   in
     Sub.batch
-      ( resizeSubscription :: nodeMoveSubscription :: splitterSubscriptions )
+      ( resizeSubscription ::
+        nodeMoveSubscription ::
+        keyboardSubscription ::
+        splitterSubscriptions
+      )
   -- Sub.batch
   --   [ -- , keyboardSubscription
   --   -- , panSubscription

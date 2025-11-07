@@ -74,8 +74,8 @@ type Main_Msg
   = UIMsg UIMsg
   | SelectNode Uuid NodeId ( Float, Float )
   | MoveNode Uuid NodeId ( Float, Float )
+  | Escape -- the universal "No! Go Back!" key & command
    -- graph-view messages
-  -- = SelectNode Uuid NodeId
   -- | Pan Uuid Float Float
   -- | Zoom Uuid Float
   -- | Undo Uuid
@@ -83,7 +83,6 @@ type Main_Msg
   -- | StartSplit Uuid NodeId
   -- | ResetView Uuid
   -- more general messages
-  -- | Escape -- the universal "No! Go Back!" key & command
   -- | Confirm -- the universal "Yeah! Let's Go!" key & command
   -- | SetMouseOver Uuid Bool
   -- | Tick
