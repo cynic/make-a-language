@@ -758,6 +758,8 @@ viewNode id data =
         , ("terminal", data.isTerminal)
         ]
 
+    fewDP n = toFloat (round (n * 10)) / 10
+
     titleText =
       (if data.isTerminal && data.isRoot then
         "Start AND end of computation\n"
@@ -778,7 +780,7 @@ viewNode id data =
       else
         ""
       )
-      ++ "\n(" ++ String.fromInt id ++ ")" -- DEBUGGING          
+      ++ "\n#" ++ String.fromInt id ++ "; " ++ String.fromFloat (fewDP node_x) ++ ", " ++ String.fromFloat (fewDP node_y) -- DEBUGGING          
     ( node_x, node_y ) =
       data.coordinates
   in
@@ -2067,28 +2069,16 @@ viewGraph graphView =
               -- []
             text_
               [ x <| width - 15
-              , y <| height - 15
-              , fill <| Paint <| Color.black
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , textAnchor AnchorEnd
-              , alignmentBaseline AlignmentCentral
-              , dominantBaseline DominantBaselineCentral
-              , pointerEvents "none"
+              , y <| height - 10
+              , class [ "status-line", "zoom" ]
               ]
-              [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
+              [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
           , text_
-              [ x <| width - 90
-              , y <| height - 15
-              , fill <| Paint <| Color.black
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , textAnchor AnchorEnd
-              , alignmentBaseline AlignmentCentral
-              , dominantBaseline DominantBaselineCentral
-              , pointerEvents "none"
+              [ x <| width - 95
+              , y <| height - 10
+              , class [ "status-line", "pan" ]
               ]
-              [ text (" 🧭 " ++ panToString graphView.pan) ]
+              [ text ("🧭 " ++ panToString graphView.pan) ]
           -- , case graphView.currentOperation of
           --     Just (ModifyingGraph _ { dest }) ->
           --       case dest of

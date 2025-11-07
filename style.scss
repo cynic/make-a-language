@@ -457,3 +457,20 @@ rect.redo {
 #hover-arrowhead {
   fill: var(--cyan);
 }
+
+
+.status-line {
+  fill: var(--comment);
+  stroke-width: 1.5px;
+  stroke: var(--current-line);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  font-family: theme.$font-family-system;
+  font-size: 14px;
+  text-anchor: end;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+  alignment-baseline: central;
+  paint-order: stroke fill markers;
+}
