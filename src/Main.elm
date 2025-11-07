@@ -44,6 +44,7 @@ import GraphEditor
 import Dict exposing (Dict)
 import Jsonify exposing (..)
 import Graph exposing (Graph)
+import Css exposing (px)
 
 {-
 Quality / technology requirements:
@@ -202,8 +203,8 @@ linkDrawingForPackage package =
     If there is no such `GraphPackage`, then nothing is done and no
     `GraphView` is returned.
 -}
-viewFromPackage : (Float, Float) -> Uuid -> Model -> (Maybe GraphView, Model)
-viewFromPackage (w, h) package_uuid model =
+viewFromPackage : (Float, Float) -> (Float, Float) -> Uuid -> Model -> (Maybe GraphView, Model)
+viewFromPackage (w, h) (x, y) package_uuid model =
   let
     (id, model_) = getUuid model
   in
@@ -218,6 +219,7 @@ viewFromPackage (w, h) package_uuid model =
             , package = pkg
             , simulation = computed.simulation
             , dimensions = (w, h)
+            , coordinates = (x, y)
             , forces = computed.forces
             , specificForces = IntDict.empty
             , zoom = 1.0
@@ -326,11 +328,11 @@ init flags =
       { dimensions =
           { sideBar = ( constants.sideBarWidth.initial, decoded.height )
           , bottomPanel =
-              ( decoded.width - constants.sideBarWidth.initial
+              ( decoded.width - constants.sideBarWidth.initial - 8 - 48
               , constants.toolsPanelHeight.initial
               )
           , mainEditor =
-              ( decoded.width - constants.sideBarWidth.initial - 8
+              ( decoded.width - constants.sideBarWidth.initial - 8 - 48
               , decoded.height - constants.toolsPanelHeight.initial - 8
               )
           , viewport = ( decoded.width, decoded.height )
@@ -358,11 +360,17 @@ init flags =
       }
     model =
       -- I _know_ that this will succeed, because I've added this
-      -- exact 
+      -- exact one
       let
         (v, model_with_viewDict) =
           viewFromPackage
             state.dimensions.mainEditor
+            ( if state.open.sideBar then
+                Tuple.first state.dimensions.sideBar
+              else
+                0
+            , 0
+            )
             mainPackage.userGraph.graphIdentifier
             model_excl_views
       in
@@ -1106,7 +1114,7 @@ recalculate_uistate ({dimensions} as ui) =
     panel_height =
         Tuple.second dimensions.bottomPanel
     visible_sidebar_width_plus_splitter =
-      if ui.open.sideBar then sidebar_width + 8 else 0
+      if ui.open.sideBar then sidebar_width + 8 + 48 else 0
     visible_panel_height_plus_splitter =
       if ui.open.bottomPanel then panel_height + 8 else 0
   in
@@ -1775,6 +1783,10 @@ view model =
         [ HA.class "editor-and-tools-panel" ]
         [ div
             [ HA.class "editor-main"
+            , HA.css
+                [ Css.maxWidth <| px <| Tuple.first model.uiState.dimensions.mainEditor
+                , Css.maxHeight <| px <| Tuple.second model.uiState.dimensions.mainEditor
+                ]
             ]
             [ UserInterface.debugDimensions model.uiState.dimensions.mainEditor
             , AutoDict.get model.mainGraphView model.graph_views
@@ -2586,6 +2598,22 @@ view model =
 --     StepThrough -> "Debug Mode"
 --     NotReady -> "Uncommitted"
 
+-- ≈85-105 in SVG-coordinates seems to be a "good" amount of space
+-- to leave around the borders of the viewport.
+-- viewportToSvgCoords : (Float, Float) -> GraphView -> (Float, Float)
+-- viewportToSvgCoords (x_, y_) graph_view =
+--   -- first, we will need to clamp to the viewport.
+--   -- if the viewport coords are out of that, then clamp to max/min and
+--   -- leave it there.
+--   let
+--     (gv_x_host, gv_y_host) = graph_view.coordinates
+--     (gv_w_host, gv_h_host) = graph_view.dimensions
+--     (gv_w_guest, gv_h_guest) = graph_view.package
+--     clampToViewable x y =
+--       if x < graph_view
+--   in
+--     clampToViewable x y graph_view
+
 -- SUBSCRIPTIONS
 
 subscriptions : Model -> Sub Msg
@@ -2746,7 +2774,14 @@ subscriptions model =
               BE.onMouseMove
                 ( D.map2
                     (\x y ->
-                      MoveNode view_uuid dest (x, y)
+                      MoveNode
+                        view_uuid
+                        dest
+                        ( mapCorrespondingPair
+                            (-)
+                            (x, y)
+                            ( Tuple.mapBoth ((+) 0) ((+) 0) graph_view.coordinates )
+                        )
                     )
                     (D.field "clientX" D.float)
                     (D.field "clientY" D.float)

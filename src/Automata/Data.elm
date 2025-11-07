@@ -311,6 +311,7 @@ type alias GraphView =
     -- morass.
   , simulation : Force.State NodeId
   , dimensions : (Float, Float) -- (w,h) of svg element
+  , coordinates : (Float, Float) -- (x,y) of the container
     -- `forces` includes:
     -- - graph forces of attraction and repulsion
     -- - node forces to pull the root towards the center

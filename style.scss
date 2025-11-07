@@ -27,6 +27,8 @@
 
 .editor-frame {
   display: flex;
+  height: 100vh;
+  width: 100vw;
 }
 
 .editor-and-tools-panel {
@@ -474,3 +476,31 @@ rect.redo {
   alignment-baseline: central;
   paint-order: stroke fill markers;
 }
+
+// svg {
+  // border: solid 2px red;
+  // max-width: 100%;
+  // height: auto;
+// }
+
+// .editor-main {
+//   border: solid 2px green;
+
+//   & * {
+//     opacity: 0.8;
+//   }
+// }
+
+// .editor-and-tools-panel {
+//   border: solid 2px orange;
+//   & * {
+//     opacity: 0.8;
+//   }
+// }
+
+// .editor-frame {
+//   border: solid 2px yellow;
+//   & * {
+//     opacity: 0.8;
+//   }
+// }

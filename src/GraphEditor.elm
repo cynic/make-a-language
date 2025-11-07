@@ -20,7 +20,9 @@ import TypedSvg.Attributes.InPx exposing
 import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
-  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
+  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..)
+  , MeetOrSlice(..), Align(..), Scale(..)
+  )
 import TypedSvg.Attributes.InPx as Px
 import Html
 import Html.Attributes
@@ -2011,6 +2013,10 @@ viewGraph graphView =
   in
     svg
       ([ viewBox 0 0 width height
+       , TypedSvg.Attributes.InPx.width width
+      --  , TypedSvg.Attributes.style <| "max-width:" ++ (String.fromFloat width) ++ "px"
+      --  , TypedSvg.Attributes.InPx.height height
+      --  , TypedSvg.Attributes.preserveAspectRatio (Align ScaleMin ScaleMin) Meet
       -- , Mouse.onOver (\_ -> SetMouseOver model.id True)
       -- , Mouse.onOut (\_ -> SetMouseOver model.id False)
       ] {- ++ interactivity -})
@@ -2068,7 +2074,7 @@ viewGraph graphView =
               -- ]
               -- []
             text_
-              [ x <| width - 15
+              [ x <| Debug.log "W" <| width - 15
               , y <| height - 10
               , class [ "status-line", "zoom" ]
               ]

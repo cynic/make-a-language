@@ -185,11 +185,11 @@ viewToolsArea model =
                     Automata.Data.height model.uiState.dimensions.bottomPanel
                   else
                     0
-              , Css.width <| Css.px <|
-                  if model.uiState.open.bottomPanel then
-                    Automata.Data.width model.uiState.dimensions.bottomPanel
-                  else
-                    0
+              -- , Css.width <| Css.px <|
+              --     if model.uiState.open.bottomPanel then
+              --       Automata.Data.width model.uiState.dimensions.bottomPanel - 36
+              --     else
+              --       0
               ]
           ]
           [ debugDimensions model.uiState.dimensions.bottomPanel
