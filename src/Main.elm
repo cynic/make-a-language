@@ -211,7 +211,7 @@ linkDrawingForPackage package =
     `GraphView` is returned.
 -}
 viewFromPackage : (Float, Float) -> (Float, Float) -> GraphViewProperties -> Uuid -> Model -> (Maybe GraphView, Model)
-viewFromPackage (w, h) (x, y) {isFrozen} package_uuid model =
+viewFromPackage (w, h) (x, y) properties package_uuid model =
   let
     (id, model_) = getUuid model
   in
@@ -227,48 +227,11 @@ viewFromPackage (w, h) (x, y) {isFrozen} package_uuid model =
           -- the height of the viewport "automatically" once we have the right width.
           solved_pkg =
             { pkg | userGraph = computed.solvedGraph }
-          aspectRatio : Float
-          aspectRatio = w / h
-          inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
-          inner_pad =
-            if isFrozen then
-              -- we don't need any buffer.
-              -- So, just put in a "buffer" for the node radius.
-              10
-            else
-              -- when we edit (e.g. make new nodes etc), we want some free space around to put
-              -- those nodes.  That is what this is for.
-              95
-          -- the forces on the graph place the root at (0, 0).
-          -- they also pull all the other nodes to the right and to the
-          -- y-axis center.
-          -- So I can take the number of nodes and multiply by, say, 150 and
-          -- I shouldn't be too far off from a maximum.
-          theoretical_max = 150.0 * toFloat (Graph.size computed.solvedGraph.graph)
-          -- Now find out: where is the bounding box for the nodes?
-          ( (min_x, max_x), (min_y, max_y) ) =    
-            Graph.fold
-              (\ctx ((xmin, xmax), (ymin, ymax)) ->
-                ( ( min ctx.node.label.x xmin
-                  , max ctx.node.label.x xmax
-                  )
-                , ( min ctx.node.label.y ymin
-                  , max ctx.node.label.y ymax
-                  )
-                )
-              )
-              ((theoretical_max, -1000), (theoretical_max, -1000))
-              computed.solvedGraph.graph
-            |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad), (c - inner_pad, d + inner_pad))
-            -- |> Debug.log "Bounds"
-          -- from this, I can figure out the appropriate coordinates
-          center_y = (min_y + max_y) / 2
-          autoHeight = (max_x - min_x) / aspectRatio
-          -- now, we want a center within that autoHeight.
-          guestCoordinates = ( min_x, center_y - autoHeight / 2 )
-          guestDimensions = ( max_x - min_x, autoHeight )
-          properties =
-            { isFrozen = isFrozen }
+          guest_viewport =
+            calculateGuestDimensionsForHost
+              (w, h)
+              properties
+              solved_pkg.userGraph.graph
           graph_view : GraphView
           graph_view =
             { id = id
@@ -276,8 +239,8 @@ viewFromPackage (w, h) (x, y) {isFrozen} package_uuid model =
             , simulation = computed.simulation
             , host_dimensions = (w, h)
             , host_coordinates = (x, y)
-            , guest_dimensions = guestDimensions
-            , guest_coordinates = guestCoordinates
+            , guest_dimensions = guest_viewport.dimensions
+            , guest_coordinates = guest_viewport.coordinates
             , forces = computed.forces
             , specificForces = IntDict.empty
             , zoom = 1.0
@@ -1187,6 +1150,57 @@ recalculate_uistate ({dimensions} as ui) =
         }
   }
 
+{-| Accepts host dimensions, view properties, and a graph, and calculates the
+    appropriate guest coordinates & guest dimensions (i.e. viewport).
+-}
+calculateGuestDimensionsForHost : (Float, Float) -> GraphViewProperties -> Graph.Graph Entity Connection -> { dimensions : (Float, Float), coordinates : (Float, Float) }
+calculateGuestDimensionsForHost (w, h) properties graph =
+  let
+    aspectRatio : Float
+    aspectRatio = w / h
+    inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
+    inner_pad =
+      if properties.isFrozen then
+        -- we don't need any buffer.
+        -- So, just put in a "buffer" for the node radius.
+        10
+      else
+        -- when we edit (e.g. make new nodes etc), we want some free space around to put
+        -- those nodes.  That is what this is for.
+        95
+    -- the forces on the graph place the root at (0, 0).
+    -- they also pull all the other nodes to the right and to the
+    -- y-axis center.
+    -- So I can take the number of nodes and multiply by, say, 150 and
+    -- I shouldn't be too far off from a maximum.
+    theoretical_max = 150.0 * toFloat (Graph.size graph)
+    -- Now find out: where is the bounding box for the nodes?
+    ( (min_x, max_x), (min_y, max_y) ) =    
+      Graph.fold
+        (\ctx ((xmin, xmax), (ymin, ymax)) ->
+          ( ( min ctx.node.label.x xmin
+            , max ctx.node.label.x xmax
+            )
+          , ( min ctx.node.label.y ymin
+            , max ctx.node.label.y ymax
+            )
+          )
+        )
+        ((theoretical_max, -1000), (theoretical_max, -1000))
+        graph
+      |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad), (c - inner_pad, d + inner_pad))
+      -- |> Debug.log "Bounds"
+    -- from this, I can figure out the appropriate coordinates
+    center_y = (min_y + max_y) / 2
+    autoHeight = (max_x - min_x) / aspectRatio
+    -- now, we want a center within that autoHeight.
+    guestCoordinates = ( min_x, center_y - autoHeight / 2 )
+    guestDimensions = ( max_x - min_x, autoHeight )
+  in
+    { dimensions = guestDimensions
+    , coordinates = guestCoordinates
+    }
+
 updateMainEditorDimensions : Model -> Model
 updateMainEditorDimensions ({uiState} as model) =
   -- On resize, I must update the dimensions for the graph view that
@@ -1196,7 +1210,18 @@ updateMainEditorDimensions ({uiState} as model) =
         AutoDict.update model.mainGraphView
           (Maybe.map
             (\graph_view ->
-              { graph_view | host_dimensions = uiState.dimensions.mainEditor }
+              let
+                guest_viewport =
+                  calculateGuestDimensionsForHost
+                    uiState.dimensions.mainEditor
+                    graph_view.properties
+                    graph_view.package.userGraph.graph
+              in
+                { graph_view
+                  | host_dimensions = uiState.dimensions.mainEditor
+                  , guest_dimensions = guest_viewport.dimensions
+                  , guest_coordinates = guest_viewport.coordinates
+                }
             )
           >> Maybe.Extra.orElseLazy (\() -> Debug.todo "PUNT")
           )
