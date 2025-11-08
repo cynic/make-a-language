@@ -766,8 +766,8 @@ viewLink (from, to) drawing_data =
 nodeRadius : Float
 nodeRadius = 7
 
-viewNode : NodeId -> NodeDrawingData -> Svg Msg
-viewNode id data =
+viewNode : GraphViewProperties -> NodeId -> NodeDrawingData -> Svg Msg
+viewNode properties id data =
     -- permit_node_reselection =
     --   Mouse.onWithOptions
     --     "mousedown"
@@ -823,12 +823,12 @@ viewNode id data =
       else
         "")
       ++ "Shift-drag to reposition" ++
-      (if data.interactivity.canSplit then
+      (if data.canSplit && properties.canSplitNodes then
             "\nCtrl-click to split transitions"
           else
             ""
       ) ++
-      (if data.interactivity.canSelect then
+      (if properties.canSelectNodes then
         "\nClick to create or link a new transition"
       else
         ""
@@ -840,8 +840,10 @@ viewNode id data =
     g
       [ class nodeClass
       -- ::interactivity
-      , data.interactivity.canSelect
+      , properties.canSelectNodes
         |> thenPermitInteraction (onClick <| SelectNode data.view_uuid id (node_x, node_y))
+      -- , properties.canSplitNodes
+      --   |> thenPermitInteraction (onClick <| StartSplit id)
       ]
       [ circle
           [ --r nodeRadius
@@ -1782,17 +1784,24 @@ viewMainSvgContent graph_view =
     --     _ ->
     --       class []
     , class
-        [ "graph"
-        , if not graph_view.properties.isFrozen then "can-select-nodes" else ""
-        , if not graph_view.properties.isFrozen && graph_view.properties.canSelectConnections then "can-select-connections" else ""
-        ]
+        ( if graph_view.properties.isFrozen then
+            [ "graph" ]
+          else
+            classList
+              [ ("graph", True)
+              , ("can-select-nodes", graph_view.properties.canSelectNodes)
+              , ("can-select-connections", graph_view.properties.canSelectConnections)
+              , ("can-select-space", graph_view.properties.canSelectEmptySpace)
+              , ("can-split-nodes", graph_view.properties.canSplitNodes)
+              ]
+        )
     ]
     [ defs [] arrowheadDefs
     , Dict.toList graph_view.drawingData.link_drawing
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
-      |> List.map (\(nodeId, data) -> viewNode nodeId data)
+      |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)
       |> g [ class [ "nodes" ] ]
     -- , case graph_view.currentOperation of
     --     Just (ModifyingGraph _ { source }) ->

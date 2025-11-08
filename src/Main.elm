@@ -130,26 +130,14 @@ nodeDrawingForPackage package {isFrozen} graphView_uuid {currentOperation} =
                 |> Maybe.withDefault False
             , coordinates = ( node.label.x, node.label.y )
             , isRoot = node.id == package.userGraph.root
-            , interactivity =
-                { canSplit =
-                    if isFrozen then
-                      False
-                    else
-                      Maybe.map isSplittable nodeContext
-                      |> Maybe.withDefault False
-                , canSelect =
-                    if isFrozen then
-                      False
-                    else
-                      case currentOperation of
-                        Just (ModifyConnection gv_uuid (CreatingNewNode _)) ->
-                          gv_uuid == graphView_uuid
-                        Nothing ->
-                          True
-                        _ ->
-                          False
-                }
+            , canSplit =
+                if isFrozen then
+                  False
+                else
+                  Maybe.map isSplittable nodeContext
+                  |> Maybe.withDefault False
             , view_uuid = graphView_uuid
+            , isSelected = False
             }
           )
       )
@@ -393,6 +381,9 @@ init flags =
             )
             { isFrozen = False
             , canSelectConnections = True
+            , canSelectEmptySpace = False
+            , canSelectNodes = True
+            , canSplitNodes = True
             }
             mainPackage.userGraph.graphIdentifier
             model_excl_views
@@ -713,28 +704,6 @@ updateGraphView uuid msg model =
 
     SetMouseOut ->
       { model | mouseIsHere = False }
-
-    CreateOrUpdateLinkTo dest ->
-      case model.currentOperation of
-        Just (ModifyingGraph _ { source }) ->
-          let
-            transitions =
-              Graph.get dest model.package.userGraph.graph
-              |> Maybe.map (\node ->
-                case IntDict.get source node.incoming of
-                  Just conn ->
-                    conn
-                  Nothing -> -- no link to this node, at present.
-                    AutoSet.empty transitionToString
-              )
-              |> Maybe.withDefault (AutoSet.empty transitionToString)
-          in
-            { model
-              | currentOperation =
-                  Just <| ModifyingGraph ChooseCharacter <| GraphModification source (ExistingNode dest) transitions
-            }
-        _ ->
-          model
 
     CreateNewNodeAt ( x, y ) ->
       case model.currentOperation of
@@ -1392,11 +1361,9 @@ selectNodeInView model view_uuid node_id coordinates =
           , isDisconnected = False
           , coordinates = coordinates
           , isRoot = False
-          , interactivity =
-              { canSplit = False
-              , canSelect = False
-              }
+          , canSplit = False
           , view_uuid = view_uuid
+          , isSelected = False
           }
         linkDrawingData : LinkDrawingData
         linkDrawingData =
@@ -1442,6 +1409,12 @@ selectNodeInView model view_uuid node_id coordinates =
                             Dict.insert newNodeId
                               nodeDrawingData
                               drawingData.node_drawing
+                            |> Dict.update node_id
+                              (Maybe.map
+                                (\source_node ->
+                                    { source_node | isSelected = True }
+                                )
+                              )
                         , link_drawing =
                             Dict.insert (node_id, newNodeId)
                               linkDrawingData
@@ -1451,6 +1424,8 @@ selectNodeInView model view_uuid node_id coordinates =
                       let properties = graph_view.properties in
                       { properties
                         | canSelectConnections = False
+                        , canSelectEmptySpace = True
+                        , canSplitNodes = False
                       }
                 }
                 model.graph_views
@@ -1517,14 +1492,96 @@ moveNode source_id dest_id (x, y) graph_view =
         }
   }
 
+cancelNewNodeCreation : Uuid -> NodeId -> NodeId -> Model -> Model
+cancelNewNodeCreation view_uuid source dest model =
+  { model
+    | currentOperation = Nothing
+    , graph_views =
+        AutoDict.update view_uuid
+          (Maybe.map (\graph_view ->
+            { graph_view
+              | drawingData =
+                  let drawingData = graph_view.drawingData in
+                  { drawingData
+                    | node_drawing =
+                        Dict.remove dest drawingData.node_drawing
+                    , link_drawing =
+                        Dict.remove (source, dest) drawingData.link_drawing
+                  }
+              , properties =
+                  let properties = graph_view.properties in
+                  { properties
+                    | canSelectConnections = True
+                  }
+            }
+          ))
+          model.graph_views
+  }
+
+editConnection : Model -> Uuid -> ConnectionAlteration -> NodeId -> Model
+editConnection model view_uuid old_alteration new_dest =
+  let
+    transitions = -- this is the connection between the two nodes
+      AutoDict.get view_uuid model.graph_views
+      |> Maybe.map (\graph_view ->
+          Graph.get new_dest graph_view.package.userGraph.graph
+            |> Maybe.map (\node ->
+              case IntDict.get old_alteration.source node.incoming of
+                Just conn ->
+                  conn
+                Nothing -> -- no link to this node, at present.
+                  AutoSet.empty transitionToString
+            )
+            |> Maybe.withDefault (AutoSet.empty transitionToString)
+      )
+  in
+    cancelNewNodeCreation view_uuid old_alteration.source old_alteration.dest model
+    |>  (\model_ ->
+          { model_
+            | currentOperation =
+                transitions |> Maybe.map (\conn ->
+                  ModifyConnection view_uuid
+                    ( EditExistingConnection
+                        { old_alteration
+                          | dest = new_dest
+                          , connection = conn
+                        }
+                    )
+                )
+            , -- and now we will enter the editing-connection phase, so
+              graph_views =
+                AutoDict.update view_uuid
+                  (Maybe.map (\graph_view ->
+                    { graph_view
+                      | properties =
+                          let properties = graph_view.properties in
+                          { properties
+                            | canSelectConnections = False
+                            , canSelectEmptySpace = False
+                            , canSelectNodes = False
+                            , canSplitNodes = False
+                          }
+                    }
+                  ))
+                  model_.graph_views
+          }
+        )
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     UIMsg ui_msg ->
       update_ui ui_msg model
-    
     SelectNode view_uuid node_id (x, y) ->
-      ( selectNodeInView model view_uuid node_id (x, y)
+      ( case model.currentOperation of
+          Nothing ->
+            selectNodeInView model view_uuid node_id (x, y)
+          Just (ModifyConnection _ (CreatingNewNode alteration)) ->
+            -- we already have a node selected, and now, an existing
+            -- node is being selected as the destination.
+            editConnection model view_uuid alteration node_id
+          _ ->
+            model
       , Cmd.none
       )
     
@@ -1542,30 +1599,8 @@ update msg model =
 
     Escape ->
       ( case model.currentOperation of
-          Just (ModifyConnection graph_uuid (CreatingNewNode {source, dest})) ->
-            { model
-              | currentOperation = Nothing
-              , graph_views =
-                  AutoDict.update graph_uuid
-                    (Maybe.map (\graph_view ->
-                      { graph_view
-                        | drawingData =
-                            let drawingData = graph_view.drawingData in
-                            { drawingData
-                              | node_drawing =
-                                  Dict.remove dest drawingData.node_drawing
-                              , link_drawing =
-                                  Dict.remove (source, dest) drawingData.link_drawing
-                            }
-                        , properties =
-                            let properties = graph_view.properties in
-                            { properties
-                              | canSelectConnections = True
-                            }
-                      }
-                    ))
-                    model.graph_views
-            }
+          Just (ModifyConnection view_uuid (CreatingNewNode {source, dest})) ->
+            cancelNewNodeCreation view_uuid source dest model
           _ ->
             model
       , Cmd.none
@@ -2769,21 +2804,29 @@ view model =
 --     StepThrough -> "Debug Mode"
 --     NotReady -> "Uncommitted"
 
--- ≈85-105 in SVG-coordinates seems to be a "good" amount of space
--- to leave around the borders of the viewport.
--- viewportToSvgCoords : (Float, Float) -> GraphView -> (Float, Float)
--- viewportToSvgCoords (x_, y_) graph_view =
---   -- first, we will need to clamp to the viewport.
---   -- if the viewport coords are out of that, then clamp to max/min and
---   -- leave it there.
---   let
---     (gv_x_host, gv_y_host) = graph_view.coordinates
---     (gv_w_host, gv_h_host) = graph_view.dimensions
---     (gv_w_guest, gv_h_guest) = graph_view.package
---     clampToViewable x y =
---       if x < graph_view
---   in
---     clampToViewable x y graph_view
+translateHostCoordinates : (Float, Float) -> GraphView -> (Float, Float)
+translateHostCoordinates (x, y) graph_view =
+  let
+    ( x_host, y_host ) = graph_view.host_coordinates
+    ( w_host, h_host ) = graph_view.host_dimensions
+    ( x_guest, y_guest ) = graph_view.guest_coordinates
+    ( w_guest, h_guest ) = graph_view.guest_dimensions
+    translate_dimension coord coord_host coord_guest dim_host dim_guest =
+      if coord <= coord_host then
+        coord_guest
+      else if coord >= coord_host + dim_host then
+        coord_guest + dim_guest
+      else
+        let
+          ratio = dim_guest / dim_host
+        in
+          (coord - coord_host) * ratio + coord_guest
+    translate_x =
+      translate_dimension x x_host x_guest w_host w_guest
+    translate_y =
+      translate_dimension y y_host y_guest h_host h_guest
+  in
+    ( translate_x, translate_y )
 
 -- SUBSCRIPTIONS
 
@@ -2942,31 +2985,6 @@ subscriptions model =
           AutoDict.get view_uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
-              let
-                translate : (Float, Float) -> (Float, Float)
-                translate ( x, y ) =
-                  let
-                    ( x_host, y_host ) = graph_view.host_coordinates
-                    ( w_host, h_host ) = graph_view.host_dimensions
-                    ( x_guest, y_guest ) = graph_view.guest_coordinates
-                    ( w_guest, h_guest ) = graph_view.guest_dimensions
-                    translate_dimension coord coord_host coord_guest dim_host dim_guest =
-                      if coord <= coord_host then
-                        coord_guest
-                      else if coord >= coord_host + dim_host then
-                        coord_guest + dim_guest
-                      else
-                        let
-                          ratio = dim_guest / dim_host
-                        in
-                          (coord - coord_host) * ratio + coord_guest
-                    translate_x =
-                      translate_dimension x x_host x_guest w_host w_guest
-                    translate_y =
-                      translate_dimension y y_host y_guest h_host h_guest
-                  in
-                    ( translate_x, translate_y )
-              in
               BE.onMouseMove
                 ( D.map2
                     (\x y ->
@@ -2974,7 +2992,7 @@ subscriptions model =
                         view_uuid
                         source
                         dest
-                        (translate (x, y)) -- this is incorrect! Must translate…
+                        (graph_view |> translateHostCoordinates (x, y)) -- this is incorrect! Must translate…
                     )
                     (D.field "clientX" D.float)
                     (D.field "clientY" D.float)

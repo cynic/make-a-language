@@ -130,10 +130,10 @@
     stroke-width: 3;
     animation: current-node-pulse 2s ease-in-out infinite;
     
-    .can-select-nodes &:hover {
-      animation: current-node-pulse 1s ease-in-out infinite; // Faster pulse on hover
-      cursor: pointer;
-    }
+    // .can-select-nodes &:hover {
+    //   animation: current-node-pulse 1s ease-in-out infinite; // Faster pulse on hover
+    //   cursor: pointer;
+    // }
   }
     
   // 6. Phantom node - placeholder for potential creation

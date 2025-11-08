@@ -242,6 +242,9 @@ type AcceptChoice
 type alias GraphViewProperties =
   { isFrozen : Bool
   , canSelectConnections : Bool
+  , canSelectEmptySpace : Bool
+  , canSelectNodes : Bool
+  , canSplitNodes : Bool
   }
 
 type Cardinality
@@ -282,11 +285,9 @@ type alias NodeDrawingData =
   , isDisconnected : Bool
   , coordinates : (Float, Float)
   , isRoot : Bool
-  , interactivity :
-      { canSplit : Bool
-      , canSelect : Bool
-      }
+  , canSplit : Bool
   , view_uuid : Uuid
+  , isSelected : Bool
   }
 
 type alias DrawingData =
