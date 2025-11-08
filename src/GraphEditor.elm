@@ -2129,7 +2129,7 @@ viewGraph graphView =
                 -- ]
                 -- []
               text_
-                [ x <| Debug.log "W" <| (guest_x + guest_width) - 5
+                [ x <| (guest_x + guest_width) - 5
                 , y <| (guest_y + guest_height) - 10
                 , class [ "status-line", "zoom" ]
                 ]

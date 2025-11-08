@@ -383,7 +383,7 @@ init flags =
           viewFromPackage
             state.dimensions.mainEditor
             ( if state.open.sideBar then
-                Tuple.first state.dimensions.sideBar
+                Tuple.first state.dimensions.sideBar + 48 + 8
               else
                 0
             , 0
@@ -2851,13 +2851,38 @@ subscriptions model =
           AutoDict.get view_uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
+              let
+                translate : (Float, Float) -> (Float, Float)
+                translate ( x, y ) =
+                  let
+                    ( x_host, y_host ) = graph_view.host_coordinates
+                    ( w_host, h_host ) = graph_view.host_dimensions
+                    ( x_guest, y_guest ) = graph_view.guest_coordinates
+                    ( w_guest, h_guest ) = graph_view.guest_dimensions
+                    translate_dimension coord coord_host coord_guest dim_host dim_guest =
+                      if coord <= coord_host then
+                        coord_guest
+                      else if coord >= coord_host + dim_host then
+                        coord_guest + dim_guest
+                      else
+                        let
+                          ratio = dim_guest / dim_host
+                        in
+                          (coord - coord_host) * ratio + coord_guest
+                    translate_x =
+                      translate_dimension x x_host x_guest w_host w_guest
+                    translate_y =
+                      translate_dimension y y_host y_guest h_host h_guest
+                  in
+                    ( translate_x, translate_y )
+              in
               BE.onMouseMove
                 ( D.map2
                     (\x y ->
                       MoveNode
                         view_uuid
                         dest
-                        graph_view.host_coordinates -- this is incorrect! Must translate…
+                        (translate (x, y)) -- this is incorrect! Must translate…
                     )
                     (D.field "clientX" D.float)
                     (D.field "clientY" D.float)
