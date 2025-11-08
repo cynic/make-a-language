@@ -73,7 +73,7 @@ type UIMsg
 type Main_Msg
   = UIMsg UIMsg
   | SelectNode Uuid NodeId ( Float, Float )
-  | MoveNode Uuid NodeId ( Float, Float )
+  | MoveNode Uuid NodeId NodeId ( Float, Float )
   | Escape -- the universal "No! Go Back!" key & command
    -- graph-view messages
   -- | Pan Uuid Float Float
@@ -267,6 +267,7 @@ type alias LinkDrawingData =
       , chosen : AutoDict.Dict String AcceptVia Int
       }
   , label : Connection
+  , isPhantom : Bool
   }
 
 type ExclusiveNodeAttributes

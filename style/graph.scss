@@ -209,99 +209,120 @@
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-// Base edge styling
-.link {
-  // Remove default SVG styling
-  fill: none;
-  
-  // The background path (simulated stroke)
-  &.background {
-    stroke: var(--background);
-    stroke-width: 6px; // Wider than main path for the "stroke" effect
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    opacity: 0.8;
-    // pointer-events: none; // NEW
+// Phantom edge pulse animation - synchronized with phantom node
+@keyframes phantom-edge-pulse {
+  0%, 100% {
+    stroke: var(--red);
+    opacity: 1;
   }
-  
-  // The main visible path
-  &:not(.background) {
-    stroke: var(--comment);
-    stroke-width: 2px;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    transition: all 0.2s ease;
-    // Arrowhead styling
-    marker-end: url(#arrowhead);
-    // pointer-events: none; // NEW
+  50% {
+    stroke: var(--purple);
+    opacity: 0.7;
   }
+}
 
-  // Hover state for entire edge
-  // &:hover {
-  //   &:not(.background) {
-  //     stroke: var(--cyan);
-  //     stroke-width: 3px;
-  //     filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
-  //   }
+
+
+
+.link-group {
+
+  // Base edge styling
+  .link {
+    // Remove default SVG styling
+    fill: none;
     
-  //   // Make the background path slightly wider on hover for better contrast
-  //   &.background {
-  //     stroke-width: 8px;
-  //   }
-  // }
-
-  // Edge label styling
-  &.text {
-    fill: var(--foreground);
-    font-family: theme.$font-family-system;
-    font-size: 16px; // larger for better click target
-    font-weight: 500; // NEW
-    text-anchor: middle;
-    dominant-baseline: central;
-    pointer-events: all;
-    user-select: none;
+    // The background path (simulated stroke)
+    &.background {
+      stroke: var(--background);
+      stroke-width: 6px; // Wider than main path for the "stroke" effect
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.8;
+      // pointer-events: none; // NEW
+    }
     
-    // Background for better readability
-    paint-order: stroke fill markers;
-    stroke: var(--background);
-    stroke-width: 6px; // MUCH thicker for better click-target
-    stroke-linecap: round;
-    stroke-linejoin: round;
-
-    // transition: all 0.2s ease; // NEW
-
-    .link.current & {
-      fill: var(--pink);
-      font-weight: 600;
-      animation: text-pulse 1s ease-in-out infinite;
+    // The main visible path
+    &:not(.background) {
+      stroke: var(--comment);
+      stroke-width: 2px;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: all 0.2s ease;
+      // Arrowhead styling
+      marker-end: url(#arrowhead);
+      // pointer-events: none; // NEW
     }
 
-    .interactive &:hover {
-      // stroke: var(--cyan);
-      stroke-width: 3px;
-      filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
-      fill: var(--cyan);
-      // font-weight: 600;
-      font-size: 24px; // grow on hover, better target
-      cursor: pointer; // NEW
-      // stroke-width: 8px; // same
+    // Edge label styling
+    &.text {
+      fill: var(--foreground);
+      font-family: theme.$font-family-system;
+      font-size: 16px; // larger for better click target
+      font-weight: 500; // NEW
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: all;
+      user-select: none;
+      
+      // Background for better readability
+      paint-order: stroke fill markers;
+      stroke: var(--background);
+      stroke-width: 6px; // MUCH thicker for better click-target
+      stroke-linecap: round;
+      stroke-linejoin: round;
 
-      ~ * { // .link:not(.background) {
-        stroke:var(--cyan);
+      // transition: all 0.2s ease; // NEW
+
+      .link.current & {
+        fill: var(--pink);
+        font-weight: 600;
+        animation: text-pulse 1s ease-in-out infinite;
+      }
+
+      .interactive &:hover {
+        // stroke: var(--cyan);
         stroke-width: 3px;
+        filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
+        fill: var(--cyan);
+        // font-weight: 600;
+        font-size: 24px; // grow on hover, better target
+        cursor: pointer; // NEW
+        // stroke-width: 8px; // same
+
+        ~ * { // .link:not(.background) {
+          stroke:var(--cyan);
+          stroke-width: 3px;
+        }
       }
     }
+
+    // Phantom edge group
+    &.phantom {
+      // Phantom edge background (the "stroke" effect)
+      &.background {
+        stroke: var(--background);
+        stroke-width: 6px;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      
+      // Main phantom edge path
+      &:not(.background) {
+        stroke: var(--red);
+        stroke-width: 2px;
+        stroke-dasharray: 5, 3; // Dashed line - slightly different pattern from node
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        animation: phantom-edge-pulse 2s ease-in-out infinite;
+        pointer-events: none;
+        opacity: 0.9;
+        marker-end: url(#phantom-arrowhead);
+      }
+      
+    }
+
   }
 }
 
@@ -335,7 +356,7 @@
 @keyframes edge-pulse {
   0%, 100% {
     stroke-width: 3px;
-    filter: drop-shadow(0 0 3px rgba(189, 147, 249, 0.5));
+    filter: drop-shadow(0 0 3px rgba(189, 147, 249, 0.5));    
   }
   50% {
     stroke-width: 3.5px;
@@ -374,3 +395,8 @@
   fill: var(--cyan);
 }
 
+// If you want to style the existing arrowhead instead:
+#phantom-arrowhead {
+  animation: phantom-edge-pulse 2s ease-in-out infinite;
+  fill: transparent;
+}

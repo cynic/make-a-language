@@ -46,6 +46,7 @@ import Jsonify exposing (..)
 import Graph exposing (Graph)
 import Css exposing (px)
 import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
+import GraphEditor exposing (path_between)
 
 {-
 Quality / technology requirements:
@@ -154,6 +155,20 @@ nodeDrawingForPackage package {isFrozen} graphView_uuid {currentOperation} =
       )
     |> Dict.fromList
 
+linkExistsInGraph : Graph.NodeContext Entity Connection -> NodeId -> Bool
+linkExistsInGraph from to =
+  -- does a link exist from `from` to `to`?
+  IntDict.member to from.outgoing
+
+identifyCardinality : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
+identifyCardinality from to =
+  if to.node.id == from then
+    Recursive
+  else if linkExistsInGraph to from then
+    Bidirectional
+  else
+    Unidirectional
+
 linkDrawingForPackage : GraphPackage -> Dict (NodeId, NodeId) LinkDrawingData
 linkDrawingForPackage package =
   Graph.edges package.userGraph.graph
@@ -167,22 +182,9 @@ linkDrawingForPackage package =
   |> List.map
       (\{sourceNode, destNode, label} ->
         let
-          linkExistsInGraph : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Bool
-          linkExistsInGraph from to =
-            -- does a link exist from `from` to `to`?
-            IntDict.member to.node.id from.outgoing
-
-          identifyCardinality : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Cardinality
-          identifyCardinality from to =
-            if to.node.id == from.node.id then
-              Recursive
-            else if linkExistsInGraph to from then
-              Bidirectional
-            else
-              Unidirectional
           cardinality : Cardinality
           cardinality =
-            identifyCardinality sourceNode destNode
+            identifyCardinality sourceNode.node.id destNode
         in
           ( (sourceNode.node.id, destNode.node.id)
           , { cardinality = cardinality
@@ -198,6 +200,7 @@ linkDrawingForPackage package =
                   destNode.node.label
                   cardinality
                   7 5
+            , isPhantom = False
             }
           )
     )
@@ -1370,10 +1373,43 @@ selectNodeInView model view_uuid node_id coordinates =
   |> Maybe.map
     (\graph_view ->
       let
+        newNodeId : NodeId
         newNodeId =
           Graph.nodeIdRange graph_view.package.userGraph.graph
           |> Maybe.map (Tuple.second >> (+) 1)
           |> Maybe.withDefault 0
+        nodeDrawingData : NodeDrawingData
+        nodeDrawingData =
+          { exclusiveAttributes = Just DrawPhantom
+          , isTerminal = True
+          , isDisconnected = False
+          , coordinates = coordinates
+          , isRoot = False
+          , interactivity =
+              { canSplit = False
+              , canSelect = False
+              }
+          , view_uuid = view_uuid
+          }
+        linkDrawingData : LinkDrawingData
+        linkDrawingData =
+          { cardinality = Unidirectional
+          , pathBetween =
+              { pathString = ""
+              , transition_coordinates = { x = 0, y = 0 }
+              , length = 0.1
+              , control_point = { x = 0, y = 0 }
+              , source_connection_point = { x = 0, y = 0 }
+              , target_connection_point = { x = 0, y = 0 }
+              }
+          , executionData =
+              { executed = False
+              , smallest_recency = -1
+              , chosen = AutoDict.empty acceptConditionToString
+              }
+          , label = AutoSet.empty transitionToString
+          , isPhantom = True
+          }
       in
         { model
           | currentOperation =
@@ -1397,18 +1433,12 @@ selectNodeInView model view_uuid node_id coordinates =
                       { drawingData
                         | node_drawing =
                             Dict.insert newNodeId
-                              { exclusiveAttributes = Just DrawPhantom
-                              , isTerminal = True
-                              , isDisconnected = False
-                              , coordinates = coordinates
-                              , isRoot = False
-                              , interactivity =
-                                  { canSplit = False
-                                  , canSelect = False
-                                  }
-                              , view_uuid = view_uuid
-                              }
+                              nodeDrawingData
                               drawingData.node_drawing
+                        , link_drawing =
+                            Dict.insert (node_id, newNodeId)
+                              linkDrawingData
+                              drawingData.link_drawing
                       }
                 }
                 model.graph_views
@@ -1416,20 +1446,62 @@ selectNodeInView model view_uuid node_id coordinates =
     )
   |> Maybe.withDefault model
 
-moveNode : NodeId -> (Float, Float) -> GraphView -> GraphView
-moveNode node_id (x, y) graph_view =
+moveNode : NodeId -> NodeId -> (Float, Float) -> GraphView -> GraphView
+moveNode source_id dest_id (x, y) graph_view =
   { graph_view
     | drawingData =
-        let drawingData = graph_view.drawingData in
+        let
+          drawingData = graph_view.drawingData
+          cardinality =
+            if source_id == dest_id then
+              Recursive
+            else
+              let
+                maybeDest =
+                  Graph.get dest_id graph_view.package.userGraph.graph
+              in
+                case maybeDest of
+                  Nothing ->
+                    Unidirectional
+                  Just dest ->
+                    if linkExistsInGraph dest source_id then
+                      Bidirectional
+                    else
+                      Unidirectional
+        in
         { drawingData
           | node_drawing =
-              Dict.update node_id
+              Dict.update dest_id
                 (Maybe.map
                   (\phantom_node ->
                       { phantom_node | coordinates = (x, y) }
                   )
                 )
                 drawingData.node_drawing
+          , link_drawing =
+              let
+                sourceNode =
+                  Graph.get source_id graph_view.package.userGraph.graph
+              in
+                Dict.update (source_id, dest_id)
+                  (Maybe.map
+                    (\phantom_link ->
+                        { phantom_link
+                          | pathBetween =
+                              sourceNode
+                              |> Maybe.map
+                                (\src ->
+                                  path_between
+                                    src.node.label
+                                    { x = x, y = y }
+                                    cardinality
+                                    7 5
+                                )
+                              |> Maybe.withDefault phantom_link.pathBetween                                
+                        }
+                    )
+                  )
+                  drawingData.link_drawing
         }
   }
 
@@ -1444,12 +1516,12 @@ update msg model =
       , Cmd.none
       )
     
-    MoveNode view_uuid node_id (x, y) ->
+    MoveNode view_uuid source_id dest_id (x, y) ->
       ( { model
           | graph_views =
               AutoDict.update view_uuid
                 (Maybe.map
-                  (moveNode node_id (x, y))
+                  (moveNode source_id dest_id (x, y))
                 )
                 model.graph_views
         }
@@ -1458,7 +1530,7 @@ update msg model =
 
     Escape ->
       ( case model.currentOperation of
-          Just (ModifyConnection graph_uuid (CreatingNewNode {dest})) ->
+          Just (ModifyConnection graph_uuid (CreatingNewNode {source, dest})) ->
             { model
               | currentOperation = Nothing
               , graph_views =
@@ -1470,6 +1542,8 @@ update msg model =
                             { drawingData
                               | node_drawing =
                                   Dict.remove dest drawingData.node_drawing
+                              , link_drawing =
+                                  Dict.remove (source, dest) drawingData.link_drawing
                             }
                       }
                     ))
@@ -2847,7 +2921,7 @@ subscriptions model =
           []
     nodeMoveSubscription =
       case model.currentOperation of
-        Just (ModifyConnection view_uuid (CreatingNewNode {dest})) ->
+        Just (ModifyConnection view_uuid (CreatingNewNode {source, dest})) ->
           AutoDict.get view_uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
@@ -2881,6 +2955,7 @@ subscriptions model =
                     (\x y ->
                       MoveNode
                         view_uuid
+                        source
                         dest
                         (translate (x, y)) -- this is incorrect! Must translate…
                     )

@@ -692,6 +692,8 @@ viewLink (from, to) drawing_data =
         linkClass =
           if drawing_data.executionData.executed then
             [ "link", "executed", "recent-" ++ String.fromInt drawing_data.executionData.smallest_recency ]
+          else if drawing_data.isPhantom then
+            [ "link", "phantom" ]
           else
             [ "link" ]
       in
@@ -701,7 +703,7 @@ viewLink (from, to) drawing_data =
             path
               [ d drawing_data.pathBetween.pathString
               -- , noFill
-              , class [ "link", "background" ]
+              , class ( "background" :: linkClass )
               ]
               [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
           , path
@@ -713,7 +715,7 @@ viewLink (from, to) drawing_data =
               [ x <| drawing_data.pathBetween.transition_coordinates.x
               , y <| drawing_data.pathBetween.transition_coordinates.y
               -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              , class [ "link", "text" ]
+              , class ( "text" :: linkClass )
               -- , onClick (EditTransition edge.from edge.to edge.label)
               ]
               ( title [] [ text "Click to modify" ] :: labelText 
