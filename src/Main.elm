@@ -45,6 +45,7 @@ import Dict exposing (Dict)
 import Jsonify exposing (..)
 import Graph exposing (Graph)
 import Css exposing (px)
+import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
 
 {-
 Quality / technology requirements:
@@ -212,14 +213,55 @@ viewFromPackage (w, h) (x, y) package_uuid model =
     |> Maybe.map
       (\pkg ->
         let
+          computed : GraphEditor.ComputeGraphResult
           computed = GraphEditor.computeGraphFully (w, h) pkg.userGraph
+          -- now that we have the positions, calculate the dimensions of
+          -- the viewport.
+          -- first, let's get the aspect ratio.  That will let us figure out
+          -- the height of the viewport "automatically" once we have the right width.
+          solved_pkg =
+            { pkg | userGraph = computed.solvedGraph }
+          aspectRatio : Float
+          aspectRatio = w / h
+          inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
+          inner_pad = 95
+          -- the forces on the graph place the root at (0, 0).
+          -- they also pull all the other nodes to the right and to the
+          -- y-axis center.
+          -- So I can take the number of nodes and multiply by, say, 150 and
+          -- I shouldn't be too far off from a maximum.
+          theoretical_max = 150.0 * toFloat (Graph.size computed.solvedGraph.graph)
+          -- Now find out: where is the bounding box for the nodes?
+          ( (min_x, max_x), (min_y, max_y) ) =    
+            Graph.fold
+              (\ctx ((xmin, xmax), (ymin, ymax)) ->
+                ( ( min ctx.node.label.x xmin
+                  , max ctx.node.label.x xmax
+                  )
+                , ( min ctx.node.label.y ymin
+                  , max ctx.node.label.y ymax
+                  )
+                )
+              )
+              ((theoretical_max, -1000), (theoretical_max, -1000))
+              computed.solvedGraph.graph
+            |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad), (c - inner_pad, d + inner_pad))
+            -- |> Debug.log "Bounds"
+          -- from this, I can figure out the appropriate coordinates
+          center_y = (min_y + max_y) / 2
+          autoHeight = (max_x - min_x) / aspectRatio
+          -- now, we want a center within that autoHeight.
+          guestCoordinates = ( min_x, center_y - autoHeight / 2 )
+          guestDimensions = ( max_x - min_x, autoHeight )
           graph_view : GraphView
           graph_view =
             { id = id
-            , package = pkg
+            , package = solved_pkg
             , simulation = computed.simulation
-            , dimensions = (w, h)
-            , coordinates = (x, y)
+            , host_dimensions = (w, h)
+            , host_coordinates = (x, y)
+            , guest_dimensions = guestDimensions
+            , guest_coordinates = guestCoordinates
             , forces = computed.forces
             , specificForces = IntDict.empty
             , zoom = 1.0
@@ -230,8 +272,8 @@ viewFromPackage (w, h) (x, y) package_uuid model =
                 , tickCount = 0
                 }
             , drawingData =
-                { link_drawing = linkDrawingForPackage pkg
-                , node_drawing = nodeDrawingForPackage pkg id model
+                { link_drawing = linkDrawingForPackage solved_pkg
+                , node_drawing = nodeDrawingForPackage solved_pkg id model
                 }
             }
         in
@@ -1141,7 +1183,7 @@ updateMainEditorDimensions ({uiState} as model) =
         AutoDict.update model.mainGraphView
           (Maybe.map
             (\graph_view ->
-              { graph_view | dimensions = uiState.dimensions.mainEditor }
+              { graph_view | host_dimensions = uiState.dimensions.mainEditor }
             )
           >> Maybe.Extra.orElseLazy (\() -> Debug.todo "PUNT")
           )
@@ -2777,11 +2819,7 @@ subscriptions model =
                       MoveNode
                         view_uuid
                         dest
-                        ( mapCorrespondingPair
-                            (-)
-                            (x, y)
-                            ( Tuple.mapBoth ((+) 0) ((+) 0) graph_view.coordinates )
-                        )
+                        graph_view.host_coordinates -- this is incorrect! Must translate…
                     )
                     (D.field "clientX" D.float)
                     (D.field "clientY" D.float)

@@ -310,8 +310,10 @@ type alias GraphView =
     -- No, I'll take the ability to examine the internals over that future
     -- morass.
   , simulation : Force.State NodeId
-  , dimensions : (Float, Float) -- (w,h) of svg element
-  , coordinates : (Float, Float) -- (x,y) of the container
+  , host_dimensions : (Float, Float) -- (w,h) of svg element
+  , host_coordinates : (Float, Float) -- (x,y) of svg element
+  , guest_dimensions : (Float, Float) -- (w,h) of svg viewport
+  , guest_coordinates : (Float, Float) -- (x,y) of svg viewport
     -- `forces` includes:
     -- - graph forces of attraction and repulsion
     -- - node forces to pull the root towards the center

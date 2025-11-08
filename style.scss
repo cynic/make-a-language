@@ -477,6 +477,10 @@ rect.redo {
   paint-order: stroke fill markers;
 }
 
+.graph {
+  transition: all 0.3s ease;
+}
+
 // svg {
   // border: solid 2px red;
   // max-width: 100%;

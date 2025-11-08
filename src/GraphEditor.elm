@@ -45,6 +45,8 @@ import Random.Pcg.Extended as Random
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
+import Basics.Extra exposing (minSafeInteger)
+import Basics.Extra exposing (maxSafeInteger)
 
 type alias Model = GraphView
 type alias Msg = Main_Msg
@@ -85,8 +87,8 @@ makeLinkForces graph =
           (\(k, v) forces_ ->
             { source = ctx.node.id
             , target = k
-            , distance = 10 + 30.0 * toFloat (AutoSet.size v) -- 35-40 seems like a good distance
-            , strength = Just 0.7 -- * (toFloat <| Set.size v)
+            , distance = 80 -- 35-40 seems like a good distance
+            , strength = Just 1.0 -- * (toFloat <| Set.size v)
             } :: forces_
           )
           acc
@@ -95,14 +97,61 @@ makeLinkForces graph =
     graph
   |> Force.customLinks 3
 
+coordinateForces : NodeId -> Graph Entity Connection -> List (Force.Force NodeId)
+coordinateForces root graph =
+  let
+    x_target : Float
+    x_target = toFloat <| (Graph.size graph) * (80 + 18)
+  in
+    -- links are the "springs"
+    -- manyBody is the "repulsion"
+    Graph.fold
+      (\ctx {toX, toY, link, manyBody} ->
+        let
+        -- for all outgoing links that AREN'T recursive, create a link-Force.
+          linkForce =
+            IntDict.keys ctx.outgoing
+            |> List.filter ((/=) ctx.node.id)
+            |> List.foldl
+                (\k forces_ ->
+                  { source = ctx.node.id
+                  , target = k
+                  , distance = 80 -- 35-40 seems like a good distance
+                  , strength = Just 1.0 -- * (toFloat <| Set.size v)
+                  } :: forces_
+                )
+                link
+        in
+          if ctx.node.id == root then
+            { toX =
+                { node = ctx.node.id , strength = 20.0 , target = 0 } :: toX
+            , toY =
+                { node = ctx.node.id , strength = 20.0 , target = 0 } :: toY
+            , link = linkForce
+            , manyBody = ctx.node.id :: manyBody
+            }
+          else
+            { toX =
+                { node = ctx.node.id , strength = 0.03 , target = x_target } :: toX
+            , toY =
+                { node = ctx.node.id , strength = 0.03 , target = 0 } :: toY
+            , link = linkForce
+            , manyBody = ctx.node.id :: manyBody
+            }
+      )
+      { toX = [], toY = [], link = [], manyBody = [] }
+      graph
+    |>  (\{toX, toY, link, manyBody} ->
+          [ Force.towardsX toX
+          , Force.towardsY toY
+          , Force.customLinks 3 link
+          , Force.manyBodyStrength -20.0 manyBody
+          ]
+        )
+
 forces : AutomatonGraph -> (Int, Int) -> List (Force.Force NodeId)
 forces g (width, height) =
-  [ makeLinkForces g.graph -- the springs
-  , Force.manyBodyStrength -2000.0 (List.map .id <| Graph.nodes g.graph) -- the repulsion
-  , Force.towardsX [ { node = g.root, strength = 0.1, target = 0 } ]
-  , Force.towardsY [ { node = g.root, strength = 0.8, target = toFloat (height // 2) } ]
-  , Force.center (toFloat width / 2) (toFloat height / 2)
-  ]
+  coordinateForces g.root g.graph
 
 toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
@@ -1625,9 +1674,9 @@ hoverArrowheadMarker =
 --   --   []
 
 viewUndoRedoVisualisation : GraphView -> Svg a
-viewUndoRedoVisualisation { package, dimensions } =
+viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
   let
-    (_, h) = dimensions
+    h = Tuple.second guest_coordinates + Tuple.second guest_dimensions
     rect_width = 30
     rect_height = 10
     rect_spacing = 3
@@ -1734,8 +1783,10 @@ viewMainSvgContent graph_view =
     --       pointerEvents "none"
     --     _ ->
     --       class []
+    , class [ "graph" ]
     ]
-    [ defs [] [ arrowheadMarker, phantomArrowheadMarker, hoverArrowheadMarker ]
+    [ defs [] [ arrowheadMarker, phantomArrowheadMarker, hoverArrowheadMarker
+    ]
     , Dict.toList graph_view.drawingData.link_drawing
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
       |> g [ class [ "edges" ] ]
@@ -1919,7 +1970,9 @@ viewMainSvgContent graph_view =
 viewGraph : GraphView -> Svg Msg
 viewGraph graphView =
   let
-    ( width, height ) = graphView.dimensions
+    ( host_width, host_height ) = graphView.host_dimensions
+    ( guest_width, guest_height) = graphView.guest_dimensions
+    ( guest_x, guest_y ) = graphView.guest_coordinates
     -- ( mouse_x, mouse_y ) = mouseCoords
     -- permit_scroll : Svg Main_Msg
     -- permit_scroll =
@@ -1933,7 +1986,7 @@ viewGraph graphView =
     --         _ ->
     --           Zoom n
     --     )
-    panBuffer = panBufferAmount graphView.dimensions
+    panBuffer = panBufferAmount graphView.guest_dimensions
     -- permit_pan : List (Svg GraphView_Msg)
     -- permit_pan =
     --   [ onMouseMove MouseMove
@@ -2012,8 +2065,9 @@ viewGraph graphView =
       --     permit_click :: permit_scroll :: permit_pan
   in
     svg
-      ([ viewBox 0 0 width height
-       , TypedSvg.Attributes.InPx.width width
+      ([ viewBox guest_x guest_y guest_width guest_height
+       , TypedSvg.Attributes.InPx.width host_width
+       , TypedSvg.Attributes.InPx.height host_height
       --  , TypedSvg.Attributes.style <| "max-width:" ++ (String.fromFloat width) ++ "px"
       --  , TypedSvg.Attributes.InPx.height height
       --  , TypedSvg.Attributes.preserveAspectRatio (Align ScaleMin ScaleMin) Meet
@@ -2045,21 +2099,21 @@ viewGraph graphView =
       --     Just (Dragging _) ->
       --       g [] []
       ,
-        let
-          bottomMsg message =
-            text_
-              [ Px.x 15
-              , Px.y <| height - 15
-              , fill <| Paint <| Color.black
-              , fontFamily ["sans-serif"]
-              , fontSize 14
-              , textAnchor AnchorStart
-              , alignmentBaseline AlignmentCentral
-              , dominantBaseline DominantBaselineCentral
-              , pointerEvents "none"
-              ]
-              [ text message ]
-        in
+        -- let
+        --   bottomMsg message =
+        --     text_
+        --       [ Px.x 15
+        --       , Px.y <| height - 15
+        --       , fill <| Paint <| Color.black
+        --       , fontFamily ["sans-serif"]
+        --       , fontSize 14
+        --       , textAnchor AnchorStart
+        --       , alignmentBaseline AlignmentCentral
+        --       , dominantBaseline DominantBaselineCentral
+        --       , pointerEvents "none"
+        --       ]
+        --       [ text message ]
+        -- in
         g
           [ ]
           [ --rect
@@ -2074,14 +2128,14 @@ viewGraph graphView =
               -- ]
               -- []
             text_
-              [ x <| Debug.log "W" <| width - 15
-              , y <| height - 10
+              [ x <| Debug.log "W" <| (guest_x + guest_width) - 5
+              , y <| (guest_y + guest_height) - 10
               , class [ "status-line", "zoom" ]
               ]
               [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
           , text_
-              [ x <| width - 95
-              , y <| height - 10
+              [ x <| (guest_x + guest_width) - 80
+              , y <| (guest_y + guest_height) - 10
               , class [ "status-line", "pan" ]
               ]
               [ text ("🧭 " ++ panToString graphView.pan) ]
