@@ -240,8 +240,7 @@ type AcceptChoice
   | ChooseGraphReference Int
 
 type alias GraphViewProperties =
-  { tickCount : Int
-  , isFrozen : Bool
+  { isFrozen : Bool
   }
 
 type Cardinality

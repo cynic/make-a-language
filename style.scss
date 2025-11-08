@@ -2,6 +2,7 @@
 @use 'style/splitter';
 @use 'style/sidebar';
 @use 'style/bottompanel';
+@use 'style/graph';
 
 .debug-parent {
   position: relative;
@@ -24,6 +25,35 @@
     border-left: 1px solid red;
   }
 }
+
+// ===== Borders, for debugging dimensions =====
+// svg {
+  // border: solid 2px red;
+  // max-width: 100%;
+  // height: auto;
+// }
+
+// .editor-main {
+//   border: solid 2px green;
+
+//   & * {
+//     opacity: 0.8;
+//   }
+// }
+
+// .editor-and-tools-panel {
+//   border: solid 2px orange;
+//   & * {
+//     opacity: 0.8;
+//   }
+// }
+
+// .editor-frame {
+//   border: solid 2px yellow;
+//   & * {
+//     opacity: 0.8;
+//   }
+// }
 
 .editor-frame {
   display: flex;
@@ -88,423 +118,3 @@ rect.redo {
     text-align: center;
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Base node styling
-.graph-node {
-  r: 7px;
-  fill: var(--current-line);
-  stroke: var(--comment);
-  stroke-width: 1.5;
-  cursor: pointer;
-  transition: all 0.2s ease;
-
-  &:hover {
-    stroke-width: 2.5;
-    stroke: var(--foreground);
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
-  }
-
-  // Larger radii for important nodes; smaller for less-important.
-  &.start,
-  &.terminal,
-  &.current {
-    r: 8px; // Slightly larger for emphasis
-    stroke-width: 2.5;
-
-    &:hover {
-      stroke-width: 3.5;
-    }
-  }
-
-  &.selected {
-    r: 9px; // Most prominent when selected
-    stroke-width: 3;
-
-    &:hover {
-      stroke-width: 4;
-    }
-  }
-
-  &.disconnected {
-    r: 6px; // Slightly smaller for disconnected
-    stroke-width: 1;
-  }
-
-  &.phantom {
-    r: 8px; // Slightly larger for discoverability
-  }
-
-  // 1. Start Node
-  &.start {
-    fill: var(--green);
-    stroke: var(--green);
-    stroke-width: 2;
-    
-    &:hover {
-      stroke: var(--green);
-      stroke-width: 3;
-      filter: drop-shadow(0 2px 6px rgba(80, 250, 123, 0.4));
-    }
-  }
-
-  // 2. Terminal Nodes  
-  &.terminal {
-    fill: var(--red);
-    stroke: var(--red);
-    stroke-width: 3; // Thicker border for emphasis
-    
-    &:hover {
-      stroke: var(--red);
-      stroke-width: 4;
-      filter: drop-shadow(0 2px 6px rgba(255, 85, 85, 0.4));
-    }
-  }
-  
-  // 3. Disconnected Nodes
-  &.disconnected {
-    fill: transparent;
-    stroke: var(--comment);
-    stroke-width: 2;
-    stroke-dasharray: 5, 3; // Dashed border
-    
-    &:hover {
-      stroke: var(--comment);
-      stroke-dasharray: 5, 3; // Keep dashed on hover
-      fill: rgba(98, 114, 164, 0.1); // --comment with low opacity
-    }
-  }
-
-  // 4. User-Selected Nodes
-  &.selected {
-    fill: var(--purple);
-    stroke: var(--purple);
-    stroke-width: 3;
-    filter: drop-shadow(0 2px 8px rgba(189, 147, 249, 0.5));
-    
-    &:hover {
-      stroke-width: 4;
-      filter: drop-shadow(0 4px 12px rgba(189, 147, 249, 0.6));
-    }
-  }
-
-  // 5. Current Node (Programmatic Focus)
-  &.current {
-    fill: var(--cyan);
-    stroke: var(--cyan);
-    stroke-width: 3;
-    animation: current-node-pulse 2s ease-in-out infinite;
-    
-    &:hover {
-      animation: current-node-pulse 1s ease-in-out infinite; // Faster pulse on hover
-    }
-  }
-    
-  // 6. Phantom node - placeholder for potential creation
-  &.phantom {
-    fill: transparent;
-    stroke: var(--green);
-    stroke-width: 2;
-    stroke-dasharray: 3, 3;
-    animation: phantom-pulse 2s ease-in-out infinite;
-    cursor: crosshair;
-    
-    &:hover {
-      stroke-width: 3;
-      stroke-dasharray: 0; // Solid on hover
-      animation: none;
-      fill: rgba(80, 250, 123, 0.1); // --green with low opacity
-    }
-  }
-  
-}
-
-// // Node text labels
-// .graph-node-label {
-//   fill: var(--foreground);
-//   // font-family: $font-family-monospace;
-//   font-size: 12px;
-//   text-anchor: middle;
-//   dominant-baseline: central;
-//   pointer-events: none;
-//   user-select: none;
-// }
-
-// .graph-node-start-label {
-//   fill: var(--background);
-//   font-weight: 600;
-// }
-
-// .graph-node-terminal-label {
-//   fill: var(--background);
-//   font-weight: 600;
-// }
-
-// .graph-node-disconnected-label {
-//   fill: var(--comment);
-//   opacity: 0.8;
-// }
-
-// .graph-node-selected-label {
-//   fill: var(--background);
-//   font-weight: 600;
-// }
-
-// .graph-node-current-label {
-//   fill: var(--background);
-//   font-weight: 600;
-// }
-
-// Pulsing animation for current node
-@keyframes current-node-pulse {
-  0%, 100% {
-    stroke-width: 3;
-    filter: drop-shadow(0 2px 6px rgba(139, 233, 253, 0.4));
-  }
-  50% {
-    stroke-width: 4;
-    filter: drop-shadow(0 3px 10px rgba(139, 233, 253, 0.6));
-  }
-}
-
-@keyframes phantom-pulse {
-  0%, 100% {
-    stroke: var(--green);
-    opacity: 0.7;
-  }
-  50% {
-    stroke: var(--cyan);
-    opacity: 1;
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Base edge styling
-.link {
-  // Remove default SVG styling
-  fill: none;
-  
-  // The background path (simulated stroke)
-  &.background {
-    stroke: var(--background);
-    stroke-width: 6px; // Wider than main path for the "stroke" effect
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    opacity: 0.8;
-    // pointer-events: none; // NEW
-  }
-  
-  // The main visible path
-  &:not(.background) {
-    stroke: var(--comment);
-    stroke-width: 2px;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    transition: all 0.2s ease;
-    // Arrowhead styling
-    marker-end: url(#arrowhead);
-    // pointer-events: none; // NEW
-  }
-
-  // Hover state for entire edge
-  // &:hover {
-  //   &:not(.background) {
-  //     stroke: var(--cyan);
-  //     stroke-width: 3px;
-  //     filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
-  //   }
-    
-  //   // Make the background path slightly wider on hover for better contrast
-  //   &.background {
-  //     stroke-width: 8px;
-  //   }
-  // }
-
-  // Edge label styling
-  &.text {
-    fill: var(--foreground);
-    font-family: theme.$font-family-system;
-    font-size: 16px; // larger for better click target
-    font-weight: 500; // NEW
-    text-anchor: middle;
-    dominant-baseline: central;
-    pointer-events: all;
-    user-select: none;
-    
-    // Background for better readability
-    paint-order: stroke fill markers;
-    stroke: var(--background);
-    stroke-width: 6px; // MUCH thicker for better click-target
-    stroke-linecap: round;
-    stroke-linejoin: round;
-
-    cursor: pointer; // NEW
-    // transition: all 0.2s ease; // NEW
-
-    .link.current & {
-      fill: var(--pink);
-      font-weight: 600;
-      animation: text-pulse 1s ease-in-out infinite;
-    }
-
-    &:hover {
-      // stroke: var(--cyan);
-      stroke-width: 3px;
-      filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
-      fill: var(--cyan);
-      // font-weight: 600;
-      font-size: 24px; // grow on hover, better target
-      // stroke-width: 8px; // same
-
-      ~ * { // .link:not(.background) {
-        stroke:var(--cyan);
-        stroke-width: 3px;
-      }
-    }
-  }
-}
-
-.link-group:has(.link.text:hover) path:not(.background) {
-  stroke: var(--cyan);
-  marker-end: url(#hover-arrowhead);
-}
-
-// Group hover state - simplified
-// .link-group:hover {
-//   .link:not(.background):not(text) {
-//     stroke: var(--pink);
-//     stroke-width: 3px;
-
-//     & #arrowhead {
-//       fill: var(--pink);
-//     }
-//   }
-  
-//   // .link.background {
-//   //   stroke-width: 8px;
-//   // }
-  
-//   .link.text {
-//     // fill: var(--cyan);
-//     font-weight: 600;
-//   }
-// }
-
-// Animations
-@keyframes edge-pulse {
-  0%, 100% {
-    stroke-width: 3px;
-    filter: drop-shadow(0 0 3px rgba(189, 147, 249, 0.5));
-  }
-  50% {
-    stroke-width: 3.5px;
-    filter: drop-shadow(0 0 5px rgba(189, 147, 249, 0.7));
-  }
-}
-
-@keyframes current-edge-pulse {
-  0%, 100% {
-    stroke-width: 4px;
-    filter: drop-shadow(0 0 4px rgba(255, 121, 198, 0.6));
-  }
-  50% {
-    stroke-width: 5px;
-    filter: drop-shadow(0 0 6px rgba(255, 121, 198, 0.8));
-  }
-}
-
-@keyframes text-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-
-// Arrowhead marker styling (if you want to style it via CSS)
-// Note: This might need to be inline in the SVG, but here's the CSS approach
-#arrowhead {
-  fill: var(--comment);
-  stroke: none;
-}
-
-#hover-arrowhead {
-  fill: var(--cyan);
-}
-
-
-.status-line {
-  fill: var(--comment);
-  stroke-width: 1.5px;
-  stroke: var(--current-line);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  font-family: theme.$font-family-system;
-  font-size: 14px;
-  text-anchor: end;
-  dominant-baseline: central;
-  pointer-events: none;
-  user-select: none;
-  alignment-baseline: central;
-  paint-order: stroke fill markers;
-}
-
-.graph {
-  transition: all 0.3s ease;
-}
-
-// svg {
-  // border: solid 2px red;
-  // max-width: 100%;
-  // height: auto;
-// }
-
-// .editor-main {
-//   border: solid 2px green;
-
-//   & * {
-//     opacity: 0.8;
-//   }
-// }
-
-// .editor-and-tools-panel {
-//   border: solid 2px orange;
-//   & * {
-//     opacity: 0.8;
-//   }
-// }
-
-// .editor-frame {
-//   border: solid 2px yellow;
-//   & * {
-//     opacity: 0.8;
-//   }
-// }

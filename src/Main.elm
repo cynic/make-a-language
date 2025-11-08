@@ -79,8 +79,8 @@ getUuid model =
   in
     ( v, updatedModel )
 
-nodeDrawingForPackage : GraphPackage -> Uuid -> Model -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package graphView_uuid {currentOperation} =
+nodeDrawingForPackage : GraphPackage -> GraphViewProperties -> Uuid -> Model -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage package {isFrozen} graphView_uuid {currentOperation} =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -90,11 +90,11 @@ nodeDrawingForPackage package graphView_uuid {currentOperation} =
         nonRecursive =
           IntDict.filter (\k _ -> k /= graphNode.node.id) graphNode.incoming
       in
-      IntDict.size nonRecursive > 1 ||
-      ( IntDict.findMin nonRecursive
-        |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
-        |> Maybe.withDefault False
-      )
+        IntDict.size nonRecursive > 1 ||
+        ( IntDict.findMin nonRecursive
+          |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
+          |> Maybe.withDefault False
+        )
   in
     Graph.nodes package.userGraph.graph
     |> List.map
@@ -131,16 +131,22 @@ nodeDrawingForPackage package graphView_uuid {currentOperation} =
             , isRoot = node.id == package.userGraph.root
             , interactivity =
                 { canSplit =
-                    Maybe.map isSplittable nodeContext
-                    |> Maybe.withDefault False
+                    if isFrozen then
+                      False
+                    else
+                      Maybe.map isSplittable nodeContext
+                      |> Maybe.withDefault False
                 , canSelect =
-                    case currentOperation of
-                      Just (ModifyConnection gv_uuid (CreatingNewNode _)) ->
-                        gv_uuid == graphView_uuid
-                      Nothing ->
-                        True
-                      _ ->
-                        False
+                    if isFrozen then
+                      False
+                    else
+                      case currentOperation of
+                        Just (ModifyConnection gv_uuid (CreatingNewNode _)) ->
+                          gv_uuid == graphView_uuid
+                        Nothing ->
+                          True
+                        _ ->
+                          False
                 }
             , view_uuid = graphView_uuid
             }
@@ -204,8 +210,8 @@ linkDrawingForPackage package =
     If there is no such `GraphPackage`, then nothing is done and no
     `GraphView` is returned.
 -}
-viewFromPackage : (Float, Float) -> (Float, Float) -> Uuid -> Model -> (Maybe GraphView, Model)
-viewFromPackage (w, h) (x, y) package_uuid model =
+viewFromPackage : (Float, Float) -> (Float, Float) -> GraphViewProperties -> Uuid -> Model -> (Maybe GraphView, Model)
+viewFromPackage (w, h) (x, y) {isFrozen} package_uuid model =
   let
     (id, model_) = getUuid model
   in
@@ -224,7 +230,15 @@ viewFromPackage (w, h) (x, y) package_uuid model =
           aspectRatio : Float
           aspectRatio = w / h
           inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
-          inner_pad = 95
+          inner_pad =
+            if isFrozen then
+              -- we don't need any buffer.
+              -- So, just put in a "buffer" for the node radius.
+              10
+            else
+              -- when we edit (e.g. make new nodes etc), we want some free space around to put
+              -- those nodes.  That is what this is for.
+              95
           -- the forces on the graph place the root at (0, 0).
           -- they also pull all the other nodes to the right and to the
           -- y-axis center.
@@ -253,6 +267,8 @@ viewFromPackage (w, h) (x, y) package_uuid model =
           -- now, we want a center within that autoHeight.
           guestCoordinates = ( min_x, center_y - autoHeight / 2 )
           guestDimensions = ( max_x - min_x, autoHeight )
+          properties =
+            { isFrozen = isFrozen }
           graph_view : GraphView
           graph_view =
             { id = id
@@ -267,13 +283,10 @@ viewFromPackage (w, h) (x, y) package_uuid model =
             , zoom = 1.0
             , pan = ( 0, 0)
             , disconnectedNodes = Set.empty
-            , properties =
-                { isFrozen = False
-                , tickCount = 0
-                }
+            , properties = properties
             , drawingData =
                 { link_drawing = linkDrawingForPackage solved_pkg
-                , node_drawing = nodeDrawingForPackage solved_pkg id model
+                , node_drawing = nodeDrawingForPackage solved_pkg properties id model
                 }
             }
         in
@@ -298,8 +311,8 @@ main =
     , subscriptions = subscriptions
     }
 
-createNewPackage : Uuid.Uuid -> Time.Posix -> (Float, Float) -> AutomatonGraph -> GraphPackage
-createNewPackage testUuid currentTime dimensions g = -- `dimensions` is the width & height of the panel
+createNewPackage : Uuid.Uuid -> Time.Posix -> AutomatonGraph -> GraphPackage
+createNewPackage testUuid currentTime g = -- `dimensions` is the width & height of the panel
   { userGraph = g
   -- , dimensions = dimensions
   , description = Nothing
@@ -340,7 +353,6 @@ init flags =
                 createNewPackage
                   testUuid
                   decoded.startTime
-                  (decoded.width, decoded.height)
                   (Automata.Data.empty mainUuid)
             in
               ( AutoDict.insert mainUuid pkg allPackagesDict
@@ -413,6 +425,7 @@ init flags =
                 0
             , 0
             )
+            { isFrozen = False }
             mainPackage.userGraph.graphIdentifier
             model_excl_views
       in

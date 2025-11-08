@@ -1091,36 +1091,32 @@ viewNode id data =
 --       _ ->
 --         g [] []
 
-mkArrowhead : String -> Svg msg
-mkArrowhead id_ =
-  marker
-    [ id id_
-    , viewBox 0 0 10 10
-    , refX "0"
-    , refY "5"
-    , orient "auto-start-reverse"
-    , markerWidth 5
-    , markerHeight 5
+arrowheadDefs : List (Svg msg)
+arrowheadDefs =
+  let
+    mkArrowhead : String -> Svg msg
+    mkArrowhead id_ =
+      marker
+        [ id id_
+        , viewBox 0 0 10 10
+        , refX "0"
+        , refY "5"
+        , orient "auto-start-reverse"
+        , markerWidth 5
+        , markerHeight 5
+        ]
+        [ path
+          [ d "M 0 0 L 10 5 L 0 10 z" ]
+          []
+        ]
+  in
+    [ mkArrowhead "arrowhead"
+    , mkArrowhead "phantom-arrowhead"
+      --strokeWidth 1.5
+      -- , strokeDasharray "1.5 2"
+      -- , strokeLinecap StrokeLinecapRound
+    , mkArrowhead "hover-arrowhead"
     ]
-    [ path
-      [ d "M 0 0 L 10 5 L 0 10 z" ]
-      []
-    ]
-
-arrowheadMarker : Svg msg
-arrowheadMarker =
-  mkArrowhead "arrowhead"
-
-phantomArrowheadMarker : Svg msg
-phantomArrowheadMarker =
-  mkArrowhead "phantom-arrowhead"
-    --strokeWidth 1.5
-    -- , strokeDasharray "1.5 2"
-    -- , strokeLinecap StrokeLinecapRound
-
-hoverArrowheadMarker : Svg msg
-hoverArrowheadMarker =
-  mkArrowhead "hover-arrowhead"
 
 -- transition_buttonSize : Float
 -- transition_buttonSize = 55
@@ -1783,10 +1779,12 @@ viewMainSvgContent graph_view =
     --       pointerEvents "none"
     --     _ ->
     --       class []
-    , class [ "graph" ]
+    , class
+        [ "graph"
+        , if not graph_view.properties.isFrozen then "interactive" else ""
+        ]
     ]
-    [ defs [] [ arrowheadMarker, phantomArrowheadMarker, hoverArrowheadMarker
-    ]
+    [ defs [] arrowheadDefs
     , Dict.toList graph_view.drawingData.link_drawing
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
       |> g [ class [ "edges" ] ]
@@ -2114,55 +2112,58 @@ viewGraph graphView =
         --       ]
         --       [ text message ]
         -- in
-        g
-          [ ]
-          [ --rect
-              -- [ x (Tuple.first model.dimensions - 121)
-              -- , y (Tuple.second model.dimensions - 30)
-              -- , Px.width 120
-              -- , Px.height 30
-              -- , stroke <| Paint <| Color.black
-              -- , strokeWidth 1
-              -- , Px.rx 5
-              -- , Px.ry 5
-              -- ]
-              -- []
-            text_
-              [ x <| Debug.log "W" <| (guest_x + guest_width) - 5
-              , y <| (guest_y + guest_height) - 10
-              , class [ "status-line", "zoom" ]
-              ]
-              [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
-          , text_
-              [ x <| (guest_x + guest_width) - 80
-              , y <| (guest_y + guest_height) - 10
-              , class [ "status-line", "pan" ]
-              ]
-              [ text ("🧭 " ++ panToString graphView.pan) ]
-          -- , case graphView.currentOperation of
-          --     Just (ModifyingGraph _ { dest }) ->
-          --       case dest of
-          --         NoDestination ->
-          --           bottomMsg "Press «Esc» to cancel link creation"
-          --         ExistingNode _ ->
-          --           bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
-          --         NewNode _ ->
-          --           bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-          --     Just (AlteringConnection _ _) ->
-          --       bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-          --     Just (Splitting _) ->
-          --       g [] []
-          --     Just (Executing _ _) ->
-          --       bottomMsg "Executing computation."
-          --     Just (Dragging _) ->
-          --       g [] []
-          --     Nothing ->
-          --       case graphView.package.undoBuffer of
-          --         [] ->
-          --           g [] []
-          --         _ ->
-          --           bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
-          ]
+        if graphView.properties.isFrozen then
+          g [] []
+        else
+          g
+            [ ]
+            [ --rect
+                -- [ x (Tuple.first model.dimensions - 121)
+                -- , y (Tuple.second model.dimensions - 30)
+                -- , Px.width 120
+                -- , Px.height 30
+                -- , stroke <| Paint <| Color.black
+                -- , strokeWidth 1
+                -- , Px.rx 5
+                -- , Px.ry 5
+                -- ]
+                -- []
+              text_
+                [ x <| Debug.log "W" <| (guest_x + guest_width) - 5
+                , y <| (guest_y + guest_height) - 10
+                , class [ "status-line", "zoom" ]
+                ]
+                [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
+            , text_
+                [ x <| (guest_x + guest_width) - 80
+                , y <| (guest_y + guest_height) - 10
+                , class [ "status-line", "pan" ]
+                ]
+                [ text ("🧭 " ++ panToString graphView.pan) ]
+            -- , case graphView.currentOperation of
+            --     Just (ModifyingGraph _ { dest }) ->
+            --       case dest of
+            --         NoDestination ->
+            --           bottomMsg "Press «Esc» to cancel link creation"
+            --         ExistingNode _ ->
+            --           bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
+            --         NewNode _ ->
+            --           bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+            --     Just (AlteringConnection _ _) ->
+            --       bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+            --     Just (Splitting _) ->
+            --       g [] []
+            --     Just (Executing _ _) ->
+            --       bottomMsg "Executing computation."
+            --     Just (Dragging _) ->
+            --       g [] []
+            --     Nothing ->
+            --       case graphView.package.undoBuffer of
+            --         [] ->
+            --           g [] []
+            --         _ ->
+            --           bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
+            ]
       ]
 
 -- onMouseScroll : (Float -> msg) -> Html.Attribute msg
