@@ -391,7 +391,9 @@ init flags =
                 0
             , 0
             )
-            { isFrozen = False }
+            { isFrozen = False
+            , canSelectConnections = True
+            }
             mainPackage.userGraph.graphIdentifier
             model_excl_views
       in
@@ -1224,6 +1226,11 @@ updateMainEditorDimensions ({uiState} as model) =
                   | host_dimensions = uiState.dimensions.mainEditor
                   , guest_dimensions = guest_viewport.dimensions
                   , guest_coordinates = guest_viewport.coordinates
+                  , host_coordinates =
+                      if uiState.open.sideBar then
+                        (Tuple.first uiState.dimensions.sideBar + 8 + 48, 0)
+                      else
+                        (0, 0)
                 }
             )
           >> Maybe.Extra.orElseLazy (\() -> Debug.todo "PUNT")

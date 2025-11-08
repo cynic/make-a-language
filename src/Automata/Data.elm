@@ -241,6 +241,7 @@ type AcceptChoice
 
 type alias GraphViewProperties =
   { isFrozen : Bool
+  , canSelectConnections : Bool
   }
 
 type Cardinality
