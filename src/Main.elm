@@ -1447,6 +1447,11 @@ selectNodeInView model view_uuid node_id coordinates =
                               linkDrawingData
                               drawingData.link_drawing
                       }
+                  , properties =
+                      let properties = graph_view.properties in
+                      { properties
+                        | canSelectConnections = False
+                      }
                 }
                 model.graph_views
         }
@@ -1551,6 +1556,11 @@ update msg model =
                                   Dict.remove dest drawingData.node_drawing
                               , link_drawing =
                                   Dict.remove (source, dest) drawingData.link_drawing
+                            }
+                        , properties =
+                            let properties = graph_view.properties in
+                            { properties
+                              | canSelectConnections = True
                             }
                       }
                     ))

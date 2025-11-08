@@ -28,7 +28,7 @@
   stroke-width: 1.5;
   transition: all 0.2s ease;
 
-  .interactive &:hover {
+  .can-select-nodes &:hover {
     stroke-width: 2.5;
     stroke: var(--foreground);
     filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
@@ -41,7 +41,7 @@
     r: 8px; // Slightly larger for emphasis
     stroke-width: 2.5;
 
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       stroke-width: 3.5;
       cursor: pointer;
     }
@@ -51,7 +51,7 @@
     r: 9px; // Most prominent when selected
     stroke-width: 3;
 
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       stroke-width: 4;
       cursor: pointer;
     }
@@ -72,7 +72,7 @@
     stroke: var(--green);
     stroke-width: 2;
     
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       stroke: var(--green);
       stroke-width: 3;
       filter: drop-shadow(0 2px 6px rgba(80, 250, 123, 0.4));
@@ -86,7 +86,7 @@
     stroke: var(--red);
     stroke-width: 3; // Thicker border for emphasis
     
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       stroke: var(--red);
       stroke-width: 4;
       filter: drop-shadow(0 2px 6px rgba(255, 85, 85, 0.4));
@@ -101,7 +101,7 @@
     stroke-width: 2;
     stroke-dasharray: 5, 3; // Dashed border
     
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       stroke: var(--comment);
       stroke-dasharray: 5, 3; // Keep dashed on hover
       fill: rgba(98, 114, 164, 0.1); // --comment with low opacity
@@ -116,7 +116,7 @@
     stroke-width: 3;
     filter: drop-shadow(0 2px 8px rgba(189, 147, 249, 0.5));
     
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       stroke-width: 4;
       filter: drop-shadow(0 4px 12px rgba(189, 147, 249, 0.6));
       cursor: pointer;
@@ -130,7 +130,7 @@
     stroke-width: 3;
     animation: current-node-pulse 2s ease-in-out infinite;
     
-    .interactive &:hover {
+    .can-select-nodes &:hover {
       animation: current-node-pulse 1s ease-in-out infinite; // Faster pulse on hover
       cursor: pointer;
     }
@@ -279,7 +279,7 @@
         animation: text-pulse 1s ease-in-out infinite;
       }
 
-      .interactive &:hover {
+      .can-select-connections &:hover {
         // stroke: var(--cyan);
         stroke-width: 3px;
         filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
@@ -326,7 +326,7 @@
   }
 }
 
-.interactive .link-group:has(.link.text:hover) path:not(.background) {
+.can-select-connections .link-group:has(.link.text:hover) path:not(.background) {
   stroke: var(--cyan);
   marker-end: url(#hover-arrowhead);
 }

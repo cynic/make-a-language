@@ -1783,7 +1783,8 @@ viewMainSvgContent graph_view =
     --       class []
     , class
         [ "graph"
-        , if not graph_view.properties.isFrozen then "interactive" else ""
+        , if not graph_view.properties.isFrozen then "can-select-nodes" else ""
+        , if not graph_view.properties.isFrozen && graph_view.properties.canSelectConnections then "can-select-connections" else ""
         ]
     ]
     [ defs [] arrowheadDefs
