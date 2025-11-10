@@ -65,7 +65,8 @@ type UIMsg
   | SelectTool ToolIcon
   | MouseMove Float Float
   | OnResize (Float, Float)
-  | StartDragging DragTarget
+  | StartDraggingNode Uuid NodeId
+  | StartDraggingSplitter SplitterMovement
   | DragSplitter Bool Float -- stop-dragging, amount
   | ToggleAreaVisibility AreaUITarget
   -- | StartDraggingHorizontalSplitter
@@ -166,7 +167,7 @@ type alias Main_Model =
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
   -- , mouseCoords : ( Float, Float )
-  , currentOperation : Maybe UserOperation
+  , interactionStack : AutoDict.Dict String (Maybe Uuid) (List InteractionState)
   }
 
 type alias GraphPackage =
@@ -184,10 +185,7 @@ type alias GraphPackage =
   ForceDirectedGraph.elm
 --------------------------------------------------------}
 
-type DragTarget
-  = DragNode Uuid NodeId
-  | DragLeftRightSplitter
-  | DragUpDownSplitter
+type SplitterMovement = LeftRight | UpDown
 
 type AreaUITarget
   = NavigatorsArea
@@ -228,16 +226,86 @@ type alias ConnectionAlteration =
   , picker : AcceptChoice
   }
 
-type UserOperation
-  = Splitting Uuid Split -- split a node into two, so I can work on the parts separately
-  | Dragging DragTarget -- move a node around (visually)
-  | ModifyConnection Uuid ConnectionEditing
-  | Executing Uuid ExecutionResult
+{-  Let's go over UI interactions, and the state machine behind
+    them.  So, first of all, what can you possibly do on the UI?
+
+    1. Click (empty space)
+    2. Click (node)
+    3. Click (connection)
+    4. Shift-drag (node)
+    5. Ctrl-click (node)
+    6. Shift-click (connection) [go into graph-ref??]
+    7. Pan at edge
+    8. Drag UI-splitter
+
+    So what does the state machine look like?
+
+              ┌─────────────┐                                       
+              │[7] Drag     │                                       
+              │    splitter │                                       
+              └──────┬──────┘                                       
+                    ▲│                                              
+┌─────────┐         ││        ┌──────────┐                         ▼
+│[5] Drag │◄────┐   ││  ┌────►│[4] Split │                          
+│    node │     │   │▼  │     │    node  │                          
+└──────┬──┘  ┌──┴───┴───┴─┐   └──┬───────┘        ┌────┐            
+       └────►│    Initial │◄─────┘    ┌───────────┴──┐ │            
+        ┌───►│[1] UI      ├──────────►│    Inspect   │ │            
+        │  ┌─┤    state   │◄─┬────────┤[6] graph     │◄┘            
+        │  │ └────────────┘  │        │    reference │              
+        │  │ ┌─────────────┐ │        └──────────────┘              
+        │  └►│    Source   ├─┘                                      
+        │    │[2] node     │                                        
+        │  ┌─┤    selected │                                        
+        │  │ └─────────────┘                                        
+        │  │ ┌───────────────┐                                      
+        │  └►│[3] Connection │                                      
+        └────┤    editing    │                                      
+             └───────────────┘                                      
+
+    There are many states.  In each state, which of the actions are
+    possible?
+
+    [1 Initial] 2,3,4,5,6,7,8
+    [2 Node-selected] 1,2,4,5,7,8
+    [3 Connection-editing] [different UI]
+    [4 Node-splitting] [different UI]
+    [5 Node-dragging] 7
+    [6 Graph-reference] ???
+-}
+
+{-  How do I represent that here?
+
+    - Note that [2] leads only to [3]. I have placed both of those into
+      `ModifyConnection`.
+    - Dragging can be dragging a graph node (as above) or dragging a slider
+      requires similar mouse-tracking. So I've placed all that under `Dragging`
+    - Splitting and Executing are separate operations 
+    - ...and so on.
+
+    The point is that the interaction-state list (because it can be a stack of
+    actions) does not map directly to the state machine. But what is important is
+    this: given a particular top-of-stack, what actual interactions are feasible
+    or sensible on the UI side?  THAT is what forms the link between the abstract
+    "state machine" and the actual things that can be done by the user.
+      
+-}
+
+type InteractionState
+    -- split a node into two, so I can work on the parts separately
+  = Splitting
+      { to_split : NodeId
+      , left : Connection
+      , right : Connection
+      }
+  | DraggingNode NodeId
+  | DraggingSplitter SplitterMovement
+  | ModifyConnection ConnectionEditing
+  | Executing ExecutionResult
 
 type AcceptChoice
   = ChooseCharacter
-  -- the first parameter is the thumbnail index to focus on
-  | ChooseGraphReference Int
+  | ChooseGraphReference
 
 type alias GraphViewProperties =
   { isFrozen : Bool
@@ -325,7 +393,7 @@ type alias GraphView =
   , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
-  , properties : GraphViewProperties
+  -- , properties : GraphViewProperties
   , drawingData : DrawingData
   }
 
@@ -333,11 +401,6 @@ type alias GraphView =
   Other
 --------------------------------------------------------}
 
-type alias Split =
-  { to_split : NodeId
-  , left : Connection
-  , right : Connection
-  }
 
 type alias Entity =
   -- fits into the mould of Force.Entity AND Automata.Data.StateData.

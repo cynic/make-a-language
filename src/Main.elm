@@ -81,7 +81,7 @@ getUuid model =
     ( v, updatedModel )
 
 nodeDrawingForPackage : GraphPackage -> GraphViewProperties -> Uuid -> Model -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package {isFrozen} graphView_uuid {currentOperation} =
+nodeDrawingForPackage package {isFrozen} graphView_uuid {interactionStack} =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -106,19 +106,19 @@ nodeDrawingForPackage package {isFrozen} graphView_uuid {currentOperation} =
         in
           ( node.id
           , { exclusiveAttributes =
-                case currentOperation of
-                  Just (Dragging (DragNode gv_uuid node_id)) ->
+                case interactionStack of
+                  Dragging (DragNode gv_uuid node_id) :: _ ->
                     maybe_fromBool
                       (gv_uuid == graphView_uuid && node.id == node_id)
                       DrawSelected
-                  Just (Executing _ result) ->
+                  Executing _ result :: _ ->
                     maybe_fromBool
                       ( GraphEditor.executionData result
                         |> Maybe.map (.currentNode >> (==) node.id)
                         |> Maybe.withDefault False
                       )
                       DrawCurrentExecutionNode
-                  Just (ModifyConnection gv_uuid (CreatingNewNode {dest})) ->
+                  ModifyConnection gv_uuid (CreatingNewNode {dest}) :: _ ->
                     maybe_fromBool
                       (gv_uuid == graphView_uuid && node.id == dest)
                       DrawPhantom
@@ -364,7 +364,7 @@ init flags =
       , uiConstants = constants
       , randomSeed = initialSeed
       -- , mouseCoords = (0, 0)
-      , currentOperation = Nothing
+      , interactionStack = []
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -554,12 +554,12 @@ updateGraphView uuid msg model =
       }
     NodeDragStart nodeId ->
       { model
-      | currentOperation = Just <| Dragging nodeId
+      | interactionStack = Just <| Dragging nodeId
       -- , simulation = Force.reheat model.simulation
       }
 
     NodeDragEnd ->
-      case model.currentOperation of
+      case model.interactionStack of
         Just (Dragging nodeId) ->
           let
             ( x, y ) =
@@ -594,7 +594,7 @@ updateGraphView uuid msg model =
                 g.graph
           in
             { model
-              | currentOperation = Nothing
+              | interactionStack = Nothing
               , currentPackage =
                   { pkg
                     | userGraph =
@@ -626,7 +626,7 @@ updateGraphView uuid msg model =
         pkg = model.package
         ug = pkg.userGraph
         newGraph =
-          case model.currentOperation of
+          case model.interactionStack of
             Just (Dragging nodeId) ->
               { ug
                 | graph =
@@ -677,7 +677,7 @@ updateGraphView uuid msg model =
       in
         { model
         | pan =
-            case model.currentOperation of
+            case model.interactionStack of
               Just (ModifyingGraph _ { dest }) ->
                 case dest of
                   NoDestination ->
@@ -697,7 +697,7 @@ updateGraphView uuid msg model =
         }
 
     SelectNode index ->
-      { model | currentOperation = Just <| ModifyingGraph ChooseCharacter <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
+      { model | interactionStack = Just <| ModifyingGraph ChooseCharacter <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
 
     SetMouseOver ->
       { model | mouseIsHere = True }
@@ -706,10 +706,10 @@ updateGraphView uuid msg model =
       { model | mouseIsHere = False }
 
     CreateNewNodeAt ( x, y ) ->
-      case model.currentOperation of
+      case model.interactionStack of
         Just (ModifyingGraph _ { source, transitions }) ->
           { model
-            | currentOperation =
+            | interactionStack =
                 Just <| ModifyingGraph ChooseCharacter <| GraphModification source (NewNode ( x, y )) transitions
           }
         _ ->
@@ -718,33 +718,33 @@ updateGraphView uuid msg model =
     Escape ->
       let
         escapery =
-          case model.currentOperation of
+          case model.interactionStack of
             Just (ModifyingGraph via { source, dest, transitions }) ->
               case dest of
                 NoDestination ->
                   -- I must be escaping from something earlier.
-                  { model | currentOperation = Nothing }
+                  { model | interactionStack = Nothing }
                 _ ->
                   { model
-                    | currentOperation =
+                    | interactionStack =
                         Just <| ModifyingGraph via <| GraphModification source NoDestination transitions
                   }
             Just (Splitting _) ->
-              { model | currentOperation = Nothing }
+              { model | interactionStack = Nothing }
             Just (AlteringConnection _ _) ->
-              { model | currentOperation = Nothing }
+              { model | interactionStack = Nothing }
             Nothing ->
               model
             Just (Dragging _) ->
               -- stop dragging.
-              { model | currentOperation = Nothing }
+              { model | interactionStack = Nothing }
             Just (Executing _ _) ->
               model -- nothing to escape.
               -- let
               --   pkg = model.package
               -- in
               --   { model
-              --     | currentOperation = Nothing
+              --     | interactionStack = Nothing
               --     , currentPackage =
               --         { pkg
               --           | userGraph = original
@@ -767,7 +767,7 @@ updateGraphView uuid msg model =
             pkg = model_.package
           in
             { model_
-            | currentOperation = Nothing
+            | interactionStack = Nothing
             , currentPackage =
                 { pkg
                   | userGraph = updatedGraph
@@ -797,7 +797,7 @@ updateGraphView uuid msg model =
           |> \newGraph -> commit_change newGraph model
 
       in
-        case model.currentOperation of
+        case model.interactionStack of
           Just (ModifyingGraph _ { source, dest, transitions }) ->
             case dest of
               ( NewNode ( x, y ) ) ->
@@ -818,7 +818,7 @@ updateGraphView uuid msg model =
                   updateExistingNode source dest transitions
           Just (Splitting { to_split, left, right }) ->
             if AutoSet.isEmpty left || AutoSet.isEmpty right then
-              { model | currentOperation = Nothing }
+              { model | interactionStack = Nothing }
             else
               Graph.get to_split model.package.userGraph.graph
               |> Maybe.map (\node ->
@@ -876,10 +876,10 @@ updateGraphView uuid msg model =
                     resultSet
               )
       in
-        case model.currentOperation of
+        case model.interactionStack of
           Just (ModifyingGraph via ({ transitions } as mod)) ->
             { model
-              | currentOperation =
+              | interactionStack =
                   Just <| ModifyingGraph via <|
                     { mod
                       | transitions = alterTransitions transitions
@@ -887,7 +887,7 @@ updateGraphView uuid msg model =
             }
           Just (AlteringConnection via ({ transitions } as mod)) ->
             { model
-              | currentOperation =
+              | interactionStack =
                   Just <| AlteringConnection
                     via
                     { mod
@@ -928,7 +928,7 @@ updateGraphView uuid msg model =
                   ( left, right )
             in
               { model
-                | currentOperation =
+                | interactionStack =
                     Just <| Splitting <| Split to_split newLeft newRight
               }
           _ ->
@@ -936,13 +936,13 @@ updateGraphView uuid msg model =
 
     EditTransition src dest conn ->
       { model
-        | currentOperation =
+        | interactionStack =
             Just <| AlteringConnection ChooseCharacter (ConnectionAlteration src dest conn)
       }
 
     Reheat ->
       -- If I'm not doing anything else, permit auto-layout
-      case model.currentOperation of
+      case model.interactionStack of
         Nothing ->
           { model
           | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
@@ -952,28 +952,28 @@ updateGraphView uuid msg model =
           model
 
     SwitchVia newChosen ->
-      case model.currentOperation of
+      case model.interactionStack of
         Just (ModifyingGraph _ d) ->
-          { model | currentOperation = Just <| ModifyingGraph newChosen d }
+          { model | interactionStack = Just <| ModifyingGraph newChosen d }
         Just (AlteringConnection _ d) ->
-          { model | currentOperation = Just <| AlteringConnection newChosen d }
+          { model | interactionStack = Just <| AlteringConnection newChosen d }
         _ -> model
 
     SwitchToNextComputation ->
-      case model.currentOperation of
+      case model.interactionStack of
         Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
+          { model | interactionStack = Just <| ModifyingGraph (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
         Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
+          { model | interactionStack = Just <| AlteringConnection (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
         _ ->
           model
 
     SwitchToPreviousComputation ->
-      case model.currentOperation of
+      case model.interactionStack of
         Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| ModifyingGraph (ChooseGraphReference <| max 0 (idx - 1)) d }
+          { model | interactionStack = Just <| ModifyingGraph (ChooseGraphReference <| max 0 (idx - 1)) d }
         Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | currentOperation = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
+          { model | interactionStack = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
         _ ->
           model
 
@@ -982,7 +982,7 @@ updateGraphView uuid msg model =
       |> Maybe.map
         (\node ->
           { model
-            | currentOperation =
+            | interactionStack =
                 Just <| Splitting <|
                   Split
                     node.node.id
@@ -1002,7 +1002,7 @@ updateGraphView uuid msg model =
       |> Maybe.withDefault model
 
     Undo ->
-      case (model.currentOperation, model.package.undoBuffer) of
+      case (model.interactionStack, model.package.undoBuffer) of
         (_, []) ->
           model
         (Just _, _) ->
@@ -1022,7 +1022,7 @@ updateGraphView uuid msg model =
             }
 
     Redo ->
-      case (model.currentOperation, model.package.redoBuffer) of
+      case (model.interactionStack, model.package.redoBuffer) of
         (_, []) ->
           model
         (Just _, _) ->
@@ -1045,10 +1045,10 @@ updateGraphView uuid msg model =
       let
         pkg = model.package
       in
-        case model.currentOperation of
+        case model.interactionStack of
           Just (Executing original executionResult) ->
             { model
-              | currentOperation = Just <| Executing original (DFA.run executionResult)
+              | interactionStack = Just <| Executing original (DFA.run executionResult)
               , currentPackage =
                   { pkg
                     | userGraph =
@@ -1063,10 +1063,10 @@ updateGraphView uuid msg model =
       let
         pkg = model.package
       in
-        case model.currentOperation of
+        case model.interactionStack of
           Just (Executing original executionResult) ->
             { model
-              | currentOperation = Just <| Executing original (DFA.step executionResult)
+              | interactionStack = Just <| Executing original (DFA.step executionResult)
               , currentPackage =
                   { pkg
                     | userGraph =
@@ -1082,10 +1082,10 @@ updateGraphView uuid msg model =
       let
         pkg = model.package
       in
-        case model.currentOperation of
+        case model.interactionStack of
           Just (Executing original _) ->
             { model
-              | currentOperation = Nothing
+              | interactionStack = Nothing
               , currentPackage =
                   { pkg
                     | userGraph = original
@@ -1305,21 +1305,21 @@ update_ui ui_msg model =
       , Cmd.none
       )
     StartDragging what ->
-      case model.currentOperation of
-        Nothing ->
+      case model.interactionStack of
+        [] ->
           -- println "Starting dragging"
-          ( { model | currentOperation = Just (Dragging what) }
+          ( { model | interactionStack = Dragging what :: model.interactionStack }
           , Cmd.none
           )
         _ ->
           println "🚨 Requested to start dragging, but already doing a different operation; ignoring!"
           ( model, Cmd.none )
     DragSplitter shouldStop coord ->
-      case model.currentOperation of
-        Just (Dragging what) ->
+      case model.interactionStack of
+        Dragging what :: rest ->
           ( { model
-              | currentOperation =
-                  if shouldStop then Nothing else model.currentOperation
+              | interactionStack =
+                  if shouldStop then rest else model.interactionStack
               , uiState =
                   dragSplitter coord what model.uiConstants model.uiState
             }
@@ -1386,18 +1386,17 @@ selectNodeInView model view_uuid node_id coordinates =
           }
       in
         { model
-          | currentOperation =
-              Just
-                ( ModifyConnection
-                  view_uuid
-                  ( CreatingNewNode
-                      { source = node_id
-                      , dest = newNodeId
-                      , connection = AutoSet.empty transitionToString
-                      , picker = ChooseCharacter
-                      }
-                  )
+          | interactionStack =
+              ( ModifyConnection
+                view_uuid
+                ( CreatingNewNode
+                    { source = node_id
+                    , dest = newNodeId
+                    , connection = AutoSet.empty transitionToString
+                    , picker = ChooseCharacter
+                    }
                 )
+              ) :: model.interactionStack
           -- and now modify that view
           , graph_views =
               AutoDict.insert view_uuid
@@ -1495,7 +1494,15 @@ moveNode source_id dest_id (x, y) graph_view =
 cancelNewNodeCreation : Uuid -> NodeId -> NodeId -> Model -> Model
 cancelNewNodeCreation view_uuid source dest model =
   { model
-    | currentOperation = Nothing
+    | interactionStack =
+        case model.interactionStack of
+          ModifyConnection gv_uuid (CreatingNewNode _) :: rest ->
+            if gv_uuid == view_uuid then
+              rest
+            else
+              model.interactionStack
+          _ ->
+            model.interactionStack -- nothing to pop.
     , graph_views =
         AutoDict.update view_uuid
           (Maybe.map (\graph_view ->
@@ -1538,16 +1545,18 @@ editConnection model view_uuid old_alteration new_dest =
     cancelNewNodeCreation view_uuid old_alteration.source old_alteration.dest model
     |>  (\model_ ->
           { model_
-            | currentOperation =
-                transitions |> Maybe.map (\conn ->
+            | interactionStack =
+                transitions
+                |> Maybe.map (\conn ->
                   ModifyConnection view_uuid
                     ( EditExistingConnection
                         { old_alteration
                           | dest = new_dest
                           , connection = conn
                         }
-                    )
+                    ) :: model_.interactionStack
                 )
+                |> Maybe.withDefault model_.interactionStack
             , -- and now we will enter the editing-connection phase, so
               graph_views =
                 AutoDict.update view_uuid
@@ -1573,10 +1582,10 @@ update msg model =
     UIMsg ui_msg ->
       update_ui ui_msg model
     SelectNode view_uuid node_id (x, y) ->
-      ( case model.currentOperation of
-          Nothing ->
+      ( case model.interactionStack of
+          [] ->
             selectNodeInView model view_uuid node_id (x, y)
-          Just (ModifyConnection _ (CreatingNewNode alteration)) ->
+          (ModifyConnection _ (CreatingNewNode alteration)) :: _ ->
             -- we already have a node selected, and now, an existing
             -- node is being selected as the destination.
             editConnection model view_uuid alteration node_id
@@ -1598,9 +1607,9 @@ update msg model =
       )
 
     Escape ->
-      ( case model.currentOperation of
-          Just (ModifyConnection view_uuid (CreatingNewNode {source, dest})) ->
-            cancelNewNodeCreation view_uuid source dest model
+      ( case model.interactionStack of
+          _ :: rest ->
+            { model | interactionStack = rest }
           _ ->
             model
       , Cmd.none
@@ -1774,7 +1783,7 @@ update msg model =
     --   in
     --   ( { model 
     --     | executionStage =
-    --         case newFdModel.currentOperation of
+    --         case newFdModel.interactionStack of
     --           Just (Executing _ (CanContinue _)) ->
     --             StepThrough
     --           Just (Executing _ _) ->
@@ -1976,14 +1985,14 @@ update msg model =
 
 -- VIEW
 
-view : Model -> Html Msg
-view model =
+viewMainInterface : Model -> Html Msg
+viewMainInterface model =
   div
     [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
     , viewSplitter
         5 LeftRight
-        (model.currentOperation)
+        (List.head model.interactionStack)
         (model.uiState.open.sideBar)
     , div
         [ HA.class "editor-and-tools-panel" ]
@@ -2002,26 +2011,36 @@ view model =
             ]
         , viewSplitter
             4 UpDown
-            model.currentOperation
+            (List.head model.interactionStack)
             model.uiState.open.bottomPanel
         , viewToolsArea model
         ]
     ]
 
--- viewLeftSection : Model -> Html Msg
--- viewLeftSection model =
---   div 
---     [ HA.class "left-section" ]
---     [ viewIconBar model
---     , if model.leftPanelOpen then
---         div 
---           [ HA.class "left-panel-container" ]
---           [ viewLeftPanel model
---           , viewHorizontalSplitter
---           ]
---       else
---         text ""
---     ]
+viewCharacterPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
+viewCharacterPicker model uuid source dest connection =
+  div [] [ text "character picker" ]
+
+viewGraphPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
+viewGraphPicker model uuid source dest connection =
+  div [] [ text "graph picker" ]
+
+viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
+viewConnectionEditor model uuid {source, dest, connection, picker} =
+  case picker of
+    ChooseCharacter ->
+      viewCharacterPicker model uuid source dest connection
+    ChooseGraphReference ->
+      viewGraphPicker model uuid source dest connection
+
+view : Model -> Html Msg
+view model =
+  case model.interactionStack of
+    ModifyConnection view_uuid (EditExistingConnection alteration) :: _ ->
+      viewConnectionEditor model view_uuid alteration
+    _ ->
+      viewMainInterface model
+
 
 -- isAccepted : ExecutionResult -> Maybe Bool
 -- isAccepted result =
@@ -2538,7 +2557,7 @@ view model =
 -- executionText { fdg_model } =
 --   div
 --     []
---     [ case fdg_model.currentOperation of
+--     [ case fdg_model.interactionStack of
 --         Just (Executing _ result) ->
 --           let
 --             maybeDatum =
@@ -2674,7 +2693,7 @@ view model =
 --         , HA.value testInput
 --         , onInput (\v -> UpdateTestPanelContent v testExpected)
 --         , HA.placeholder "Enter your test input here"
---         , HA.disabled <| Maybe.Extra.isJust model.fdg_model.currentOperation
+--         , HA.disabled <| Maybe.Extra.isJust model.fdg_model.interactionStack
 --         ]
 --         []
 --   in
@@ -2707,7 +2726,7 @@ view model =
 --     , HA.value (model.fdg_model.package.description |> Maybe.withDefault "")
 --     , onInput UpdateDescriptionPanelContent
 --     , HA.placeholder "What does this computation do?"
---     , HA.disabled <| Maybe.Extra.isJust model.fdg_model.currentOperation
+--     , HA.disabled <| Maybe.Extra.isJust model.fdg_model.interactionStack
 --     ]
 --     []
 
@@ -2804,6 +2823,31 @@ view model =
 --     StepThrough -> "Debug Mode"
 --     NotReady -> "Uncommitted"
 
+{-
+  **************************************
+  Interaction → interactive capabilities
+  **************************************
+-}
+
+canSelectConnections : List InteractionState -> Bool
+canSelectConnections stack =
+  case stack of
+    [] ->
+      True
+    Splitting _ :: _ ->
+      False
+    DraggingNode _ :: _ ->
+      False
+    DraggingSplitter _ :: _ ->
+      False
+    Executing _ ->
+      False
+    ModifyConnection (CreatingNewNode _) ->
+      True
+    ModifyConnection _ ->
+      False
+
+
 translateHostCoordinates : (Float, Float) -> GraphView -> (Float, Float)
 translateHostCoordinates (x, y) graph_view =
   let
@@ -2880,7 +2924,7 @@ subscriptions model =
                 _ ->
                   D.fail "Untrapped"
                   -- in
-                  -- case model.currentOperation of
+                  -- case model.interactionStack of
                   --   Just (ModifyingGraph ChooseCharacter { dest }) ->
                   --     case dest of
                   --       NoDestination ->
@@ -2933,7 +2977,7 @@ subscriptions model =
     --                 _ ->
     --                   D.fail "Not a character key"
     --               -- in
-    --               -- case model.currentOperation of
+    --               -- case model.interactionStack of
     --               --   Just (ModifyingGraph ChooseCharacter { dest }) ->
     --               --     case dest of
     --               --       NoDestination ->
@@ -2964,8 +3008,8 @@ subscriptions model =
     resizeSubscription =
       BE.onResize (\w h -> UIMsg <| OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     splitterSubscriptions =
-      case model.currentOperation of
-        Just (Dragging DragLeftRightSplitter) ->
+      case model.interactionStack of
+        Dragging DragLeftRightSplitter :: _ ->
           let
             -- navigatorbarwidth + splitterwidth/2
             offset = -(48 + 8 / 2)
@@ -2973,15 +3017,15 @@ subscriptions model =
             [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))
             , BE.onMouseUp (D.map ((+) offset >> DragSplitter True >> UIMsg) (D.field "clientX" D.float))
             ]
-        Just (Dragging DragUpDownSplitter) ->
+        Dragging DragUpDownSplitter :: _ ->
           [ BE.onMouseMove (D.map (DragSplitter False >> UIMsg) (D.field "clientY" D.float))
           , BE.onMouseUp (D.map (DragSplitter True >> UIMsg) (D.field "clientY" D.float))
           ]
         _ ->
           []
     nodeMoveSubscription =
-      case model.currentOperation of
-        Just (ModifyConnection view_uuid (CreatingNewNode {source, dest})) ->
+      case model.interactionStack of
+        ModifyConnection view_uuid (CreatingNewNode {source, dest}) :: _ ->
           AutoDict.get view_uuid model.graph_views
           |> Maybe.map
             (\graph_view ->

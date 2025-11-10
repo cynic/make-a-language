@@ -8,6 +8,7 @@ import Html.Styled.Attributes as HA
 import Css
 import Svg.Styled exposing (svg)
 import Svg.Styled.Attributes
+import Automata.Data exposing (..)
 
 type alias Msg = Main_Msg
 type alias Model = Main_Model
@@ -91,19 +92,17 @@ viewNavigatorsArea model =
           ]
     ]
 
-type SplitterMovement = LeftRight | UpDown
-
-viewSplitter : Int -> SplitterMovement -> Maybe UserOperation -> Bool -> Html Main_Msg
-viewSplitter zIdx movement currentOperation areaOpen =
+viewSplitter : Int -> SplitterMovement -> Maybe InteractionState -> Bool -> Html Main_Msg
+viewSplitter zIdx movement interactionStack areaOpen =
   let
-    (dragTarget, movementClass, targetArea) =
+    (movementClass, targetArea) =
       case movement of
         LeftRight ->
-          ( DragLeftRightSplitter, "leftright", NavigatorsArea )
+          ( "leftright", NavigatorsArea )
         UpDown ->
-          ( DragUpDownSplitter, "updown", ToolsArea )
-    isDragging = currentOperation == Just (Dragging dragTarget)
-    draggable = (currentOperation == Nothing || isDragging) && areaOpen
+          ( "updown", ToolsArea )
+    isDragging = interactionStack == Just (DraggingSplitter movement)
+    draggable = (interactionStack == Nothing || isDragging) && areaOpen
     collapseIcon =
       svg
         [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
@@ -124,7 +123,7 @@ viewSplitter zIdx movement currentOperation areaOpen =
         , HA.css
             [ Css.zIndex (Css.int zIdx)
             ]
-        , HE.onMouseDown (UIMsg <| StartDragging dragTarget)
+        , HE.onMouseDown (UIMsg <| StartDraggingSplitter movement)
         ]
         [ div
             [ HA.class <| "separator-handle " ++ movementClass ]
