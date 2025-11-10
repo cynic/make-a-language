@@ -93,7 +93,7 @@ viewNavigatorsArea model =
     ]
 
 viewSplitter : Int -> SplitterMovement -> Maybe InteractionState -> Bool -> Html Main_Msg
-viewSplitter zIdx movement interactionStack areaOpen =
+viewSplitter zIdx movement interactionsDict areaOpen =
   let
     (movementClass, targetArea) =
       case movement of
@@ -101,8 +101,8 @@ viewSplitter zIdx movement interactionStack areaOpen =
           ( "leftright", NavigatorsArea )
         UpDown ->
           ( "updown", ToolsArea )
-    isDragging = interactionStack == Just (DraggingSplitter movement)
-    draggable = (interactionStack == Nothing || isDragging) && areaOpen
+    isDragging = interactionsDict == Just (DraggingSplitter movement)
+    draggable = (interactionsDict == Nothing || isDragging) && areaOpen
     collapseIcon =
       svg
         [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)

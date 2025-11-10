@@ -778,7 +778,7 @@ viewNode properties id data =
     --       else if e.keys.ctrl && splittable then
     --         StartSplit id
     --       else
-    --         case interactionStack of
+    --         case interactionsDict of
     --           Just (ModifyingGraph _ _) ->
     --             -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
     --             CreateOrUpdateLinkTo id
@@ -787,7 +787,7 @@ viewNode properties id data =
     --     )
 
     -- interactivity =
-    --   case interactionStack of
+    --   case interactionsDict of
     --     Just (ModifyingGraph _ { dest }) ->
     --       case dest of
     --         NoDestination ->
@@ -1081,7 +1081,7 @@ viewNode properties id data =
 --       |> Maybe.withDefaultLazy
 --           (\() -> ( 0, 0 ) |> Debug.log "Error K<UFOUDFI8") -- should never get here!
 --   in
---     case model.interactionStack of
+--     case model.interactionsDict of
 --       Just (ModifyingGraph _ { dest }) ->
 --         case dest of
 --           NoDestination ->
@@ -1410,7 +1410,7 @@ arrowheadDefs =
 --     ( w, _ ) = model.dimensions
 --     category_chooser_space = 80
 --     conn =
---       case model.interactionStack of
+--       case model.interactionsDict of
 --         Just (ModifyingGraph _ { transitions }) ->
 --           transitions
 --         Just (AlteringConnection _ { transitions }) ->
@@ -1775,7 +1775,7 @@ viewMainSvgContent : GraphView -> Svg Msg
 viewMainSvgContent graph_view =
   g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
     [ transform [ matrixFromZoom graph_view.pan graph_view.zoom ]
-    -- , case graph_view.interactionStack of
+    -- , case graph_view.interactionsDict of
     --     Just (Dragging _) ->
     --       -- disable pointer-events.
     --       -- This is to stop elements from getting in the way of
@@ -1803,7 +1803,7 @@ viewMainSvgContent graph_view =
     , Dict.toList graph_view.drawingData.node_drawing
       |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)
       |> g [ class [ "nodes" ] ]
-    -- , case graph_view.interactionStack of
+    -- , case graph_view.interactionsDict of
     --     Just (ModifyingGraph _ { source }) ->
     --       Graph.get source graph_view.package.userGraph.graph
     --       |> Maybe.map (viewPhantom graph_view mouseCoords)
@@ -1949,7 +1949,7 @@ viewMainSvgContent graph_view =
 --                   { pkg
 --                     | userGraph = .solvedGraph (computeGraphFully (m_w, m_h) userGraph)
 --                   }
---               , interactionStack = Nothing
+--               , interactionsDict = Nothing
 --             }
 --             mouseCoords
 --         ]
@@ -1988,7 +1988,7 @@ viewGraph graphView =
     -- permit_scroll =
     --   onMouseScroll
     --     (\n ->
-    --       case model.interactionStack of
+    --       case model.interactionsDict of
     --         Just (ModifyingGraph (ChooseGraphReference _) _) ->
     --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
     --         Just (AlteringConnection (ChooseGraphReference _) _) ->
@@ -2019,7 +2019,7 @@ viewGraph graphView =
     --     "mousedown"
     --     { stopPropagation = True, preventDefault = True }
     --     (\_ ->
-    --       case model.interactionStack of
+    --       case model.interactionsDict of
     --         Just (ModifyingGraph _ _) ->
     --           case nearby_node nearby_node_lockOnDistance mouseCoords model of
     --             Just node -> -- in this case, the UI would show it being "locked-on"
@@ -2047,7 +2047,7 @@ viewGraph graphView =
       -- CHECK THIS!
       -- Usability: should a "mis-click" result in Escape??
       -- Let's see.
-      -- case model.interactionStack of
+      -- case model.interactionsDict of
       --   Just (Splitting _) ->
       --     [ permit_click ]
       --   Just (AlteringConnection (ChooseGraphReference _) _) ->
@@ -2087,7 +2087,7 @@ viewGraph graphView =
       [ -- this stuff is in the background.
         viewUndoRedoVisualisation graphView
       , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-      -- , case graphView.interactionStack of
+      -- , case graphView.interactionsDict of
       --     Just (ModifyingGraph via { dest }) ->
       --       case dest of
       --         NoDestination ->
@@ -2152,7 +2152,7 @@ viewGraph graphView =
                 , class [ "status-line", "pan" ]
                 ]
                 [ text ("🧭 " ++ panToString graphView.pan) ]
-            -- , case graphView.interactionStack of
+            -- , case graphView.interactionsDict of
             --     Just (ModifyingGraph _ { dest }) ->
             --       case dest of
             --         NoDestination ->
@@ -2203,7 +2203,7 @@ viewGraph graphView =
 -- debugModel_ message model =
 --   let
 --     op =
---       case model.interactionStack of
+--       case model.interactionsDict of
 --         Just o -> "(" ++ Debug.toString o ++ ")"
 --         Nothing -> "(no op)"
 --     graph =

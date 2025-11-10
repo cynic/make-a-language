@@ -158,6 +158,11 @@ type alias UIState =
     }
   }
 
+type ShownUI
+  = ThreePaneEditor
+  | ConnectionEditor Uuid
+
+
 type alias Main_Model =
   { graph_views : AutoDict.Dict String Uuid GraphView
   , mainGraphView : Uuid
@@ -167,7 +172,10 @@ type alias Main_Model =
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
   -- , mouseCoords : ( Float, Float )
-  , interactionStack : AutoDict.Dict String (Maybe Uuid) (List InteractionState)
+  , interactionsDict : AutoDict.Dict String (Maybe Uuid) (List InteractionState)
+  , properties :
+      { canEscape : Bool
+      }
   }
 
 type alias GraphPackage =
@@ -393,7 +401,7 @@ type alias GraphView =
   , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
-  -- , properties : GraphViewProperties
+  , properties : GraphViewProperties
   , drawingData : DrawingData
   }
 
