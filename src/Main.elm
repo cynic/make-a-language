@@ -1433,14 +1433,28 @@ update_ui ui_msg model =
     SelectTool _ ->
       Debug.todo "branch 'SelectTool _' not implemented"
 
-    MouseMove _ _ ->
-
-      Debug.todo "branch 'MouseMove _ _' not implemented"
-
     OnResize dims ->
       ( resizeViewport dims model
       , Cmd.none
       )
+
+    StartPan graphView_uuid xDir yDir ->
+      ( model, Cmd.none )
+      -- ( pushInteractionForStack (Just graphView_uuid) (Panning xDir yDir) model
+      --   |> setProperties
+      -- , Cmd.none
+      -- )
+
+    StopPan graphView_uuid ->
+      ( model, Cmd.none )
+      -- ( case popInteraction (Just graphView_uuid) model of
+      --     Just (Panning xDir yDir, model_) ->
+      --       model_
+      --       |> setProperties
+      --     _ ->
+      --       model
+      -- , Cmd.none
+      -- )
 
 selectNodeInView : Model -> Uuid -> NodeId -> (Float, Float) -> Model
 selectNodeInView model view_uuid node_id coordinates =
@@ -2322,7 +2336,7 @@ viewMainInterface model =
             ]
             [ UserInterface.debugDimensions model.uiState.dimensions.mainEditor
             , AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.map (GraphEditor.viewGraph >> Html.Styled.fromUnstyled)
+              |> Maybe.map (GraphEditor.viewGraph)
               |> Maybe.withDefault
                 (div [ HA.class "error graph-not-loaded" ] [ text "⚠ Graph to load was not found!" ]) -- erk! say what now?!
             ]

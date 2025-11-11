@@ -2,20 +2,22 @@ module GraphEditor exposing (..)
 import Browser.Events
 import Color
 import Force
+import Css
 import Graph exposing (Edge, Graph, NodeContext, NodeId)
-import Html.Events as HE
-import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
+import Html.Styled.Events as HE
+import Html.Styled exposing
+  (Html, div)
+-- import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
+import Html.Styled.Attributes as HA
 import Json.Decode as D
 import TypedSvg exposing
   (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
-  ( class, fill, stroke, viewBox, fontFamily, fontWeight, alignmentBaseline
-  , textAnchor, cursor, id, refX, refY, orient, d, markerEnd, dominantBaseline
-  , transform, noFill, strokeDasharray, strokeLinecap
-  , markerStart, pointerEvents, dy)
+  ( class, fill, viewBox, id, refX, refY, orient, d
+  , transform, dy)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Attributes.InPx exposing
-  ( cx, cy, r, strokeWidth, x, y, height, fontSize
+  ( cx, cy, r, x, y, height
   , markerWidth, markerHeight, width, rx , ry)
 import TypedSvg.Core exposing (Svg, text)
 import TypedSvg.Types exposing
@@ -24,8 +26,6 @@ import TypedSvg.Types exposing
   , MeetOrSlice(..), Align(..), Scale(..)
   )
 import TypedSvg.Attributes.InPx as Px
-import Html
-import Html.Attributes
 import Set exposing (Set)
 import AutoSet
 import IntDict
@@ -38,15 +38,12 @@ import Dict exposing (Dict)
 import Maybe.Extra as Maybe
 import Automata.Debugging
 import Uuid
-import Svg
 import Uuid exposing (Uuid)
 import AutoDict
 import Random.Pcg.Extended as Random
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
-import Basics.Extra exposing (minSafeInteger)
-import Basics.Extra exposing (maxSafeInteger)
 
 type alias Model = GraphView
 type alias Msg = Main_Msg
@@ -61,10 +58,10 @@ type alias Msg = Main_Msg
 panBufferAmount : (Float, Float) -> Float
 panBufferAmount (w, h) =
   let
-    minBuffer = 15 -- minimum comfortable target: 20-40px (WCAG). Mouse precision @ 15-25px.
+    minBuffer = 25 -- minimum comfortable target: 20-40px (WCAG). Mouse precision @ 15-25px.
     -- Fitts' Law says edges are infinite, but there's no guarantee that the edge of the
     -- window will be a *real* edge.
-    maxBuffer = 40
+    maxBuffer = 60
     bufferRatio = 0.025 -- 2.5%.  Perhaps ≈3% would be even better; let's see.
     -- but also, a more consistent buffer-size might be simpler and better for users to
     -- build muscle-memory.  So let's see.
@@ -840,7 +837,7 @@ viewNode properties id data =
     g
       [ class nodeClass
       , properties.canSelectNodes
-        |> thenPermitInteraction (onClick <| SelectNode data.view_uuid id (node_x, node_y))
+        |> thenPermitSvgInteraction (onClick <| SelectNode data.view_uuid id (node_x, node_y))
       -- , (properties.canSplitNodes && data.canSplit)
       --   |> thenPermitInteraction (onClick <| StartSplit id)
       ]
@@ -1923,64 +1920,100 @@ viewMainSvgContent graph_view =
 --           )
 --       ]
 
-viewGraph : GraphView -> Svg Msg
+viewGraph : GraphView -> Html Msg
 viewGraph graphView =
   let
     ( host_width, host_height ) = graphView.host_dimensions
     ( guest_width, guest_height) = graphView.guest_dimensions
     ( guest_x, guest_y ) = graphView.guest_coordinates
     panBuffer = panBufferAmount graphView.guest_dimensions
-  in
-    svg
-      ([ viewBox guest_x guest_y guest_width guest_height
-       , TypedSvg.Attributes.InPx.width host_width
-       , TypedSvg.Attributes.InPx.height host_height
-      ] {- ++ interactivity -})
-      [ -- this stuff is in the background.
-        viewUndoRedoVisualisation graphView
-      , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-      ,
-        if graphView.isFrozen then
-          g [] []
-        else
-          g
-            [ ]
-            [ -- text_
-                -- [ x <| (guest_x + guest_width) - 5
-                -- , y <| (guest_y + guest_height) - 10
-                -- , class [ "status-line", "zoom" ]
-                -- ]
-                -- [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
-              text_
-                [ x <| (guest_x + guest_width) - 80
-                , y <| (guest_y + guest_height) - 10
-                , class [ "status-line", "pan" ]
-                ]
-                [ text ("🧭 " ++ panToString graphView.pan) ]
-            -- , case graphView.interactionsDict of
-            --     Just (ModifyingGraph _ { dest }) ->
-            --       case dest of
-            --         NoDestination ->
-            --           bottomMsg "Press «Esc» to cancel link creation"
-            --         ExistingNode _ ->
-            --           bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
-            --         NewNode _ ->
-            --           bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            --     Just (AlteringConnection _ _) ->
-            --       bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
-            --     Just (Splitting _) ->
-            --       g [] []
-            --     Just (Executing _ _) ->
-            --       bottomMsg "Executing computation."
-            --     Just (Dragging _) ->
-            --       g [] []
-            --     Nothing ->
-            --       case graphView.package.undoBuffer of
-            --         [] ->
-            --           g [] []
-            --         _ ->
-            --           bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
+    panRadius = sqrt (2.0 * panBuffer * panBuffer)
+    mkArrow : Float -> Float -> String -> Float -> Float -> String -> Html Msg
+    mkArrow dx dy direction width height pathString =
+      if graphView.properties.canPan then
+        div
+          [ HA.class <| "pan-region " ++ direction
+          , HA.css
+            [ Css.width (Css.px width)
+            , Css.height (Css.px height)
             ]
+          , graphView.properties.canPan
+            |> thenPermitInteraction (HE.onMouseOver (UIMsg (StartPan graphView.id dx dy)))
+          , graphView.properties.canPan
+            |> thenPermitInteraction (HE.onMouseOver (UIMsg (StopPan graphView.id)))
+          ]
+          [ svg
+              [ class [ "pan-arrow" ] 
+              , viewBox 0 0 20 20
+              ]
+              [ path [ d pathString ] [] ]
+            |> Html.Styled.fromUnstyled
+          ]
+      else
+        Html.Styled.text ""
+  in
+    div
+      [ HA.class "graph-container" ]
+      [ svg
+          ([ viewBox guest_x guest_y guest_width guest_height
+          , TypedSvg.Attributes.InPx.width host_width
+          , TypedSvg.Attributes.InPx.height host_height
+          ] {- ++ interactivity -})
+          [ -- this stuff is in the background.
+            viewUndoRedoVisualisation graphView
+          , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
+          ,
+            if graphView.isFrozen then
+              g [] []
+            else
+              g
+                [ ]
+                [ -- text_
+                    -- [ x <| (guest_x + guest_width) - 80
+                    -- , y <| (guest_y + guest_height) - 10
+                    -- , class [ "status-line", "zoom" ]
+                    -- ]
+                    -- [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
+                  text_
+                    [ x <| (guest_x + guest_width) - 5
+                    , y <| (guest_y + guest_height) - 10
+                    , class [ "status-line", "pan" ]
+                    ]
+                    [ text ("🧭 " ++ panToString graphView.pan) ]
+                -- , case graphView.interactionsDict of
+                --     Just (ModifyingGraph _ { dest }) ->
+                --       case dest of
+                --         NoDestination ->
+                --           bottomMsg "Press «Esc» to cancel link creation"
+                --         ExistingNode _ ->
+                --           bottomMsg "Choose transitions to connect these nodes. Press «Esc» to cancel."
+                --         NewNode _ ->
+                --           bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+                --     Just (AlteringConnection _ _) ->
+                --       bottomMsg "Choose transitions for this link. Press «Esc» to cancel."
+                --     Just (Splitting _) ->
+                --       g [] []
+                --     Just (Executing _ _) ->
+                --       bottomMsg "Executing computation."
+                --     Just (Dragging _) ->
+                --       g [] []
+                --     Nothing ->
+                --       case graphView.package.undoBuffer of
+                --         [] ->
+                --           g [] []
+                --         _ ->
+                --           bottomMsg "Press «Enter» to apply these changes; press «Ctrl-Z» / «Ctrl-Y» to undo / redo"
+                ]
+          ]
+          |> Html.Styled.fromUnstyled
+      , mkArrow  0 -1 "top" host_width panBuffer         "M10 2 L2 18 L18 18 Z"
+      , mkArrow  0  1 "bottom" host_width panBuffer      "M10 18 L18 2 L2 2 Z"
+      , mkArrow -1  0 "left" panBuffer host_height       "M2 10 L18 2 L18 18 Z"
+      , mkArrow  0 -1 "right" panBuffer host_height      "M18 10 L2 2 L2 18 Z"
+      , mkArrow  1 -1 "top-right" panRadius panRadius    "M16 4 L4 4 L16 16 Z"
+      , mkArrow  1  1 "bottom-right" panRadius panRadius "M4 16 L16 16 L16 4 Z"
+      , mkArrow -1 -1 "top-left" panRadius panRadius     "M4 4 L16 4 L4 16 Z"
+      , mkArrow -1  1 "bottom-left" panRadius panRadius  "M16 16 L4 16 L4 4 Z"
       ]
 
 -- onMouseScroll : (Float -> msg) -> Html.Attribute msg

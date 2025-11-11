@@ -17,6 +17,11 @@ import Dict exposing (Dict)
 import Html.Events
 import Json.Decode
 import Html
+import Html.Styled.Events
+import Html.Styled
+import TypedSvg.Core
+import TypedSvg.Events
+import VirtualDom
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -66,12 +71,13 @@ type CancelWhat
 type UIMsg
   = SelectNavigation NavigatorIcon
   | SelectTool ToolIcon
-  | MouseMove Float Float
   | OnResize (Float, Float)
   | StartDraggingNode Uuid NodeId
   | StartDraggingSplitter SplitterMovement
   | DragSplitter Bool Float -- stop-dragging, amount
   | ToggleAreaVisibility AreaUITarget
+  | StartPan Uuid Float Float
+  | StopPan Uuid
   -- | StartDraggingHorizontalSplitter
 
 type Main_Msg
@@ -636,12 +642,19 @@ acceptConditionToString v =
     ViaGraphReference uuid ->
       Uuid.toString uuid
 
-thenPermitInteraction : Html.Attribute a -> Bool -> Html.Attribute a
+thenPermitInteraction : Html.Styled.Attribute a -> Bool -> Html.Styled.Attribute a
 thenPermitInteraction event cond =
   if cond then
     event
   else
-    Html.Events.on "dummy" (Json.Decode.fail "dummy event")
+    Html.Styled.Events.on "dummy" (Json.Decode.fail "dummy event")
+
+thenPermitSvgInteraction : TypedSvg.Core.Attribute a -> Bool -> TypedSvg.Core.Attribute a
+thenPermitSvgInteraction event cond =
+  if cond then
+    event
+  else
+    TypedSvg.Events.on "dummy" (VirtualDom.Normal <| Json.Decode.fail "dummy event")
 
 {-| Convert an AcceptVia to a printable-for-output string. -}
 printableAcceptCondition : AcceptVia -> String
