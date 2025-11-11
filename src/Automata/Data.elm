@@ -161,14 +161,11 @@ type alias UIState =
     }
   }
 
-type ShownUI
-  = ThreePaneEditor
-  | ConnectionEditor Uuid
-
 type alias MainUIProperties =
   { canEscape : Bool
   , canDragSplitter : Bool
   , canAcceptCharacters : Bool
+  , dragDirection : Maybe SplitterMovement
   }
 
 type alias Main_Model =

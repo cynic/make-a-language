@@ -1980,147 +1980,17 @@ viewGraph graphView =
     ( host_width, host_height ) = graphView.host_dimensions
     ( guest_width, guest_height) = graphView.guest_dimensions
     ( guest_x, guest_y ) = graphView.guest_coordinates
-    -- ( mouse_x, mouse_y ) = mouseCoords
-    -- permit_scroll : Svg Main_Msg
-    -- permit_scroll =
-    --   onMouseScroll
-    --     (\n ->
-    --       case model.interactionsDict of
-    --         Just (ModifyingGraph (ChooseGraphReference _) _) ->
-    --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
-    --         Just (AlteringConnection (ChooseGraphReference _) _) ->
-    --           if n > 0 then SwitchToNextComputation else SwitchToPreviousComputation
-    --         _ ->
-    --           Zoom n
-    --     )
     panBuffer = panBufferAmount graphView.guest_dimensions
-    -- permit_pan : List (Svg GraphView_Msg)
-    -- permit_pan =
-    --   [ onMouseMove MouseMove
-    --   , cursor <|
-    --       -- working around an insane Elm-compiler parser bug https://github.com/elm/compiler/issues/1261
-    --       case ( 1 + round (xPanAt width panBuffer mouse_x), 1 + round (yPanAt height panBuffer mouse_y) ) of
-    --         ( 2, 2 ) -> CursorSEResize
-    --         ( 0, 2 ) -> CursorSWResize
-    --         ( 2, 0 ) -> CursorNEResize
-    --         ( 0, 0 ) -> CursorNWResize
-    --         ( 1, 2 ) -> CursorNResize
-    --         ( 0, 1 ) -> CursorWResize
-    --         ( 1, 0 ) -> CursorNResize -- eh? where's CursorSResize?
-    --         ( 2, 1 ) -> CursorEResize
-    --         _ -> CursorDefault
-    --   ]
-    -- permit_click : Svg GraphView_Msg
-    -- permit_click =
-    --   Mouse.onWithOptions
-    --     "mousedown"
-    --     { stopPropagation = True, preventDefault = True }
-    --     (\_ ->
-    --       case model.interactionsDict of
-    --         Just (ModifyingGraph _ _) ->
-    --           case nearby_node nearby_node_lockOnDistance mouseCoords model of
-    --             Just node -> -- in this case, the UI would show it being "locked-on"
-    --               CreateOrUpdateLinkTo node.id
-    --             Nothing ->
-    --               CreateNewNodeAt mouseCoords
-    --         _ ->
-    --           Escape
-    --     )
-    -- permit_stopdrag : Svg GraphView_Msg
-    -- permit_stopdrag =
-    --   Mouse.onUp (\_ -> NodeDragEnd)
-    -- interactivity : List (Svg GraphView_Msg)
-    -- interactivity =
-      -- don't permit panning if:
-      -- 1. I'm splitting a node
-      -- 2. I'm editing a transition/connection
-      --
-      -- don't permit zooming under the same circumstances as above.
-      --
-      -- don't permit clicking if:
-      -- 1. I'm modifying the graph, and have already selected/created a node
-      --
-      -- but clicking has a default of Escape, so we can usually allow it.
-      -- CHECK THIS!
-      -- Usability: should a "mis-click" result in Escape??
-      -- Let's see.
-      -- case model.interactionsDict of
-      --   Just (Splitting _) ->
-      --     [ permit_click ]
-      --   Just (AlteringConnection (ChooseGraphReference _) _) ->
-      --     [ permit_scroll ]
-      --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
-      --     [ permit_scroll ]
-      --   Just (ModifyingGraph _ { dest }) ->
-      --     case dest of
-      --       NewNode _ ->
-      --         []
-      --       ExistingNode _ ->
-      --         []
-      --       _ ->
-      --         permit_click :: permit_scroll :: permit_pan
-      --   Just (AlteringConnection _ _) ->
-      --     []
-      --   Just (Executing _ _) ->
-      --     permit_pan
-      --   Just (Dragging _) ->
-      --     -- must have permit_pan (for mouse-movement)
-      --     -- must have permit_stopdrag
-      --     -- ignore click (we only care about stop-drag right now)
-      --     permit_stopdrag :: permit_scroll :: permit_pan
-      --   Nothing ->
-      --     permit_click :: permit_scroll :: permit_pan
   in
     svg
       ([ viewBox guest_x guest_y guest_width guest_height
        , TypedSvg.Attributes.InPx.width host_width
        , TypedSvg.Attributes.InPx.height host_height
-      --  , TypedSvg.Attributes.style <| "max-width:" ++ (String.fromFloat width) ++ "px"
-      --  , TypedSvg.Attributes.InPx.height height
-      --  , TypedSvg.Attributes.preserveAspectRatio (Align ScaleMin ScaleMin) Meet
-      -- , Mouse.onOver (\_ -> SetMouseOver model.id True)
-      -- , Mouse.onOut (\_ -> SetMouseOver model.id False)
       ] {- ++ interactivity -})
       [ -- this stuff is in the background.
         viewUndoRedoVisualisation graphView
       , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-      -- , case graphView.interactionsDict of
-      --     Just (ModifyingGraph via { dest }) ->
-      --       case dest of
-      --         NoDestination ->
-      --           g [] []
-      --         _ ->
-      --           viewSvgTransitionChooser via graphView
-      --     Just (AlteringConnection via _) ->
-      --       viewSvgTransitionChooser via graphView
-      --     Just (Splitting { to_split, left, right }) ->
-      --       Graph.get to_split graphView.package.userGraph.graph
-      --       |> Maybe.map (\_ -> -- ignore node, we have all the info already
-      --         viewSvgTransitionSplitter left right graphView
-      --       )
-      --       |> Maybe.withDefault (g [] [])
-      --     Just (Executing _ _) ->
-      --       g [] [] -- no overlay needed. (but if I *DO* put in some overlay at some point, it'd go here!!)
-      --     Nothing ->
-      --       g [] []
-      --     Just (Dragging _) ->
-      --       g [] []
       ,
-        -- let
-        --   bottomMsg message =
-        --     text_
-        --       [ Px.x 15
-        --       , Px.y <| height - 15
-        --       , fill <| Paint <| Color.black
-        --       , fontFamily ["sans-serif"]
-        --       , fontSize 14
-        --       , textAnchor AnchorStart
-        --       , alignmentBaseline AlignmentCentral
-        --       , dominantBaseline DominantBaselineCentral
-        --       , pointerEvents "none"
-        --       ]
-        --       [ text message ]
-        -- in
         if graphView.isFrozen then
           g [] []
         else

@@ -1413,7 +1413,9 @@ update_ui ui_msg model =
       ( case popInteraction (Nothing) model of
           Just (DraggingSplitter movement, model_) ->
             if shouldStop then
-              model_ |> updateMainEditorDimensions
+              model_
+              |> updateMainEditorDimensions
+              |> setProperties
             else
               { model
                 | uiState =
@@ -1717,6 +1719,7 @@ defaultMainProperties =
   { canEscape = False
   , canDragSplitter = True
   , canAcceptCharacters = False
+  , dragDirection = Nothing
   }
 
 setProperties : Model -> Model
@@ -1740,6 +1743,7 @@ setProperties model =
       , { canEscape = True
         , canDragSplitter = True
         , canAcceptCharacters = False
+        , dragDirection = Nothing
         }
       )
     whenDraggingNode : ((Bool -> GraphViewProperties), MainUIProperties)
@@ -1756,10 +1760,11 @@ setProperties model =
       , { canEscape = True
         , canDragSplitter = False
         , canAcceptCharacters = False
+        , dragDirection = Nothing
         }
       )
-    whenDraggingSplitter : ((Bool -> GraphViewProperties), MainUIProperties)
-    whenDraggingSplitter =
+    whenDraggingSplitter : SplitterMovement -> ((Bool -> GraphViewProperties), MainUIProperties)
+    whenDraggingSplitter movement =
       ( \isFrozen ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
@@ -1772,6 +1777,7 @@ setProperties model =
       , { canEscape = False
         , canDragSplitter = False
         , canAcceptCharacters = False
+        , dragDirection = Just movement
         }
       )
     whenSourceNodeSelected : ((Bool -> GraphViewProperties), MainUIProperties)
@@ -1788,6 +1794,7 @@ setProperties model =
       , { canEscape = True
         , canDragSplitter = True
         , canAcceptCharacters = False
+        , dragDirection = Nothing
         }
       )
     whenEditingConnection : ((Bool -> GraphViewProperties), MainUIProperties)
@@ -1804,6 +1811,7 @@ setProperties model =
       , { canEscape = True
         , canDragSplitter = False
         , canAcceptCharacters = True
+        , dragDirection = Nothing
         }
       )
     whenExecuting : ((Bool -> GraphViewProperties), MainUIProperties)
@@ -1820,12 +1828,13 @@ setProperties model =
       , { canEscape = True
         , canDragSplitter = True
         , canAcceptCharacters = False
+        , dragDirection = Nothing
         }
       )
     mainProperties_base =
       case peekInteraction (Nothing) model of
-        Just (DraggingSplitter _) ->
-          setMainProperties whenDraggingSplitter
+        Just (DraggingSplitter movement) ->
+          setMainProperties (whenDraggingSplitter movement)
         _ ->
           setMainProperties default
   in
@@ -1912,7 +1921,7 @@ update msg model =
               -- Ideally, I shouldn't even spawn an event if there's nothing to do.
               model
             Just (Just uuid, ModifyConnection (CreatingNewNode {source,dest}), _) ->
-              cancelNewNodeCreation uuid source dest model -- this will pop, and handle graph changes too.
+              cancelNewNodeCreation uuid source dest model -- this will pop, and also handle graph/UI changes too.
               |> setProperties
             Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
@@ -2300,7 +2309,7 @@ viewMainInterface model =
     [ viewNavigatorsArea model
     , viewSplitter
         5 LeftRight
-        lastInteraction
+        model
         (model.uiState.open.sideBar)
     , div
         [ HA.class "editor-and-tools-panel" ]
@@ -2319,7 +2328,7 @@ viewMainInterface model =
             ]
         , viewSplitter
             4 UpDown
-            lastInteraction
+            model
             model.uiState.open.bottomPanel
         , viewToolsArea model
         ]

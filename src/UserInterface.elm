@@ -92,8 +92,8 @@ viewNavigatorsArea model =
           ]
     ]
 
-viewSplitter : Int -> SplitterMovement -> Maybe InteractionState -> Bool -> Html Main_Msg
-viewSplitter zIdx movement interactionsDict areaOpen =
+viewSplitter : Int -> SplitterMovement -> Model -> Bool -> Html Main_Msg
+viewSplitter zIdx movement model areaOpen =
   let
     (movementClass, targetArea) =
       case movement of
@@ -101,8 +101,6 @@ viewSplitter zIdx movement interactionsDict areaOpen =
           ( "leftright", NavigatorsArea )
         UpDown ->
           ( "updown", ToolsArea )
-    isDragging = interactionsDict == Just (DraggingSplitter movement)
-    draggable = (interactionsDict == Nothing || isDragging) && areaOpen
     collapseIcon =
       svg
         [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
@@ -117,8 +115,8 @@ viewSplitter zIdx movement interactionsDict areaOpen =
       div
         [ HA.classList
             [ ("splitter-separator " ++ movementClass, True)
-            , ("dragging", isDragging)
-            , ( "draggable", draggable)
+            , ("dragging", model.properties.dragDirection == Just movement)
+            , ( "draggable", model.properties.canDragSplitter && areaOpen)
             ]
         , HA.css
             [ Css.zIndex (Css.int zIdx)
