@@ -839,68 +839,17 @@ viewNode properties id data =
   in
     g
       [ class nodeClass
-      -- ::interactivity
       , properties.canSelectNodes
         |> thenPermitInteraction (onClick <| SelectNode data.view_uuid id (node_x, node_y))
-      -- , properties.canSplitNodes
+      -- , (properties.canSplitNodes && data.canSplit)
       --   |> thenPermitInteraction (onClick <| StartSplit id)
       ]
       [ circle
-          [ --r nodeRadius
-          --, strokeWidth 2
-            cx node_x
+          [ cx node_x
           , cy node_y
           , class nodeClass
           ]
           []
-      -- ,  if data.isTerminal && data.isRoot then
-      --       text_
-      --         [ x <| node_x
-      --         , y <| (node_y + 1)
-      --         , fontFamily ["sans-serif"]
-      --         , fontSize 14
-      --         , fontWeight FontWeightNormal
-      --         , textAnchor AnchorMiddle
-      --         , alignmentBaseline AlignmentBaseline
-      --         , dominantBaseline DominantBaselineMiddle
-      --         , Html.Attributes.attribute "paint-order" "stroke fill markers"
-      --         ]
-      --         [ text "💥"
-      --         , title [] [text titleText]
-      --         ]
-      --     else if data.isTerminal then
-      --       text_
-      --         [ x <| node_x
-      --         , y <| (node_y + 1)
-      --         , fontFamily ["sans-serif"]
-      --         , fontSize 14
-      --         , fontWeight FontWeightNormal
-      --         , textAnchor AnchorMiddle
-      --         , alignmentBaseline AlignmentBaseline
-      --         , dominantBaseline DominantBaselineMiddle
-      --         , Html.Attributes.attribute "paint-order" "stroke fill markers"
-      --         ]
-      --         [ text "🎯"
-      --         , title [] [text titleText]
-      --         ]
-      --     else if data.isRoot then
-      --       text_
-      --         [ x <| node_x
-      --         , y <| (node_y + 1)
-      --         , fontFamily ["sans-serif"]
-      --         , fontSize 12
-      --         , fontWeight FontWeightNormal
-      --         , textAnchor AnchorMiddle
-      --         , alignmentBaseline AlignmentBaseline
-      --         , dominantBaseline DominantBaselineMiddle
-      --         , Html.Attributes.attribute "paint-order" "stroke fill markers"
-      --         , fill <| Paint <| Color.grey
-      --         ]
-      --         [ text "⭐"
-      --         , title [] [text titleText]
-      --         ]
-      --     else
-      --       g [] []
       , title [] [text titleText]
       ]
 
