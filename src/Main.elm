@@ -82,8 +82,8 @@ getUuid model =
   in
     ( v, updatedModel )
 
-nodeDrawingForPackage : GraphPackage -> GraphViewProperties -> Uuid -> Model -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package {isFrozen} graphView_uuid ({interactionsDict} as model) =
+nodeDrawingForPackage : GraphPackage -> Bool -> Uuid -> Model -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage package isFrozen graphView_uuid model =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -203,8 +203,8 @@ linkDrawingForPackage package =
     If there is no such `GraphPackage`, then nothing is done and no
     `GraphView` is returned.
 -}
-viewFromPackage : (Float, Float) -> (Float, Float) -> GraphViewProperties -> Uuid -> Model -> (Maybe GraphView, Model)
-viewFromPackage (w, h) (x, y) properties package_uuid model =
+viewFromPackage : (Float, Float) -> (Float, Float) -> Bool -> Uuid -> Model -> (Maybe GraphView, Model)
+viewFromPackage (w, h) (x, y) createFrozen package_uuid model =
   let
     (id, model_) = getUuid model
   in
@@ -223,17 +223,21 @@ viewFromPackage (w, h) (x, y) properties package_uuid model =
           guest_viewport =
             calculateGuestDimensionsForHost
               (w, h)
-              properties
+              createFrozen
               solved_pkg.userGraph.graph
+          properties = defaultViewProperties createFrozen
           graph_view : GraphView
           graph_view =
             { id = id
+            , isFrozen = createFrozen
             , package = solved_pkg
             , simulation = computed.simulation
             , host_dimensions = (w, h)
             , host_coordinates = (x, y)
             , guest_dimensions = guest_viewport.dimensions
             , guest_coordinates = guest_viewport.coordinates
+            , guest_center_coordinates = guest_viewport.center_coordinates
+            , guest_center_dimensions = guest_viewport.center_dimensions
             , forces = computed.forces
             , specificForces = IntDict.empty
             , zoom = 1.0
@@ -242,7 +246,7 @@ viewFromPackage (w, h) (x, y) properties package_uuid model =
             , properties = properties
             , drawingData =
                 { link_drawing = linkDrawingForPackage solved_pkg
-                , node_drawing = nodeDrawingForPackage solved_pkg properties id model
+                , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id model
                 }
             }
         in
@@ -368,8 +372,7 @@ init flags =
       -- , mouseCoords = (0, 0)
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
       , properties =
-          { canEscape = False
-          }
+          defaultMainProperties
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -384,12 +387,7 @@ init flags =
                 0
             , 0
             )
-            { isFrozen = False
-            , canSelectConnections = True
-            , canSelectEmptySpace = False
-            , canSelectNodes = True
-            , canSplitNodes = True
-            }
+            False
             mainPackage.userGraph.graphIdentifier
             model_excl_views
       in
@@ -1129,17 +1127,23 @@ recalculate_uistate ({dimensions} as ui) =
         }
   }
 
+type alias GuestDimensions =
+  { dimensions : (Float, Float)
+  , coordinates : (Float, Float)
+  , center_coordinates : (Float, Float)
+  , center_dimensions : (Float, Float)
+  }
 {-| Accepts host dimensions, view properties, and a graph, and calculates the
     appropriate guest coordinates & guest dimensions (i.e. viewport).
 -}
-calculateGuestDimensionsForHost : (Float, Float) -> GraphViewProperties -> Graph.Graph Entity Connection -> { dimensions : (Float, Float), coordinates : (Float, Float) }
-calculateGuestDimensionsForHost (w, h) properties graph =
+calculateGuestDimensionsForHost : (Float, Float) -> Bool -> Graph.Graph Entity Connection -> GuestDimensions
+calculateGuestDimensionsForHost (w, h) isFrozen graph =
   let
     aspectRatio : Float
     aspectRatio = w / h
     inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
     inner_pad =
-      if properties.isFrozen then
+      if isFrozen then
         -- we don't need any buffer.
         -- So, just put in a "buffer" for the node radius.
         10
@@ -1154,7 +1158,7 @@ calculateGuestDimensionsForHost (w, h) properties graph =
     -- I shouldn't be too far off from a maximum.
     theoretical_max = 150.0 * toFloat (Graph.size graph)
     -- Now find out: where is the bounding box for the nodes?
-    ( (min_x, max_x), (min_y, max_y) ) =    
+    ( (min_x_raw, max_x_raw), (min_y_raw, max_y_raw) ) =    
       Graph.fold
         (\ctx ((xmin, xmax), (ymin, ymax)) ->
           ( ( min ctx.node.label.x xmin
@@ -1167,17 +1171,29 @@ calculateGuestDimensionsForHost (w, h) properties graph =
         )
         ((theoretical_max, -1000), (theoretical_max, -1000))
         graph
-      |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad), (c - inner_pad, d + inner_pad))
+    ( (min_x, max_x), (min_y, max_y) ) =
+      ( (min_x_raw - inner_pad, max_x_raw + inner_pad)
+      , (min_y_raw - inner_pad, max_y_raw + inner_pad))
       -- |> Debug.log "Bounds"
     -- from this, I can figure out the appropriate coordinates
     center_y = (min_y + max_y) / 2
+    center_x = (min_x + max_x) / 2
     autoHeight = (max_x - min_x) / aspectRatio
     -- now, we want a center within that autoHeight.
     guestCoordinates = ( min_x, center_y - autoHeight / 2 )
     guestDimensions = ( max_x - min_x, autoHeight )
+    centerCoordinates =
+      ( clamp min_x center_x (min_x + 80)
+      , clamp min_y center_y (min_y + 80)
+      )
+    centerDimensions =
+      ( max_x_raw - 80 - min_x_raw
+      , max_y_raw - 80 - min_y_raw)
   in
     { dimensions = guestDimensions
     , coordinates = guestCoordinates
+    , center_coordinates = centerCoordinates
+    , center_dimensions = centerDimensions
     }
 
 updateMainEditorDimensions : Model -> Model
@@ -1193,7 +1209,7 @@ updateMainEditorDimensions ({uiState} as model) =
                 guest_viewport =
                   calculateGuestDimensionsForHost
                     uiState.dimensions.mainEditor
-                    graph_view.properties
+                    graph_view.isFrozen
                     graph_view.package.userGraph.graph
               in
                 { graph_view
@@ -1603,8 +1619,8 @@ cancelNewNodeCreation view_uuid source dest model =
 editConnection : Model -> Uuid -> ConnectionAlteration -> NodeId -> Model
 editConnection model view_uuid old_alteration new_dest =
   let
-    edit_connection : GraphView -> Model
-    edit_connection graph_view =
+    editConnectionInView : GraphView -> Model
+    editConnectionInView graph_view =
       let
         viewWithDestination : GraphView
         viewWithDestination = -- ensure that the destination node exists in the graph.
@@ -1675,9 +1691,165 @@ editConnection model view_uuid old_alteration new_dest =
 
   in
     AutoDict.get view_uuid model.graph_views
-    |> Maybe.map (edit_connection)
+    |> Maybe.map (editConnectionInView)
     |> Maybe.withDefault model
 
+defaultViewProperties : Bool -> GraphViewProperties
+defaultViewProperties isFrozen =
+  { canSelectConnections = not isFrozen
+  , canSelectEmptySpace = False
+  , canSelectNodes = not isFrozen
+  , canSplitNodes = not isFrozen
+  , canDragNodes = not isFrozen
+  , canInspectRefs = True
+  , canPan = True
+  }
+
+defaultMainProperties : MainUIProperties
+defaultMainProperties =
+  { canEscape = False
+  , canDragSplitter = True
+  , canAcceptCharacters = False
+  }
+
+setProperties : Model -> Msg -> Model
+setProperties model msg =
+  let
+    setLocalProperties f a = (Tuple.first f) a
+    setMainProperties f = (Tuple.second f)
+    default : ((Bool -> GraphViewProperties), MainUIProperties)
+    default = ( defaultViewProperties, defaultMainProperties )
+    whenSplittingNode : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenSplittingNode =
+      ( \isFrozen ->
+          { canSelectConnections = False
+          , canSelectEmptySpace = False
+          , canSelectNodes = False
+          , canSplitNodes = False
+          , canDragNodes = not isFrozen
+          , canInspectRefs = True
+          , canPan = True
+          }
+      , { canEscape = True
+        , canDragSplitter = True
+        , canAcceptCharacters = False
+        }
+      )
+    whenDraggingNode : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenDraggingNode =
+      ( \isFrozen ->
+          { canSelectConnections = False
+          , canSelectEmptySpace = False
+          , canSelectNodes = False
+          , canSplitNodes = False
+          , canDragNodes = False
+          , canInspectRefs = False
+          , canPan = True
+          }
+      , { canEscape = True
+        , canDragSplitter = False
+        , canAcceptCharacters = False
+        }
+      )
+    whenDraggingSplitter : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenDraggingSplitter =
+      ( \isFrozen ->
+          { canSelectConnections = False
+          , canSelectEmptySpace = False
+          , canSelectNodes = False
+          , canSplitNodes = False
+          , canDragNodes = False
+          , canInspectRefs = False
+          , canPan = False
+          }
+      , { canEscape = False
+        , canDragSplitter = False
+        , canAcceptCharacters = False
+        }
+      )
+    whenSourceNodeSelected : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenSourceNodeSelected =
+      ( \isFrozen ->
+          { canSelectConnections = False
+          , canSelectEmptySpace = True
+          , canSelectNodes = True
+          , canSplitNodes = True
+          , canDragNodes = True
+          , canInspectRefs = False
+          , canPan = True
+          }
+      , { canEscape = True
+        , canDragSplitter = True
+        , canAcceptCharacters = False
+        }
+      )
+    whenEditingConnection : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenEditingConnection =
+      ( \isFrozen ->
+          { canSelectConnections = False
+          , canSelectEmptySpace = False
+          , canSelectNodes = False
+          , canSplitNodes = False
+          , canDragNodes = True
+          , canInspectRefs = True
+          , canPan = True
+          }
+      , { canEscape = True
+        , canDragSplitter = False
+        , canAcceptCharacters = True
+        }
+      )
+    whenExecuting : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenExecuting =
+      ( \isFrozen ->
+          { canSelectConnections = False
+          , canSelectEmptySpace = False
+          , canSelectNodes = False
+          , canSplitNodes = False
+          , canDragNodes = False
+          , canInspectRefs = True
+          , canPan = True
+          }
+      , { canEscape = True
+        , canDragSplitter = True
+        , canAcceptCharacters = False
+        }
+      )
+  in
+    { model
+      | graph_views =
+          AutoDict.map
+            (\k v ->
+              { v
+                | properties =
+                    case peekInteraction (Just k) model of
+                      Nothing ->
+                        setLocalProperties default v.isFrozen
+                      Just (SplittingNode _) ->
+                        setLocalProperties whenSplittingNode v.isFrozen
+                      Just (DraggingNode _) ->
+                        setLocalProperties whenDraggingNode v.isFrozen
+                      Just (ModifyConnection (CreatingNewNode _)) ->
+                        setLocalProperties whenSourceNodeSelected v.isFrozen
+                      Just (ModifyConnection _) ->
+                        setLocalProperties whenEditingConnection v.isFrozen
+                      Just (Executing _) ->
+                        setLocalProperties whenExecuting v.isFrozen
+                      x ->
+                        Debug.todo <| "Received a local interaction for " ++ Debug.toString k ++ " that should never have been received… " ++ Debug.toString x
+              }
+            )
+            model.graph_views
+      , properties =
+          case peekInteraction (Nothing) model of
+            Nothing ->
+              setMainProperties default
+            Just (DraggingSplitter _) ->
+              setMainProperties whenDraggingSplitter
+            x ->
+              Debug.todo <| "Received a global interaction that should never have been received… " ++ Debug.toString x
+    }
+    
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -1722,10 +1894,6 @@ update msg model =
       , Cmd.none
       )
 
-    -- Tick ->
-    --   updateGraphViewsOnTick model
-    -- Seconded t ->
-    --   { model | currentTime = t }
     -- GraphViewMsg uuid submsg ->
     --   AutoDict.get uuid model.graph_views
     --   |> Maybe.map (updateGraphView submsg)
@@ -2152,7 +2320,6 @@ view model =
       viewConnectionEditor model uuid alteration
     _ ->
       viewMainInterface model
-
 
 -- isAccepted : ExecutionResult -> Maybe Bool
 -- isAccepted result =

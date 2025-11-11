@@ -1784,16 +1784,13 @@ viewMainSvgContent graph_view =
     --     _ ->
     --       class []
     , class
-        ( if graph_view.properties.isFrozen then
-            [ "graph" ]
-          else
-            classList
-              [ ("graph", True)
-              , ("can-select-nodes", graph_view.properties.canSelectNodes)
-              , ("can-select-connections", graph_view.properties.canSelectConnections)
-              , ("can-select-space", graph_view.properties.canSelectEmptySpace)
-              , ("can-split-nodes", graph_view.properties.canSplitNodes)
-              ]
+        ( classList
+            [ ("graph", True)
+            , ("can-select-nodes", graph_view.properties.canSelectNodes)
+            , ("can-select-connections", graph_view.properties.canSelectConnections)
+            , ("can-select-space", graph_view.properties.canSelectEmptySpace)
+            , ("can-split-nodes", graph_view.properties.canSplitNodes)
+            ]
         )
     ]
     [ defs [] arrowheadDefs
@@ -2124,29 +2121,18 @@ viewGraph graphView =
         --       ]
         --       [ text message ]
         -- in
-        if graphView.properties.isFrozen then
+        if graphView.isFrozen then
           g [] []
         else
           g
             [ ]
-            [ --rect
-                -- [ x (Tuple.first model.dimensions - 121)
-                -- , y (Tuple.second model.dimensions - 30)
-                -- , Px.width 120
-                -- , Px.height 30
-                -- , stroke <| Paint <| Color.black
-                -- , strokeWidth 1
-                -- , Px.rx 5
-                -- , Px.ry 5
+            [ -- text_
+                -- [ x <| (guest_x + guest_width) - 5
+                -- , y <| (guest_y + guest_height) - 10
+                -- , class [ "status-line", "zoom" ]
                 -- ]
-                -- []
+                -- [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
               text_
-                [ x <| (guest_x + guest_width) - 5
-                , y <| (guest_y + guest_height) - 10
-                , class [ "status-line", "zoom" ]
-                ]
-                [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
-            , text_
                 [ x <| (guest_x + guest_width) - 80
                 , y <| (guest_y + guest_height) - 10
                 , class [ "status-line", "pan" ]

@@ -162,6 +162,11 @@ type ShownUI
   = ThreePaneEditor
   | ConnectionEditor Uuid
 
+type alias MainUIProperties =
+  { canEscape : Bool
+  , canDragSplitter : Bool
+  , canAcceptCharacters : Bool
+  }
 
 type alias Main_Model =
   { graph_views : AutoDict.Dict String Uuid GraphView
@@ -173,9 +178,7 @@ type alias Main_Model =
   , randomSeed : Random.Seed
   -- , mouseCoords : ( Float, Float )
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
-  , properties :
-      { canEscape : Bool
-      }
+  , properties : MainUIProperties
   }
 
 type alias GraphPackage =
@@ -301,7 +304,7 @@ type alias ConnectionAlteration =
 
 type InteractionState
     -- split a node into two, so I can work on the parts separately
-  = Splitting
+  = SplittingNode
       { to_split : NodeId
       , left : Connection
       , right : Connection
@@ -316,11 +319,13 @@ type AcceptChoice
   | ChooseGraphReference
 
 type alias GraphViewProperties =
-  { isFrozen : Bool
-  , canSelectConnections : Bool
-  , canSelectEmptySpace : Bool
-  , canSelectNodes : Bool
-  , canSplitNodes : Bool
+  { canSelectConnections : Bool -- via click
+  , canSelectEmptySpace : Bool -- via click
+  , canSelectNodes : Bool -- via click
+  , canSplitNodes : Bool -- via ctrl-click
+  , canDragNodes : Bool -- via shift-drag
+  , canInspectRefs : Bool -- via shift-click
+  , canPan : Bool -- via hover
   }
 
 type Cardinality
@@ -379,19 +384,15 @@ type alias DrawingData =
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
-    -- Instead of repeating here, I could just supply a Uuid -> GraphPackage
-    -- "resolver" function. But I choose to repeat, because such a function
-    -- would be totally opaque to any tools, and if something ever goes wrong
-    -- with an out-of-date resolver, I'm going to spend days poring over where
-    -- that problem is.
-    --
-    -- No, I'll take the ability to examine the internals over that future
-    -- morass.
   , simulation : Force.State NodeId
   , host_dimensions : (Float, Float) -- (w,h) of svg element
   , host_coordinates : (Float, Float) -- (x,y) of svg element
   , guest_dimensions : (Float, Float) -- (w,h) of svg viewport
   , guest_coordinates : (Float, Float) -- (x,y) of svg viewport
+  -- when I pan, I always want to keep at least some part of the graph in view.
+  -- This box defines the coordinates of a box beyond whose edges I cannot pan.
+  , guest_center_coordinates : (Float, Float) -- (box_x, box_x) of svg viewport
+  , guest_center_dimensions : (Float, Float) -- (box_w, box_h) of svg viewport
     -- `forces` includes:
     -- - graph forces of attraction and repulsion
     -- - node forces to pull the root towards the center
@@ -401,6 +402,7 @@ type alias GraphView =
   , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
+  , isFrozen : Bool
   , properties : GraphViewProperties
   , drawingData : DrawingData
   }
