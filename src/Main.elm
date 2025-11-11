@@ -48,6 +48,7 @@ import Css exposing (px)
 import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
 import GraphEditor exposing (path_between)
 import WebGL exposing (entityWith)
+import List.Extra
 
 {-
 Quality / technology requirements:
@@ -82,7 +83,7 @@ getUuid model =
     ( v, updatedModel )
 
 nodeDrawingForPackage : GraphPackage -> GraphViewProperties -> Uuid -> Model -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package {isFrozen} graphView_uuid {interactionsDict} =
+nodeDrawingForPackage package {isFrozen} graphView_uuid ({interactionsDict} as model) =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -104,25 +105,22 @@ nodeDrawingForPackage package {isFrozen} graphView_uuid {interactionsDict} =
         let
           nodeContext =
             Graph.get node.id package.userGraph.graph
-          localStack =
-            AutoDict.get (Just graphView_uuid) interactionsDict
-            |> Maybe.withDefault []
         in
           ( node.id
           , { exclusiveAttributes =
-                case localStack of
-                  DraggingNode node_id :: _ ->
+                case peekInteraction (Just graphView_uuid) model of
+                  Just (DraggingNode node_id) ->
                     maybe_fromBool
                       (node.id == node_id)
                       DrawSelected
-                  Executing result :: _ ->
+                  Just (Executing result) ->
                     maybe_fromBool
                       ( GraphEditor.executionData result
                         |> Maybe.map (.currentNode >> (==) node.id)
                         |> Maybe.withDefault False
                       )
                       DrawCurrentExecutionNode
-                  ModifyConnection (CreatingNewNode {dest}) :: _ ->
+                  Just (ModifyConnection (CreatingNewNode {dest})) ->
                     maybe_fromBool
                       (node.id == dest)
                       DrawPhantom
@@ -369,6 +367,9 @@ init flags =
       , randomSeed = initialSeed
       -- , mouseCoords = (0, 0)
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
+      , properties =
+          { canEscape = False
+          }
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -1303,11 +1304,18 @@ resizeViewport (w, h) ({uiState, uiConstants} as model) =
 -}
 pushInteractionForStack : Maybe Uuid -> InteractionState -> Model -> Model
 pushInteractionForStack uuid interaction model =
+  let
+    new_recent_number =
+      AutoDict.values model.interactionsDict
+      |> List.Extra.maximumBy Tuple.first
+      |> Maybe.map (Tuple.first >> (+) 1)
+      |> Maybe.withDefault 0
+  in
   { model
     | interactionsDict =
         AutoDict.update uuid
-          ( Maybe.withDefault []
-          >> (Just << (::) interaction)
+          ( Maybe.withDefault (0, [])
+          >> (\(_, stack) -> Just (new_recent_number, interaction :: stack))
           )
           model.interactionsDict
   }
@@ -1323,26 +1331,43 @@ popInteraction uuid model =
 
   -- get the stack
   case AutoDict.get uuid model.interactionsDict of
-    Just [h] ->
+    Just (_, [h]) ->
       Just <|
         ( h
         , { model | interactionsDict = AutoDict.remove uuid model.interactionsDict }
         )
-    Just (h :: t) ->
+    Just (r, h :: t) ->
       -- if it has something, pop, and also return an updated model
       Just <|
         ( h
-        , { model | interactionsDict = AutoDict.insert uuid t model.interactionsDict }
+        , { model | interactionsDict = AutoDict.insert uuid (r - 1, t) model.interactionsDict }
         )
     _ ->
       -- if there's nothing, or there was no such dict, there's nothing
       -- to do
       Nothing
 
+popMostRecentInteraction : Model -> Maybe (InteractionState, Model)
+popMostRecentInteraction model =
+  mostRecentInteraction model
+  |> Maybe.andThen (\(uuid, _) -> popInteraction uuid model)
+
 peekInteraction : Maybe Uuid -> Model -> Maybe InteractionState
 peekInteraction uuid model =
   AutoDict.get uuid model.interactionsDict
+  |> Maybe.map Tuple.second
   |> Maybe.andThen List.head
+
+mostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState)
+mostRecentInteraction model =
+  AutoDict.toList model.interactionsDict
+  |> List.Extra.maximumBy (Tuple.second >> Tuple.first)
+  |> Maybe.andThen
+    (\(uuid, (_, interaction)) ->
+      case interaction of
+        [] -> Nothing
+        h::_ -> Just (uuid, h)
+    )
 
 update_ui : UIMsg -> Model -> ( Model, Cmd Msg)
 update_ui ui_msg model =
@@ -1578,32 +1603,43 @@ cancelNewNodeCreation view_uuid source dest model =
 editConnection : Model -> Uuid -> ConnectionAlteration -> NodeId -> Model
 editConnection model view_uuid old_alteration new_dest =
   let
-    graph_view = AutoDict.get view_uuid model.graph_views
-    modelWithDestination : Maybe (Graph.Graph Entity Connection)
-    modelWithDestination = -- ensure that the destination node exists in the graph.
-      Maybe.map (\gv ->
-        Graph.update new_dest
-          ( Maybe.withDefaultLazy
-              (\() ->
-                { node = { node = { id = new_dest, label = entity new_dest NoEffect } }
-                , incoming = AutoSet.empty transitionToString
-                , outgoing = AutoSet.empty transitionToString
+    edit_connection : GraphView -> Model
+    edit_connection graph_view =
+      let
+        viewWithDestination : GraphView
+        viewWithDestination = -- ensure that the destination node exists in the graph.
+          { graph_view
+            | package =
+                let package = graph_view.package in
+                { package
+                  | userGraph =
+                    let userGraph = package.userGraph in
+                    { userGraph
+                      | graph =
+                          Graph.update new_dest
+                            ( Maybe.map identity
+                              >> Maybe.orElseLazy
+                                (\() ->
+                                  Just <|
+                                    { node = { id = new_dest, label = entity new_dest NoEffect }
+                                    , incoming = IntDict.empty
+                                    , outgoing = IntDict.empty
+                                    }
+                                )
+                            )
+                            userGraph.graph
+                    }
                 }
-              )
-          )
-          gv.package.userGraph.graph
-      ) graph_view
-    maybeInteraction : Maybe InteractionState
-    maybeInteraction = -- this is the connection between the two nodes
-      -- if there is no such view, then the interaction is Nothing.
-      graph_view
-      |> Maybe.map (\gv ->
+          }
+        interaction : InteractionState
+        interaction = -- this is the connection between the two nodes
+          -- if there is no such view, then the interaction is Nothing.
           ModifyConnection <|
             EditExistingConnection
               { old_alteration
                 | dest = new_dest
                 , connection =
-                    Graph.get new_dest gv.package.userGraph.graph
+                    Graph.get new_dest viewWithDestination.package.userGraph.graph
                       |> Maybe.map (\node ->
                         IntDict.get old_alteration.source node.incoming
                         |> Maybe.withDefault (AutoSet.empty transitionToString)
@@ -1613,33 +1649,33 @@ editConnection model view_uuid old_alteration new_dest =
                     -- empty connection for now.  
                     |> Maybe.withDefault (AutoSet.empty transitionToString)
               }
-      )
+      in
+        cancelNewNodeCreation view_uuid old_alteration.source old_alteration.dest model
+        |> pushInteractionForStack (Just view_uuid) interaction
+        |>  (\model_ ->
+              { model_
+                | -- and now we will enter the editing-connection phase, so
+                  graph_views =
+                    AutoDict.update view_uuid
+                      (Maybe.map (\gv ->
+                        { gv
+                          | properties =
+                              let properties = gv.properties in
+                              { properties
+                                | canSelectConnections = False
+                                , canSelectEmptySpace = False
+                                , canSelectNodes = False
+                                , canSplitNodes = False
+                              }
+                        }
+                      ))
+                      model_.graph_views
+              }
+            )
+
   in
-    maybeInteraction
-    |> Maybe.map (\interaction ->
-      cancelNewNodeCreation view_uuid old_alteration.source old_alteration.dest model
-      |> pushInteractionForStack (Just view_uuid) interaction
-      |>  (\model_ ->
-            { model_
-              | -- and now we will enter the editing-connection phase, so
-                graph_views =
-                  AutoDict.update view_uuid
-                    (Maybe.map (\gv ->
-                      { gv
-                        | properties =
-                            let properties = gv.properties in
-                            { properties
-                              | canSelectConnections = False
-                              , canSelectEmptySpace = False
-                              , canSelectNodes = False
-                              , canSplitNodes = False
-                            }
-                      }
-                    ))
-                    model_.graph_views
-            }
-          )
-    )
+    AutoDict.get view_uuid model.graph_views
+    |> Maybe.map (edit_connection)
     |> Maybe.withDefault model
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -1673,16 +1709,12 @@ update msg model =
       )
 
     Escape ->
-      ( if model.capabilities.canEscape then
-          case popInteraction (Nothing) model of
+      ( if model.properties.canEscape then
+          case popMostRecentInteraction model of
             Nothing -> -- hmm, let's look at the local interactions of the main editor window.
-              case popInteraction (Just model.mainGraphView) model of
-                Nothing ->
-                  -- huh!  Looks like there's nothing to do!  So why was I called??
-                  -- Ideally, I shouldn't even spawn an event if there's nothing to do.
-                  model
-                Just (_, model_) ->
-                  model_ -- yay, I could pop from the local
+              -- huh!  Looks like there's nothing to do!  So why was I called??
+              -- Ideally, I shouldn't even spawn an event if there's nothing to do.
+              model
             Just (_, model_) ->
               model_ -- yay, I could pop from the global
         else
@@ -2062,12 +2094,17 @@ update msg model =
 
 viewMainInterface : Model -> Html Msg
 viewMainInterface model =
+  let
+    lastInteraction =
+      mostRecentInteraction model
+      |> Maybe.map Tuple.second
+  in
   div
     [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
     , viewSplitter
         5 LeftRight
-        (List.head model.interactionsDict)
+        lastInteraction
         (model.uiState.open.sideBar)
     , div
         [ HA.class "editor-and-tools-panel" ]
@@ -2086,7 +2123,7 @@ viewMainInterface model =
             ]
         , viewSplitter
             4 UpDown
-            (List.head model.interactionsDict)
+            lastInteraction
             model.uiState.open.bottomPanel
         , viewToolsArea model
         ]
@@ -2110,9 +2147,9 @@ viewConnectionEditor model uuid {source, dest, connection, picker} =
 
 view : Model -> Html Msg
 view model =
-  case peekInteraction (Just model.mainGraphView) model of
-    Just (ModifyConnection (EditExistingConnection alteration)) ->
-      viewConnectionEditor model model.mainGraphView alteration
+  case mostRecentInteraction model of
+    Just (Just uuid, ModifyConnection (EditExistingConnection alteration)) ->
+      viewConnectionEditor model uuid alteration
     _ ->
       viewMainInterface model
 
@@ -2963,49 +3000,10 @@ subscriptions model =
           |> D.andThen
             (\v ->
               case v of
-                -- ( "1", True ) ->
-                --   -- Debug.log "yup" v |> \_ ->
-                --   D.succeed ResetView
-                -- ( "Enter", False ) ->
-                --   D.succeed Confirm
                 ( "Escape", False ) ->
                   D.succeed Escape
-                -- ( "Tab", False) ->
-                --   D.succeed Reheat
-                -- ( "z", True) ->
-                --   D.succeed Undo
-                -- ( "Z", True) ->
-                --   D.succeed Undo
-                -- ( "y", True) ->
-                --   D.succeed Redo
-                -- ( "Y", True) ->
-                --   D.succeed Redo
-                -- ( ch, _ ) ->
-                --   case String.toList ch of
-                --     [char] ->
-                --       D.succeed (KeyPressed char)
-                --     _ ->
-                --       D.fail "Not a character key"
                 _ ->
                   D.fail "Untrapped"
-                  -- in
-                  -- case model.interactionsDict of
-                  --   Just (ModifyingGraph ChooseCharacter { dest }) ->
-                  --     case dest of
-                  --       NoDestination ->
-                  --         D.fail "Not a recognized key combination"
-                  --       _ ->
-                  --         decodeChar
-                  --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
-                  --     D.fail "Not choosing characters"
-                  --   Just (AlteringConnection ChooseCharacter _) ->
-                  --     decodeChar
-                  --   Just (AlteringConnection (ChooseGraphReference _) _) ->
-                  --     D.fail "Not choosing characters"
-                  --   Just (Splitting _) ->
-                  --     decodeChar
-                  --   _ ->
-                  --     D.fail "Not a recognized key combination"
             )
         )
 
@@ -3063,18 +3061,11 @@ subscriptions model =
     --     )
     --   else
     --     Sub.none
-    -- currentTimeSubscription = -- used for created-time for AutomatonGraphs
-    --   Time.every 25000 -- 'sup, homie Nyquist? All good?
-    --     ( Time.posixToMillis
-    --       >> (\v -> (v // (1000 * 60)) * (1000 * 60))
-    --       >> Time.millisToPosix
-    --       >> Seconded
-    --     )
     resizeSubscription =
       BE.onResize (\w h -> UIMsg <| OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     splitterSubscriptions =
-      case model.interactionsDict of
-        Dragging DragLeftRightSplitter :: _ ->
+      case peekInteraction Nothing model of
+        Just (DraggingSplitter LeftRight) ->
           let
             -- navigatorbarwidth + splitterwidth/2
             offset = -(48 + 8 / 2)
@@ -3082,23 +3073,23 @@ subscriptions model =
             [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))
             , BE.onMouseUp (D.map ((+) offset >> DragSplitter True >> UIMsg) (D.field "clientX" D.float))
             ]
-        Dragging DragUpDownSplitter :: _ ->
+        Just (DraggingSplitter UpDown) ->
           [ BE.onMouseMove (D.map (DragSplitter False >> UIMsg) (D.field "clientY" D.float))
           , BE.onMouseUp (D.map (DragSplitter True >> UIMsg) (D.field "clientY" D.float))
           ]
         _ ->
           []
-    nodeMoveSubscription =
-      case model.interactionsDict of
-        ModifyConnection view_uuid (CreatingNewNode {source, dest}) :: _ ->
-          AutoDict.get view_uuid model.graph_views
+    nodeMoveSubscriptions =
+      let
+        createNodeMoveSubscription uuid source dest =
+          AutoDict.get uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
               BE.onMouseMove
                 ( D.map2
                     (\x y ->
                       MoveNode
-                        view_uuid
+                        uuid
                         source
                         dest
                         (graph_view |> translateHostCoordinates (x, y)) -- this is incorrect! Must translate…
@@ -3107,14 +3098,21 @@ subscriptions model =
                     (D.field "clientY" D.float)
                 )
             )
-          |> Maybe.withDefault Sub.none
-        _ ->
-          Sub.none
+      in
+        AutoDict.toList model.interactionsDict
+        |> List.filterMap
+          (\(maybeUuid, (_, stack)) ->
+            case (maybeUuid, stack) of
+              (Just uuid, ModifyConnection (CreatingNewNode {source, dest}) :: _) ->
+                createNodeMoveSubscription uuid source dest
+              _ ->
+                Nothing
+          )
   in
     Sub.batch
       ( resizeSubscription ::
-        nodeMoveSubscription ::
         keyboardSubscription ::
+        nodeMoveSubscriptions ++
         splitterSubscriptions
       )
   -- Sub.batch

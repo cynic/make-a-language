@@ -172,7 +172,7 @@ type alias Main_Model =
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
   -- , mouseCoords : ( Float, Float )
-  , interactionsDict : AutoDict.Dict String (Maybe Uuid) (List InteractionState)
+  , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties :
       { canEscape : Bool
       }
