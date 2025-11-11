@@ -60,6 +60,9 @@ type ToolIcon
   = TestingToolIcon
   | MetadataToolIcon
 
+type CancelWhat
+  = Cancel
+
 type UIMsg
   = SelectNavigation NavigatorIcon
   | SelectTool ToolIcon

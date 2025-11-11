@@ -1363,10 +1363,13 @@ popInteraction uuid model =
       -- to do
       Nothing
 
-popMostRecentInteraction : Model -> Maybe (InteractionState, Model)
+popMostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState, Model)
 popMostRecentInteraction model =
   mostRecentInteraction model
-  |> Maybe.andThen (\(uuid, _) -> popInteraction uuid model)
+  |> Maybe.andThen (\(uuid, _) ->
+    popInteraction uuid model
+    |> Maybe.map (\(interaction, model_) -> (uuid, interaction, model_))
+  )
 
 peekInteraction : Maybe Uuid -> Model -> Maybe InteractionState
 peekInteraction uuid model =
@@ -1393,14 +1396,17 @@ update_ui ui_msg model =
           | uiState = toggleAreaVisibility where_ model.uiState
         }
         |> updateMainEditorDimensions
+        |> setProperties
       , Cmd.none
       )
     StartDraggingSplitter movement ->
       ( pushInteractionForStack (Nothing) (DraggingSplitter movement) model
+        |> setProperties
       , Cmd.none
       )
     StartDraggingNode graphView_uuid nodeId ->
       ( pushInteractionForStack (Just graphView_uuid) (DraggingNode nodeId) model
+        |> setProperties
       , Cmd.none
       )
     DragSplitter shouldStop coord ->
@@ -1414,6 +1420,7 @@ update_ui ui_msg model =
                     dragSplitter coord movement model.uiConstants model.uiState
               }
               |> updateMainEditorDimensions
+              |> setProperties
           _ ->
             model
       , Cmd.none
@@ -1712,8 +1719,8 @@ defaultMainProperties =
   , canAcceptCharacters = False
   }
 
-setProperties : Model -> Msg -> Model
-setProperties model msg =
+setProperties : Model -> Model
+setProperties model =
   let
     setLocalProperties f a = (Tuple.first f) a
     setMainProperties f = (Tuple.second f)
@@ -1815,6 +1822,12 @@ setProperties model msg =
         , canAcceptCharacters = False
         }
       )
+    mainProperties_base =
+      case peekInteraction (Nothing) model of
+        Just (DraggingSplitter _) ->
+          setMainProperties whenDraggingSplitter
+        _ ->
+          setMainProperties default
   in
     { model
       | graph_views =
@@ -1841,13 +1854,21 @@ setProperties model msg =
             )
             model.graph_views
       , properties =
-          case peekInteraction (Nothing) model of
+          case mostRecentInteraction model of
+            Just (_, SplittingNode _) ->
+              { mainProperties_base | canEscape = True }
+            Just (_, DraggingNode _) ->
+              mainProperties_base
+            Just (_, ModifyConnection (CreatingNewNode _)) ->
+              { mainProperties_base | canEscape = True }
+            Just (_, ModifyConnection _) ->
+              { mainProperties_base | canEscape = True, canAcceptCharacters = True }
+            Just (_, Executing _) ->
+              { mainProperties_base | canEscape = True }
+            Just (_, DraggingSplitter _) ->
+              mainProperties_base
             Nothing ->
-              setMainProperties default
-            Just (DraggingSplitter _) ->
-              setMainProperties whenDraggingSplitter
-            x ->
-              Debug.todo <| "Received a global interaction that should never have been received… " ++ Debug.toString x
+              mainProperties_base
     }
     
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -1859,10 +1880,12 @@ update msg model =
       ( case peekInteraction (Just view_uuid) model of
           Nothing ->
             selectNodeInView model view_uuid node_id (x, y)
+            |> setProperties
           Just (ModifyConnection (CreatingNewNode alteration)) ->
             -- we already have a node selected, and now, an existing
             -- node is being selected as the destination.
             editConnection model view_uuid alteration node_id
+            |> setProperties
           _ ->
             model
       , Cmd.none
@@ -1877,6 +1900,7 @@ update msg model =
                 )
                 model.graph_views
         }
+        |> setProperties
       , Cmd.none
       )
 
@@ -1887,8 +1911,12 @@ update msg model =
               -- huh!  Looks like there's nothing to do!  So why was I called??
               -- Ideally, I shouldn't even spawn an event if there's nothing to do.
               model
-            Just (_, model_) ->
+            Just (Just uuid, ModifyConnection (CreatingNewNode {source,dest}), _) ->
+              cancelNewNodeCreation uuid source dest model -- this will pop, and handle graph changes too.
+              |> setProperties
+            Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
+              |> setProperties
         else
           model
       , Cmd.none
@@ -3168,7 +3196,10 @@ subscriptions model =
             (\v ->
               case v of
                 ( "Escape", False ) ->
-                  D.succeed Escape
+                  if model.properties.canEscape then
+                    D.succeed Escape
+                  else
+                    D.fail "Esacpe not permitted at this point"
                 _ ->
                   D.fail "Untrapped"
             )
