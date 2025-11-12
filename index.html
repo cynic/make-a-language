@@ -29,6 +29,58 @@
     import { Elm } from './src/Main.elm'
 
     function startElm(db, packages) {
+      /* various helper functions */
+      function pointInRect(x, y, rect) {
+        return x >= rect.x && x <= rect.x + rect.w &&
+              y >= rect.y && y <= rect.y + rect.h;
+      }
+
+      function isInsideAnyRect(x, y, rects) {
+        return rects.some(r => pointInRect(x, y, r));
+      }
+
+      let panIntervalId = null;
+      let mx = -1;
+      let my = -1;
+      let uuids = new Map();
+
+      // event to track the mouse coordinates constantly and put them into (mx, my)
+      addEventListener("pointermove", (e) => {
+        mx = e.clientX;
+        my = e.clientY;
+        for (const [uuid, data] of uuids) {
+          // don't kick off a new pan while we're already panning
+          if (!data.active) {
+            check(uuid, data.rects);
+          }
+        }
+      });
+
+      function panWhile(uuid, rects) {
+        if (uuids.has(uuid) && isInsideAnyRect(mx, my, rects)) {
+          app.ports.pan.send({ uuid : uuid, x : mx, y : my });
+          setTimeout(() => panWhile(uuid, rects), 40);
+        }
+      }
+
+      function check(uuid, rects) {
+        if (!isInsideAnyRect(mx, my, rects)) {
+          return;
+        }
+        // establish stability
+        let mx_ = mx;
+        let my_ = my;
+        setTimeout(() => {
+          if (mx == mx_ && my == my_) {
+            // I have stability.
+            uuids.set(uuid, { rects : rects, active : true });
+            panWhile(uuid, rects);
+          }
+        }, 150);
+      }
+
+      /* END various helper functions */
+
       const random_seeds = new Uint32Array(5);
       crypto.getRandomValues(random_seeds);
 
@@ -42,6 +94,17 @@
         };
 
       let app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
+
+      app.ports.considerPan.subscribe((item) => {
+        console.log(item);
+        uuids.set(item.uuid, { rects : item.rectangles, active : false });
+      });
+
+      app.ports.stopPan.subscribe((uuid) => {
+        console.log("Stop-pan");
+        console.log(uuid);
+        uuids.delete(uuid);
+      });
 
       app.ports.saveToStorage.subscribe((item) => {
         console.log(item);

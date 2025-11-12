@@ -17,7 +17,7 @@ import Platform.Cmd as Cmd
 import Uuid
 import Random.Pcg.Extended as Random
 import Time
-import Ports
+import Ports exposing (..)
 import Platform.Cmd as Cmd
 import Automata.DFA as DFA
 import TypedSvg exposing (g)
@@ -234,10 +234,11 @@ viewFromPackage (w, h) (x, y) createFrozen package_uuid model =
             , simulation = computed.simulation
             , host_dimensions = (w, h)
             , host_coordinates = (x, y)
+            , panBuffer = GraphEditor.panBufferAmount (w, h)
             , guest_dimensions = guest_viewport.dimensions
             , guest_coordinates = guest_viewport.coordinates
-            , guest_center_coordinates = guest_viewport.center_coordinates
-            , guest_center_dimensions = guest_viewport.center_dimensions
+            , guest_inner_coordinates = guest_viewport.inner_coordinates
+            , guest_inner_dimensions = guest_viewport.inner_dimensions
             , forces = computed.forces
             , specificForces = IntDict.empty
             , zoom = 1.0
@@ -1130,8 +1131,8 @@ recalculate_uistate ({dimensions} as ui) =
 type alias GuestDimensions =
   { dimensions : (Float, Float)
   , coordinates : (Float, Float)
-  , center_coordinates : (Float, Float)
-  , center_dimensions : (Float, Float)
+  , inner_coordinates : (Float, Float)
+  , inner_dimensions : (Float, Float)
   }
 {-| Accepts host dimensions, view properties, and a graph, and calculates the
     appropriate guest coordinates & guest dimensions (i.e. viewport).
@@ -1140,7 +1141,9 @@ calculateGuestDimensionsForHost : (Float, Float) -> Bool -> Graph.Graph Entity C
 calculateGuestDimensionsForHost (w, h) isFrozen graph =
   let
     aspectRatio : Float
-    aspectRatio = w / h
+    aspectRatio =
+      w / h
+      -- |> Debug.log "Viewport aspect-ratio"
     inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
     inner_pad =
       if isFrozen then
@@ -1171,29 +1174,48 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
         )
         ((theoretical_max, -1000), (theoretical_max, -1000))
         graph
+      -- |> Debug.log "Raw Bounds"
     ( (min_x, max_x), (min_y, max_y) ) =
       ( (min_x_raw - inner_pad, max_x_raw + inner_pad)
       , (min_y_raw - inner_pad, max_y_raw + inner_pad))
-      -- |> Debug.log "Bounds"
+      -- |> Debug.log "After-padding Bounds"
     -- from this, I can figure out the appropriate coordinates
-    center_y = (min_y + max_y) / 2
-    center_x = (min_x + max_x) / 2
-    autoHeight = (max_x - min_x) / aspectRatio
+    center_y =
+      (min_y + max_y) / 2
+      -- |> Debug.log "center-y"
+    autoHeight =
+      (max_x - min_x) / aspectRatio
+      -- |> Debug.log "Auto-height (via aspect-ratio)"
     -- now, we want a center within that autoHeight.
-    guestCoordinates = ( min_x, center_y - autoHeight / 2 )
-    guestDimensions = ( max_x - min_x, autoHeight )
-    centerCoordinates =
-      ( clamp min_x center_x (min_x + 80)
-      , clamp min_y center_y (min_y + 80)
-      )
-    centerDimensions =
-      ( max_x_raw - 80 - min_x_raw
-      , max_y_raw - 80 - min_y_raw)
+    guestCoordinates =
+      ( min_x, center_y - autoHeight / 2 )
+      -- |> Debug.log "Top-left (X,Y) of SVG viewport"
+    guestDimensions =
+      ( max_x - min_x, autoHeight )
+      -- |> Debug.log "(Width, Height) of SVG viewport" 
+    pad_inner_x =
+      0.15 * (max_x_raw - min_x_raw)
+      -- |> Debug.log "Inner-rectangle X padding (for panning)"
+    pad_inner_y =
+      0.15 * (max_y_raw - min_y_raw)
+      -- |> Debug.log "Inner-rectangle Y padding (for panning)"
+    x_inner =
+      min_x_raw + pad_inner_x
+      -- |> Debug.log "Inner-rectangle X (for panning)"
+    y_inner =
+      min_y_raw + pad_inner_y
+      -- |> Debug.log "Inner-rectangle Y (for panning)"
+    width_inner =
+      (max_x_raw - pad_inner_x * 2) - min_x_raw
+      -- |> Debug.log "Inner-rectangle width (for panning)"
+    height_inner =
+      (max_y_raw - pad_inner_y * 2) - min_y_raw
+      -- |> Debug.log "Inner-rectangle height (for panning)"
   in
     { dimensions = guestDimensions
     , coordinates = guestCoordinates
-    , center_coordinates = centerCoordinates
-    , center_dimensions = centerDimensions
+    , inner_coordinates = ( x_inner, y_inner )
+    , inner_dimensions = ( width_inner, height_inner )
     }
 
 updateMainEditorDimensions : Model -> Model
@@ -1214,6 +1236,7 @@ updateMainEditorDimensions ({uiState} as model) =
               in
                 { graph_view
                   | host_dimensions = uiState.dimensions.mainEditor
+                  , panBuffer = GraphEditor.panBufferAmount uiState.dimensions.mainEditor
                   , guest_dimensions = guest_viewport.dimensions
                   , guest_coordinates = guest_viewport.coordinates
                   , host_coordinates =
@@ -1388,7 +1411,7 @@ mostRecentInteraction model =
         h::_ -> Just (uuid, h)
     )
 
-update_ui : UIMsg -> Model -> ( Model, Cmd Msg)
+update_ui : UIMsg -> Model -> ( Model, Cmd Msg )
 update_ui ui_msg model =
   case ui_msg of
     ToggleAreaVisibility where_ ->
@@ -1438,23 +1461,86 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
-    StartPan graphView_uuid xDir yDir ->
-      ( model, Cmd.none )
-      -- ( pushInteractionForStack (Just graphView_uuid) (Panning xDir yDir) model
-      --   |> setProperties
-      -- , Cmd.none
-      -- )
+    ConsiderPan uuid rectangles ->
+      ( model
+      , E.object
+          [ ("uuid", Uuid.encode uuid)
+          , ("rectangles"
+            , E.list
+                (\{w,h,x,y} ->
+                  E.object
+                    [ ("w", E.float w)
+                    , ("h", E.float h)
+                    , ("x", E.float x)
+                    , ("y", E.float y)
+                    ]
+                )
+                rectangles
+            )
+          ]
+        |> considerPan
+      )
 
-    StopPan graphView_uuid ->
-      ( model, Cmd.none )
-      -- ( case popInteraction (Just graphView_uuid) model of
-      --     Just (Panning xDir yDir, model_) ->
-      --       model_
-      --       |> setProperties
-      --     _ ->
-      --       model
-      -- , Cmd.none
-      -- )
+    Pan uuid x y ->
+      ( { model
+          | graph_views =
+              AutoDict.update uuid
+                (Maybe.map (\graph_view ->
+                  { graph_view
+                    | pan =
+                        let
+                          ( host_x, host_y ) = graph_view.host_coordinates
+                          ( host_width, host_height ) = graph_view.host_dimensions
+                          ( guest_x, guest_y ) = graph_view.guest_coordinates
+                          ( guest_width, guest_height) = graph_view.guest_dimensions
+                          ( guest_inner_x, guest_inner_y ) = graph_view.guest_inner_coordinates
+                          ( guest_inner_width, guest_inner_height ) = graph_view.guest_inner_dimensions
+                          ( pan_x, pan_y ) = graph_view.pan
+                          calc_for_dim v current_pan host_coord host_dim guest_coord guest_dim guest_inner_coord guest_inner_dim =
+                            -- left and top are the "negative" directions.
+                            if v <= host_coord + graph_view.panBuffer && guest_coord - current_pan - 1 < guest_inner_coord then
+                              current_pan - 1
+                            -- right and bottom are the "positive" directions
+                            else if v >= host_coord + host_dim - graph_view.panBuffer && guest_coord - current_pan + 1 + guest_dim > guest_inner_coord + guest_inner_dim then
+                              current_pan + 1
+                            else
+                              current_pan
+                        in
+                          if graph_view.properties.canPan then
+                            ( calc_for_dim x pan_x host_x host_width  guest_x guest_width  guest_inner_x guest_inner_width
+                            , calc_for_dim y pan_y host_y host_height guest_y guest_height guest_inner_y guest_inner_height
+                            )
+                          else
+                            graph_view.pan
+
+                  }
+                ))
+                model.graph_views
+        }
+      , -- this fulfils a more responsive sort of "protocol": if JS says "Pan!", and there is
+        -- either nothing to pan or nothing pannable, then tell it to stop panning.
+        AutoDict.get uuid model.graph_views
+        |> Maybe.map (\{properties} -> if properties.canPan then Cmd.none else stopPan (Uuid.toString uuid))
+        |> Maybe.withDefaultLazy (\() -> stopPan (Uuid.toString uuid))
+      )
+
+    StopPan uuid ->
+      ( model
+      , stopPan (Uuid.toString uuid)
+      )
+
+    ResetPan uuid ->
+      ( { model
+          | graph_views =
+              AutoDict.update uuid
+                (Maybe.map (\graph_view ->
+                  { graph_view | pan = (0, 0) }
+                ))
+                model.graph_views
+        }
+      , stopPan (Uuid.toString uuid)
+      )
+
 
 selectNodeInView : Model -> Uuid -> NodeId -> (Float, Float) -> Model
 selectNodeInView model view_uuid node_id coordinates =
@@ -1899,6 +1985,7 @@ update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     UIMsg ui_msg ->
       update_ui ui_msg model
+
     SelectNode view_uuid node_id (x, y) ->
       ( case peekInteraction (Just view_uuid) model of
           Nothing ->
@@ -1944,6 +2031,9 @@ update msg model =
           model
       , Cmd.none
       )
+
+    CrashWithMessage err ->
+      Debug.todo err
 
     -- GraphViewMsg uuid submsg ->
     --   AutoDict.get uuid model.graph_views
@@ -3208,7 +3298,16 @@ subscriptions model =
     --       Time.every 20 (\_ -> Pan xPan yPan {- |> Debug.log "Pan request" -})
     --     else
     --       Sub.none
-
+    panSubscription =
+      pan
+        ( D.decodeValue
+            ( D.map3 (\uuid x y -> Pan uuid x y |> UIMsg)
+                (D.field "uuid" Uuid.decoder)
+                (D.field "x" D.float)
+                (D.field "y" D.float)
+            )
+          >> Result.withDefault (CrashWithMessage "Invalid pan message from JavaScript")
+        )
     keyboardSubscription =
       BE.onKeyDown
         ( D.map2
@@ -3332,6 +3431,7 @@ subscriptions model =
   in
     Sub.batch
       ( resizeSubscription ::
+        panSubscription ::
         keyboardSubscription ::
         nodeMoveSubscriptions ++
         splitterSubscriptions

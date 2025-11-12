@@ -68,6 +68,13 @@ type ToolIcon
 type CancelWhat
   = Cancel
 
+type alias Rectangle =
+  { x : Float
+  , y : Float
+  , w : Float
+  , h : Float
+  }
+
 type UIMsg
   = SelectNavigation NavigatorIcon
   | SelectTool ToolIcon
@@ -76,8 +83,10 @@ type UIMsg
   | StartDraggingSplitter SplitterMovement
   | DragSplitter Bool Float -- stop-dragging, amount
   | ToggleAreaVisibility AreaUITarget
-  | StartPan Uuid Float Float
+  | ConsiderPan Uuid (List Rectangle)
+  | Pan Uuid Float Float
   | StopPan Uuid
+  | ResetPan Uuid
   -- | StartDraggingHorizontalSplitter
 
 type Main_Msg
@@ -85,6 +94,7 @@ type Main_Msg
   | SelectNode Uuid NodeId ( Float, Float )
   | MoveNode Uuid NodeId NodeId ( Float, Float )
   | Escape -- the universal "No! Go Back!" key & command
+  | CrashWithMessage String
    -- graph-view messages
   -- | Pan Uuid Float Float
   -- | Zoom Uuid Float
@@ -393,12 +403,13 @@ type alias GraphView =
   , simulation : Force.State NodeId
   , host_dimensions : (Float, Float) -- (w,h) of svg element
   , host_coordinates : (Float, Float) -- (x,y) of svg element
+  , panBuffer : Float -- pan-buffer amount, in host-dimensions, around the edge of the view
   , guest_dimensions : (Float, Float) -- (w,h) of svg viewport
   , guest_coordinates : (Float, Float) -- (x,y) of svg viewport
   -- when I pan, I always want to keep at least some part of the graph in view.
   -- This box defines the coordinates of a box beyond whose edges I cannot pan.
-  , guest_center_coordinates : (Float, Float) -- (box_x, box_x) of svg viewport
-  , guest_center_dimensions : (Float, Float) -- (box_w, box_h) of svg viewport
+  , guest_inner_coordinates : (Float, Float) -- (box_x, box_x) of svg viewport, for panning
+  , guest_inner_dimensions : (Float, Float) -- (box_w, box_h) of svg viewport, for panning
     -- `forces` includes:
     -- - graph forces of attraction and repulsion
     -- - node forces to pull the root towards the center
@@ -714,8 +725,8 @@ maybe_fromBool : Bool -> a -> Maybe a
 maybe_fromBool b v =
   if b then Just v else Nothing
 
-classList : List (String, Bool) -> List String
-classList =
+conditionalList : List (a, Bool) -> List a
+conditionalList =
   List.filterMap
     (\(s, b) -> if b then Just s else Nothing)
 

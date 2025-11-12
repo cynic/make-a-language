@@ -24,6 +24,7 @@ import TypedSvg.Types exposing
   (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
   , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..)
   , MeetOrSlice(..), Align(..), Scale(..)
+  , percent
   )
 import TypedSvg.Attributes.InPx as Px
 import Set exposing (Set)
@@ -44,6 +45,9 @@ import Random.Pcg.Extended as Random
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
+import TypedSvg.Types exposing (Opacity)
+import TypedSvg.Attributes exposing (stroke)
+import TypedSvg exposing (filter)
 
 type alias Model = GraphView
 type alias Msg = Main_Msg
@@ -798,7 +802,7 @@ viewNode properties id data =
     --         [ permit_node_reselection ]
   let
     nodeClass =
-      classList
+      conditionalList
         [ ("graph-node", True)
         , ("selected", data.exclusiveAttributes == Just DrawSelected)
         , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
@@ -1719,6 +1723,10 @@ matrixFromZoom (panX, panY) factor {- (pointerX, pointerY) -} =
 
 viewMainSvgContent : GraphView -> Svg Msg
 viewMainSvgContent graph_view =
+  let
+    ( guest_x, guest_y ) = graph_view.guest_coordinates
+    ( guest_width, guest_height) = graph_view.guest_dimensions
+  in
   g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
     [ transform [ matrixFromZoom graph_view.pan graph_view.zoom ]
     -- , case graph_view.interactionsDict of
@@ -1730,7 +1738,7 @@ viewMainSvgContent graph_view =
     --     _ ->
     --       class []
     , class
-        ( classList
+        ( conditionalList
             [ ("graph", True)
             , ("can-select-nodes", graph_view.properties.canSelectNodes)
             , ("can-select-connections", graph_view.properties.canSelectConnections)
@@ -1740,6 +1748,18 @@ viewMainSvgContent graph_view =
         )
     ]
     [ defs [] arrowheadDefs
+      -- this part is for debugging panning. If I uncomment it, I should also
+      -- uncomment the corresponding code in viewGraph
+    -- , rect
+    --     [ stroke <| Paint Color.lightRed
+    --     , fill <| PaintNone
+    --     , Px.strokeWidth 2
+    --     , Px.x guest_x
+    --     , Px.y guest_y
+    --     , Px.width guest_width
+    --     , Px.height guest_height
+    --     ]
+    --     []
     , Dict.toList graph_view.drawingData.link_drawing
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
       |> g [ class [ "edges" ] ]
@@ -1923,13 +1943,34 @@ viewMainSvgContent graph_view =
 viewGraph : GraphView -> Html Msg
 viewGraph graphView =
   let
+    ( host_x, host_y ) = graphView.host_coordinates
     ( host_width, host_height ) = graphView.host_dimensions
     ( guest_width, guest_height) = graphView.guest_dimensions
     ( guest_x, guest_y ) = graphView.guest_coordinates
-    panBuffer = panBufferAmount graphView.guest_dimensions
-    panRadius = sqrt (2.0 * panBuffer * panBuffer)
-    mkArrow : Float -> Float -> String -> Float -> Float -> String -> Html Msg
-    mkArrow dx dy direction width height pathString =
+    ( pan_dx, pan_dy ) = graphView.pan
+    ( guest_inner_x, guest_inner_y ) = graphView.guest_inner_coordinates
+    ( guest_inner_width, guest_inner_height ) = graphView.guest_inner_dimensions
+    draw_right_buffer =
+      guest_x - pan_dx + guest_width > guest_inner_x + guest_inner_width
+    draw_left_buffer =
+      guest_x - pan_dx < guest_inner_x
+    draw_bottom_buffer =
+      guest_y - pan_dy + guest_height > guest_inner_y + guest_inner_height
+    draw_top_buffer =
+      guest_y - pan_dy < guest_inner_y
+    rectangles =
+      if graphView.properties.canPan then
+        conditionalList
+          [ ( Rectangle host_x host_y host_width graphView.panBuffer, draw_top_buffer ) -- top
+          , ( Rectangle host_x host_y graphView.panBuffer host_height, draw_left_buffer ) -- left
+          , ( Rectangle host_x (host_y + host_height - graphView.panBuffer) host_width graphView.panBuffer, draw_bottom_buffer ) -- bottom
+          , ( Rectangle (host_x + host_width - graphView.panBuffer) host_y graphView.panBuffer host_height, draw_right_buffer ) -- right
+          ]
+      else
+        []
+    panRadius = sqrt (2.0 * graphView.panBuffer * graphView.panBuffer)
+    mkArrow : String -> Float -> Float -> String -> Html Msg
+    mkArrow direction width height pathString =
       if graphView.properties.canPan then
         div
           [ HA.class <| "pan-region " ++ direction
@@ -1938,9 +1979,9 @@ viewGraph graphView =
             , Css.height (Css.px height)
             ]
           , graphView.properties.canPan
-            |> thenPermitInteraction (HE.onMouseOver (UIMsg (StartPan graphView.id dx dy)))
+            |> thenPermitInteraction (HE.onMouseOver (UIMsg (ConsiderPan graphView.id rectangles)))
           , graphView.properties.canPan
-            |> thenPermitInteraction (HE.onMouseOver (UIMsg (StopPan graphView.id)))
+            |> thenPermitInteraction (HE.onMouseOut (UIMsg (StopPan graphView.id)))
           ]
           [ svg
               [ class [ "pan-arrow" ] 
@@ -1961,9 +2002,18 @@ viewGraph graphView =
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
             viewUndoRedoVisualisation graphView
+            -- this part is for debugging panning. If I uncomment it, I should also
+            -- uncomment the corresponding code in viewMainSvgContent.
+          -- , rect
+          --     [ fill <| Paint Color.lightYellow
+          --     , Px.x guest_inner_x
+          --     , Px.y guest_inner_y
+          --     , Px.width guest_inner_width
+          --     , Px.height guest_inner_height
+          --     ]
+          --     []
           , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-          ,
-            if graphView.isFrozen then
+          , if graphView.isFrozen then
               g [] []
             else
               g
@@ -1979,7 +2029,21 @@ viewGraph graphView =
                     , y <| (guest_y + guest_height) - 10
                     , class [ "status-line", "pan" ]
                     ]
-                    [ text ("🧭 " ++ panToString graphView.pan) ]
+                    [ tspan
+                        ( if graphView.pan == (0, 0) then
+                            []
+                          else
+                            [ class [ "pan-reset" ]
+                            , graphView.properties.canPan
+                              |> thenPermitSvgInteraction (onClick (UIMsg (ResetPan graphView.id)))
+                            ]
+                        )
+                        [ text "🧭" ]
+                    , tspan
+                        []
+                        [ text <| " " ++ panToString graphView.pan
+                        ]
+                    ]
                 -- , case graphView.interactionsDict of
                 --     Just (ModifyingGraph _ { dest }) ->
                 --       case dest of
@@ -2006,14 +2070,22 @@ viewGraph graphView =
                 ]
           ]
           |> Html.Styled.fromUnstyled
-      , mkArrow  0 -1 "top" host_width panBuffer         "M10 2 L2 18 L18 18 Z"
-      , mkArrow  0  1 "bottom" host_width panBuffer      "M10 18 L18 2 L2 2 Z"
-      , mkArrow -1  0 "left" panBuffer host_height       "M2 10 L18 2 L18 18 Z"
-      , mkArrow  0 -1 "right" panBuffer host_height      "M18 10 L2 2 L2 18 Z"
-      , mkArrow  1 -1 "top-right" panRadius panRadius    "M16 4 L4 4 L16 16 Z"
-      , mkArrow  1  1 "bottom-right" panRadius panRadius "M4 16 L16 16 L16 4 Z"
-      , mkArrow -1 -1 "top-left" panRadius panRadius     "M4 4 L16 4 L4 16 Z"
-      , mkArrow -1  1 "bottom-left" panRadius panRadius  "M16 16 L4 16 L4 4 Z"
+      , div
+          []
+          ( if graphView.properties.canPan then
+              conditionalList
+                [ ( mkArrow "top" host_width graphView.panBuffer     "M10 2 L2 18 L18 18 Z", draw_top_buffer )
+                , ( mkArrow "bottom" host_width graphView.panBuffer  "M10 18 L18 2 L2 2 Z", draw_bottom_buffer )
+                , ( mkArrow "left" graphView.panBuffer host_height   "M2 10 L18 2 L18 18 Z", draw_left_buffer )
+                , ( mkArrow "top-right" panRadius panRadius          "M16 4 L4 4 L16 16 Z", draw_top_buffer && draw_right_buffer )
+                , ( mkArrow "bottom-right" panRadius panRadius       "M4 16 L16 16 L16 4 Z", draw_bottom_buffer && draw_right_buffer )
+                , ( mkArrow "top-left" panRadius panRadius           "M4 4 L16 4 L4 16 Z", draw_top_buffer && draw_left_buffer )
+                , ( mkArrow "right" graphView.panBuffer host_height  "M18 10 L2 2 L2 18 Z", draw_right_buffer )
+                , ( mkArrow "bottom-left" panRadius panRadius        "M16 16 L4 16 L4 4 Z", draw_bottom_buffer && draw_left_buffer )
+                ]
+            else
+              []
+          )
       ]
 
 -- onMouseScroll : (Float -> msg) -> Html.Attribute msg

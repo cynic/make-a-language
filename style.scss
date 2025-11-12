@@ -266,3 +266,43 @@ rect.redo {
     // animation: pan-arrow-pulse 0.8s ease-in-out infinite;
   }
 }
+
+.pan-reset {
+  // fill: var(--yellow); // Use Dracula yellow for the emoji itself
+  // font-size: 24px; // Make it larger
+  
+  // Sunburst effect
+  filter: url(#sunburst-glow);
+  
+  // Optional: Add a subtle bounce
+  animation: gentle-bounce 2s ease-in-out infinite;
+  cursor: pointer;
+  pointer-events: all;
+  user-select: none;
+}
+
+// Sunburst animation for prominent elements
+@keyframes sunburst {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.8;
+  }
+}
+
+@keyframes particle-rise {
+  0% {
+    transform: translateY(0) scale(0);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-20px) scale(1);
+    opacity: 0;
+  }
+}
