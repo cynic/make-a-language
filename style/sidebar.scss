@@ -75,9 +75,39 @@
 .sidebar-content {
   flex: 1;
   padding: 10px;
+  height: 100vh;
   
-  &.explorer-view {
+  & .computations-explorer {
+    height: 100vh;
+    overflow-y: scroll;
+    scrollbar-width: none;
+    -ms-overflow-style: none; // screw you, Google.
     // File tree specific styles
+    & .package {
+      border-radius: 4%;
+      background-color: var(--background);
+      margin-bottom: 8px;
+      text-align: center;
+      position: relative;
+
+      &:hover {
+        background-color: var(--background-light);
+        cursor: pointer;
+      }
+
+      & .delete-button {
+        position: absolute;
+        right: 8px;
+        top: 8px;
+        font-size: 18px;
+
+        &:hover {
+          cursor: pointer;
+          // drop-shadow for the text
+          filter: drop-shadow(0 0 2px var(--purple)) saturate(200%);
+        }
+      }
+    }
   }
   
   &.search-view {

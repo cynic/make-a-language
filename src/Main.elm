@@ -49,6 +49,7 @@ import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
 import GraphEditor exposing (path_between)
 import WebGL exposing (entityWith)
 import List.Extra
+import GraphEditor exposing (viewGraph)
 
 {-
 Quality / technology requirements:
@@ -203,8 +204,8 @@ linkDrawingForPackage package =
     If there is no such `GraphPackage`, then nothing is done and no
     `GraphView` is returned.
 -}
-viewFromPackage : (Float, Float) -> (Float, Float) -> Bool -> Uuid -> Model -> (Maybe GraphView, Model)
-viewFromPackage (w, h) (x, y) createFrozen package_uuid model =
+viewFromPackage : (Float, Float) -> (Float, Float) -> InterfaceLocation -> Bool -> Uuid -> Model -> Maybe (GraphView, Model)
+viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
   let
     (id, model_) = getUuid model
   in
@@ -231,6 +232,7 @@ viewFromPackage (w, h) (x, y) createFrozen package_uuid model =
             { id = id
             , isFrozen = createFrozen
             , package = solved_pkg
+            , interfaceLocation = location
             , simulation = computed.simulation
             , host_dimensions = (w, h)
             , host_coordinates = (x, y)
@@ -258,8 +260,7 @@ viewFromPackage (w, h) (x, y) createFrozen package_uuid model =
             }
           )
       )
-    |> Maybe.withDefault
-      (Nothing, model)
+    |> Maybe.andThen Maybe.combineFirst
 
 -- MAIN
 
@@ -328,9 +329,9 @@ init flags =
     constants : UIConstants
     constants =
       { sideBarWidth =
-          { min = 50
+          { min = 100
           , max = decoded.width / 2 - 60
-          , initial = clamp 50 (decoded.width / 2 - 60) 300
+          , initial = clamp 100 (decoded.width / 2 - 60) 300
           }
       , toolsPanelHeight =
           { min = 80
@@ -380,7 +381,7 @@ init flags =
       -- I _know_ that this will succeed, because I've added this
       -- exact one
       let
-        (v, model_with_viewDict) =
+        mainGraphView =
           viewFromPackage
             state.dimensions.mainEditor
             ( if state.open.sideBar then
@@ -389,18 +390,21 @@ init flags =
                 0
             , 0
             )
+            MainEditor
             False
             mainPackage.userGraph.graphIdentifier
             model_excl_views
       in
-        case v of
+        case mainGraphView of
           Nothing ->
             Debug.log "🚨 FAILURE! GraphView could not be created. `mainGraphView` WILL be incorrect!"
-            model_with_viewDict
-          Just v_ ->
-            { model_with_viewDict | mainGraphView = v_.id }
+            model_excl_views
+          Just (v, model_with_viewDict) ->
+            { model_with_viewDict | mainGraphView = v.id }
   in
-    ( model , Cmd.none )
+    ( selectComputationsIcon model
+    , Cmd.none
+    )
 
 -- UPDATE
 
@@ -1219,38 +1223,74 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     , inner_dimensions = ( width_inner, height_inner )
     }
 
+sidebarGraphDimensions : UIState -> ( Float, Float )
+sidebarGraphDimensions uiState =
+  let
+    ( w, _ ) = uiState.dimensions.sideBar
+  in
+  ( w - 20 , 9/16 * ( w - 20 ) )
+
+
 updateMainEditorDimensions : Model -> Model
 updateMainEditorDimensions ({uiState} as model) =
-  -- On resize, I must update the dimensions for the graph view that
-  -- is displayed in the "main" editor section as well.
-  { model
-    | graph_views =
-        AutoDict.update model.mainGraphView
-          (Maybe.map
-            (\graph_view ->
-              let
-                guest_viewport =
-                  calculateGuestDimensionsForHost
-                    uiState.dimensions.mainEditor
-                    graph_view.isFrozen
-                    graph_view.package.userGraph.graph
-              in
-                { graph_view
-                  | host_dimensions = uiState.dimensions.mainEditor
-                  , panBuffer = GraphEditor.panBufferAmount uiState.dimensions.mainEditor
-                  , guest_dimensions = guest_viewport.dimensions
-                  , guest_coordinates = guest_viewport.coordinates
-                  , host_coordinates =
-                      if uiState.open.sideBar then
-                        (Tuple.first uiState.dimensions.sideBar + 8 + 48, 0)
-                      else
-                        (0, 0)
-                }
+  let
+    updateMain : GraphView -> GraphView
+    updateMain graph_view =
+      let
+        guest_viewport =
+          calculateGuestDimensionsForHost
+            uiState.dimensions.mainEditor
+            graph_view.isFrozen
+            graph_view.package.userGraph.graph
+      in
+        { graph_view
+          | host_dimensions = uiState.dimensions.mainEditor
+          , panBuffer = GraphEditor.panBufferAmount uiState.dimensions.mainEditor
+          , guest_dimensions = guest_viewport.dimensions
+          , guest_coordinates = guest_viewport.coordinates
+          , host_coordinates =
+              if uiState.open.sideBar then
+                (Tuple.first uiState.dimensions.sideBar + 8 + 48, 0)
+              else
+                (0, 0)
+        }
+    updateSidebar : GraphView -> GraphView
+    updateSidebar graph_view =
+      let
+        sidebarDimensions =
+          sidebarGraphDimensions uiState
+        guest_viewport =
+          calculateGuestDimensionsForHost
+            sidebarDimensions
+            True
+            graph_view.package.userGraph.graph
+      in
+        { graph_view
+          | host_dimensions = sidebarDimensions
+          , panBuffer = 0
+          , guest_dimensions = guest_viewport.dimensions
+          , guest_coordinates = guest_viewport.coordinates
+          , host_coordinates =
+              (0, 0) -- this is nonsense. But since I'm not panning in these, I think it's fine.
+        }
+  in
+    -- On resize, I must update the dimensions for the graph view that
+    -- is displayed in the "main" editor section as well.
+    { model
+      | graph_views =
+          AutoDict.map
+            (\_ graph_view ->
+                case graph_view.interfaceLocation of
+                  MainEditor ->
+                    updateMain graph_view
+                  Sidebar ->
+                    if uiState.open.sideBar then
+                      updateSidebar graph_view
+                    else
+                      graph_view -- don't bother.
             )
-          >> Maybe.orElseLazy (\() -> Debug.todo "PUNT: there is no main graph view?!!")
-          )
-          model.graph_views
-  }
+            model.graph_views
+    }
 
 {-| Drag a specified splitter to a specified coordinate. Returns an updated `UIState`.
 -}
@@ -1442,6 +1482,35 @@ panGraphView x y graph_view =
     else
       graph_view
 
+selectComputationsIcon : Model -> Model
+selectComputationsIcon model =
+  let
+    (computation_views, updated_model) =
+      List.foldl
+        (\uuid (acc, model_) ->
+          -- coordinates (0,0) are a lie, but I'm not panning in these, so
+          -- I don't think that I care.
+          case viewFromPackage (sidebarGraphDimensions model.uiState) (0, 0) Sidebar True uuid model_ of
+            Nothing ->
+              (acc, model_)
+            Just (v, model__) ->
+              (v.id :: acc, model__)
+        )
+        ( [], model )
+        (AutoDict.keys model.packages)
+  in
+    { updated_model
+      | uiState =
+          let uiState = model.uiState in
+          { uiState
+            | selected =
+              let selected = uiState.selected in
+              { selected | sideBar = ComputationsIcon }
+          }
+      , computationsExplorer =
+          computation_views
+    }
+
 update_ui : UIMsg -> Model -> ( Model, Cmd Msg )
 update_ui ui_msg model =
   case ui_msg of
@@ -1482,20 +1551,7 @@ update_ui ui_msg model =
       , Cmd.none
       )
     SelectNavigation ComputationsIcon ->
-      ( { model
-          | uiState =
-              let uiState = model.uiState in
-              { uiState
-                | selected =
-                  let selected = uiState.selected in
-                  { selected | sideBar = ComputationsIcon }
-              }
-          -- , computationsExplorer =
-          --     List.map
-          --       (\pkg ->
-          --           viewFromPackage
-          --       )
-        }
+      ( selectComputationsIcon model
       , Cmd.none
       )
 
@@ -1508,8 +1564,8 @@ update_ui ui_msg model =
               let uiState = model.uiState in
               { uiState
                 | selected =
-                  let selected = uiState.selected in
-                  { selected | bottomPanel = item }
+                    let selected = uiState.selected in
+                    { selected | bottomPanel = item }
               }
         }
       , Cmd.none
@@ -3518,7 +3574,7 @@ viewNavigatorsArea model =
           [ debugDimensions model.uiState.dimensions.sideBar
           , case model.uiState.selected.sideBar of
               ComputationsIcon ->
-                viewComputationsSidebar model.uiState.dimensions.sideBar
+                viewComputationsSidebar model
               TestsIcon ->
                 div
                     [ HA.class "sidebar-content" ]
@@ -3526,13 +3582,80 @@ viewNavigatorsArea model =
           ]
     ]
 
-viewComputationsSidebar : Dimensions -> Html Msg
-viewComputationsSidebar dimensions =
+viewComputationsSidebar : Model -> Html Msg
+viewComputationsSidebar model =
   div
     [ HA.class "sidebar-content" ]
-    [ text "Hello world A" ]
+    [ div
+        [ HA.class "computations-explorer" ]
+        ( List.filterMap
+            (\uuid ->
+              let
+                isMain = Uuid.toString uuid == Uuid.toString model.mainGraphView
+              in
+                AutoDict.get uuid model.graph_views
+                |> Maybe.map
+                  (\graph_view ->
+                    div
+                      [ HA.class "package" ]
+                      [ viewGraph graph_view
+                      , div
+                          [ HA.class "description" ]
+                          [ graph_view.package.description
+                            |> Maybe.withDefault "(no description)"
+                            |> text
+                          ]
+  --         , HA.title "Delete computation"
+  --         , if canSelect then
+  --             onClick (DeletePackage package.userGraph.graphIdentifier)
+  --           else
+  --             HA.title "Apply or cancel the pending changes before deleting a package."
+  --         ]
+  --         [ text "🚮" ]
+                      , if isMain then
+                          text ""
+                        else
+                          div
+                            [ HA.class "delete-button"
+                            , HA.title "Delete"
+                            -- , HE.onClick (DeletePackage graph_view.package.userGraph.graphIdentifier)
+                            ]
+                            [ text "🚮" ]
+                      ]
+                )
+            )
+            model.computationsExplorer
+        )
+    ]
 
-viewSplitter : Int -> SplitterMovement -> Model -> Bool -> Html Main_Msg
+viewCollapsedAreaButton : SplitterMovement -> Html Msg
+viewCollapsedAreaButton movement =
+  let
+    (movementClass, targetArea) =
+      case movement of
+        LeftRight ->
+          ( "leftright", NavigatorsArea )
+        UpDown ->
+          ( "updown", ToolsArea )
+    collapseIcon =
+      svg
+        [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
+        , Svg.Styled.Attributes.viewBox "4 4 10 8"
+        ]
+        [ Svg.Styled.path
+            [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
+            []
+        ]
+  in
+    button
+      [ HA.class <| "collapse-button " ++ movementClass ++ " collapsed"
+      , HA.title "Expand"
+      , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+      ]
+      [ collapseIcon ]
+
+-- unconditionally display a splitter
+viewSplitter : Int -> SplitterMovement -> Model -> Bool -> Html Msg
 viewSplitter zIdx movement model areaOpen =
   let
     (movementClass, targetArea) =
@@ -3551,115 +3674,90 @@ viewSplitter zIdx movement model areaOpen =
             []
         ]
   in
-    if areaOpen then
-      div
-        [ HA.classList
-            [ ("splitter-separator " ++ movementClass, True)
-            , ("dragging", model.properties.dragDirection == Just movement)
-            , ( "draggable", model.properties.canDragSplitter && areaOpen)
-            ]
-        , HA.css
-            [ Css.zIndex (Css.int zIdx)
-            ]
-        , HE.onMouseDown (UIMsg <| StartDraggingSplitter movement)
-        ]
-        [ div
-            [ HA.class <| "separator-handle " ++ movementClass ]
-            [ button
-                [ HA.class <| "collapse-button " ++ movementClass
-                , HA.title "Collapse"
-                , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
-                ]
-                [ collapseIcon ]
-            ]
-        ]
-    else
-      button
-        [ HA.class <| "collapse-button " ++ movementClass ++ " collapsed"
-        , HA.title "Expand"
-        , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
-        , HA.css
-            [ Css.zIndex (Css.int <| zIdx * 10)
-            ]
-        ]
-        [ collapseIcon ]
-
+    div
+      [ HA.classList
+          [ ("splitter-separator " ++ movementClass, True)
+          , ("dragging", model.properties.dragDirection == Just movement)
+          , ( "draggable", model.properties.canDragSplitter && areaOpen)
+          ]
+      , HA.css
+          [ Css.zIndex (Css.int zIdx)
+          ]
+      , HE.onMouseDown (UIMsg <| StartDraggingSplitter movement)
+      ]
+      [ div
+          [ HA.class <| "separator-handle " ++ movementClass ]
+          [ button
+              [ HA.class <| "collapse-button " ++ movementClass
+              , HA.title "Collapse"
+              , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+              ]
+              [ collapseIcon ]
+          ]
+      ]
 
 viewToolsArea : Model -> Html Msg
 viewToolsArea model =
   div
     [ HA.class "tools-container" ]
-    [ if not model.uiState.open.bottomPanel then
-        div [] []
-      else
-        div
-          [ HA.class "tools-bar" ]
-          [ button
-              [ HA.classList
-                  [ ("tool-icon", True)
-                  , ("active", model.uiState.selected.bottomPanel == TestingToolIcon)
-                  ]
-              , HA.title "Testing"
-              , (model.uiState.selected.bottomPanel /= TestingToolIcon)
-                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool TestingToolIcon))
-              ]
-              [ text "🔬"]
-          , button
-              [ HA.classList
-                  [ ("tool-icon", True)
-                  , ("active", model.uiState.selected.bottomPanel == MetadataToolIcon)
-                  ]
-              , HA.title "Tests"
-              , (model.uiState.selected.bottomPanel /= MetadataToolIcon)
-                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool MetadataToolIcon))
-              ]
-              [ text "📝" ]
-          ]
-    , if not model.uiState.open.bottomPanel then
-        div [] []
-      else
-        div
-          [ HA.class "tools-area"
-          , HA.css
-              [ Css.height <| Css.px <|
-                  if model.uiState.open.bottomPanel then
-                    Automata.Data.height model.uiState.dimensions.bottomPanel
-                  else
-                    0
-              -- , Css.width <| Css.px <|
-              --     if model.uiState.open.bottomPanel then
-              --       Automata.Data.width model.uiState.dimensions.bottomPanel - 36
-              --     else
-              --       0
-              ]
-          ]
-          [ debugDimensions model.uiState.dimensions.bottomPanel
-          , case model.uiState.selected.bottomPanel of
-              MetadataToolIcon ->
-                div
-                  [ HA.class "tool-content" ]
-                  [ text "Hello world A" ]
-              TestingToolIcon ->
-                div
-                  [ HA.class "tool-content" ]
-                  [ text "Hello world B" ]
-          ]
+    [ div
+        [ HA.class "tools-bar" ]
+        [ button
+            [ HA.classList
+                [ ("tool-icon", True)
+                , ("active", model.uiState.selected.bottomPanel == TestingToolIcon)
+                ]
+            , HA.title "Testing"
+            , (model.uiState.selected.bottomPanel /= TestingToolIcon)
+              |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool TestingToolIcon))
+            ]
+            [ text "🔬"]
+        , button
+            [ HA.classList
+                [ ("tool-icon", True)
+                , ("active", model.uiState.selected.bottomPanel == MetadataToolIcon)
+                ]
+            , HA.title "Tests"
+            , (model.uiState.selected.bottomPanel /= MetadataToolIcon)
+              |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool MetadataToolIcon))
+            ]
+            [ text "📝" ]
+        ]
+    , div
+        [ HA.class "tools-area"
+        , HA.css
+            [ Css.height <| Css.px <|
+                if model.uiState.open.bottomPanel then
+                  Automata.Data.height model.uiState.dimensions.bottomPanel
+                else
+                  0
+            ]
+        ]
+        [ debugDimensions model.uiState.dimensions.bottomPanel
+        , case model.uiState.selected.bottomPanel of
+            MetadataToolIcon ->
+              div
+                [ HA.class "tool-content" ]
+                [ text "Hello world A" ]
+            TestingToolIcon ->
+              div
+                [ HA.class "tool-content" ]
+                [ text "Hello world B" ]
+        ]
     ]
 
 viewMainInterface : Model -> Html Msg
 viewMainInterface model =
-  let
-    lastInteraction =
-      mostRecentInteraction model
-      |> Maybe.map Tuple.second
-  in
   div
     [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
-    , viewSplitter
-        5 LeftRight
-        model
-        (model.uiState.open.sideBar)
+    , if model.uiState.open.sideBar then
+        viewSplitter
+          5 LeftRight
+          model
+          (model.uiState.open.sideBar)
+      else
+        div [] []
     , div
         [ HA.class "editor-and-tools-panel" ]
         [ div
@@ -3681,6 +3779,16 @@ viewMainInterface model =
             model.uiState.open.bottomPanel
         , viewToolsArea model
         ]
+    -- we have these down here so that they WILL sit on top of the panning-region bars for the
+    -- main area.
+    , if not model.uiState.open.sideBar then
+        viewCollapsedAreaButton LeftRight
+      else
+        text ""
+    , if not model.uiState.open.bottomPanel then
+        viewCollapsedAreaButton UpDown
+      else
+        text ""
     ]
 
 viewCharacterPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg

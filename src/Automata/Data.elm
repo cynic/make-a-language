@@ -195,7 +195,7 @@ type alias Main_Model =
   -- , mouseCoords : ( Float, Float )
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties : MainUIProperties
-  , computationsExplorer : List GraphView
+  , computationsExplorer : List Uuid
   }
 
 type alias GraphPackage =
@@ -398,10 +398,15 @@ type alias DrawingData =
   , node_drawing : Dict NodeId NodeDrawingData
   }
 
+type InterfaceLocation -- for GraphView
+  = Sidebar
+  | MainEditor
+
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
   , simulation : Force.State NodeId
+  , interfaceLocation : InterfaceLocation
   , host_dimensions : (Float, Float) -- (w,h) of svg element
   , host_coordinates : (Float, Float) -- (x,y) of svg element
   , panBuffer : Float -- pan-buffer amount, in host-dimensions, around the edge of the view
