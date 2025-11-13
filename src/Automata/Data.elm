@@ -87,7 +87,7 @@ type UIMsg
   | Pan Uuid Float Float
   | StopPan Uuid
   | ResetPan Uuid
-  -- | StartDraggingHorizontalSplitter
+  -- | Zoom Uuid Float
 
 type Main_Msg
   = UIMsg UIMsg
@@ -95,9 +95,7 @@ type Main_Msg
   | MovePhantomNode Uuid NodeId NodeId ( Float, Float )
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
-   -- graph-view messages
-  -- | Pan Uuid Float Float
-  -- | Zoom Uuid Float
+  | EditTransition Uuid NodeId NodeId Connection
   | Undo Uuid
   | Redo Uuid
   -- | StartSplit Uuid NodeId

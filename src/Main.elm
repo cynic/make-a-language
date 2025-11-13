@@ -953,12 +953,6 @@ updateGraphView uuid msg model =
           _ ->
             model
 
-    EditTransition src dest conn ->
-      { model
-        | interactionsDict =
-            Just <| AlteringConnection ChooseCharacter (ConnectionAlteration src dest conn)
-      }
-
     Reheat ->
       -- If I'm not doing anything else, permit auto-layout
       case model.interactionsDict of
@@ -1411,6 +1405,12 @@ peekInteraction uuid model =
   AutoDict.get uuid model.interactionsDict
   |> Maybe.map Tuple.second
   |> Maybe.andThen List.head
+
+replaceInteraction : Maybe Uuid -> InteractionState -> Model -> Model
+replaceInteraction uuid interaction model =
+  popInteraction uuid model
+  |> Maybe.map (\(_, model_) -> pushInteractionForStack uuid interaction model_)
+  |> Maybe.withDefault model
 
 mostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState)
 mostRecentInteraction model =
@@ -1873,17 +1873,24 @@ createNewGraphNode view_uuid node_id (x, y) model =
             model.graph_views
     }
 
-editConnection : Uuid -> ConnectionAlteration -> NodeId -> Model -> Model
-editConnection view_uuid old_alteration new_dest model =
+splitConnectionEditing : ConnectionEditing -> ((ConnectionAlteration -> ConnectionEditing), ConnectionAlteration)
+splitConnectionEditing value =
+  case value of
+    CreatingNewNode x -> (CreatingNewNode, x)
+    CreateNewLink x -> (CreateNewLink, x)
+    EditExistingConnection x -> (EditExistingConnection, x)
+
+editConnection : Uuid -> ConnectionEditing -> NodeId -> Model -> Model
+editConnection view_uuid interactionValue new_dest model =
   let
+    (f, old_alteration) = splitConnectionEditing interactionValue
     editConnectionInView : GraphView -> Model
     editConnectionInView graph_view =
       let
         interaction : InteractionState
         interaction = -- this is the connection between the two nodes
           -- if there is no such view, then the interaction is Nothing.
-          ModifyConnection <|
-            EditExistingConnection
+          ModifyConnection <| f <|
               { old_alteration
                 | dest = new_dest
                 , connection =
@@ -2117,17 +2124,14 @@ update msg model =
             -- this is the initial selection.
             selectNodeInView model view_uuid node_id (x, y)
             |> setProperties
-          Just (ModifyConnection (CreatingNewNode alteration)) ->
+          Just (ModifyConnection ((CreatingNewNode _) as ce)) ->
             createNewGraphNode view_uuid node_id (x, y) model
-            |> editConnection view_uuid alteration node_id
+            |> editConnection view_uuid ce node_id
             |> setProperties
-          Just (ModifyConnection (CreateNewLink alteration)) ->
+          Just (ModifyConnection ce) ->
             -- we already have a node selected, and now, an existing
             -- node is being selected as the destination.
-            editConnection view_uuid alteration node_id model
-            |> setProperties
-          Just (ModifyConnection (EditExistingConnection alteration)) ->
-            editConnection view_uuid alteration node_id model
+            editConnection view_uuid ce node_id model
             |> setProperties
           _ ->
             model
@@ -2223,6 +2227,26 @@ update msg model =
       , Cmd.none
       )
 
+    EditTransition uuid src dest conn ->
+      ( case peekInteraction (Just uuid) model of
+          Just (ModifyConnection ce) ->
+            let
+              (f, alteration) = splitConnectionEditing ce
+            in
+              replaceInteraction (Just uuid)
+                (ModifyConnection <| f <|
+                  { alteration
+                    | source = src
+                    , dest = dest
+                    , connection = conn
+                  }
+                )
+                model
+          _ ->
+            model
+      , Cmd.none
+      )
+
     CrashWithMessage err ->
       Debug.todo err
 
@@ -2230,96 +2254,6 @@ update msg model =
     --   AutoDict.get uuid model.graph_views
     --   |> Maybe.map (updateGraphView submsg)
     --   |> Maybe.withDefault ( model, Cmd.none )
-    -- OnResize (width, height) ->
-    --   let
-    --     newModel =
-    --       { model
-    --         -- When I receive this, it is the size of the Application in the
-    --         -- x-direction EXCLUDING external borders, but it is the size of
-    --         -- the Application in the y-direction INCLUDING external borders.
-    --         -- No; I don't understand that at all.  But it's what I have to
-    --         -- work with, I guess.
-    --         | mainPanelDimensions = (width - 4, height)
-    --       }
-    --     (newRightTopWidth, newRightTopHeight, newFdgModel) = calculateRightTopDimensions newModel
-    --   in
-    --   ( { newModel
-    --       | rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-    --       , fdg_model = newFdgModel
-    --     }
-    --   , Cmd.none
-    --   )
-
-    -- ClickIcon icon ->
-    --   let
-    --     (newLeftPanelOpen, newSelectedIcon) =
-    --       if model.selectedIcon == Just icon && model.leftPanelOpen then
-    --         (False, Nothing)  -- Close panel if same icon clicked
-    --       else
-    --         (True, Just icon)  -- Open panel with new icon
-    --     (newRightTopWidth, newRightTopHeight, newFdgModel) =
-    --       calculateRightTopDimensions { model | leftPanelOpen = newLeftPanelOpen }
-    --   in
-    --   ( { model 
-    --     | leftPanelOpen = newLeftPanelOpen
-    --     , selectedIcon = newSelectedIcon
-    --     , rightTopPanelDimensions = (newRightTopWidth, newRightTopHeight)
-    --     , fdg_model = newFdgModel
-    --     }
-    --   , Cmd.none
-    --   )
-
-    -- StartDraggingHorizontalSplitter ->
-    --   ( { model | isDraggingHorizontalSplitter = True }, Cmd.none )
-
-    -- StartDraggingVerticalSplitter ->
-    --   ( { model | isDraggingVerticalSplitter = True }, Cmd.none )
-
-    -- StopDragging ->
-    --   ( { model 
-    --     | isDraggingHorizontalSplitter = False
-    --     , isDraggingVerticalSplitter = False
-    --     }
-    --   , Cmd.none
-    --   )
-
-    -- MouseMoveDrag x y ->
-    --   if model.isDraggingHorizontalSplitter then
-    --     let
-    --       (viewportWidth, _) = model.mainPanelDimensions
-    --       leftOffset =
-    --         60 -- icon-bar width
-    --         + 1 -- icon-bar right-border
-    --         + 20 -- left-panel left-padding
-    --         + 20 -- left-panel right-padding
-    --         + 1 -- left-panel right-border
-    --         + 4 -- half the splitter-width
-    --         + 2 -- …it looks visually nicer, because the cursor takes up some area
-    --       minWidth = 100 + leftOffset
-    --       maxWidth = viewportWidth / 2
-    --       newLeftPanelWidth = clamp minWidth maxWidth (x - leftOffset)
-    --     in
-    --       ( recalculateUI { model | leftPanelWidth = newLeftPanelWidth }
-    --       , Cmd.none
-    --       )
-    --   else if model.isDraggingVerticalSplitter then
-    --     let
-    --       (_, viewportHeight) = model.mainPanelDimensions
-    --       minHeight = 185  -- 8em @ 16px font ≈ 128px
-    --       maxHeight = viewportHeight / 2
-    --       statusBarHeight = 30
-    --       newBottomHeight = clamp minHeight maxHeight (viewportHeight - y - statusBarHeight)
-    --     in
-    --     ( recalculateUI { model | rightBottomPanelHeight = newBottomHeight }
-    --     , Cmd.none
-    --     )
-    --   else
-    --     ( model, Cmd.none )
-
-    -- ToggleBottomPanel ->
-    --   ( recalculateUI { model | rightBottomPanelOpen = not model.rightBottomPanelOpen }
-    --   , Cmd.none
-    --   )
 
     -- UpdateTestPanelContent newInput expectation ->
     --   let
@@ -2368,9 +2302,6 @@ update msg model =
     --       }
     --     , persistPackage updatedPackage
     --     )
-
-    -- UpdateRightTopDimensions width height ->
-    --   ( { model | rightTopPanelDimensions = (width, height) }, Cmd.none )
 
     -- StepThroughExecution ->
     --   let
@@ -2481,52 +2412,6 @@ update msg model =
     --       }
     --     , persistPackage updatedPackage
     --     )
-
-    -- SelectNode _ _ ->
-    --   Debug.todo "branch 'SelectNode _ _' not implemented"
-
-    -- Pan _ _ _ ->
-    --   Debug.todo "branch 'Pan _ _ _' not implemented"
-
-    -- Zoom _ _ ->
-    --   Debug.todo "branch 'Zoom _ _' not implemented"
-
-    -- Undo _ ->
-    --   Debug.todo "branch 'Undo _' not implemented"
-
-    -- Redo _ ->
-    --   Debug.todo "branch 'Redo _' not implemented"
-
-    -- StartSplit _ _ ->
-    --   Debug.todo "branch 'StartSplit _ _' not implemented"
-
-    -- ResetView _ ->
-    --   Debug.todo "branch 'ResetView _' not implemented"
-
-    -- Escape ->
-    --   Debug.todo "branch 'Escape' not implemented"
-
-    -- Confirm ->
-    --   Debug.todo "branch 'Confirm' not implemented"
-
-    -- SetMouseOver _ _ ->
-    --   Debug.todo "branch 'SetMouseOver _ _' not implemented"
-
-    -- KeyPressed _ ->
-    --   Debug.todo "branch 'KeyPressed _' not implemented"
-
-    -- MouseUp ->
-    --   Debug.todo "branch 'MouseUp' not implemented"
-
-    -- MouseMove _ _ ->
-    --   Debug.todo "branch 'MouseMove _ _' not implemented"
-
-    -- RunExecution ->
-    --   Debug.todo "branch 'RunExecution' not implemented"
-
-    -- ResetExecution ->
-    --   Debug.todo "branch 'ResetExecution' not implemented"
-
 
 -- isAccepted : ExecutionResult -> Maybe Bool
 -- isAccepted result =
@@ -2651,59 +2536,6 @@ update msg model =
 
 
 
-
--- viewPackageItem : Model -> GraphPackage -> Html Msg
--- viewPackageItem model package =
---   let
---     displaySvg =
---       FDG.viewComputationThumbnail (model.leftPanelWidth - 15) model.fdg_model package
---     canSelect =
---       -- we can select this EITHER if there are no pending changes, OR
---       -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
---       model.fdg_model.package.undoBuffer == [] ||
---       package.userGraph.graphIdentifier == model.fdg_model.package.userGraph.graphIdentifier
---   in
---   div 
---     [ HA.classList
---         [ ("left-panel__packageItem", True)
---         , ("left-panel__packageItem--disabled", not canSelect)
---         ]
---     , HA.css
---         [ Css.position Css.relative
---         , Css.borderRadius (Css.px 5)
---         , Css.borderWidth (Css.px 1)
---         , Css.borderColor (Css.rgb 0x28 0x2a 0x36) -- --dracula-background
---         , Css.borderStyle Css.solid
---         , Css.userSelect Css.none
---         , if canSelect then
---             Css.cursor Css.pointer
---           else
---             Css.cursor Css.notAllowed
---         ]
---     , if canSelect then
---         onClick (SelectPackage package.userGraph.graphIdentifier)
---       else
---         HA.title "Apply or cancel the pending changes before selecting another package."
---     ]
---     [ Html.Styled.fromUnstyled <| Html.map ForceDirectedMsg displaySvg
---     , div
---         [ HA.css
---             [ Css.position Css.absolute
---             , Css.right (Css.px 5)
---             , Css.top (Css.px 0)
---             ]
---         , HA.classList
---             [ ("button", canSelect)
---             , ("button--disabled", not canSelect)
---             ]
---         , HA.title "Delete computation"
---         , if canSelect then
---             onClick (DeletePackage package.userGraph.graphIdentifier)
---           else
---             HA.title "Apply or cancel the pending changes before deleting a package."
---         ]
---         [ text "🚮" ]
---     ]
 
 -- viewTestItemInPanel : (Uuid, Test) -> Html Msg
 -- viewTestItemInPanel (key, test) =
