@@ -854,44 +854,6 @@ viewNode properties id data =
       , title [] [text titleText]
       ]
 
--- nearby_node_lockOnDistance : Float
--- nearby_node_lockOnDistance = nodeRadius + 9
-
--- nearby_node_repulsionDistance : Float
--- nearby_node_repulsionDistance =
---   nodeRadius * 12
-
--- {-| Used by nearby_node and nearby_nodes. Not for other use. -}
--- nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> (Float, Float) -> Model -> b
--- nearby_node_func f distance mouseCoords { package, pan } =
---   -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
---   let
---     userGraph = package.userGraph
---     ( xPan, yPan ) = pan
---     ( mouse_x, mouse_y ) =
---       mouseCoords -- |> Debug.log "Mousecoords"
---     adjustment_x = xPan + mouse_x
---     adjustment_y = yPan + mouse_y
---     square_dist = distance * distance
---   in
---     f
---       (\node ->
---         let
---           dx = node.label.x - adjustment_x
---           dy = node.label.y - adjustment_y
---         in
---           -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
---           dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
---       )
---       (Graph.nodes userGraph.graph)
-
--- nearby_node : Float -> (Float, Float) -> Model -> Maybe (Graph.Node Entity)
--- nearby_node =
---   nearby_node_func List.find
-
--- nearby_nodes : Float -> (Float, Float) -> Model -> List (Graph.Node Entity)
--- nearby_nodes =
---   nearby_node_func List.filter
 
 -- viewPhantomSvg : { x : Float, y : Float } -> PathBetweenReturn -> Svg GraphView_Msg
 -- viewPhantomSvg target positioning =

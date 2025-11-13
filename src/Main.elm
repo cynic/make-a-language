@@ -48,7 +48,7 @@ import Css exposing (px)
 import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
 import GraphEditor exposing (path_between)
 import WebGL exposing (entityWith)
-import List.Extra
+import List.Extra as List
 import GraphEditor exposing (viewGraph)
 
 {-
@@ -150,6 +150,7 @@ linkExistsInGraph : Graph.NodeContext Entity Connection -> NodeId -> Bool
 linkExistsInGraph from to =
   -- does a link exist from `from` to `to`?
   IntDict.member to from.outgoing
+  |> Debug.log ("Checking for #" ++ String.fromInt to ++ " in #" ++ String.fromInt from.node.id ++ "'s outgoing list " ++ Debug.toString (IntDict.keys from.outgoing))
 
 identifyCardinality : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
 identifyCardinality from to =
@@ -220,7 +221,7 @@ viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
           -- first, let's get the aspect ratio.  That will let us figure out
           -- the height of the viewport "automatically" once we have the right width.
           solved_pkg =
-            { pkg | userGraph = computed.solvedGraph }
+            { pkg | userGraph = computed.solvedGraph |> debugAutomatonGraph "solved_pkg" }
           guest_viewport =
             calculateGuestDimensionsForHost
               (w, h)
@@ -1009,46 +1010,6 @@ updateGraphView uuid msg model =
           }
         )
       |> Maybe.withDefault model
-
-    Undo ->
-      case (model.interactionsDict, model.package.undoBuffer) of
-        (_, []) ->
-          model
-        (Just _, _) ->
-          model -- do not permit undo/redo while I'm performing any operation.
-        (Nothing, h::t) ->
-          let
-            pkg = model.package
-          in
-            { model
-              | currentPackage =
-                  { pkg
-                    | undoBuffer = t
-                    , redoBuffer = model.package.userGraph :: model.package.redoBuffer
-                    , userGraph = h
-                  }
-              , disconnectedNodes = identifyDisconnectedNodes h
-            }
-
-    Redo ->
-      case (model.interactionsDict, model.package.redoBuffer) of
-        (_, []) ->
-          model
-        (Just _, _) ->
-          model -- do not permit undo/redo while I'm performing any operation.
-        (Nothing, h::t) ->
-          let
-            pkg = model.package
-          in
-          { model
-            | currentPackage =
-                { pkg
-                  | redoBuffer = t
-                  , undoBuffer = model.package.userGraph :: model.package.undoBuffer
-                  , userGraph = h
-                }
-            , disconnectedNodes = identifyDisconnectedNodes h
-          }
         
     RunComputation ->
       let
@@ -1139,6 +1100,7 @@ type alias GuestDimensions =
   , inner_coordinates : (Float, Float)
   , inner_dimensions : (Float, Float)
   }
+
 {-| Accepts host dimensions, view properties, and a graph, and calculates the
     appropriate guest coordinates & guest dimensions (i.e. viewport).
 -}
@@ -1387,7 +1349,7 @@ pushInteractionForStack uuid interaction model =
   let
     new_recent_number =
       AutoDict.values model.interactionsDict
-      |> List.Extra.maximumBy Tuple.first
+      |> List.maximumBy Tuple.first
       |> Maybe.map (Tuple.first >> (+) 1)
       |> Maybe.withDefault 0
   in
@@ -1444,7 +1406,7 @@ peekInteraction uuid model =
 mostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState)
 mostRecentInteraction model =
   AutoDict.toList model.interactionsDict
-  |> List.Extra.maximumBy (Tuple.second >> Tuple.first)
+  |> List.maximumBy (Tuple.second >> Tuple.first)
   |> Maybe.andThen
     (\(uuid, (_, interaction)) ->
       case interaction of
@@ -1718,28 +1680,86 @@ selectNodeInView model view_uuid node_id coordinates =
     )
   |> Maybe.withDefault model
 
-moveNode : NodeId -> NodeId -> (Float, Float) -> GraphView -> GraphView
-moveNode source_id dest_id (x, y) graph_view =
+movePhantomNode : NodeId -> NodeId -> (Float, Float) -> GraphView -> GraphView
+movePhantomNode source_id dest_id_ (x_, y_) graph_view =
+  let
+    -- what is the destination of this link?
+    -- Sounds like a simple question: it's the phantom node, of course.  But when the
+    -- phantom node gets too close to a REAL node, then it should switch to that node;
+    -- and when it is far enough away, then it should switch back.
+    nearby_node_lockOnDistance : Float
+    nearby_node_lockOnDistance = 12
+
+    -- nearby_node_repulsionDistance : Float
+    -- nearby_node_repulsionDistance =
+    --   nodeRadius * 12
+
+    ( xPan, yPan ) =
+      graph_view.pan
+    nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> (Float, Float) -> GraphView -> b
+    nearby_node_func f distance mouseCoords { package } =
+      -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
+      let
+        userGraph = package.userGraph |> debugAutomatonGraph "userGraph in movePhantomNode"
+        ( mouse_x, mouse_y ) =
+          mouseCoords -- |> Debug.log "Mousecoords"
+        adjustment_x = xPan + mouse_x
+        adjustment_y = yPan + mouse_y
+        square_dist = distance * distance
+      in
+        f
+          (\node ->
+            let
+              dx = node.label.x - adjustment_x
+              dy = node.label.y - adjustment_y
+            in
+              -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
+              dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
+          )
+          (Graph.nodes userGraph.graph)
+
+    nearby_node : Float -> (Float, Float) -> GraphView -> Maybe (Graph.Node Entity)
+    nearby_node =
+      nearby_node_func List.find
+
+    -- nearby_nodes : Float -> (Float, Float) -> GraphView -> List (Graph.Node Entity)
+    -- nearby_nodes =
+    --   nearby_node_func List.filter
+
+    nearby = nearby_node nearby_node_lockOnDistance (x_, y_) graph_view
+    ( dest_id, x, y) =
+      -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
+      -- But if the mouse is anywhere else, just use the mouse coordinates.
+      nearby
+      |> Maybe.map (\node -> (node.id, node.label.x, node.label.y))
+      |> Maybe.withDefault (dest_id_, x_, y_)
+    edges =
+      Graph.edges graph_view.package.userGraph.graph
+      |> List.map (\{from, to} -> (from, to))
+      |> Debug.log "edges"
+  in
   { graph_view
     | drawingData =
         let
           drawingData = graph_view.drawingData
           cardinality =
             if source_id == dest_id then
-              Recursive
+              Recursive |> Debug.log "cardinality"
             else
               let
-                maybeDest =
+                maybeSrc =
                   Graph.get dest_id graph_view.package.userGraph.graph
               in
-                case maybeDest of
+                case maybeSrc of
                   Nothing ->
-                    Unidirectional
-                  Just dest ->
-                    if linkExistsInGraph dest source_id then
-                      Bidirectional
+                    Unidirectional |> Debug.log "No dest"
+                  Just src ->
+                    if linkExistsInGraph src source_id then
+                      Bidirectional |> Debug.log "cardinality"
+                    else if linkExistsInGraph src dest_id_ then
+                      Unidirectional |> Debug.log "cardinality, orig dest in graph"
                     else
-                      Unidirectional
+                      Unidirectional |> Debug.log "cardinality, no dest in graph"
         in
         { drawingData
           | node_drawing =
@@ -1755,7 +1775,7 @@ moveNode source_id dest_id (x, y) graph_view =
                 sourceNode =
                   Graph.get source_id graph_view.package.userGraph.graph
               in
-                Dict.update (source_id, dest_id)
+                Dict.update (source_id, dest_id_)
                   (Maybe.map
                     (\phantom_link ->
                         { phantom_link
@@ -2105,12 +2125,12 @@ update msg model =
       , Cmd.none
       )
     
-    MoveNode view_uuid source_id dest_id (x, y) ->
+    MovePhantomNode view_uuid source_id dest_id (x, y) ->
       ( { model
           | graph_views =
               AutoDict.update view_uuid
                 (Maybe.map
-                  (moveNode source_id dest_id (x, y))
+                  (movePhantomNode source_id dest_id (x, y))
                 )
                 model.graph_views
         }
@@ -2133,6 +2153,64 @@ update msg model =
               |> setProperties
         else
           model
+      , Cmd.none
+      )
+
+    Undo uuid ->
+      ( { model
+          | graph_views =
+              AutoDict.update uuid
+                (Maybe.map (\graph_view ->
+                    case (mostRecentInteraction model, graph_view.package.undoBuffer) of
+                      (_, []) ->
+                        graph_view
+                      (Just _, _) ->
+                        graph_view -- do not permit undo/redo while I'm performing any operation.
+                      (Nothing, h::t) ->
+                        let
+                          pkg = graph_view.package
+                        in
+                          { graph_view
+                            | package =
+                                { pkg
+                                  | undoBuffer = t
+                                  , redoBuffer = graph_view.package.userGraph :: graph_view.package.redoBuffer
+                                  , userGraph = h
+                                }
+                            , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
+                          }
+                ))
+                model.graph_views
+        }
+      , Cmd.none
+      )
+
+    Redo uuid ->
+      ( { model
+          | graph_views =
+              AutoDict.update uuid
+                (Maybe.map (\graph_view ->
+                    case (mostRecentInteraction model, graph_view.package.redoBuffer) of
+                      (_, []) ->
+                        graph_view
+                      (Just _, _) ->
+                        graph_view -- do not permit undo/redo while I'm performing any operation.
+                      (Nothing, h::t) ->
+                        let
+                          pkg = graph_view.package
+                        in
+                        { graph_view
+                          | package =
+                              { pkg
+                                | redoBuffer = t
+                                , undoBuffer = graph_view.package.userGraph :: graph_view.package.undoBuffer
+                                , userGraph = h
+                              }
+                          , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
+                        }
+                ))
+                model.graph_views
+        }
       , Cmd.none
       )
 
@@ -3329,7 +3407,7 @@ subscriptions model =
               BE.onMouseMove
                 ( D.map2
                     (\x y ->
-                      MoveNode
+                      MovePhantomNode
                         uuid
                         source
                         dest

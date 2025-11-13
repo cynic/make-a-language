@@ -92,14 +92,14 @@ type UIMsg
 type Main_Msg
   = UIMsg UIMsg
   | SelectNode Uuid NodeId ( Float, Float )
-  | MoveNode Uuid NodeId NodeId ( Float, Float )
+  | MovePhantomNode Uuid NodeId NodeId ( Float, Float )
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
    -- graph-view messages
   -- | Pan Uuid Float Float
   -- | Zoom Uuid Float
-  -- | Undo Uuid
-  -- | Redo Uuid
+  | Undo Uuid
+  | Redo Uuid
   -- | StartSplit Uuid NodeId
   -- | ResetView Uuid
   -- more general messages
