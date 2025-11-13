@@ -374,6 +374,7 @@ init flags =
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
       , properties =
           defaultMainProperties
+      , computationsExplorer = []
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -1411,6 +1412,36 @@ mostRecentInteraction model =
         h::_ -> Just (uuid, h)
     )
 
+panGraphView : Float -> Float -> GraphView -> GraphView
+panGraphView x y graph_view =
+  let
+    ( host_x, host_y ) = graph_view.host_coordinates
+    ( host_width, host_height ) = graph_view.host_dimensions
+    ( guest_x, guest_y ) = graph_view.guest_coordinates
+    ( guest_width, guest_height) = graph_view.guest_dimensions
+    ( guest_inner_x, guest_inner_y ) = graph_view.guest_inner_coordinates
+    ( guest_inner_width, guest_inner_height ) = graph_view.guest_inner_dimensions
+    ( pan_x, pan_y ) = graph_view.pan
+    calc_for_dim v current_pan host_coord host_dim guest_coord guest_dim guest_inner_coord guest_inner_dim =
+      -- left and top are the "negative" directions.
+      if v <= host_coord + graph_view.panBuffer && guest_coord - current_pan - 1 < guest_inner_coord then
+        current_pan - 1
+      -- right and bottom are the "positive" directions
+      else if v >= host_coord + host_dim - graph_view.panBuffer && guest_coord - current_pan + 1 + guest_dim > guest_inner_coord + guest_inner_dim then
+        current_pan + 1
+      else
+        current_pan
+  in
+    if graph_view.properties.canPan then
+      { graph_view
+        | pan =
+            ( calc_for_dim x pan_x host_x host_width  guest_x guest_width  guest_inner_x guest_inner_width
+            , calc_for_dim y pan_y host_y host_height guest_y guest_height guest_inner_y guest_inner_height
+            )
+      }
+    else
+      graph_view
+
 update_ui : UIMsg -> Model -> ( Model, Cmd Msg )
 update_ui ui_msg model =
   case ui_msg of
@@ -1450,11 +1481,39 @@ update_ui ui_msg model =
             model
       , Cmd.none
       )
-    SelectNavigation item ->
-      Debug.todo "branch 'SelectNavigationItem item' not implemented"
+    SelectNavigation ComputationsIcon ->
+      ( { model
+          | uiState =
+              let uiState = model.uiState in
+              { uiState
+                | selected =
+                  let selected = uiState.selected in
+                  { selected | sideBar = ComputationsIcon }
+              }
+          -- , computationsExplorer =
+          --     List.map
+          --       (\pkg ->
+          --           viewFromPackage
+          --       )
+        }
+      , Cmd.none
+      )
 
-    SelectTool _ ->
-      Debug.todo "branch 'SelectTool _' not implemented"
+    SelectNavigation _ ->
+      Debug.todo "SelectNavigation _ not implemented."
+
+    SelectTool item ->
+      ( { model
+          | uiState =
+              let uiState = model.uiState in
+              { uiState
+                | selected =
+                  let selected = uiState.selected in
+                  { selected | bottomPanel = item }
+              }
+        }
+      , Cmd.none
+      )
 
     OnResize dims ->
       ( resizeViewport dims model
@@ -1485,36 +1544,7 @@ update_ui ui_msg model =
       ( { model
           | graph_views =
               AutoDict.update uuid
-                (Maybe.map (\graph_view ->
-                  { graph_view
-                    | pan =
-                        let
-                          ( host_x, host_y ) = graph_view.host_coordinates
-                          ( host_width, host_height ) = graph_view.host_dimensions
-                          ( guest_x, guest_y ) = graph_view.guest_coordinates
-                          ( guest_width, guest_height) = graph_view.guest_dimensions
-                          ( guest_inner_x, guest_inner_y ) = graph_view.guest_inner_coordinates
-                          ( guest_inner_width, guest_inner_height ) = graph_view.guest_inner_dimensions
-                          ( pan_x, pan_y ) = graph_view.pan
-                          calc_for_dim v current_pan host_coord host_dim guest_coord guest_dim guest_inner_coord guest_inner_dim =
-                            -- left and top are the "negative" directions.
-                            if v <= host_coord + graph_view.panBuffer && guest_coord - current_pan - 1 < guest_inner_coord then
-                              current_pan - 1
-                            -- right and bottom are the "positive" directions
-                            else if v >= host_coord + host_dim - graph_view.panBuffer && guest_coord - current_pan + 1 + guest_dim > guest_inner_coord + guest_inner_dim then
-                              current_pan + 1
-                            else
-                              current_pan
-                        in
-                          if graph_view.properties.canPan then
-                            ( calc_for_dim x pan_x host_x host_width  guest_x guest_width  guest_inner_x guest_inner_width
-                            , calc_for_dim y pan_y host_y host_height guest_y guest_height guest_inner_y guest_inner_height
-                            )
-                          else
-                            graph_view.pan
-
-                  }
-                ))
+                (Maybe.map (panGraphView x y))
                 model.graph_views
         }
       , -- this fulfils a more responsive sort of "protocol": if JS says "Pan!", and there is
@@ -2336,131 +2366,6 @@ update msg model =
     -- ResetExecution ->
     --   Debug.todo "branch 'ResetExecution' not implemented"
 
--- calculateRightTopDimensions : Model -> ( Float, Float, FDG.Model )
--- calculateRightTopDimensions model =
---   let
---     -- the main panel dimensions are the size of the application area.
---     (viewportWidth, viewportHeight) = model.mainPanelDimensions
---     -- the icon bar is 60px wide. Not included: a 1px right-border.
---     iconBarWidth = 60
---     -- the left-panel also includes its right-border size here, for convenience.
---     -- and it also includes 20px of padding on either side, if it's open.
---     leftPanelWidth = if model.leftPanelOpen then model.leftPanelWidth + 1 + 20 + 20 else 0
---     -- the status bar is 30px tall.  Not included: a 1px top border.
---     statusBarHeight = 30
---     -- the bottom-right panel is a particular height. Included: a 1px border on all sides.
---     bottomPanelHeight = if model.rightBottomPanelOpen then model.rightBottomPanelHeight + 2 else 0
---     -- Always account for some splitter height (either full splitter or collapsed splitter)
---     leftRightSplitterWidth = if model.leftPanelOpen then 8 else 0
---     rightTopBottomSplitterHeight = if model.rightBottomPanelOpen then 8 else 4
---     -- add in: the 1px border from iconBar
---     -- Also, the right-panel has a 1px border all around; add it in.
---     rightTopWidth = viewportWidth - iconBarWidth - leftPanelWidth - leftRightSplitterWidth - 1 - 2
---     -- add in: the 1px statusBar  border
---     -- Also, the right-panel has a 1px border all around; add it in.
---     rightTopHeight = viewportHeight - statusBarHeight - bottomPanelHeight - rightTopBottomSplitterHeight - 1 - 2
---     newFdgModel =
---       FDG.update
---         (FDG.ViewportUpdated (rightTopWidth, rightTopHeight))
---         model.fdg_model        
---   in
-  -- Debug.log
-  --   ( "Dimension calculation"
-  --   ++"\nApplication area width & height: " ++ Debug.toString (viewportWidth, viewportHeight)
-  --   ++"\nWidth calculation:"
-  --   ++"\n   Icon-bar width (excl. 1px right-border): " ++ String.fromFloat iconBarWidth
-  --   ++"\n   Left-panel width (INCL. 1px right-border + 20px padding on each side): " ++ String.fromFloat leftPanelWidth
-  --   ++"\n   Left-right splitter width: " ++ String.fromFloat leftRightSplitterWidth
-  --   ++"\n   Calculation: " ++ String.fromFloat viewportWidth ++ " [total width] "
-  --   ++" - " ++ String.fromFloat iconBarWidth ++ " [icon-bar width] "
-  --   ++" - " ++ String.fromFloat leftPanelWidth ++ " [left-panel width] "
-  --   ++" - " ++ String.fromFloat leftRightSplitterWidth ++ " [left-right splitter width] "
-  --   ++" - 1 [icon-bar border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopWidth
-  --   ++"\nHeight calculation:"
-  --   ++"\n   Status-bar height (excl. 1px top-border): " ++ String.fromFloat statusBarHeight
-  --   ++"\n   Bottom-panel height (INCL. 1px border on each side): " ++ String.fromFloat bottomPanelHeight
-  --   ++"\n   Right-top-bottom splitter height: " ++ String.fromFloat rightTopBottomSplitterHeight
-  --   ++"\n   Calculation: " ++ String.fromFloat viewportHeight ++ " [total height] "
-  --   ++" - " ++ String.fromFloat statusBarHeight ++ " [status-bar height] "
-  --   ++" - " ++ String.fromFloat bottomPanelHeight ++ " [bottom-panel height] "
-  --   ++" - " ++ String.fromFloat rightTopBottomSplitterHeight ++ " [right-top-bottom splitter height] "
-  --   ++" - 1 [status-bar border] - 1 [bottom-panel border] - 2 [right-panel 1px border] = " ++ String.fromFloat rightTopHeight
-  --   ) () |> \_ ->
-  -- ( rightTopWidth, rightTopHeight, newFdgModel )
-
--- recalculateUI : Model -> Model
--- recalculateUI model =
---   let
---     ( rightTopWidth, rightTopHeight, newFdgModel ) =
---       calculateRightTopDimensions model
---   in
---     { model
---       | fdg_model = newFdgModel
---       , rightTopPanelDimensions = ( rightTopWidth, rightTopHeight )
---     }
-
--- VIEW
-
-viewMainInterface : Model -> Html Msg
-viewMainInterface model =
-  let
-    lastInteraction =
-      mostRecentInteraction model
-      |> Maybe.map Tuple.second
-  in
-  div
-    [ HA.class "editor-frame" ]
-    [ viewNavigatorsArea model
-    , viewSplitter
-        5 LeftRight
-        model
-        (model.uiState.open.sideBar)
-    , div
-        [ HA.class "editor-and-tools-panel" ]
-        [ div
-            [ HA.class "editor-main"
-            , HA.css
-                [ Css.maxWidth <| px <| Tuple.first model.uiState.dimensions.mainEditor
-                , Css.maxHeight <| px <| Tuple.second model.uiState.dimensions.mainEditor
-                ]
-            ]
-            [ UserInterface.debugDimensions model.uiState.dimensions.mainEditor
-            , AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.map (GraphEditor.viewGraph)
-              |> Maybe.withDefault
-                (div [ HA.class "error graph-not-loaded" ] [ text "⚠ Graph to load was not found!" ]) -- erk! say what now?!
-            ]
-        , viewSplitter
-            4 UpDown
-            model
-            model.uiState.open.bottomPanel
-        , viewToolsArea model
-        ]
-    ]
-
-viewCharacterPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
-viewCharacterPicker model uuid source dest connection =
-  div [] [ text "character picker" ]
-
-viewGraphPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
-viewGraphPicker model uuid source dest connection =
-  div [] [ text "graph picker" ]
-
-viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
-viewConnectionEditor model uuid {source, dest, connection, picker} =
-  case picker of
-    ChooseCharacter ->
-      viewCharacterPicker model uuid source dest connection
-    ChooseGraphReference ->
-      viewGraphPicker model uuid source dest connection
-
-view : Model -> Html Msg
-view model =
-  case mostRecentInteraction model of
-    Just (Just uuid, ModifyConnection (EditExistingConnection alteration)) ->
-      viewConnectionEditor model uuid alteration
-    _ ->
-      viewMainInterface model
 
 -- isAccepted : ExecutionResult -> Maybe Bool
 -- isAccepted result =
@@ -2599,7 +2504,7 @@ view model =
 
 
 
-    
+
 
 -- viewPackageItem : Model -> GraphPackage -> Html Msg
 -- viewPackageItem model package =
@@ -3287,17 +3192,6 @@ translateHostCoordinates (x, y) graph_view =
 subscriptions : Model -> Sub Msg
 subscriptions model =
   let
-    -- ( xCoord, yCoord ) = model.mouseCoords -- |> Debug.log "Mouse coords"
-    -- ( width, height ) = model.dimensions
-    -- panSubscription =
-    --   let
-    --     xPan = xPanAt width xCoord
-    --     yPan = yPanAt height yCoord
-    --   in
-    --     if model.mouseIsHere && (xPan /= 0 || yPan /= 0) then
-    --       Time.every 20 (\_ -> Pan xPan yPan {- |> Debug.log "Pan request" -})
-    --     else
-    --       Sub.none
     panSubscription =
       pan
         ( D.decodeValue
@@ -3450,3 +3344,365 @@ subscriptions model =
   --     else
         -- Sub.none
     -- ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+{- ***********************************************************
+   VIEW FUNCTIONS
+   ***********************************************************
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+          ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣄⠀⠀⠀⠀⠀⠀⣠⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+          ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠚⠻⠿⡇⠀⠀⠀⠀⢸⠿⠟⠓⠀⠀⠀⠀⠀⠀⠀⠀⠀
+          ⠀⠀⠀⠀⠀⠀⣠⣴⣾⣿⣶⣦⡀⢀⣤⣤⡀⢀⣴⣶⣿⣷⣦⣄⠀⠀⠀⠀⠀⠀
+          ⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⡇⢸⣿⣿⡇⢸⣿⣿⣿⣿⣿⣿⣦⠀⠀⠀⠀⠀
+          ⠀⠀⠀⠀⠘⠋⣉⡉⠙⠛⢿⣿⡇⢸⣿⣿⡇⢸⣿⡿⠛⠋⢉⣉⠙⠃⠀⠀⠀⠀
+          ⠀⠀⢀⣤⣾⡛⠛⠛⠻⢷⣤⡙⠃⢸⣿⣿⡇⠘⢋⣤⣾⡟⠛⠛⠛⠷⣤⡀⠀⠀
+          ⠀⢀⣾⣿⣿⡇⠀⠀⠀⠀⠙⣷⠀⠘⠛⠛⠃⠀⣾⣿⣿⣿⠀⠀⠀⠀⠈⢷⡀⠀
+          ⠀⢸⡇⠈⠉⠀⠀⠀⠀⠀⠀⢸⡆⢰⣿⣿⡆⢰⡇⠀⠉⠁⠀⠀⠀⠀⠀⢸⡇⠀
+          ⠀⠸⣧⠀⠀⠀⠀⠀⠀⠀⢀⡾⠀⠀⠉⠉⠀⠀⢷⡀⠀⠀⠀⠀⠀⠀⠀⣼⠇⠀
+          ⠀⠀⠙⢷⣄⣀⠀⠀⣀⣤⡾⠁⠀⠀⠀⠀⠀⠀⠈⢷⣤⣀⠀⠀⣀⣠⡾⠋⠀⠀
+          ⠀⠀⠀⠀⠉⠛⠛⠛⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠛⠛⠛⠉⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+debugViewDimensions : Bool
+debugViewDimensions = True
+
+debugElement : String -> String -> Html a
+debugElement otherClass s =
+  if debugViewDimensions then
+    div
+      [ HA.class "debug-parent" ]
+      [ div
+        [ HA.class <| "debug-dimensions " ++ otherClass ]
+        [ text s ]
+      ]
+  else
+    div
+      []
+      []
+
+debugDimensions : Dimensions -> Html a
+debugDimensions (w, h) =
+  debugElement "width height" (String.fromFloat w ++ "×" ++ String.fromFloat h)
+
+debugHeight : Float -> Html a
+debugHeight h =
+  debugElement "height" (String.fromFloat h)
+
+debugWidth : Float -> Html a
+debugWidth w =
+  debugElement "width" (String.fromFloat w)
+
+-- viewPackageItem : Model -> GraphPackage -> Html Msg
+-- viewPackageItem model package =
+--   let
+--     displaySvg =
+--       FDG.viewComputationThumbnail (model.leftPanelWidth - 15) model.fdg_model package
+--     canSelect =
+--       -- we can select this EITHER if there are no pending changes, OR
+--       -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
+--       model.fdg_model.package.undoBuffer == [] ||
+--       package.userGraph.graphIdentifier == model.fdg_model.package.userGraph.graphIdentifier
+--   in
+--   div 
+--     [ HA.classList
+--         [ ("left-panel__packageItem", True)
+--         , ("left-panel__packageItem--disabled", not canSelect)
+--         ]
+--     , HA.css
+--         [ Css.position Css.relative
+--         , Css.borderRadius (Css.px 5)
+--         , Css.borderWidth (Css.px 1)
+--         , Css.borderColor (Css.rgb 0x28 0x2a 0x36) -- --dracula-background
+--         , Css.borderStyle Css.solid
+--         , Css.userSelect Css.none
+--         , if canSelect then
+--             Css.cursor Css.pointer
+--           else
+--             Css.cursor Css.notAllowed
+--         ]
+--     , if canSelect then
+--         onClick (SelectPackage package.userGraph.graphIdentifier)
+--       else
+--         HA.title "Apply or cancel the pending changes before selecting another package."
+--     ]
+--     [ Html.Styled.fromUnstyled <| Html.map ForceDirectedMsg displaySvg
+--     , div
+--         [ HA.css
+--             [ Css.position Css.absolute
+--             , Css.right (Css.px 5)
+--             , Css.top (Css.px 0)
+--             ]
+--         , HA.classList
+--             [ ("button", canSelect)
+--             , ("button--disabled", not canSelect)
+--             ]
+--         , HA.title "Delete computation"
+--         , if canSelect then
+--             onClick (DeletePackage package.userGraph.graphIdentifier)
+--           else
+--             HA.title "Apply or cancel the pending changes before deleting a package."
+--         ]
+--         [ text "🚮" ]
+--     ]
+
+
+viewNavigatorsArea : Model -> Html Msg
+viewNavigatorsArea model =
+  div
+    [ HA.class "sidebar-container" ]
+    [ if not model.uiState.open.sideBar then
+        div [] []
+      else
+        div
+          [ HA.class "navigation-bar" ]
+          [ button
+              [ HA.classList
+                  [ ("navigation-icon", True)
+                  , ("active", model.uiState.selected.sideBar == ComputationsIcon)
+                  ]
+              , HA.title "Computations"
+              , (model.uiState.selected.sideBar /= ComputationsIcon)
+                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectNavigation ComputationsIcon))
+              ]
+              [ text "📁"]
+          , button
+              [ HA.classList
+                  [ ("navigation-icon", True)
+                  , ("active", model.uiState.selected.sideBar == TestsIcon)
+                  ]
+              , HA.title "Tests"
+              , (model.uiState.selected.sideBar /= TestsIcon)
+                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectNavigation TestsIcon))
+              ]
+              [ text "🧪" ]
+          ]
+    , if not model.uiState.open.sideBar then
+        div [] []
+      else
+        div
+          [ HA.class "sidebar"
+          , HA.css
+              [ Css.width <| Css.px <|
+                  if model.uiState.open.sideBar then
+                    Automata.Data.width model.uiState.dimensions.sideBar
+                  else
+                    0
+              ]
+          ]
+          [ debugDimensions model.uiState.dimensions.sideBar
+          , case model.uiState.selected.sideBar of
+              ComputationsIcon ->
+                viewComputationsSidebar model.uiState.dimensions.sideBar
+              TestsIcon ->
+                div
+                    [ HA.class "sidebar-content" ]
+                    [ text "Hello world B" ]
+          ]
+    ]
+
+viewComputationsSidebar : Dimensions -> Html Msg
+viewComputationsSidebar dimensions =
+  div
+    [ HA.class "sidebar-content" ]
+    [ text "Hello world A" ]
+
+viewSplitter : Int -> SplitterMovement -> Model -> Bool -> Html Main_Msg
+viewSplitter zIdx movement model areaOpen =
+  let
+    (movementClass, targetArea) =
+      case movement of
+        LeftRight ->
+          ( "leftright", NavigatorsArea )
+        UpDown ->
+          ( "updown", ToolsArea )
+    collapseIcon =
+      svg
+        [ Svg.Styled.Attributes.class ("collapse-icon " ++ movementClass)
+        , Svg.Styled.Attributes.viewBox "4 4 10 8"
+        ]
+        [ Svg.Styled.path
+            [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
+            []
+        ]
+  in
+    if areaOpen then
+      div
+        [ HA.classList
+            [ ("splitter-separator " ++ movementClass, True)
+            , ("dragging", model.properties.dragDirection == Just movement)
+            , ( "draggable", model.properties.canDragSplitter && areaOpen)
+            ]
+        , HA.css
+            [ Css.zIndex (Css.int zIdx)
+            ]
+        , HE.onMouseDown (UIMsg <| StartDraggingSplitter movement)
+        ]
+        [ div
+            [ HA.class <| "separator-handle " ++ movementClass ]
+            [ button
+                [ HA.class <| "collapse-button " ++ movementClass
+                , HA.title "Collapse"
+                , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+                ]
+                [ collapseIcon ]
+            ]
+        ]
+    else
+      button
+        [ HA.class <| "collapse-button " ++ movementClass ++ " collapsed"
+        , HA.title "Expand"
+        , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+        , HA.css
+            [ Css.zIndex (Css.int <| zIdx * 10)
+            ]
+        ]
+        [ collapseIcon ]
+
+
+viewToolsArea : Model -> Html Msg
+viewToolsArea model =
+  div
+    [ HA.class "tools-container" ]
+    [ if not model.uiState.open.bottomPanel then
+        div [] []
+      else
+        div
+          [ HA.class "tools-bar" ]
+          [ button
+              [ HA.classList
+                  [ ("tool-icon", True)
+                  , ("active", model.uiState.selected.bottomPanel == TestingToolIcon)
+                  ]
+              , HA.title "Testing"
+              , (model.uiState.selected.bottomPanel /= TestingToolIcon)
+                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool TestingToolIcon))
+              ]
+              [ text "🔬"]
+          , button
+              [ HA.classList
+                  [ ("tool-icon", True)
+                  , ("active", model.uiState.selected.bottomPanel == MetadataToolIcon)
+                  ]
+              , HA.title "Tests"
+              , (model.uiState.selected.bottomPanel /= MetadataToolIcon)
+                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool MetadataToolIcon))
+              ]
+              [ text "📝" ]
+          ]
+    , if not model.uiState.open.bottomPanel then
+        div [] []
+      else
+        div
+          [ HA.class "tools-area"
+          , HA.css
+              [ Css.height <| Css.px <|
+                  if model.uiState.open.bottomPanel then
+                    Automata.Data.height model.uiState.dimensions.bottomPanel
+                  else
+                    0
+              -- , Css.width <| Css.px <|
+              --     if model.uiState.open.bottomPanel then
+              --       Automata.Data.width model.uiState.dimensions.bottomPanel - 36
+              --     else
+              --       0
+              ]
+          ]
+          [ debugDimensions model.uiState.dimensions.bottomPanel
+          , case model.uiState.selected.bottomPanel of
+              MetadataToolIcon ->
+                div
+                  [ HA.class "tool-content" ]
+                  [ text "Hello world A" ]
+              TestingToolIcon ->
+                div
+                  [ HA.class "tool-content" ]
+                  [ text "Hello world B" ]
+          ]
+    ]
+
+viewMainInterface : Model -> Html Msg
+viewMainInterface model =
+  let
+    lastInteraction =
+      mostRecentInteraction model
+      |> Maybe.map Tuple.second
+  in
+  div
+    [ HA.class "editor-frame" ]
+    [ viewNavigatorsArea model
+    , viewSplitter
+        5 LeftRight
+        model
+        (model.uiState.open.sideBar)
+    , div
+        [ HA.class "editor-and-tools-panel" ]
+        [ div
+            [ HA.class "editor-main"
+            , HA.css
+                [ Css.maxWidth <| px <| Tuple.first model.uiState.dimensions.mainEditor
+                , Css.maxHeight <| px <| Tuple.second model.uiState.dimensions.mainEditor
+                ]
+            ]
+            [ debugDimensions model.uiState.dimensions.mainEditor
+            , AutoDict.get model.mainGraphView model.graph_views
+              |> Maybe.map (GraphEditor.viewGraph)
+              |> Maybe.withDefault
+                (div [ HA.class "error graph-not-loaded" ] [ text "⚠ Graph to load was not found!" ]) -- erk! say what now?!
+            ]
+        , viewSplitter
+            4 UpDown
+            model
+            model.uiState.open.bottomPanel
+        , viewToolsArea model
+        ]
+    ]
+
+viewCharacterPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
+viewCharacterPicker model uuid source dest connection =
+  div [] [ text "character picker" ]
+
+viewGraphPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
+viewGraphPicker model uuid source dest connection =
+  div [] [ text "graph picker" ]
+
+viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
+viewConnectionEditor model uuid {source, dest, connection, picker} =
+  case picker of
+    ChooseCharacter ->
+      viewCharacterPicker model uuid source dest connection
+    ChooseGraphReference ->
+      viewGraphPicker model uuid source dest connection
+
+view : Model -> Html Msg
+view model =
+  case mostRecentInteraction model of
+    Just (Just uuid, ModifyConnection (EditExistingConnection alteration)) ->
+      viewConnectionEditor model uuid alteration
+    _ ->
+      viewMainInterface model

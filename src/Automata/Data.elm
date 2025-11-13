@@ -56,10 +56,10 @@ type alias Flags =
 
 type NavigatorIcon
   = ComputationsIcon
-  | SearchIcon
-  | GitIcon
+  -- | SearchIcon
+  -- | GitIcon
   | TestsIcon
-  | ExtensionsIcon
+  -- | ExtensionsIcon
 
 type ToolIcon
   = TestingToolIcon
@@ -195,6 +195,7 @@ type alias Main_Model =
   -- , mouseCoords : ( Float, Float )
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties : MainUIProperties
+  , computationsExplorer : List GraphView
   }
 
 type alias GraphPackage =

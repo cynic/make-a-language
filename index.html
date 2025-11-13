@@ -96,13 +96,13 @@
       let app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
 
       app.ports.considerPan.subscribe((item) => {
-        console.log(item);
+        // console.log(item);
         uuids.set(item.uuid, { rects : item.rectangles, active : false });
       });
 
       app.ports.stopPan.subscribe((uuid) => {
-        console.log("Stop-pan");
-        console.log(uuid);
+        // console.log("Stop-pan");
+        // console.log(uuid);
         uuids.delete(uuid);
       });
 
