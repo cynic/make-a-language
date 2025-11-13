@@ -3226,20 +3226,22 @@ translateHostCoordinates (x, y) graph_view =
     ( w_host, h_host ) = graph_view.host_dimensions
     ( x_guest, y_guest ) = graph_view.guest_coordinates
     ( w_guest, h_guest ) = graph_view.guest_dimensions
-    translate_dimension coord coord_host coord_guest dim_host dim_guest =
+    ( pan_x, pan_y ) = graph_view.pan
+    translate_dimension coord coord_host coord_guest dim_host dim_guest pan =
       if coord <= coord_host then
-        coord_guest
+        coord_guest + pan -- on the (left/top) edge
       else if coord >= coord_host + dim_host then
-        coord_guest + dim_guest
+        coord_guest + dim_guest + pan -- on the (right/bottom) edge
       else
+        -- this is in the actual area
         let
           ratio = dim_guest / dim_host
         in
-          (coord - coord_host) * ratio + coord_guest
+          (coord - coord_host) * ratio + coord_guest + pan
     translate_x =
-      translate_dimension x x_host x_guest w_host w_guest
+      translate_dimension x x_host x_guest w_host w_guest pan_x
     translate_y =
-      translate_dimension y y_host y_guest h_host h_guest
+      translate_dimension y y_host y_guest h_host h_guest pan_y
   in
     ( translate_x, translate_y )
 
