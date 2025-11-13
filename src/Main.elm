@@ -50,6 +50,7 @@ import GraphEditor exposing (path_between)
 import WebGL exposing (entityWith)
 import List.Extra as List
 import GraphEditor exposing (viewGraph)
+import Automata.Debugging exposing (debugLog_)
 
 {-
 Quality / technology requirements:
@@ -150,7 +151,7 @@ linkExistsInGraph : Graph.NodeContext Entity Connection -> NodeId -> Bool
 linkExistsInGraph from to =
   -- does a link exist from `from` to `to`?
   IntDict.member to from.outgoing
-  |> Debug.log ("Checking for #" ++ String.fromInt to ++ " in #" ++ String.fromInt from.node.id ++ "'s outgoing list " ++ Debug.toString (IntDict.keys from.outgoing))
+  -- |> Debug.log ("Checking for #" ++ String.fromInt to ++ " in #" ++ String.fromInt from.node.id ++ "'s outgoing list " ++ Debug.toString (IntDict.keys from.outgoing))
 
 identifyCardinality : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
 identifyCardinality from to =
@@ -221,7 +222,11 @@ viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
           -- first, let's get the aspect ratio.  That will let us figure out
           -- the height of the viewport "automatically" once we have the right width.
           solved_pkg =
-            { pkg | userGraph = computed.solvedGraph |> debugAutomatonGraph "solved_pkg" }
+            { pkg
+              | userGraph =
+                computed.solvedGraph
+                -- |> debugAutomatonGraph ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
+            }
           guest_viewport =
             calculateGuestDimensionsForHost
               (w, h)
@@ -401,7 +406,11 @@ init flags =
             Debug.log "🚨 FAILURE! GraphView could not be created. `mainGraphView` WILL be incorrect!"
             model_excl_views
           Just (v, model_with_viewDict) ->
-            { model_with_viewDict | mainGraphView = v.id }
+            { model_with_viewDict
+              | mainGraphView =
+                  v.id
+                  -- |> debugLog_ "mainGraphView UUID" truncate_uuid
+            }
   in
     ( selectComputationsIcon model
     , Cmd.none
@@ -1733,10 +1742,10 @@ movePhantomNode source_id dest_id_ (x_, y_) graph_view =
       nearby
       |> Maybe.map (\node -> (node.id, node.label.x, node.label.y))
       |> Maybe.withDefault (dest_id_, x_, y_)
-    edges =
-      Graph.edges graph_view.package.userGraph.graph
-      |> List.map (\{from, to} -> (from, to))
-      |> Debug.log "edges"
+    -- edges =
+    --   Graph.edges graph_view.package.userGraph.graph
+    --   |> List.map (\{from, to} -> (from, to))
+    --   |> Debug.log "edges"
   in
   { graph_view
     | drawingData =
@@ -1744,7 +1753,7 @@ movePhantomNode source_id dest_id_ (x_, y_) graph_view =
           drawingData = graph_view.drawingData
           cardinality =
             if source_id == dest_id then
-              Recursive |> Debug.log "cardinality"
+              Recursive --|> Debug.log "cardinality"
             else
               let
                 maybeSrc =
@@ -1752,14 +1761,14 @@ movePhantomNode source_id dest_id_ (x_, y_) graph_view =
               in
                 case maybeSrc of
                   Nothing ->
-                    Unidirectional |> Debug.log "No dest"
+                    Unidirectional --|> Debug.log "No dest"
                   Just src ->
                     if linkExistsInGraph src source_id then
-                      Bidirectional |> Debug.log "cardinality"
+                      Bidirectional --|> Debug.log "cardinality"
                     else if linkExistsInGraph src dest_id_ then
-                      Unidirectional |> Debug.log "cardinality, orig dest in graph"
+                      Unidirectional --|> Debug.log "cardinality, orig dest in graph"
                     else
-                      Unidirectional |> Debug.log "cardinality, no dest in graph"
+                      Unidirectional --|> Debug.log "cardinality, no dest in graph"
         in
         { drawingData
           | node_drawing =
