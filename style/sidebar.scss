@@ -76,9 +76,32 @@
   flex: 1;
   padding: 10px;
   height: 100vh;
+
+  &.computations {
+    display: flex;
+    flex-direction: column;
+
+    & .sidebar-title {
+      display: flex;
+      justify-content: space-between;
+
+      & .add-button {
+        width: 24px;
+        height: 24px;
+        border: none;
+        border-radius: 4px;
+        background-color: var(--purple);
+
+        &:hover {
+          cursor: pointer;
+          background-color: var(--pink);
+        }
+      }
+    }
+
+  }
   
   & .computations-explorer {
-    height: 100vh;
     overflow-y: scroll;
     scrollbar-width: none;
     -ms-overflow-style: none; // screw you, Google.

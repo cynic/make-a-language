@@ -1742,7 +1742,6 @@ viewMainSvgContent graph_view =
             [ ("graph", True)
             , ("can-select-nodes", graph_view.properties.canSelectNodes)
             , ("can-select-connections", graph_view.properties.canSelectConnections)
-            , ("can-select-space", graph_view.properties.canSelectEmptySpace)
             , ("can-split-nodes", graph_view.properties.canSplitNodes)
             ]
         )

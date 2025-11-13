@@ -2,7 +2,7 @@ module Main exposing (..)
 import Browser
 import Browser.Events as BE
 import Html.Styled exposing
-  (Html, div, h3, p, ul, li, input, textarea, span, toUnstyled, text, button)
+  (Html, div, h1, p, ul, li, input, textarea, span, toUnstyled, text, button)
 import Html.Styled.Events as HE
 import Json.Encode as E
 import Json.Decode as D
@@ -226,7 +226,7 @@ viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
               (w, h)
               createFrozen
               solved_pkg.userGraph.graph
-          properties = defaultViewProperties createFrozen
+          properties = defaultViewProperties createFrozen solved_pkg
           graph_view : GraphView
           graph_view =
             { id = id
@@ -1709,7 +1709,6 @@ selectNodeInView model view_uuid node_id coordinates =
                               let properties = graph_view.properties in
                               { properties
                                 | canSelectConnections = False
-                                , canSelectEmptySpace = True
                                 , canSplitNodes = False
                               }
                       }
@@ -1810,38 +1809,47 @@ cancelNewNodeCreation view_uuid source dest model =
     _ ->
       model
 
+createNewGraphNode : Uuid -> NodeId -> (Float, Float) -> Model -> Model
+createNewGraphNode view_uuid node_id (x, y) model =
+  let
+    viewWithNode : GraphView -> GraphView
+    viewWithNode graph_view = -- ensure that the destination node exists in the graph.
+      { graph_view
+        | package =
+            let package = graph_view.package in
+            { package
+              | userGraph =
+                let userGraph = package.userGraph in
+                { userGraph
+                  | graph =
+                      Graph.insert
+                        { node =
+                            { id = node_id
+                            , label =
+                                entity node_id NoEffect
+                                |> (\e -> { e | x = x, y = y })
+                            }
+                        , incoming = IntDict.empty
+                        , outgoing = IntDict.empty
+                        }
+                        userGraph.graph
+                }
+            }
+      }
+  in
+    { model
+      | graph_views =
+          AutoDict.update view_uuid
+            (Maybe.map (viewWithNode))
+            model.graph_views
+    }
 
-editConnection : Model -> Uuid -> ConnectionAlteration -> NodeId -> Model
-editConnection model view_uuid old_alteration new_dest =
+editConnection : Uuid -> ConnectionAlteration -> NodeId -> Model -> Model
+editConnection view_uuid old_alteration new_dest model =
   let
     editConnectionInView : GraphView -> Model
     editConnectionInView graph_view =
       let
-        viewWithDestination : GraphView
-        viewWithDestination = -- ensure that the destination node exists in the graph.
-          { graph_view
-            | package =
-                let package = graph_view.package in
-                { package
-                  | userGraph =
-                    let userGraph = package.userGraph in
-                    { userGraph
-                      | graph =
-                          Graph.update new_dest
-                            ( Maybe.map identity
-                              >> Maybe.orElseLazy
-                                (\() ->
-                                  Just <|
-                                    { node = { id = new_dest, label = entity new_dest NoEffect }
-                                    , incoming = IntDict.empty
-                                    , outgoing = IntDict.empty
-                                    }
-                                )
-                            )
-                            userGraph.graph
-                    }
-                }
-          }
         interaction : InteractionState
         interaction = -- this is the connection between the two nodes
           -- if there is no such view, then the interaction is Nothing.
@@ -1850,7 +1858,7 @@ editConnection model view_uuid old_alteration new_dest =
               { old_alteration
                 | dest = new_dest
                 , connection =
-                    Graph.get new_dest viewWithDestination.package.userGraph.graph
+                    Graph.get new_dest graph_view.package.userGraph.graph
                       |> Maybe.map (\node ->
                         IntDict.get old_alteration.source node.incoming
                         |> Maybe.withDefault (AutoSet.empty transitionToString)
@@ -1874,7 +1882,6 @@ editConnection model view_uuid old_alteration new_dest =
                               let properties = gv.properties in
                               { properties
                                 | canSelectConnections = False
-                                , canSelectEmptySpace = False
                                 , canSelectNodes = False
                                 , canSplitNodes = False
                               }
@@ -1889,15 +1896,15 @@ editConnection model view_uuid old_alteration new_dest =
     |> Maybe.map (editConnectionInView)
     |> Maybe.withDefault model
 
-defaultViewProperties : Bool -> GraphViewProperties
-defaultViewProperties isFrozen =
+defaultViewProperties : GraphViewPropertySetter
+defaultViewProperties isFrozen package =
   { canSelectConnections = not isFrozen
-  , canSelectEmptySpace = False
   , canSelectNodes = not isFrozen
   , canSplitNodes = not isFrozen
   , canDragNodes = not isFrozen
   , canInspectRefs = True
   , canPan = True
+  , canChooseInPackageList = package.undoBuffer == []
   }
 
 defaultMainProperties : MainUIProperties
@@ -1908,23 +1915,26 @@ defaultMainProperties =
   , dragDirection = Nothing
   }
 
+type alias GraphViewPropertySetter = Bool -> GraphPackage -> GraphViewProperties
+type alias MainPropertySetter = MainUIProperties
+
 setProperties : Model -> Model
 setProperties model =
   let
     setLocalProperties f a = (Tuple.first f) a
     setMainProperties f = (Tuple.second f)
-    default : ((Bool -> GraphViewProperties), MainUIProperties)
+    default : (GraphViewPropertySetter, MainPropertySetter)
     default = ( defaultViewProperties, defaultMainProperties )
-    whenSplittingNode : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenSplittingNode : (GraphViewPropertySetter, MainPropertySetter)
     whenSplittingNode =
-      ( \isFrozen ->
+      ( \isFrozen package ->
           { canSelectConnections = False
-          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = not isFrozen
           , canInspectRefs = True
           , canPan = True
+          , canChooseInPackageList = package.undoBuffer == []
           }
       , { canEscape = True
         , canDragSplitter = True
@@ -1932,16 +1942,16 @@ setProperties model =
         , dragDirection = Nothing
         }
       )
-    whenDraggingNode : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenDraggingNode : (GraphViewPropertySetter, MainPropertySetter)
     whenDraggingNode =
-      ( \isFrozen ->
+      ( \isFrozen package ->
           { canSelectConnections = False
-          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = False
           , canInspectRefs = False
           , canPan = True
+          , canChooseInPackageList = package.undoBuffer == []
           }
       , { canEscape = True
         , canDragSplitter = False
@@ -1949,16 +1959,16 @@ setProperties model =
         , dragDirection = Nothing
         }
       )
-    whenDraggingSplitter : SplitterMovement -> ((Bool -> GraphViewProperties), MainUIProperties)
+    whenDraggingSplitter : SplitterMovement -> (GraphViewPropertySetter, MainPropertySetter)
     whenDraggingSplitter movement =
-      ( \isFrozen ->
+      ( \isFrozen package ->
           { canSelectConnections = False
-          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = False
           , canInspectRefs = False
           , canPan = False
+          , canChooseInPackageList = package.undoBuffer == []
           }
       , { canEscape = False
         , canDragSplitter = False
@@ -1966,16 +1976,16 @@ setProperties model =
         , dragDirection = Just movement
         }
       )
-    whenSourceNodeSelected : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenSourceNodeSelected : (GraphViewPropertySetter, MainPropertySetter)
     whenSourceNodeSelected =
-      ( \isFrozen ->
+      ( \isFrozen package ->
           { canSelectConnections = False
-          , canSelectEmptySpace = True
           , canSelectNodes = True
           , canSplitNodes = True
           , canDragNodes = True
           , canInspectRefs = False
           , canPan = True
+          , canChooseInPackageList = package.undoBuffer == []
           }
       , { canEscape = True
         , canDragSplitter = True
@@ -1983,16 +1993,16 @@ setProperties model =
         , dragDirection = Nothing
         }
       )
-    whenEditingConnection : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenEditingConnection : (GraphViewPropertySetter, MainPropertySetter)
     whenEditingConnection =
-      ( \isFrozen ->
+      ( \isFrozen package ->
           { canSelectConnections = False
-          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = True
           , canInspectRefs = True
           , canPan = True
+          , canChooseInPackageList = package.undoBuffer == []
           }
       , { canEscape = True
         , canDragSplitter = False
@@ -2000,16 +2010,16 @@ setProperties model =
         , dragDirection = Nothing
         }
       )
-    whenExecuting : ((Bool -> GraphViewProperties), MainUIProperties)
+    whenExecuting : (GraphViewPropertySetter, MainPropertySetter)
     whenExecuting =
-      ( \isFrozen ->
+      ( \isFrozen package ->
           { canSelectConnections = False
-          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = False
           , canInspectRefs = True
           , canPan = True
+          , canChooseInPackageList = package.undoBuffer == []
           }
       , { canEscape = True
         , canDragSplitter = True
@@ -2032,17 +2042,17 @@ setProperties model =
                 | properties =
                     case peekInteraction (Just k) model of
                       Nothing ->
-                        setLocalProperties default v.isFrozen
+                        setLocalProperties default v.isFrozen v.package
                       Just (SplittingNode _) ->
-                        setLocalProperties whenSplittingNode v.isFrozen
+                        setLocalProperties whenSplittingNode v.isFrozen v.package
                       Just (DraggingNode _) ->
-                        setLocalProperties whenDraggingNode v.isFrozen
+                        setLocalProperties whenDraggingNode v.isFrozen v.package
                       Just (ModifyConnection (CreatingNewNode _)) ->
-                        setLocalProperties whenSourceNodeSelected v.isFrozen
+                        setLocalProperties whenSourceNodeSelected v.isFrozen v.package
                       Just (ModifyConnection _) ->
-                        setLocalProperties whenEditingConnection v.isFrozen
+                        setLocalProperties whenEditingConnection v.isFrozen v.package
                       Just (Executing _) ->
-                        setLocalProperties whenExecuting v.isFrozen
+                        setLocalProperties whenExecuting v.isFrozen v.package
                       x ->
                         Debug.todo <| "Received a local interaction for " ++ Debug.toString k ++ " that should never have been received… " ++ Debug.toString x
               }
@@ -2075,12 +2085,20 @@ update msg model =
     SelectNode view_uuid node_id (x, y) ->
       ( case peekInteraction (Just view_uuid) model of
           Nothing ->
+            -- this is the initial selection.
             selectNodeInView model view_uuid node_id (x, y)
             |> setProperties
           Just (ModifyConnection (CreatingNewNode alteration)) ->
+            createNewGraphNode view_uuid node_id (x, y) model
+            |> editConnection view_uuid alteration node_id
+            |> setProperties
+          Just (ModifyConnection (CreateNewLink alteration)) ->
             -- we already have a node selected, and now, an existing
             -- node is being selected as the destination.
-            editConnection model view_uuid alteration node_id
+            editConnection view_uuid alteration node_id model
+            |> setProperties
+          Just (ModifyConnection (EditExistingConnection alteration)) ->
+            editConnection view_uuid alteration node_id model
             |> setProperties
           _ ->
             model
@@ -2540,21 +2558,6 @@ update msg model =
 --       , viewIcon ExtensionsIcon "🧩" [] model
 --       ]
 
--- viewIcon : LeftPanelIcon -> String -> List (Html Msg) -> Model -> Html Msg
--- viewIcon icon iconText extra model =
---   let
---     isSelected = model.selectedIcon == Just icon
---     iconClass = if isSelected then "icon icon--selected" else "icon"
---   in
---   div 
---     [ HA.class iconClass
---     , onClick (ClickIcon icon)
---     , HA.css
---         [ Css.position Css.relative
---         ]
---     ]
---     ( text iconText :: extra )
-
 
 
 
@@ -2837,40 +2840,6 @@ update msg model =
 --               |> Html.map ForceDirectedMsg
 --             )
 --         ]
---     ]
-
--- viewVerticalSplitter : Html Msg
--- viewVerticalSplitter =
---   div 
---     [ HA.class "vertical-splitter"
---     , onMouseDown StartDraggingVerticalSplitter
---     ]
---     [ div 
---       [ HA.class "vertical-splitter__handle"
---       , onClick ToggleBottomPanel
---       ]
---       []
---     ]
-
--- viewCollapsedVerticalSplitter : Html Msg
--- viewCollapsedVerticalSplitter =
---   div 
---     [ HA.class "collapsed-vertical-splitter"
---     , onClick ToggleBottomPanel
---     ]
---     [ div 
---       [ HA.class "collapsed-vertical-splitter__handle" ]
---       []
---     ]
-
--- viewRightBottomPanel : Model -> Html Msg
--- viewRightBottomPanel model =
---   div 
---     [ HA.class "right-bottom-panel"
---     , HA.style "height" (String.fromFloat model.rightBottomPanelHeight ++ "px")
---     ]
---     [ viewBottomPanelHeader model
---     , viewBottomPanelContent model
 --     ]
 
 -- viewTestPanelButtons : Model -> List (Html Msg)
@@ -3587,8 +3556,17 @@ viewNavigatorsArea model =
 viewComputationsSidebar : Model -> Html Msg
 viewComputationsSidebar model =
   div
-    [ HA.class "sidebar-content" ]
-    [ div
+    [ HA.class "sidebar-content computations" ]
+    [ h1
+        [ HA.class "sidebar-title" ]
+        [ text "Computations "
+        , button
+            [ HA.class "add-button"
+            , HA.title "Create new computation"
+            ]
+            [ text "➕" ]
+        ]
+    , div
         [ HA.class "computations-explorer" ]
         ( List.filterMap
             (\uuid ->

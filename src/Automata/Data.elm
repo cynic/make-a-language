@@ -337,12 +337,12 @@ type AcceptChoice
 
 type alias GraphViewProperties =
   { canSelectConnections : Bool -- via click
-  , canSelectEmptySpace : Bool -- via click
   , canSelectNodes : Bool -- via click
   , canSplitNodes : Bool -- via ctrl-click
   , canDragNodes : Bool -- via shift-drag
   , canInspectRefs : Bool -- via shift-click
   , canPan : Bool -- via hover
+  , canChooseInPackageList : Bool
   }
 
 type Cardinality
