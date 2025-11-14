@@ -101,8 +101,9 @@ makeLinkForces graph =
 coordinateForces : NodeId -> Graph Entity Connection -> List (Force.Force NodeId)
 coordinateForces root graph =
   let
+    num_nodes = Graph.size graph
     x_target : Float
-    x_target = toFloat <| (Graph.size graph) * (80 + 18)
+    x_target = toFloat <| num_nodes * (80 + 18)
   in
     -- links are the "springs"
     -- manyBody is the "repulsion"
@@ -143,11 +144,14 @@ coordinateForces root graph =
       { toX = [], toY = [], link = [], manyBody = [] }
       graph
     |>  (\{toX, toY, link, manyBody} ->
-          [ Force.towardsX toX
-          , Force.towardsY toY
-          , Force.customLinks 3 link
-          , Force.manyBodyStrength -20.0 manyBody
-          ]
+          if num_nodes > 1 then
+            [ Force.towardsX toX
+            , Force.towardsY toY
+            , Force.customLinks 3 link
+            , Force.manyBodyStrength -20.0 manyBody
+            ]
+          else
+            []
         )
 
 forces : AutomatonGraph -> (Int, Int) -> List (Force.Force NodeId)
@@ -1955,7 +1959,14 @@ viewGraph graphView =
         Html.Styled.text ""
   in
     div
-      [ HA.class "graph-container" ]
+      [ HA.class "graph-container"
+      , HA.id <| Uuid.toString graphView.id
+      , HA.css
+          [ Css.width (Css.px host_width)
+          , Css.height (Css.px host_height)
+          ]
+      , HE.onMouseOver (UIMsg (RequestCoordinates graphView.id))
+      ]
       [ svg
           ([ viewBox guest_x guest_y guest_width guest_height
           , TypedSvg.Attributes.InPx.width host_width

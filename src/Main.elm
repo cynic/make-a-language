@@ -51,6 +51,8 @@ import WebGL exposing (entityWith)
 import List.Extra as List
 import GraphEditor exposing (viewGraph)
 import Automata.Debugging exposing (debugLog_)
+import Automata.Debugging exposing (debugAutomatonGraphXY)
+import Automata.Debugging exposing (debugGraph)
 
 {-
 Quality / technology requirements:
@@ -225,7 +227,7 @@ viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
             { pkg
               | userGraph =
                 computed.solvedGraph
-                -- |> debugAutomatonGraph ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
+                |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
             }
           guest_viewport =
             calculateGuestDimensionsForHost
@@ -321,7 +323,16 @@ init flags =
                 createNewPackage
                   testUuid
                   decoded.startTime
-                  (Automata.Data.empty mainUuid)
+                  ( { graph =
+                        Graph.fromNodesAndEdges
+                          [ Graph.Node 0 (entity 0 NoEffect |> (\e -> { e | x = 0, y = 0 }))
+                          ]
+                          []
+                    , graphIdentifier = mainUuid
+                    , root = 0
+                    }
+                    |> debugAutomatonGraphXY "[init] new initial graph"
+                  )
             in
               ( AutoDict.insert mainUuid pkg allPackagesDict
               , pkg
@@ -1113,7 +1124,7 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     aspectRatio : Float
     aspectRatio =
       w / h
-      -- |> Debug.log "Viewport aspect-ratio"
+      |> Debug.log "Viewport aspect-ratio"
     inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
     inner_pad =
       if isFrozen then
@@ -1144,7 +1155,7 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
         )
         ((theoretical_max, -1000), (theoretical_max, -1000))
         graph
-      -- |> Debug.log "Raw Bounds"
+      |> Debug.log "Raw Bounds"
     ( (min_x, max_x), (min_y, max_y) ) =
       ( (min_x_raw - inner_pad, max_x_raw + inner_pad)
       , (min_y_raw - inner_pad, max_y_raw + inner_pad))
@@ -1152,35 +1163,35 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     -- from this, I can figure out the appropriate coordinates
     center_y =
       (min_y + max_y) / 2
-      -- |> Debug.log "center-y"
+      |> Debug.log "center-y"
     autoHeight =
       (max_x - min_x) / aspectRatio
-      -- |> Debug.log "Auto-height (via aspect-ratio)"
+      |> Debug.log "Auto-height (via aspect-ratio)"
     -- now, we want a center within that autoHeight.
     guestCoordinates =
       ( min_x, center_y - autoHeight / 2 )
-      -- |> Debug.log "Top-left (X,Y) of SVG viewport"
+      |> Debug.log "Top-left (X,Y) of SVG viewport"
     guestDimensions =
       ( max_x - min_x, autoHeight )
-      -- |> Debug.log "(Width, Height) of SVG viewport" 
+      |> Debug.log "(Width, Height) of SVG viewport" 
     pad_inner_x =
       0.15 * (max_x_raw - min_x_raw)
-      -- |> Debug.log "Inner-rectangle X padding (for panning)"
+      |> Debug.log "Inner-rectangle X padding (for panning)"
     pad_inner_y =
       0.15 * (max_y_raw - min_y_raw)
-      -- |> Debug.log "Inner-rectangle Y padding (for panning)"
+      |> Debug.log "Inner-rectangle Y padding (for panning)"
     x_inner =
       min_x_raw + pad_inner_x
-      -- |> Debug.log "Inner-rectangle X (for panning)"
+      |> Debug.log "Inner-rectangle X (for panning)"
     y_inner =
       min_y_raw + pad_inner_y
-      -- |> Debug.log "Inner-rectangle Y (for panning)"
+      |> Debug.log "Inner-rectangle Y (for panning)"
     width_inner =
       (max_x_raw - pad_inner_x * 2) - min_x_raw
-      -- |> Debug.log "Inner-rectangle width (for panning)"
+      |> Debug.log "Inner-rectangle width (for panning)"
     height_inner =
       (max_y_raw - pad_inner_y * 2) - min_y_raw
-      -- |> Debug.log "Inner-rectangle height (for panning)"
+      |> Debug.log "Inner-rectangle height (for panning)"
   in
     { dimensions = guestDimensions
     , coordinates = guestCoordinates
@@ -1596,6 +1607,23 @@ update_ui ui_msg model =
                 model.graph_views
         }
       , stopPan (Uuid.toString uuid)
+      )
+
+    RequestCoordinates uuid ->
+      ( model
+      , requestCoordinates (Uuid.toString uuid)
+      )
+
+    ReceiveCoordinates uuid (x, y) ->
+      ( { model
+          | graph_views =
+              AutoDict.update uuid
+                (Maybe.map (\graph_view ->
+                  { graph_view | host_coordinates = (x, y) }
+                ))
+                model.graph_views
+        }
+      , Cmd.none
       )
 
 
@@ -2650,116 +2678,6 @@ update msg model =
 --         expectReject
 --       ]
 
--- viewLeftPanel : Model -> Html Msg
--- viewLeftPanel model =
---   div 
---     [ HA.class "left-panel"
---     , HA.style "width" (String.fromFloat model.leftPanelWidth ++ "px")
---     ]
---     [ case model.selectedIcon of
---         Just ComputationsIcon ->
---           div []
---             [ h2
---                 []
---                 [ text "Computations "
---                 , div
---                     [ HA.class "button button--primary"
---                     , onClick CreateNewPackage
---                     , HA.title "Create new computation"
---                     ]
---                     [ text "➕" ]
---                 ]
---             -- , p [] [ text "File management functionality would go here." ]
---             , ul []
---               ( model.fdg_model.packages
---                 |> AutoDict.toList
---                 |> List.map Tuple.second
---                 |> List.sortBy (Time.posixToMillis << .created)
---                 |> List.reverse
---                 |> List.map
---                   (\pkg ->
---                     li
---                       []
---                       [ viewPackageItem model pkg ]
---                   )
---               )
---             ]
-        
---         Just SearchIcon ->
---           div []
---             [ h3 [] [ text "Search" ]
---             , input 
---               [ HA.type_ "text"
---               , HA.placeholder "Search in files..."
---               ] []
---             , p [] [ text "Search results would appear here." ]
---             ]
-        
---         Just GitIcon ->
---           div []
---             [ h3 [] [ text "Source Control" ]
---             , p [] [ text "Git integration would go here." ]
---             , div [ HA.class "panel-content" ]
---               [ p [] [ text "• 3 changes" ]
---               , p [] [ text "• 1 staged file" ]
---               , p [] [ text "• main branch" ]
---               ]
---             ]
-        
---         Just TestsIcon ->
---           viewLeftTestPanel model
-        
---         Just ExtensionsIcon ->
---           div []
---             [ h3 [] [ text "Extensions" ]
---             , p [] [ text "Extension management would go here." ]
---             , div [ HA.class "panel-content" ]
---               [ p [] [ text "🔧 Elm Language Support" ]
---               , p [] [ text "🎨 Dracula Theme" ]
---               , p [] [ text "📝 Auto Format" ]
---               ]
---             ]
-        
---         Nothing ->
---           text ""
---     ]
-
--- viewHorizontalSplitter : Html Msg
--- viewHorizontalSplitter =
---   div 
---     [ HA.class "horizontal-splitter"
---     , onMouseDown StartDraggingHorizontalSplitter
---     ]
---     []
-
--- viewRightSection : Model -> Html Msg
--- viewRightSection model =
---   div 
---     [ HA.class "right-section" ]
---     [ viewRightTopPanel model
---     , if model.rightBottomPanelOpen then
---         div []
---           [ viewVerticalSplitter
---           , viewRightBottomPanel model
---           ]
---       else
---         -- Show a minimal splitter when panel is closed
---         viewCollapsedVerticalSplitter
---     ]
-
--- viewRightTopPanel : Model -> Html Msg
--- viewRightTopPanel model =
---   div 
---     [ HA.class "right-top-panel" ]
---     [ -- For now, display dimensions as requested in comments
---       div 
---         [ HA.class "right-top-panel__content" ]
---         [ Html.Styled.fromUnstyled
---             ( FDG.view model.fdg_model
---               |> Html.map ForceDirectedMsg
---             )
---         ]
---     ]
 
 -- viewTestPanelButtons : Model -> List (Html Msg)
 -- viewTestPanelButtons model =
@@ -3098,15 +3016,6 @@ update msg model =
   **************************************
 -}
 
-{-
-[g] can select connection?
-[g] can select empty space?
-[g] can select nodes?
-[g] can split nodes?
-[g] can execute?
-
--}
-
 translateHostCoordinates : (Float, Float) -> GraphView -> (Float, Float)
 translateHostCoordinates (x, y) graph_view =
   let
@@ -3221,6 +3130,17 @@ subscriptions model =
     --     )
     --   else
     --     Sub.none
+    coordinateSubscription =
+      receiveCoordinates
+        ( D.decodeValue
+            (D.map3 (\uuid x y -> ReceiveCoordinates uuid (x, y) |> UIMsg)
+              (D.field "uuid" Uuid.decoder)
+              (D.field "x" D.float)
+              (D.field "y" D.float)
+            )
+          >> Result.withDefault (CrashWithMessage "Invalid coordinates message from JavaScript")
+          >> Debug.log "Received coordinates"
+        )
     resizeSubscription =
       BE.onResize (\w h -> UIMsg <| OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     splitterSubscriptions =
@@ -3272,6 +3192,7 @@ subscriptions model =
     Sub.batch
       ( resizeSubscription ::
         panSubscription ::
+        coordinateSubscription ::
         keyboardSubscription ::
         nodeMoveSubscriptions ++
         splitterSubscriptions
@@ -3692,7 +3613,9 @@ viewMainInterface model =
 
 viewCharacterPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
 viewCharacterPicker model uuid source dest connection =
-  div [] [ text "character picker" ]
+  div
+    [ HA.class "character-picker-container" ]
+    [ text "character picker" ]
 
 viewGraphPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
 viewGraphPicker model uuid source dest connection =

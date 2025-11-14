@@ -1,5 +1,9 @@
 @use './theme';
 
+.graph-container {
+  position: relative;
+}
+
 // ===== PANNING BORDER REGIONS =====
 .pan-region {
     position: absolute;

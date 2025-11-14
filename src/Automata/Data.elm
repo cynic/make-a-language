@@ -86,6 +86,8 @@ type UIMsg
   | ConsiderPan Uuid (List Rectangle)
   | Pan Uuid Float Float
   | StopPan Uuid
+  | RequestCoordinates Uuid
+  | ReceiveCoordinates Uuid (Float, Float)
   | ResetPan Uuid
   -- | Zoom Uuid Float
 

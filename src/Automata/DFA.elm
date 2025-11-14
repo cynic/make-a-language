@@ -1869,7 +1869,10 @@ toUnminimisedAutomatonGraph uuid dfa =
   in
     case stateList of
       [] ->
-        Automata.Data.empty uuid
+        { graph = Graph.empty
+        , graphIdentifier = uuid
+        , root = 0
+        }
         -- |> debugAutomatonGraph "[toUnminimisedAutomatonGraph] Graph, since DFA was empty"
       _ ->
         { graph = graph

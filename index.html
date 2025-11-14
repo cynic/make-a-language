@@ -43,6 +43,7 @@
       let mx = -1;
       let my = -1;
       let uuids = new Map();
+      let windowHasFocus = true;
 
       // event to track the mouse coordinates constantly and put them into (mx, my)
       addEventListener("pointermove", (e) => {
@@ -56,10 +57,23 @@
         }
       });
 
+      // Window focus
+      window.addEventListener('blur', () => {
+        windowHasFocus = false;
+      });
+
+      window.addEventListener('focus', () => {
+        windowHasFocus = true;
+      });
+
       function panWhile(uuid, rects) {
         if (uuids.has(uuid) && isInsideAnyRect(mx, my, rects)) {
-          app.ports.pan.send({ uuid : uuid, x : mx, y : my });
+          if (!document.hidden && windowHasFocus) {
+            app.ports.pan.send({ uuid : uuid, x : mx, y : my });
+          }
           setTimeout(() => panWhile(uuid, rects), 40);
+        } else {
+          uuids.delete(uuid);
         }
       }
 
@@ -94,6 +108,15 @@
         };
 
       let app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
+
+      app.ports.requestCoordinates.subscribe((uuid) => {
+        const elem = document.getElementById(uuid);
+        if (elem === null) return;
+        const box = elem.getBoundingClientRect();
+        const result = { uuid: uuid, x : box.left, y : box.top };
+        // console.log(result);
+        setTimeout(() => app.ports.receiveCoordinates.send(result), 1);
+      });
 
       app.ports.considerPan.subscribe((item) => {
         // console.log(item);
