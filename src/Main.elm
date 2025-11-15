@@ -124,9 +124,9 @@ nodeDrawingForPackage package isFrozen graphView_uuid model =
                         |> Maybe.withDefault False
                       )
                       DrawCurrentExecutionNode
-                  Just (ModifyConnection (CreatingNewNode {dest})) ->
+                  Just (ChoosingDestinationFor _ (NewNode phantom _)) ->
                     maybe_fromBool
-                      (node.id == dest)
+                      (node.id == phantom)
                       DrawPhantom
                   _ ->
                     Nothing
@@ -155,14 +155,21 @@ linkExistsInGraph from to =
   IntDict.member to from.outgoing
   -- |> Debug.log ("Checking for #" ++ String.fromInt to ++ " in #" ++ String.fromInt from.node.id ++ "'s outgoing list " ++ Debug.toString (IntDict.keys from.outgoing))
 
-identifyCardinality : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
-identifyCardinality from to =
+identifyCardinalityViaContext : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
+identifyCardinalityViaContext from to =
   if to.node.id == from then
     Recursive
-  else if linkExistsInGraph to from then
+  else if linkExistsInGraph to from then -- i.e. in opposite direction
     Bidirectional
   else
     Unidirectional
+
+identifyCardinality : NodeId -> NodeId -> GraphView -> Cardinality
+identifyCardinality from to {package} =
+  Graph.get to package.userGraph.graph
+  |> Maybe.map
+    (\toContext -> identifyCardinalityViaContext from toContext)
+  |> Maybe.withDefault Unidirectional
 
 linkDrawingForPackage : GraphPackage -> Dict (NodeId, NodeId) LinkDrawingData
 linkDrawingForPackage package =
@@ -179,15 +186,11 @@ linkDrawingForPackage package =
         let
           cardinality : Cardinality
           cardinality =
-            identifyCardinality sourceNode.node.id destNode
+            identifyCardinalityViaContext sourceNode.node.id destNode
         in
           ( (sourceNode.node.id, destNode.node.id)
           , { cardinality = cardinality
-            , executionData =
-                { executed = False
-                , smallest_recency = -1
-                , chosen = AutoDict.empty acceptConditionToString
-                }
+            , executionData = Nothing
             , label = label
             , pathBetween =
                 GraphEditor.path_between
@@ -1280,7 +1283,7 @@ dragSplitter coord movement constants ({dimensions} as ui) =
         Tuple.first dimensions.sideBar
     panel_height =
       if movement == UpDown then
-        clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Automata.Data.height dimensions.viewport - 8 - coord)
+        clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Tuple.second dimensions.viewport - 8 - coord)
       else
         Tuple.second dimensions.bottomPanel
   in
@@ -1388,17 +1391,20 @@ popInteraction uuid model =
   -- get the stack
   case AutoDict.get uuid model.interactionsDict of
     Just (_, [h]) ->
+      println "One interaction on this stack; removing the stack itself."
       Just <|
         ( h
         , { model | interactionsDict = AutoDict.remove uuid model.interactionsDict }
         )
     Just (r, h :: t) ->
       -- if it has something, pop, and also return an updated model
+      println "More than one interaction on this stack; removing the topmost interaction."
       Just <|
         ( h
         , { model | interactionsDict = AutoDict.insert uuid (r - 1, t) model.interactionsDict }
         )
     _ ->
+      println "Was called to pop, but there's nothing to pop!"
       -- if there's nothing, or there was no such dict, there's nothing
       -- to do
       Nothing
@@ -1626,106 +1632,204 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
+unusedNodeId : AutomatonGraph -> NodeId
+unusedNodeId {graph} =
+  Graph.nodeIdRange graph
+  |> Maybe.map (Tuple.second >> (+) 1)
+  |> Maybe.withDefault 0
 
-selectNodeInView : Model -> Uuid -> NodeId -> (Float, Float) -> Model
-selectNodeInView model view_uuid node_id coordinates =
+selectSourceNode : Model -> Uuid -> NodeId -> Model
+selectSourceNode model view_uuid node_id =
+  -- initially, you must click on a node to select it.
+  -- therefore, we are initially always looking at a recursive
+  -- connection to the same node!
   AutoDict.get view_uuid model.graph_views
+  |> Maybe.andThen (\graph_view ->
+    (graph_view, Graph.get node_id graph_view.package.userGraph.graph)
+    |> Maybe.combineSecond
+  )
   |> Maybe.map
-    (\graph_view ->
+    (\(graph_view, nodeContext) ->
       let
-        newNodeId : NodeId
-        newNodeId =
-          Graph.nodeIdRange graph_view.package.userGraph.graph
-          |> Maybe.map (Tuple.second >> (+) 1)
-          |> Maybe.withDefault 0
-        nodeDrawingData : NodeDrawingData
-        nodeDrawingData =
-          { exclusiveAttributes = Just DrawPhantom
-          , isTerminal = True
-          , isDisconnected = False
-          , coordinates = coordinates
-          , isRoot = False
-          , canSplit = False
-          , view_uuid = view_uuid
-          , isSelected = False
-          }
         linkDrawingData : LinkDrawingData
         linkDrawingData =
-          { cardinality = Unidirectional
+          { cardinality = Recursive
           , pathBetween =
-              { pathString = ""
-              , transition_coordinates = { x = 0, y = 0 }
-              , length = 0.1
-              , control_point = { x = 0, y = 0 }
-              , source_connection_point = { x = 0, y = 0 }
-              , target_connection_point = { x = 0, y = 0 }
-              }
-          , executionData =
-              { executed = False
-              , smallest_recency = -1
-              , chosen = AutoDict.empty acceptConditionToString
-              }
+              path_between
+                nodeContext.node.label
+                nodeContext.node.label
+                Recursive
+                9 9
+          , executionData = Nothing
           , label = AutoSet.empty transitionToString
           , isPhantom = True
           }
         interaction =
-          ModifyConnection <|
-            CreatingNewNode
-              { source = node_id
-              , dest = newNodeId
-              , connection = AutoSet.empty transitionToString
-              , picker = ChooseCharacter
-              }
-        updateDrawingData drawingData =
-          -- update drawing data to show a new "phantom" node
-          -- and a new "phantom" link leading to it
-          { drawingData
-            | node_drawing =
-                Dict.insert newNodeId
-                  nodeDrawingData
-                  drawingData.node_drawing
-                |> Dict.update node_id
-                  (Maybe.map
-                    (\source_node ->
-                        { source_node | isSelected = True }
-                    )
-                  )
-            , link_drawing =
-                Dict.insert (node_id, newNodeId)
-                  linkDrawingData
-                  drawingData.link_drawing
-          }
+          ChoosingDestinationFor node_id
+            ( ExistingNode node_id
+                ( IntDict.get node_id nodeContext.incoming
+                  |> Maybe.withDefault (AutoSet.empty transitionToString)
+                )
+            )
       in
         pushInteractionForStack (Just view_uuid) interaction model
           -- and now modify the drawing-data for that view
-        |> (\model_ ->
-              { model_
-                | graph_views =
-                    AutoDict.insert view_uuid
-                      { graph_view
-                        | drawingData = updateDrawingData graph_view.drawingData
-                          , properties = -- 🔴🔴🔴🔴🔴🔴 TODO 🔴🔴🔴🔴🔴🔴 update this when I shift to something centralized
-                              let properties = graph_view.properties in
-                              { properties
-                                | canSelectConnections = False
-                                , canSplitNodes = False
-                              }
-                      }
-                      model_.graph_views
+        |> updateDrawingData view_uuid
+            (\drawingData ->
+              { drawingData
+                | node_drawing =
+                    Dict.update node_id
+                      (Maybe.map (\source_node ->
+                        { source_node | isSelected = True }
+                      ))
+                      drawingData.node_drawing
+                , link_drawing =
+                    Dict.insert (node_id, node_id) linkDrawingData drawingData.link_drawing
               }
-          )
+            )
     )
   |> Maybe.withDefault model
 
-movePhantomNode : NodeId -> NodeId -> (Float, Float) -> GraphView -> GraphView
-movePhantomNode source_id dest_id_ (x_, y_) graph_view =
+
+{- moving phantom node.  Wow, this is a ridiculous amount of code, separated into
+   an equaly ridiculous number of functions!!
+-}
+
+switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> (Float, Float) -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (x_, y_) sourceNodeContext model =
+  let
+    phantom_nodeid =
+      unusedNodeId graph_view.package.userGraph
+    nodeData =
+      { exclusiveAttributes = Just DrawPhantom
+      , isTerminal = True
+      , isDisconnected = False
+      , coordinates = (x_, y_)
+      , isRoot = False
+      , canSplit = False
+      , view_uuid = view_uuid
+      , isSelected = False
+      }
+    linkData = -- this is the new calculated link-path
+      { cardinality = Unidirectional
+      , pathBetween =
+          path_between -- calculate the link path
+            sourceNodeContext.node.label
+            { x = x_, y = y_ }
+            Unidirectional
+            7 7
+      , executionData = Nothing
+      , label = AutoSet.empty transitionToString
+      , isPhantom = True
+      }
+  in
+    updateDrawingData view_uuid
+      (\drawingData ->
+        { drawingData
+          | node_drawing = Dict.insert phantom_nodeid nodeData drawingData.node_drawing
+          , link_drawing =
+              ( if old_conn_is_empty then
+                  Dict.remove (sourceNodeContext.node.id, existing_id) drawingData.link_drawing
+                else
+                  Dict.update (sourceNodeContext.node.id, existing_id)
+                    (Maybe.map (\existing_link ->
+                      { existing_link | isPhantom = False }
+                    ))
+                    drawingData.link_drawing
+              )
+              -- and add the link path to `some_node`
+              |> Dict.insert (sourceNodeContext.node.id, phantom_nodeid) linkData
+        }
+      )
+      model
+    -- we've made the changes, so set the interaction
+    |> replaceInteraction (Just view_uuid)
+        ( ChoosingDestinationFor sourceNodeContext.node.id
+            ( NewNode phantom_nodeid (x_, y_) )
+        )
+
+phantomLinkDrawingForExisting : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> LinkDrawingData
+phantomLinkDrawingForExisting sourceNodeContext existingNodeContext =
+  let
+    cardinality =
+      identifyCardinalityViaContext sourceNodeContext.node.id existingNodeContext
+    connection =
+      IntDict.get sourceNodeContext.node.id existingNodeContext.incoming
+      |> Maybe.withDefaultLazy (\() -> AutoSet.empty transitionToString)
+  in
+    { cardinality = cardinality
+    , pathBetween =
+        path_between -- calculate the link path
+          sourceNodeContext.node.label
+          existingNodeContext.node.label
+          cardinality
+          7 9
+    , executionData = Nothing
+    , label = connection
+    , isPhantom = True
+    }
+
+switchFromPhantomToExisting : Uuid -> NodeId -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext existingNodeContext model =
+  let
+    linkData = -- this is the new calculated link-path
+      phantomLinkDrawingForExisting sourceNodeContext existingNodeContext
+  in
+    updateDrawingData view_uuid
+      (\drawingData ->
+        { drawingData
+          | node_drawing =
+              Dict.remove phantom_id drawingData.node_drawing
+          , link_drawing =
+              -- get rid of the old phantom link
+              Dict.remove (sourceNodeContext.node.id, phantom_id) drawingData.link_drawing
+              -- and add the link path to `some_node`
+              |> Dict.insert (sourceNodeContext.node.id, existingNodeContext.node.id) linkData
+        }
+      )
+      model
+    -- we've made the changes, so set the interaction
+    |> replaceInteraction (Just view_uuid)
+        ( ChoosingDestinationFor sourceNodeContext.node.id
+            ( ExistingNode existingNodeContext.node.id linkData.label )
+        )
+
+switchFromExistingToExisting : Uuid -> Bool -> NodeId -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNodeContext nearbyNodeContext model =
+  let
+    linkData = -- this is the new calculated link-path
+      phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext
+  in
+    updateDrawingData view_uuid
+      (\drawingData ->
+        { drawingData
+          | link_drawing =
+              -- get rid of the old phantom link, if necessary
+              ( if old_conn_is_empty then
+                  Dict.remove (sourceNodeContext.node.id, old_existing) drawingData.link_drawing
+                else
+                  drawingData.link_drawing
+              )
+              -- and add the link path to `some_node`
+              |> Dict.insert (sourceNodeContext.node.id, nearbyNodeContext.node.id) linkData
+        }
+      )
+      model
+    -- we've made the changes, so set the interaction
+    |> replaceInteraction (Just view_uuid)
+        ( ChoosingDestinationFor sourceNodeContext.node.id
+            ( ExistingNode nearbyNodeContext.node.id linkData.label )
+        )
+
+movePhantomNodeInView : Uuid -> GraphView -> (Float, Float) -> Model -> Model
+movePhantomNodeInView view_uuid graph_view (x_, y_) model =
   let
     -- what is the destination of this link?
     -- Sounds like a simple question: it's the phantom node, of course.  But when the
     -- phantom node gets too close to a REAL node, then it should switch to that node;
     -- and when it is far enough away, then it should switch back.
     nearby_node_lockOnDistance : Float
-    nearby_node_lockOnDistance = 12
+    nearby_node_lockOnDistance = 18
 
     -- nearby_node_repulsionDistance : Float
     -- nearby_node_repulsionDistance =
@@ -1763,108 +1867,148 @@ movePhantomNode source_id dest_id_ (x_, y_) graph_view =
     -- nearby_nodes =
     --   nearby_node_func List.filter
 
-    nearby = nearby_node nearby_node_lockOnDistance (x_, y_) graph_view
-    ( dest_id, x, y) =
-      -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
-      -- But if the mouse is anywhere else, just use the mouse coordinates.
-      nearby
-      |> Maybe.map (\node -> (node.id, node.label.x, node.label.y))
-      |> Maybe.withDefault (dest_id_, x_, y_)
-    -- edges =
-    --   Graph.edges graph_view.package.userGraph.graph
-    --   |> List.map (\{from, to} -> (from, to))
-    --   |> Debug.log "edges"
   in
-  { graph_view
-    | drawingData =
-        let
-          drawingData = graph_view.drawingData
-          cardinality =
-            if source_id == dest_id then
-              Recursive --|> Debug.log "cardinality"
-            else
-              let
-                maybeSrc =
-                  Graph.get dest_id graph_view.package.userGraph.graph
-              in
-                case maybeSrc of
-                  Nothing ->
-                    Unidirectional --|> Debug.log "No dest"
-                  Just src ->
-                    if linkExistsInGraph src source_id then
-                      Bidirectional --|> Debug.log "cardinality"
-                    else if linkExistsInGraph src dest_id_ then
-                      Unidirectional --|> Debug.log "cardinality, orig dest in graph"
-                    else
-                      Unidirectional --|> Debug.log "cardinality, no dest in graph"
-        in
-        { drawingData
-          | node_drawing =
-              Dict.update dest_id
-                (Maybe.map
-                  (\phantom_node ->
-                      { phantom_node | coordinates = (x, y) }
-                  )
-                )
-                drawingData.node_drawing
-          , link_drawing =
-              let
-                sourceNode =
-                  Graph.get source_id graph_view.package.userGraph.graph
-              in
-                Dict.update (source_id, dest_id_)
-                  (Maybe.map
-                    (\phantom_link ->
-                        { phantom_link
-                          | pathBetween =
-                              sourceNode
-                              |> Maybe.map
-                                (\src ->
-                                  path_between
-                                    src.node.label
-                                    { x = x, y = y }
-                                    cardinality
-                                    7 5
-                                )
-                              |> Maybe.withDefault phantom_link.pathBetween                                
+    -- first, let's find this thing.
+    case peekInteraction (Just view_uuid) model of
+      Just (ChoosingDestinationFor source (NewNode phantom_id _)) ->
+        -- okay, so there is a phantom node already there and active.
+        -- in the easiest case, we just need to move its (x,y) coordinates, and be done.
+        -- But if we are close enough to "lock on" to a nearby node, then we need to
+        -- change this interaction to reflect that instead.  So, which case do we
+        -- have?
+        case nearby_node nearby_node_lockOnDistance (x_, y_) graph_view of
+          Just nearbyNode ->
+            -- ooh, we're close to a lock-on node. Okay. Let's get rid of the phantom
+            -- node; then calculate the link path (might be straight or curved or recursive)
+            -- based on the node; and then get rid of the old link path, and put in the
+            -- new one.
+            -- Lastly, we set the interaction to the correct value.            
+            Maybe.map2
+              (\sourceNodeContext nearbyNodeContext ->
+                  switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext nearbyNodeContext model
+              )
+              (Graph.get source graph_view.package.userGraph.graph)
+              (Graph.get nearbyNode.id graph_view.package.userGraph.graph)
+            |> Maybe.withDefault model
+          Nothing ->
+            -- great, there is no nearby node; just update the (x, y).
+            Maybe.map
+              (\sourceNodeContext ->
+                  updateDrawingData view_uuid
+                    (\drawingData ->
+                        { drawingData
+                          | node_drawing =
+                              Dict.update phantom_id
+                                (Maybe.map (\nodeData ->
+                                  { nodeData | coordinates = (x_, y_) }
+                                ))
+                                drawingData.node_drawing
+                          , link_drawing =
+                              Dict.update (source, phantom_id)
+                                (Maybe.map (\linkData ->
+                                  { linkData
+                                    | pathBetween =
+                                        path_between
+                                          sourceNodeContext.node.label
+                                          { x = x_, y = y_ }
+                                          Unidirectional
+                                          7 7
+                                  }
+                                ))
+                                drawingData.link_drawing
                         }
                     )
-                  )
-                  drawingData.link_drawing
-        }
+                    model
+                  |> replaceInteraction (Just view_uuid)
+                    ( ChoosingDestinationFor source (NewNode phantom_id (x_, y_)) )
+              )
+              (Graph.get source graph_view.package.userGraph.graph)
+            |> Maybe.withDefault model
+      Just (ChoosingDestinationFor source (ExistingNode existing_node conn)) ->
+        -- here the situation is "reversed":
+        -- If I find a neighbour, and it is the existing neighbour, then I need do
+        -- nothing.
+        -- If I find a neighbour, and it is NOT the existing neighbour, then I need to
+        -- switch to it.
+        -- If I don't find a neighbour, then I must switch to a phantom node.
+        case nearby_node nearby_node_lockOnDistance (x_, y_) graph_view of
+          Just nearbyNode ->
+            if existing_node == nearbyNode.id then
+              -- no change needed.
+              model
+            else
+              -- switch to the new node.
+              Maybe.map2
+                (\sourceNodeContext nearbyNodeContext ->
+                    switchFromExistingToExisting view_uuid (AutoSet.isEmpty conn) existing_node sourceNodeContext nearbyNodeContext model
+                )
+                (Graph.get source graph_view.package.userGraph.graph)
+                (Graph.get nearbyNode.id graph_view.package.userGraph.graph)
+              |> Maybe.withDefault model -- no changes made.
+          Nothing ->
+            -- great, there is no nearby node; just update the (x, y).
+            Maybe.map
+              (\sourceNodeContext -> switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view (x_, y_) sourceNodeContext model)
+              (Graph.get source graph_view.package.userGraph.graph)
+            |> Maybe.withDefault model
+      _ ->
+        model
+
+movePhantomNode : Uuid -> (Float, Float) -> Model -> Model
+movePhantomNode view_uuid (x_, y_) model =
+  AutoDict.get view_uuid model.graph_views
+  |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv (x_, y_) model)
+  |> Maybe.withDefault model
+
+updateDrawingData : Uuid -> (DrawingData -> DrawingData) -> Model -> Model
+updateDrawingData view_uuid f model =
+  { model
+    | graph_views =
+        AutoDict.update view_uuid
+          (Maybe.map (\graph_view ->
+            { graph_view
+              | drawingData = f graph_view.drawingData
+            }
+          ))
+          model.graph_views
   }
 
-cancelNewNodeCreation : Uuid -> NodeId -> NodeId -> Model -> Model
-cancelNewNodeCreation view_uuid source dest model =
-  let
-    updateDrawingData drawingData =
+removePhantomLink : Uuid -> NodeId -> NodeId -> Model -> Model
+removePhantomLink view_uuid source dest =
+  updateDrawingData view_uuid
+    (\drawingData ->
       { drawingData
-        | node_drawing =
-            Dict.remove dest drawingData.node_drawing
-        , link_drawing =
+        | link_drawing =
             Dict.remove (source, dest) drawingData.link_drawing
       }
+    )
+
+cancelNewNodeCreation : Uuid -> Model -> Model
+cancelNewNodeCreation view_uuid model =
+  let
+    kill : NodeId -> NodeId -> Model -> Model
+    kill source dest model_ =
+      updateDrawingData view_uuid
+        (\drawingData ->
+          { drawingData
+            | node_drawing =
+                Dict.remove dest drawingData.node_drawing
+            , link_drawing =
+                Dict.remove (source, dest) drawingData.link_drawing
+          }
+        )
+        model_
   in
-  case popInteraction (Just view_uuid) model of
-    Just (ModifyConnection (CreatingNewNode _), model_) ->
-      { model_
-        | graph_views =
-            AutoDict.update view_uuid
-              (Maybe.map (\graph_view ->
-                { graph_view
-                  | drawingData =
-                      updateDrawingData graph_view.drawingData
-                  , properties = -- 🔴🔴🔴🔴🔴🔴 TODO 🔴🔴🔴🔴🔴🔴 Centralize when I get to that step!
-                      let properties = graph_view.properties in
-                      { properties
-                        | canSelectConnections = True
-                      }
-                }
-              ))
-              model_.graph_views
-      }
-    _ ->
-      model
+    case popInteraction (Just view_uuid) model of
+      Just (ChoosingDestinationFor source (NewNode dest _), model_) ->
+        println "Popped ChoosingDestinationFor"
+        kill source dest model_
+      Just (EditingConnection {source, dest} True, model_) ->
+        println "Popped EditingConnection"
+        kill source dest model_
+      _ ->
+        println "WHERE IS IT"
+        model
 
 createNewGraphNode : Uuid -> NodeId -> (Float, Float) -> Model -> Model
 createNewGraphNode view_uuid node_id (x, y) model =
@@ -1900,65 +2044,6 @@ createNewGraphNode view_uuid node_id (x, y) model =
             (Maybe.map (viewWithNode))
             model.graph_views
     }
-
-splitConnectionEditing : ConnectionEditing -> ((ConnectionAlteration -> ConnectionEditing), ConnectionAlteration)
-splitConnectionEditing value =
-  case value of
-    CreatingNewNode x -> (CreatingNewNode, x)
-    CreateNewLink x -> (CreateNewLink, x)
-    EditExistingConnection x -> (EditExistingConnection, x)
-
-editConnection : Uuid -> ConnectionEditing -> NodeId -> Model -> Model
-editConnection view_uuid interactionValue new_dest model =
-  let
-    (f, old_alteration) = splitConnectionEditing interactionValue
-    editConnectionInView : GraphView -> Model
-    editConnectionInView graph_view =
-      let
-        interaction : InteractionState
-        interaction = -- this is the connection between the two nodes
-          -- if there is no such view, then the interaction is Nothing.
-          ModifyConnection <| f <|
-              { old_alteration
-                | dest = new_dest
-                , connection =
-                    Graph.get new_dest graph_view.package.userGraph.graph
-                      |> Maybe.map (\node ->
-                        IntDict.get old_alteration.source node.incoming
-                        |> Maybe.withDefault (AutoSet.empty transitionToString)
-                      )
-                    -- if the new_dest doesn't exist in the graph, then maybe it is
-                    -- a totally to-be-created new-node.  So let's put it as an
-                    -- empty connection for now.  
-                    |> Maybe.withDefault (AutoSet.empty transitionToString)
-              }
-      in
-        cancelNewNodeCreation view_uuid old_alteration.source old_alteration.dest model
-        |> pushInteractionForStack (Just view_uuid) interaction
-        |>  (\model_ ->
-              { model_
-                | -- and now we will enter the editing-connection phase, so
-                  graph_views =
-                    AutoDict.update view_uuid
-                      (Maybe.map (\gv ->
-                        { gv
-                          | properties =
-                              let properties = gv.properties in
-                              { properties
-                                | canSelectConnections = False
-                                , canSelectNodes = False
-                                , canSplitNodes = False
-                              }
-                        }
-                      ))
-                      model_.graph_views
-              }
-            )
-
-  in
-    AutoDict.get view_uuid model.graph_views
-    |> Maybe.map (editConnectionInView)
-    |> Maybe.withDefault model
 
 defaultViewProperties : GraphViewPropertySetter
 defaultViewProperties isFrozen package =
@@ -2111,12 +2196,12 @@ setProperties model =
                         setLocalProperties whenSplittingNode v.isFrozen v.package
                       Just (DraggingNode _) ->
                         setLocalProperties whenDraggingNode v.isFrozen v.package
-                      Just (ModifyConnection (CreatingNewNode _)) ->
+                      Just (ChoosingDestinationFor _ _) ->
                         setLocalProperties whenSourceNodeSelected v.isFrozen v.package
-                      Just (ModifyConnection _) ->
-                        setLocalProperties whenEditingConnection v.isFrozen v.package
                       Just (Executing _) ->
                         setLocalProperties whenExecuting v.isFrozen v.package
+                      Just (EditingConnection _ _) ->
+                        setLocalProperties whenEditingConnection v.isFrozen v.package
                       x ->
                         Debug.todo <| "Received a local interaction for " ++ Debug.toString k ++ " that should never have been received… " ++ Debug.toString x
               }
@@ -2128,9 +2213,9 @@ setProperties model =
               { mainProperties_base | canEscape = True }
             Just (_, DraggingNode _) ->
               mainProperties_base
-            Just (_, ModifyConnection (CreatingNewNode _)) ->
+            Just (_, ChoosingDestinationFor _ _) ->
               { mainProperties_base | canEscape = True }
-            Just (_, ModifyConnection _) ->
+            Just (_, EditingConnection _ _) ->
               { mainProperties_base | canEscape = True, canAcceptCharacters = True }
             Just (_, Executing _) ->
               { mainProperties_base | canEscape = True }
@@ -2146,35 +2231,43 @@ update msg model =
     UIMsg ui_msg ->
       update_ui ui_msg model
 
-    SelectNode view_uuid node_id (x, y) ->
+    SelectNode view_uuid node_id ->
       ( case peekInteraction (Just view_uuid) model of
-          Nothing ->
-            -- this is the initial selection.
-            selectNodeInView model view_uuid node_id (x, y)
+          Just (ChoosingDestinationFor src (NewNode phantom_id (x, y))) ->
+            -- I've clicked on some kind of an empty space.  I'll want to create this node,
+            -- and then proceed to edit the connection.
+            createNewGraphNode view_uuid phantom_id (x, y) model
+            |> replaceInteraction (Just view_uuid)
+                  ( EditingConnection
+                      { source = src
+                      , dest = phantom_id
+                      , connection = AutoSet.empty transitionToString
+                      }
+                      True
+                  )
             |> setProperties
-          Just (ModifyConnection ((CreatingNewNode _) as ce)) ->
-            createNewGraphNode view_uuid node_id (x, y) model
-            |> editConnection view_uuid ce node_id
-            |> setProperties
-          Just (ModifyConnection ce) ->
+          Just (ChoosingDestinationFor src (ExistingNode dest_id conn)) ->
             -- we already have a node selected, and now, an existing
             -- node is being selected as the destination.
-            editConnection view_uuid ce node_id model
+            replaceInteraction (Just view_uuid)
+              ( EditingConnection
+                  { source = src
+                  , dest = dest_id
+                  , connection = conn
+                  }
+                  False
+              )
+              model
             |> setProperties
-          _ ->
-            model
+          _ -> -- including 'Nothing'
+            -- this is the initial selection.
+            selectSourceNode model view_uuid node_id
+            |> setProperties
       , Cmd.none
       )
     
-    MovePhantomNode view_uuid source_id dest_id (x, y) ->
-      ( { model
-          | graph_views =
-              AutoDict.update view_uuid
-                (Maybe.map
-                  (movePhantomNode source_id dest_id (x, y))
-                )
-                model.graph_views
-        }
+    MovePhantomNode view_uuid (x, y) ->
+      ( movePhantomNode view_uuid (x, y) model
         |> setProperties
       , Cmd.none
       )
@@ -2186,9 +2279,11 @@ update msg model =
               -- huh!  Looks like there's nothing to do!  So why was I called??
               -- Ideally, I shouldn't even spawn an event if there's nothing to do.
               model
-            Just (Just uuid, ModifyConnection (CreatingNewNode {source,dest}), _) ->
-              cancelNewNodeCreation uuid source dest model -- this will pop, and also handle graph/UI changes too.
+            Just (Just uuid, ChoosingDestinationFor _ (NewNode _ _), _) ->
+              cancelNewNodeCreation uuid model -- this will pop, and also handle graph/UI changes too.
               |> setProperties
+            Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
+              removePhantomLink uuid source dest model
             Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
               |> setProperties
@@ -2240,38 +2335,18 @@ update msg model =
                         let
                           pkg = graph_view.package
                         in
-                        { graph_view
-                          | package =
-                              { pkg
-                                | redoBuffer = t
-                                , undoBuffer = graph_view.package.userGraph :: graph_view.package.undoBuffer
-                                , userGraph = h
-                              }
-                          , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
-                        }
+                          { graph_view
+                            | package =
+                                { pkg
+                                  | redoBuffer = t
+                                  , undoBuffer = graph_view.package.userGraph :: graph_view.package.undoBuffer
+                                  , userGraph = h
+                                }
+                            , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
+                          }
                 ))
                 model.graph_views
         }
-      , Cmd.none
-      )
-
-    EditTransition uuid src dest conn ->
-      ( case peekInteraction (Just uuid) model of
-          Just (ModifyConnection ce) ->
-            let
-              (f, alteration) = splitConnectionEditing ce
-            in
-              replaceInteraction (Just uuid)
-                (ModifyConnection <| f <|
-                  { alteration
-                    | source = src
-                    , dest = dest
-                    , connection = conn
-                  }
-                )
-                model
-          _ ->
-            model
       , Cmd.none
       )
 
@@ -3139,7 +3214,7 @@ subscriptions model =
               (D.field "y" D.float)
             )
           >> Result.withDefault (CrashWithMessage "Invalid coordinates message from JavaScript")
-          >> Debug.log "Received coordinates"
+          -- >> Debug.log "Received coordinates"
         )
     resizeSubscription =
       BE.onResize (\w h -> UIMsg <| OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
@@ -3161,7 +3236,7 @@ subscriptions model =
           []
     nodeMoveSubscriptions =
       let
-        createNodeMoveSubscription uuid source dest =
+        createNodeMoveSubscription uuid =
           AutoDict.get uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
@@ -3170,9 +3245,7 @@ subscriptions model =
                     (\x y ->
                       MovePhantomNode
                         uuid
-                        source
-                        dest
-                        (graph_view |> translateHostCoordinates (x, y)) -- this is incorrect! Must translate…
+                        (graph_view |> translateHostCoordinates (x, y))
                     )
                     (D.field "clientX" D.float)
                     (D.field "clientY" D.float)
@@ -3183,8 +3256,8 @@ subscriptions model =
         |> List.filterMap
           (\(maybeUuid, (_, stack)) ->
             case (maybeUuid, stack) of
-              (Just uuid, ModifyConnection (CreatingNewNode {source, dest}) :: _) ->
-                createNodeMoveSubscription uuid source dest
+              (Just uuid, ChoosingDestinationFor _ _ :: _) ->
+                createNodeMoveSubscription uuid
               _ ->
                 Nothing
           )
@@ -3377,7 +3450,7 @@ viewNavigatorsArea model =
           , HA.css
               [ Css.width <| Css.px <|
                   if model.uiState.open.sideBar then
-                    Automata.Data.width model.uiState.dimensions.sideBar
+                    Tuple.first model.uiState.dimensions.sideBar
                   else
                     0
               ]
@@ -3548,7 +3621,7 @@ viewToolsArea model =
         , HA.css
             [ Css.height <| Css.px <|
                 if model.uiState.open.bottomPanel then
-                  Automata.Data.height model.uiState.dimensions.bottomPanel
+                  Tuple.second model.uiState.dimensions.bottomPanel
                 else
                   0
             ]
@@ -3611,28 +3684,16 @@ viewMainInterface model =
         text ""
     ]
 
-viewCharacterPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
-viewCharacterPicker model uuid source dest connection =
-  div
-    [ HA.class "character-picker-container" ]
-    [ text "character picker" ]
-
-viewGraphPicker : Model -> Uuid -> NodeId -> NodeId -> Connection -> Html Msg
-viewGraphPicker model uuid source dest connection =
-  div [] [ text "graph picker" ]
-
 viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
-viewConnectionEditor model uuid {source, dest, connection, picker} =
-  case picker of
-    ChooseCharacter ->
-      viewCharacterPicker model uuid source dest connection
-    ChooseGraphReference ->
-      viewGraphPicker model uuid source dest connection
+viewConnectionEditor model uuid {source, dest, connection} =
+  div
+    [ HA.class "connection-picker-container" ]
+    [ text "connection picker" ]
 
 view : Model -> Html Msg
 view model =
   case mostRecentInteraction model of
-    Just (Just uuid, ModifyConnection (EditExistingConnection alteration)) ->
+    Just (Just uuid, EditingConnection alteration _) ->
       viewConnectionEditor model uuid alteration
     _ ->
       viewMainInterface model

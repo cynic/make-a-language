@@ -93,15 +93,14 @@ type UIMsg
 
 type Main_Msg
   = UIMsg UIMsg
-  | SelectNode Uuid NodeId ( Float, Float )
-  | MovePhantomNode Uuid NodeId NodeId ( Float, Float )
+  | SelectNode Uuid NodeId
+  | MovePhantomNode Uuid (Float, Float)
+  -- | EditTransition Uuid NodeId NodeId Connection
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
-  | EditTransition Uuid NodeId NodeId Connection
   | Undo Uuid
   | Redo Uuid
   -- | StartSplit Uuid NodeId
-  -- | ResetView Uuid
   -- more general messages
   -- | Confirm -- the universal "Yeah! Let's Go!" key & command
   -- | SetMouseOver Uuid Bool
@@ -116,74 +115,6 @@ type Main_Msg
   -- | StepThroughExecution
   -- | CreateNewPackage
 
-
-type alias UIConstants =
-  { sideBarWidth :
-      { min : Float
-      , max : Float
-      , initial : Float
-      }
-  , toolsPanelHeight :
-      { min : Float
-      , max : Float
-      , initial : Float
-      }
-  }
-{-
-  The `Side Bar` on the left contains the `Tool View`s.
--}
-type alias Dimensions = ( Float, Float )
-
-width : Dimensions -> Float
-width (v, _) = v
-
-height : Dimensions -> Float
-height (_, v) = v
-
-type alias UIState =
-  { dimensions :
-    { -- the part that slides out on the left
-      sideBar : Dimensions
-      -- the strip that contains the Selector items for
-      -- the different "navigators" (file-view, test,
-      -- version control, search, etc etc) has a fixed
-      -- size: 48px.
-      --
-      -- the area at the bottom-right hosts "tools" or
-      -- "outputs".  (I think that, for generality (🧨),
-      -- I should call these "tools").
-    , bottomPanel : Dimensions
-      -- this is the area on left of the bottom-panel, which
-      -- allows us to select which "tool" we want to see.
-      -- Just like the strip for selecting "navigators", this
-      -- is a fixed size: 36px.
-      -- 
-      -- this is the "main" editor area
-    , mainEditor : Dimensions
-      -- this is the viewport
-    , viewport : Dimensions
-    }
-  , open :
-    -- a panel can be open or closed.
-    { bottomPanel : Bool
-    , sideBar : Bool
-    }
-  , selected :
-    -- independent of being open or closed, a selection is
-    -- made.  That selection is preserved across open/close
-    -- operations.
-    { bottomPanel : ToolIcon
-    , sideBar : NavigatorIcon
-    }
-  }
-
-type alias MainUIProperties =
-  { canEscape : Bool
-  , canDragSplitter : Bool
-  , canAcceptCharacters : Bool
-  , dragDirection : Maybe SplitterMovement
-  }
-
 type alias Main_Model =
   { graph_views : AutoDict.Dict String Uuid GraphView
   , mainGraphView : Uuid
@@ -192,11 +123,23 @@ type alias Main_Model =
   , uiState : UIState
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
-  -- , mouseCoords : ( Float, Float )
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties : MainUIProperties
   , computationsExplorer : List Uuid
   }
+
+type InteractionState
+    -- split a node into two, so I can work on the parts separately
+  = SplittingNode
+      { to_split : NodeId
+      , left : Connection
+      , right : Connection
+      }
+  | DraggingNode NodeId
+  | DraggingSplitter SplitterMovement
+  | ChoosingDestinationFor NodeId PossibleDestination
+  | EditingConnection ConnectionAlteration Bool -- should-delete-target-if-empty-connection
+  | Executing ExecutionResult
 
 type alias GraphPackage =
   { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
@@ -219,39 +162,10 @@ type AreaUITarget
   = NavigatorsArea
   | ToolsArea
 
-type ConnectionEditing
-{-
-  We can:
-  (A) 1. Create a new node, then…
-      2. Toggle selected transitions
-      3. CONFIRM or CANCEL
-  
-  OR
-
-  (B) 1. Create a link to an existing node
-      2. Toggle selected transitions
-      3. CONFIRM or CANCEL
-
-  OR
-
-  (C) 1. Edit an existing link
-      2. Toggle selected transitions
-      3. CONFIRM or CANCEL
-
-  Now, if one starts with (A.1), and then
-  selects an EXISTING node—rather than
-  clicking on empty space—then one will end
-  up in (C.1) or (B.1), depending.
--}
-  = CreatingNewNode ConnectionAlteration
-  | CreateNewLink ConnectionAlteration -- this is for an already-existing node.
-  | EditExistingConnection ConnectionAlteration
-
 type alias ConnectionAlteration =
   { source : NodeId
   , dest : NodeId
   , connection : Connection
-  , picker : AcceptChoice
   }
 
 {-  Let's go over UI interactions, and the state machine behind
@@ -319,21 +233,74 @@ type alias ConnectionAlteration =
       
 -}
 
-type InteractionState
-    -- split a node into two, so I can work on the parts separately
-  = SplittingNode
-      { to_split : NodeId
-      , left : Connection
-      , right : Connection
-      }
-  | DraggingNode NodeId
-  | DraggingSplitter SplitterMovement
-  | ModifyConnection ConnectionEditing
-  | Executing ExecutionResult
+type PossibleDestination
+  = NewNode NodeId (Float, Float)
+  | ExistingNode NodeId Connection
 
 type AcceptChoice
   = ChooseCharacter
   | ChooseGraphReference
+
+type alias UIConstants =
+  { sideBarWidth :
+      { min : Float
+      , max : Float
+      , initial : Float
+      }
+  , toolsPanelHeight :
+      { min : Float
+      , max : Float
+      , initial : Float
+      }
+  }
+{-
+  The `Side Bar` on the left contains the `Tool View`s.
+-}
+type alias Dimensions = ( Float, Float )
+
+type alias UIState =
+  { dimensions :
+    { -- the part that slides out on the left
+      sideBar : Dimensions
+      -- the strip that contains the Selector items for
+      -- the different "navigators" (file-view, test,
+      -- version control, search, etc etc) has a fixed
+      -- size: 48px.
+      --
+      -- the area at the bottom-right hosts "tools" or
+      -- "outputs".  (I think that, for generality (🧨),
+      -- I should call these "tools").
+    , bottomPanel : Dimensions
+      -- this is the area on left of the bottom-panel, which
+      -- allows us to select which "tool" we want to see.
+      -- Just like the strip for selecting "navigators", this
+      -- is a fixed size: 36px.
+      -- 
+      -- this is the "main" editor area
+    , mainEditor : Dimensions
+      -- this is the viewport
+    , viewport : Dimensions
+    }
+  , open :
+    -- a panel can be open or closed.
+    { bottomPanel : Bool
+    , sideBar : Bool
+    }
+  , selected :
+    -- independent of being open or closed, a selection is
+    -- made.  That selection is preserved across open/close
+    -- operations.
+    { bottomPanel : ToolIcon
+    , sideBar : NavigatorIcon
+    }
+  }
+
+type alias MainUIProperties =
+  { canEscape : Bool
+  , canDragSplitter : Bool
+  , canAcceptCharacters : Bool
+  , dragDirection : Maybe SplitterMovement
+  }
 
 type alias GraphViewProperties =
   { canSelectConnections : Bool -- via click
@@ -363,11 +330,11 @@ type alias LinkDrawingData =
   { cardinality : Cardinality
   , pathBetween : PathBetweenReturn
   , executionData :
-      { executed : Bool
-      , smallest_recency : Int
+      Maybe
+        { smallest_recency : Int
         -- map of chosen-transition → recency
-      , chosen : AutoDict.Dict String AcceptVia Int
-      }
+        , chosen : AutoDict.Dict String AcceptVia Int
+        }
   , label : Connection
   , isPhantom : Bool
   }

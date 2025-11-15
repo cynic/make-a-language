@@ -682,25 +682,29 @@ viewLink : (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
 viewLink (from, to) drawing_data =
       let
         labelText =
-          if drawing_data.executionData.executed then
-            connectionToSvgTextHighlightingChars
-              drawing_data.label
-              (\via ->
-                AutoDict.get via drawing_data.executionData.chosen
-                |> Maybe.map (\recency ->
-                  [ "executed", "recent-" ++ String.fromInt recency ]
+          case drawing_data.executionData of
+            Just {chosen} ->
+              connectionToSvgTextHighlightingChars
+                drawing_data.label
+                (\via ->
+                  AutoDict.get via chosen
+                  |> Maybe.map (\recency ->
+                    [ "executed", "recent-" ++ String.fromInt recency ]
+                  )
+                  |> Maybe.withDefault []
                 )
-                |> Maybe.withDefault []
-              )
-          else
-            connectionToSvgText drawing_data.label
+            Nothing ->
+              connectionToSvgText drawing_data.label
         linkClass =
-          if drawing_data.executionData.executed then
-            [ "link", "executed", "recent-" ++ String.fromInt drawing_data.executionData.smallest_recency ]
-          else if drawing_data.isPhantom then
-            [ "link", "phantom" ]
-          else
-            [ "link" ]
+          case ( drawing_data.executionData, drawing_data.isPhantom ) of
+            ( Nothing, True ) ->
+              [ "link", "phantom" ]
+            ( Nothing, False ) ->
+              [ "link" ]
+            ( Just {smallest_recency}, True ) ->
+              [ "link", "executed", "phantom", "recent-" ++ String.fromInt smallest_recency ]
+            ( Just {smallest_recency}, False ) ->
+              [ "link", "executed", "recent-" ++ String.fromInt smallest_recency ]
       in
         g
           [ class [ "link-group" ] ]
@@ -845,7 +849,7 @@ viewNode properties id data =
     g
       [ class nodeClass
       , properties.canSelectNodes
-        |> thenPermitSvgInteraction (onClick <| SelectNode data.view_uuid id (node_x, node_y))
+        |> thenPermitSvgInteraction (onClick <| SelectNode data.view_uuid id)
       -- , (properties.canSplitNodes && data.canSplit)
       --   |> thenPermitInteraction (onClick <| StartSplit id)
       ]
