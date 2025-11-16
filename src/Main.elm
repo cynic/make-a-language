@@ -1638,6 +1638,17 @@ update_ui ui_msg model =
         Just (_, model_) ->
           ( model_ |> setProperties, Cmd.none )
 
+    EditConnection uuid src dest connection ->
+      ( pushInteractionForStack (Just uuid)
+          ( EditingConnection
+              { source = src, dest = dest, connection = connection }
+              False
+          )
+          model
+        |> setProperties
+      , Cmd.none
+      )
+
 unusedNodeId : AutomatonGraph -> NodeId
 unusedNodeId {graph} =
   Graph.nodeIdRange graph
@@ -2027,13 +2038,13 @@ cancelNewNodeCreation view_uuid model =
   in
     case popInteraction (Just view_uuid) model of
       Just (ChoosingDestinationFor source (NewNode dest _), model_) ->
-        println "Popped ChoosingDestinationFor"
+        -- println "Popped ChoosingDestinationFor"
         kill source dest model_
       Just (EditingConnection {source, dest} True, model_) ->
-        println "Popped EditingConnection"
+        -- println "Popped EditingConnection"
         kill source dest model_
       _ ->
-        println "WHERE IS IT"
+        println "🚨 ERROR $DBMWMGYERCC"
         model
 
 createNewGraphNode : Uuid -> NodeId -> (Float, Float) -> Model -> Model
@@ -2289,6 +2300,84 @@ selectDestination view_uuid src possible_dest model =
         )
       |> setProperties
 
+deleteLinkFromView : Uuid -> NodeId -> NodeId -> Model -> Model
+deleteLinkFromView view_uuid source dest model =
+  let
+    conn =
+      AutoDict.get view_uuid model.graph_views
+      |> Maybe.andThen (\gv -> Graph.get dest gv.package.userGraph.graph)
+      |> Maybe.andThen (\{incoming} -> IntDict.get source incoming)
+      |> Maybe.withDefault (AutoSet.empty transitionToString)
+  in
+    if AutoSet.isEmpty conn then
+      { model
+        | graph_views =
+            AutoDict.update view_uuid
+              (Maybe.map (\graph_view ->
+                { graph_view
+                  | drawingData =
+                      let drawingData = graph_view.drawingData in
+                      { drawingData
+                        | link_drawing = Dict.remove (source, dest) drawingData.link_drawing
+                      }
+                  , package =
+                      let pkg = graph_view.package in
+                      { pkg
+                        | userGraph =
+                          let ag = pkg.userGraph in
+                          { ag
+                            | graph =
+                                Graph.update dest
+                                  (Maybe.map (\destContext ->
+                                    { destContext
+                                      | incoming =
+                                          IntDict.remove source destContext.incoming
+                                    }
+                                  ))
+                                  ag.graph
+                          }
+                      }
+                }
+              ))
+              model.graph_views
+      }
+    else
+      model
+
+deleteNodeFromView : Uuid -> NodeId -> NodeId -> Model -> Model
+deleteNodeFromView view_uuid source dest model =
+  let
+    model_ =
+      updateDrawingData view_uuid
+        (\drawingData ->
+            { drawingData
+              | link_drawing =
+                  Dict.remove (source, dest) drawingData.link_drawing
+              , node_drawing =
+                  Dict.remove dest drawingData.node_drawing
+            }
+        )
+        model
+  in
+      { model_
+        | graph_views =
+            AutoDict.update view_uuid
+              (Maybe.map (\graph_view ->
+                { graph_view
+                  | package =
+                      let pkg = graph_view.package in
+                      { pkg
+                        | userGraph =
+                          let ag = pkg.userGraph in
+                          { ag
+                            | graph = Graph.remove dest ag.graph
+                          }
+                      }
+                }
+              ))
+              model_.graph_views
+      }
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -2333,6 +2422,14 @@ update msg model =
               |> setProperties
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
               removePhantomLink uuid source dest model
+            Just (Just uuid, EditingConnection {source, dest} deleteTargetIfCancelled, model_) ->
+              if deleteTargetIfCancelled then
+                deleteNodeFromView uuid source dest model_
+                |> setProperties
+              else
+                -- does deletion IF appropriate.
+                deleteLinkFromView uuid source dest model_
+                |> setProperties
             Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
               |> setProperties

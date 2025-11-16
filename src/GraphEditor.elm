@@ -680,8 +680,8 @@ executionData r =
 --           )
 --       )
 
-viewLink : (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
-viewLink (from, to) drawing_data =
+viewLink : Uuid -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
+viewLink view_uuid (from, to) drawing_data =
       let
         labelText =
           case drawing_data.executionData of
@@ -727,7 +727,7 @@ viewLink (from, to) drawing_data =
               , y <| drawing_data.pathBetween.transition_coordinates.y
               -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , class ( "text" :: linkClass )
-              -- , onClick (EditTransition edge.from edge.to edge.label)
+              , onClick (UIMsg <| EditConnection view_uuid from to drawing_data.label)
               ]
               ( title [] [ text "Click to modify" ] :: labelText 
               )
@@ -1714,7 +1714,7 @@ viewMainSvgContent graph_view =
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
       |> List.sortBy (\(_, data) -> if data.isPhantom then 1 else 0)
-      |> List.map (\((from, to), data) -> viewLink (from, to) data)
+      |> List.map (\((from, to), data) -> viewLink graph_view.id (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
       |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)

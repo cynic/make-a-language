@@ -90,6 +90,7 @@ type UIMsg
   | ReceiveCoordinates Uuid (Float, Float)
   | ResetPan Uuid
   | SelectPackage Uuid
+  | EditConnection Uuid NodeId NodeId Connection
   -- | Zoom Uuid Float
 
 type Main_Msg
