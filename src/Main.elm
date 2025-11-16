@@ -1125,22 +1125,7 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     aspectRatio : Float
     aspectRatio =
       w / h
-      |> Debug.log "Viewport aspect-ratio"
-    inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
-    inner_pad =
-      if isFrozen then
-        -- we don't need any buffer.
-        -- So, just put in a "buffer" for the node radius.
-        10
-      else
-        -- when we edit (e.g. make new nodes etc), we want some free space around to put
-        -- those nodes.  That is what this is for.
-        95
-    -- the forces on the graph place the root at (0, 0).
-    -- they also pull all the other nodes to the right and to the
-    -- y-axis center.
-    -- So I can take the number of nodes and multiply by, say, 150 and
-    -- I shouldn't be too far off from a maximum.
+      -- |> Debug.log "Viewport aspect-ratio"
     theoretical_max = 150.0 * toFloat (Graph.size graph)
     -- Now find out: where is the bounding box for the nodes?
     ( (min_x_raw, max_x_raw), (min_y_raw, max_y_raw) ) =    
@@ -1156,7 +1141,25 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
         )
         ((theoretical_max, -1000), (theoretical_max, -1000))
         graph
-      |> Debug.log "Raw Bounds"
+      -- |> Debug.log "Raw Bounds"
+    inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
+    inner_pad =
+      if isFrozen then
+        -- we don't need any buffer.
+        -- So, just put in a "buffer" for the node radius.
+        if max_x_raw - min_x_raw < 60 then
+          60 -- this is the minimum amount. It is enough to show a single node.
+        else
+          10
+      else
+        -- when we edit (e.g. make new nodes etc), we want some free space around to put
+        -- those nodes.  That is what this is for.
+        95
+    -- the forces on the graph place the root at (0, 0).
+    -- they also pull all the other nodes to the right and to the
+    -- y-axis center.
+    -- So I can take the number of nodes and multiply by, say, 150 and
+    -- I shouldn't be too far off from a maximum.
     ( (min_x, max_x), (min_y, max_y) ) =
       ( (min_x_raw - inner_pad, max_x_raw + inner_pad)
       , (min_y_raw - inner_pad, max_y_raw + inner_pad))
@@ -1164,35 +1167,35 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     -- from this, I can figure out the appropriate coordinates
     center_y =
       (min_y + max_y) / 2
-      |> Debug.log "center-y"
+      -- |> Debug.log "center-y"
     autoHeight =
       (max_x - min_x) / aspectRatio
-      |> Debug.log "Auto-height (via aspect-ratio)"
+      -- |> Debug.log "Auto-height (via aspect-ratio)"
     -- now, we want a center within that autoHeight.
     guestCoordinates =
       ( min_x, center_y - autoHeight / 2 )
-      |> Debug.log "Top-left (X,Y) of SVG viewport"
+      -- |> Debug.log "Top-left (X,Y) of SVG viewport"
     guestDimensions =
       ( max_x - min_x, autoHeight )
-      |> Debug.log "(Width, Height) of SVG viewport" 
+      -- |> Debug.log "(Width, Height) of SVG viewport" 
     pad_inner_x =
       0.15 * (max_x_raw - min_x_raw)
-      |> Debug.log "Inner-rectangle X padding (for panning)"
+      -- |> Debug.log "Inner-rectangle X padding (for panning)"
     pad_inner_y =
       0.15 * (max_y_raw - min_y_raw)
-      |> Debug.log "Inner-rectangle Y padding (for panning)"
+      -- |> Debug.log "Inner-rectangle Y padding (for panning)"
     x_inner =
       min_x_raw + pad_inner_x
-      |> Debug.log "Inner-rectangle X (for panning)"
+      -- |> Debug.log "Inner-rectangle X (for panning)"
     y_inner =
       min_y_raw + pad_inner_y
-      |> Debug.log "Inner-rectangle Y (for panning)"
+      -- |> Debug.log "Inner-rectangle Y (for panning)"
     width_inner =
       (max_x_raw - pad_inner_x * 2) - min_x_raw
-      |> Debug.log "Inner-rectangle width (for panning)"
+      -- |> Debug.log "Inner-rectangle width (for panning)"
     height_inner =
       (max_y_raw - pad_inner_y * 2) - min_y_raw
-      |> Debug.log "Inner-rectangle height (for panning)"
+      -- |> Debug.log "Inner-rectangle height (for panning)"
   in
     { dimensions = guestDimensions
     , coordinates = guestCoordinates
