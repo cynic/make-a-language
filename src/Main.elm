@@ -210,8 +210,8 @@ linkDrawingForPackage package =
     If there is no such `GraphPackage`, then nothing is done and no
     `GraphView` is returned.
 -}
-viewFromPackage : (Float, Float) -> (Float, Float) -> InterfaceLocation -> Bool -> Uuid -> Model -> Maybe (GraphView, Model)
-viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
+viewFromPackage : (Float, Float) -> InterfaceLocation -> Bool -> Uuid -> Model -> Maybe (GraphView, Model)
+viewFromPackage (w, h) location createFrozen package_uuid model =
   let
     (id, model_) = getUuid model
   in
@@ -245,7 +245,7 @@ viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
             , interfaceLocation = location
             , simulation = computed.simulation
             , host_dimensions = (w, h)
-            , host_coordinates = (x, y)
+            , host_coordinates = (-1, -1)
             , panBuffer = GraphEditor.panBufferAmount (w, h)
             , guest_dimensions = guest_viewport.dimensions
             , guest_coordinates = guest_viewport.coordinates
@@ -267,6 +267,11 @@ viewFromPackage (w, h) (x, y) location createFrozen package_uuid model =
           , { model_
               | graph_views =
                   AutoDict.insert id graph_view model_.graph_views
+              , mainGraphView =
+                  if location == MainEditor then
+                    id
+                  else
+                    model.mainGraphView
             }
           )
       )
@@ -403,12 +408,6 @@ init flags =
         mainGraphView =
           viewFromPackage
             state.dimensions.mainEditor
-            ( if state.open.sideBar then
-                Tuple.first state.dimensions.sideBar + 48 + 8
-              else
-                0
-            , 0
-            )
             MainEditor
             False
             mainPackage.userGraph.graphIdentifier
@@ -1475,9 +1474,7 @@ selectComputationsIcon model =
     (computation_views, updated_model) =
       List.foldl
         (\uuid (acc, model_) ->
-          -- coordinates (0,0) are a lie, but I'm not panning in these, so
-          -- I don't think that I care.
-          case viewFromPackage (sidebarGraphDimensions model.uiState) (0, 0) Sidebar True uuid model_ of
+          case viewFromPackage (sidebarGraphDimensions model.uiState) Sidebar True uuid model_ of
             Nothing ->
               (acc, model_)
             Just (v, model__) ->
@@ -1630,6 +1627,13 @@ update_ui ui_msg model =
         }
       , Cmd.none
       )
+
+    SelectPackage uuid ->
+      case viewFromPackage model.uiState.dimensions.mainEditor MainEditor False uuid model of
+        Nothing ->
+          ( model, Cmd.none )
+        Just (_, model_) ->
+          ( model_ |> setProperties, Cmd.none )
 
 unusedNodeId : AutomatonGraph -> NodeId
 unusedNodeId {graph} =
@@ -3532,7 +3536,9 @@ viewComputationsSidebar model =
                 |> Maybe.map
                   (\graph_view ->
                     div
-                      [ HA.class "package" ]
+                      [ HA.class "package"
+                      , HE.onClick (UIMsg <| SelectPackage graph_view.package.userGraph.graphIdentifier)
+                      ]
                       [ viewGraph graph_view
                       , div
                           [ HA.class "description" ]

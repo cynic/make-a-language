@@ -89,6 +89,7 @@ type UIMsg
   | RequestCoordinates Uuid
   | ReceiveCoordinates Uuid (Float, Float)
   | ResetPan Uuid
+  | SelectPackage Uuid
   -- | Zoom Uuid Float
 
 type Main_Msg
