@@ -144,7 +144,7 @@
     stroke-dasharray: 3, 3;
     animation: phantom-pulse 2s ease-in-out infinite;
     cursor: crosshair;
-    // pointer-events: none; // so: I can interact with other elements; BUT, :hover, has no effect.
+    pointer-events: none; // so: I can interact with other elements; BUT, :hover, has no effect.
   }
   
 }

@@ -460,8 +460,8 @@ connectionToSvgTextHighlightingChars conn highlightFunction =
 --   | New Cardinality -- user has clicked, but entirety isn't approved yet.
 --                     -- When it is approved, we'll see it under Confirmed.
 
-path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> Float -> Float -> PathBetweenReturn
-path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
+path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> PathBetweenReturn
+path_between sourceXY_orig destXY_orig cardinality =
   {- we're doing a curved line, using a quadratic path.
       So, let's make a triangle. The two points at the "base" are the
       start and end of the connection ("source" and "target").  Now,
@@ -476,6 +476,8 @@ path_between sourceXY_orig destXY_orig cardinality radius_from radius_to =
       increases, the angle increases too.
   --}
   let
+    radius_from = 7
+    radius_to = 5
     sourceXY =
       case cardinality of
         Recursive ->
@@ -1730,6 +1732,7 @@ viewMainSvgContent graph_view =
     --     ]
     --     []
     , Dict.toList graph_view.drawingData.link_drawing
+      |> List.sortBy (\(_, data) -> if data.isPhantom then 1 else 0)
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing

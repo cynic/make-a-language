@@ -197,7 +197,6 @@ linkDrawingForPackage package =
                   sourceNode.node.label
                   destNode.node.label
                   cardinality
-                  7 5
             , isPhantom = False
             }
           )
@@ -1644,12 +1643,9 @@ selectSourceNode model view_uuid node_id =
   -- therefore, we are initially always looking at a recursive
   -- connection to the same node!
   AutoDict.get view_uuid model.graph_views
-  |> Maybe.andThen (\graph_view ->
-    (graph_view, Graph.get node_id graph_view.package.userGraph.graph)
-    |> Maybe.combineSecond
-  )
+  |> Maybe.andThen (.package >> .userGraph >> .graph >> Graph.get node_id)
   |> Maybe.map
-    (\(graph_view, nodeContext) ->
+    (\nodeContext ->
       let
         linkDrawingData : LinkDrawingData
         linkDrawingData =
@@ -1659,7 +1655,6 @@ selectSourceNode model view_uuid node_id =
                 nodeContext.node.label
                 nodeContext.node.label
                 Recursive
-                9 9
           , executionData = Nothing
           , label = AutoSet.empty transitionToString
           , isPhantom = True
@@ -1717,7 +1712,6 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
             sourceNodeContext.node.label
             { x = x_, y = y_ }
             Unidirectional
-            7 7
       , executionData = Nothing
       , label = AutoSet.empty transitionToString
       , isPhantom = True
@@ -1763,7 +1757,6 @@ phantomLinkDrawingForExisting sourceNodeContext existingNodeContext =
           sourceNodeContext.node.label
           existingNodeContext.node.label
           cardinality
-          7 9
     , executionData = Nothing
     , label = connection
     , isPhantom = True
@@ -1912,7 +1905,6 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
                                           sourceNodeContext.node.label
                                           { x = x_, y = y_ }
                                           Unidirectional
-                                          7 7
                                   }
                                 ))
                                 drawingData.link_drawing
@@ -2048,6 +2040,7 @@ createNewGraphNode view_uuid node_id (x, y) model =
 defaultViewProperties : GraphViewPropertySetter
 defaultViewProperties isFrozen package =
   { canSelectConnections = not isFrozen
+  , canSelectEmptySpace = False
   , canSelectNodes = not isFrozen
   , canSplitNodes = not isFrozen
   , canDragNodes = not isFrozen
@@ -2078,6 +2071,7 @@ setProperties model =
     whenSplittingNode =
       ( \isFrozen package ->
           { canSelectConnections = False
+          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = not isFrozen
@@ -2095,6 +2089,7 @@ setProperties model =
     whenDraggingNode =
       ( \isFrozen package ->
           { canSelectConnections = False
+          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = False
@@ -2112,6 +2107,7 @@ setProperties model =
     whenDraggingSplitter movement =
       ( \isFrozen package ->
           { canSelectConnections = False
+          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = False
@@ -2129,6 +2125,7 @@ setProperties model =
     whenSourceNodeSelected =
       ( \isFrozen package ->
           { canSelectConnections = False
+          , canSelectEmptySpace = True
           , canSelectNodes = True
           , canSplitNodes = True
           , canDragNodes = True
@@ -2146,6 +2143,7 @@ setProperties model =
     whenEditingConnection =
       ( \isFrozen package ->
           { canSelectConnections = False
+          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = True
@@ -2163,6 +2161,7 @@ setProperties model =
     whenExecuting =
       ( \isFrozen package ->
           { canSelectConnections = False
+          , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
           , canDragNodes = False
