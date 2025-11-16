@@ -1690,6 +1690,33 @@ selectSourceNode model view_uuid node_id =
    an equaly ridiculous number of functions!!
 -}
 
+{-| Called to turn phantoms, in the node-drawing data only, into solid things. -}
+solidifyPhantoms : Uuid -> NodeId -> NodeId -> Model -> Model
+solidifyPhantoms view_uuid src phantom_id model =
+  updateDrawingData view_uuid
+    (\drawingData ->
+      { drawingData
+        | node_drawing =
+            Dict.update phantom_id
+              (Maybe.map (\phantom ->
+                { phantom | exclusiveAttributes = Nothing }
+              ))
+              drawingData.node_drawing
+            |> Dict.update src
+              (Maybe.map (\srcNode ->
+                { srcNode | isSelected = False }
+              ))
+        , link_drawing =
+            ( Dict.update (src, phantom_id)
+                (Maybe.map (\existing_link ->
+                  { existing_link | isPhantom = False }
+                ))
+                drawingData.link_drawing
+            )
+      }
+    )
+    model
+
 switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> (Float, Float) -> Graph.NodeContext Entity Connection -> Model -> Model
 switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (x_, y_) sourceNodeContext model =
   let
@@ -1814,6 +1841,35 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNode
             ( ExistingNode nearbyNodeContext.node.id linkData.label )
         )
 
+updatePhantomMovement : Uuid -> NodeId -> ( Float, Float ) -> Graph.NodeContext Entity Connection -> Model -> Model
+updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model =
+  updateDrawingData view_uuid
+    (\drawingData ->
+        { drawingData
+          | node_drawing =
+              Dict.update phantom_id
+                (Maybe.map (\nodeData ->
+                  { nodeData | coordinates = (x_, y_) }
+                ))
+                drawingData.node_drawing
+          , link_drawing =
+              Dict.update (sourceNodeContext.node.id, phantom_id)
+                (Maybe.map (\linkData ->
+                  { linkData
+                    | pathBetween =
+                        path_between
+                          sourceNodeContext.node.label
+                          { x = x_, y = y_ }
+                          Unidirectional
+                  }
+                ))
+                drawingData.link_drawing
+        }
+    )
+    model
+  |> replaceInteraction (Just view_uuid)
+    ( ChoosingDestinationFor sourceNodeContext.node.id (NewNode phantom_id (x_, y_)) )
+
 movePhantomNodeInView : Uuid -> GraphView -> (Float, Float) -> Model -> Model
 movePhantomNodeInView view_uuid graph_view (x_, y_) model =
   let
@@ -1822,11 +1878,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
     -- phantom node gets too close to a REAL node, then it should switch to that node;
     -- and when it is far enough away, then it should switch back.
     nearby_node_lockOnDistance : Float
-    nearby_node_lockOnDistance = 18
-
-    -- nearby_node_repulsionDistance : Float
-    -- nearby_node_repulsionDistance =
-    --   nodeRadius * 12
+    nearby_node_lockOnDistance = 20
 
     ( xPan, yPan ) =
       graph_view.pan
@@ -1887,32 +1939,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
             -- great, there is no nearby node; just update the (x, y).
             Maybe.map
               (\sourceNodeContext ->
-                  updateDrawingData view_uuid
-                    (\drawingData ->
-                        { drawingData
-                          | node_drawing =
-                              Dict.update phantom_id
-                                (Maybe.map (\nodeData ->
-                                  { nodeData | coordinates = (x_, y_) }
-                                ))
-                                drawingData.node_drawing
-                          , link_drawing =
-                              Dict.update (source, phantom_id)
-                                (Maybe.map (\linkData ->
-                                  { linkData
-                                    | pathBetween =
-                                        path_between
-                                          sourceNodeContext.node.label
-                                          { x = x_, y = y_ }
-                                          Unidirectional
-                                  }
-                                ))
-                                drawingData.link_drawing
-                        }
-                    )
-                    model
-                  |> replaceInteraction (Just view_uuid)
-                    ( ChoosingDestinationFor source (NewNode phantom_id (x_, y_)) )
+                updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model
               )
               (Graph.get source graph_view.package.userGraph.graph)
             |> Maybe.withDefault model
@@ -1938,7 +1965,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
                 (Graph.get nearbyNode.id graph_view.package.userGraph.graph)
               |> Maybe.withDefault model -- no changes made.
           Nothing ->
-            -- great, there is no nearby node; just update the (x, y).
+            -- there is no nearby node; move from the existing node to a phantom node. 
             Maybe.map
               (\sourceNodeContext -> switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view (x_, y_) sourceNodeContext model)
               (Graph.get source graph_view.package.userGraph.graph)
@@ -2037,7 +2064,7 @@ createNewGraphNode view_uuid node_id (x, y) model =
             model.graph_views
     }
 
-defaultViewProperties : GraphViewPropertySetter
+defaultViewProperties : Bool -> GraphViewPropertySetter
 defaultViewProperties isFrozen package =
   { canSelectConnections = not isFrozen
   , canSelectEmptySpace = False
@@ -2057,7 +2084,7 @@ defaultMainProperties =
   , dragDirection = Nothing
   }
 
-type alias GraphViewPropertySetter = Bool -> GraphPackage -> GraphViewProperties
+type alias GraphViewPropertySetter = GraphPackage -> GraphViewProperties
 type alias MainPropertySetter = MainUIProperties
 
 setProperties : Model -> Model
@@ -2065,11 +2092,11 @@ setProperties model =
   let
     setLocalProperties f a = (Tuple.first f) a
     setMainProperties f = (Tuple.second f)
-    default : (GraphViewPropertySetter, MainPropertySetter)
+    default : (Bool -> GraphViewPropertySetter, MainPropertySetter)
     default = ( defaultViewProperties, defaultMainProperties )
-    whenSplittingNode : (GraphViewPropertySetter, MainPropertySetter)
-    whenSplittingNode =
-      ( \isFrozen package ->
+    whenSplittingNode : Bool -> (GraphViewPropertySetter, MainPropertySetter)
+    whenSplittingNode isFrozen =
+      ( \package ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
           , canSelectNodes = False
@@ -2087,7 +2114,7 @@ setProperties model =
       )
     whenDraggingNode : (GraphViewPropertySetter, MainPropertySetter)
     whenDraggingNode =
-      ( \isFrozen package ->
+      ( \package ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
           , canSelectNodes = False
@@ -2105,7 +2132,7 @@ setProperties model =
       )
     whenDraggingSplitter : SplitterMovement -> (GraphViewPropertySetter, MainPropertySetter)
     whenDraggingSplitter movement =
-      ( \isFrozen package ->
+      ( \package ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
           , canSelectNodes = False
@@ -2123,7 +2150,7 @@ setProperties model =
       )
     whenSourceNodeSelected : (GraphViewPropertySetter, MainPropertySetter)
     whenSourceNodeSelected =
-      ( \isFrozen package ->
+      ( \package ->
           { canSelectConnections = False
           , canSelectEmptySpace = True
           , canSelectNodes = True
@@ -2141,7 +2168,7 @@ setProperties model =
       )
     whenEditingConnection : (GraphViewPropertySetter, MainPropertySetter)
     whenEditingConnection =
-      ( \isFrozen package ->
+      ( \package ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
           , canSelectNodes = False
@@ -2159,7 +2186,7 @@ setProperties model =
       )
     whenExecuting : (GraphViewPropertySetter, MainPropertySetter)
     whenExecuting =
-      ( \isFrozen package ->
+      ( \package ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
           , canSelectNodes = False
@@ -2192,15 +2219,15 @@ setProperties model =
                       Nothing ->
                         setLocalProperties default v.isFrozen v.package
                       Just (SplittingNode _) ->
-                        setLocalProperties whenSplittingNode v.isFrozen v.package
+                        setLocalProperties (whenSplittingNode v.isFrozen) v.package
                       Just (DraggingNode _) ->
-                        setLocalProperties whenDraggingNode v.isFrozen v.package
+                        setLocalProperties whenDraggingNode v.package
                       Just (ChoosingDestinationFor _ _) ->
-                        setLocalProperties whenSourceNodeSelected v.isFrozen v.package
+                        setLocalProperties whenSourceNodeSelected v.package
                       Just (Executing _) ->
-                        setLocalProperties whenExecuting v.isFrozen v.package
+                        setLocalProperties whenExecuting v.package
                       Just (EditingConnection _ _) ->
-                        setLocalProperties whenEditingConnection v.isFrozen v.package
+                        setLocalProperties whenEditingConnection v.package
                       x ->
                         Debug.todo <| "Received a local interaction for " ++ Debug.toString k ++ " that should never have been received… " ++ Debug.toString x
               }
@@ -2224,6 +2251,37 @@ setProperties model =
               mainProperties_base
     }
     
+selectDestination : Uuid -> NodeId -> PossibleDestination -> Model -> Model
+selectDestination view_uuid src possible_dest model =
+  case possible_dest of
+    NewNode phantom_id (x, y) ->
+      -- I've clicked on some kind of an empty space.  I'll want to create this node,
+      -- and then proceed to edit the connection.
+      createNewGraphNode view_uuid phantom_id (x, y) model
+      |> solidifyPhantoms view_uuid src phantom_id
+      |> replaceInteraction (Just view_uuid)
+            ( EditingConnection
+                { source = src
+                , dest = phantom_id
+                , connection = AutoSet.empty transitionToString
+                }
+                True
+            )
+      |> setProperties
+    ExistingNode dest_id conn ->
+      -- we already have a node selected, and now, an existing
+      -- node is being selected as the destination.
+      solidifyPhantoms view_uuid src dest_id model
+      |> replaceInteraction (Just view_uuid)
+        ( EditingConnection
+            { source = src
+            , dest = dest_id
+            , connection = conn
+            }
+            False
+        )
+      |> setProperties
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -2232,36 +2290,21 @@ update msg model =
 
     SelectNode view_uuid node_id ->
       ( case peekInteraction (Just view_uuid) model of
-          Just (ChoosingDestinationFor src (NewNode phantom_id (x, y))) ->
-            -- I've clicked on some kind of an empty space.  I'll want to create this node,
-            -- and then proceed to edit the connection.
-            createNewGraphNode view_uuid phantom_id (x, y) model
-            |> replaceInteraction (Just view_uuid)
-                  ( EditingConnection
-                      { source = src
-                      , dest = phantom_id
-                      , connection = AutoSet.empty transitionToString
-                      }
-                      True
-                  )
-            |> setProperties
-          Just (ChoosingDestinationFor src (ExistingNode dest_id conn)) ->
-            -- we already have a node selected, and now, an existing
-            -- node is being selected as the destination.
-            replaceInteraction (Just view_uuid)
-              ( EditingConnection
-                  { source = src
-                  , dest = dest_id
-                  , connection = conn
-                  }
-                  False
-              )
-              model
-            |> setProperties
-          _ -> -- including 'Nothing'
+          Just (ChoosingDestinationFor src etc) ->
+            selectDestination view_uuid src etc model
+          _ -> -- includes 'Nothing'
             -- this is the initial selection.
             selectSourceNode model view_uuid node_id
             |> setProperties
+      , Cmd.none
+      )
+
+    SelectSpace view_uuid ->
+      ( case peekInteraction (Just view_uuid) model of
+          Just (ChoosingDestinationFor src etc) ->
+            selectDestination view_uuid src etc model
+          _ ->
+            model
       , Cmd.none
       )
     

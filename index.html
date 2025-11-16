@@ -44,6 +44,7 @@
       let my = -1;
       let uuids = new Map();
       let windowHasFocus = true;
+      let sentCoordinates = new Map();
 
       // event to track the mouse coordinates constantly and put them into (mx, my)
       addEventListener("pointermove", (e) => {
@@ -114,7 +115,14 @@
         if (elem === null) return;
         const box = elem.getBoundingClientRect();
         const result = { uuid: uuid, x : box.left, y : box.top };
+        // to avoid sending unnecessary messages, check: have I sent this _exact_
+        // message before?  I only need to send such a message once.
         // console.log(result);
+        const alreadySent = sentCoordinates.get(uuid);
+        // we can't compare for structural equality without bringing in an external
+        // library because it's 2025 and who needs that anyway, right? Right?
+        if (alreadySent !== undefined && alreadySent.x === result.x && alreadySent.y === result.y) return;
+        sentCoordinates.set(uuid, result); // add it.
         setTimeout(() => app.ports.receiveCoordinates.send(result), 1);
       });
 

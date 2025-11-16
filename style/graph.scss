@@ -2,6 +2,10 @@
 
 .graph {
   transition: all 0.3s ease;
+
+  &.can-select-space {
+    cursor: crosshair;
+  }
 }
 
 .status-line {

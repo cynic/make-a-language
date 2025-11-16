@@ -94,6 +94,7 @@ type UIMsg
 type Main_Msg
   = UIMsg UIMsg
   | SelectNode Uuid NodeId
+  | SelectSpace Uuid
   | MovePhantomNode Uuid (Float, Float)
   -- | EditTransition Uuid NodeId NodeId Connection
   | Escape -- the universal "No! Go Back!" key & command

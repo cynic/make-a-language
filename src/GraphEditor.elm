@@ -1695,28 +1695,8 @@ matrixFromZoom (panX, panY) factor {- (pointerX, pointerY) -} =
 
 viewMainSvgContent : GraphView -> Svg Msg
 viewMainSvgContent graph_view =
-  let
-    ( guest_x, guest_y ) = graph_view.guest_coordinates
-    ( guest_width, guest_height) = graph_view.guest_dimensions
-  in
   g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
     [ transform [ matrixFromZoom graph_view.pan graph_view.zoom ]
-    -- , case graph_view.interactionsDict of
-    --     Just (Dragging _) ->
-    --       -- disable pointer-events.
-    --       -- This is to stop elements from getting in the way of
-    --       -- registering mouse-movement.
-    --       pointerEvents "none"
-    --     _ ->
-    --       class []
-    , class
-        ( conditionalList
-            [ ("graph", True)
-            , ("can-select-nodes", graph_view.properties.canSelectNodes)
-            , ("can-select-connections", graph_view.properties.canSelectConnections)
-            , ("can-split-nodes", graph_view.properties.canSplitNodes)
-            ]
-        )
     ]
     [ defs [] arrowheadDefs
       -- this part is for debugging panning. If I uncomment it, I should also
@@ -1732,26 +1712,14 @@ viewMainSvgContent graph_view =
     --     ]
     --     []
     , Dict.toList graph_view.drawingData.link_drawing
+      -- draw any phantom link last, because it should be displayed on top of everything else.
       |> List.sortBy (\(_, data) -> if data.isPhantom then 1 else 0)
       |> List.map (\((from, to), data) -> viewLink (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
       |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)
       |> g [ class [ "nodes" ] ]
-    -- , case graph_view.interactionsDict of
-    --     Just (ModifyingGraph _ { source }) ->
-    --       Graph.get source graph_view.package.userGraph.graph
-    --       |> Maybe.map (viewPhantom graph_view mouseCoords)
-    --       |> Maybe.withDefault (g [] [])
-    --     _ ->
-    --       g [] []
     ]
-
--- {-| Given a width, get the correct height for a thumbnail -}
--- thumbnailHeight : Float -> Float
--- thumbnailHeight w =
---   -- just fudge some kind of an "appropriate" aspect ratio ;-)!
---   w / sqrt 5
 
 -- {-| Takes a guess at where a string should be broken into words.
 
@@ -1826,92 +1794,6 @@ viewMainSvgContent graph_view =
 --   in
 --     break (String.toList text) 0 [] []
 
--- viewComputationThumbnail : Float -> Model -> (Float, Float) -> GraphPackage -> Svg GraphView_Msg
--- viewComputationThumbnail width m mouseCoords { dimensions, userGraph, description } =
---   let
---     height = thumbnailHeight width
---     ( m_w, m_h ) = dimensions
---     inner_pad = 40
---     ( (min_x, max_x), (min_y, max_y) ) =    
---       Graph.fold
---         (\ctx ((xmin, xmax), (ymin, ymax)) ->
---           ( ( min ctx.node.label.x xmin
---             , max ctx.node.label.x xmax
---             )
---           , ( min ctx.node.label.y ymin
---             , max ctx.node.label.y ymax
---             )
---           )
---         )
---         ((m_w, 0), (m_h, 0))
---         userGraph.graph
---       |> \((a, b), (c, d)) -> ((a - inner_pad, b + inner_pad*2), (c - inner_pad, d + inner_pad*2))
---       -- |> Debug.log "Bounds"
---     fontSize = 16
---     lineSpacing = 1.2
---     fcc = 2.0 -- font-character-constant; typeface-specific
---     brokenString =
---       Maybe.map (breakStringBadly fcc fontSize width) description
---       |> Maybe.withDefault []
---     descriptionStart_y =
---       height -
---         (toFloat (List.length brokenString - 1) * (toFloat fontSize * lineSpacing) )
---         - 0.5 * fontSize
---     pkg = m.package
---   in
---     -- this takes the vast majority of its functionality from ForceDirectedGraph.elm
---     -- so, since I can nest a SVG inside a SVG, let me just abuse that a bit…
---     svg
---       [
---         TypedSvg.Attributes.InPx.width width
---       , TypedSvg.Attributes.InPx.height height
---       ]
---       [ svg
---         {-
---           As I get in 
---         -}
---         [ TypedSvg.Attributes.viewBox
---             min_x -- x-offset
---             min_y -- y-offset
---             (max_x - min_x) -- width
---             (max_y - min_y) -- height
---         , TypedSvg.Attributes.pointerEvents "none"
---         ]
---         [ --Automata.Debugging.debugAutomatonGraph "Thumbnail" model.userGraph |> \_ ->
---           viewMainSvgContent
---             { m
---               | package =
---                   { pkg
---                     | userGraph = .solvedGraph (computeGraphFully (m_w, m_h) userGraph)
---                   }
---               , interactionsDict = Nothing
---             }
---             mouseCoords
---         ]
---       , TypedSvg.g
---           []
---           [ viewGraphReference userGraph.graphIdentifier 0 0 ]
---       , text_
---           [ textAnchor AnchorMiddle
---           , alignmentBaseline AlignmentCentral
---           , fill <| Paint <| Color.black
---           , fontFamily [ "serif" ]
---           , strokeWidth 2
---           , stroke <| Paint <| Color.white
---           , Html.Attributes.attribute "paint-order" "stroke fill markers"
---           ]
---           ( List.indexedMap
---               (\i line ->
---                 tspan
---                   [ x <| width / 2
---                   , y <| descriptionStart_y + (toFloat i * (toFloat fontSize * lineSpacing))
---                   ]
---                   [ text line ]
---               )
---               brokenString
---           )
---       ]
-
 viewGraph : GraphView -> Html Msg
 viewGraph graphView =
   let
@@ -1978,6 +1860,17 @@ viewGraph graphView =
           ([ viewBox guest_x guest_y guest_width guest_height
           , TypedSvg.Attributes.InPx.width host_width
           , TypedSvg.Attributes.InPx.height host_height
+          , class
+              ( conditionalList
+                  [ ("graph", True)
+                  , ("can-select-nodes", graphView.properties.canSelectNodes)
+                  , ("can-select-connections", graphView.properties.canSelectConnections)
+                  , ("can-split-nodes", graphView.properties.canSplitNodes)
+                  , ("can-select-space", graphView.properties.canSelectEmptySpace)
+                  ]
+              )
+          , graphView.properties.canSelectEmptySpace
+            |> thenPermitSvgInteraction (onClick (SelectSpace graphView.id))
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
             viewUndoRedoVisualisation graphView
