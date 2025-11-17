@@ -53,6 +53,9 @@ import GraphEditor exposing (viewGraph)
 import Automata.Debugging exposing (debugLog_)
 import Automata.Debugging exposing (debugAutomatonGraphXY)
 import Automata.Debugging exposing (debugGraph)
+import Browser.Dom
+import Task
+import Process
 
 {-
 Quality / technology requirements:
@@ -3871,10 +3874,10 @@ viewConnectionEditor model uuid {source, dest, connection} =
                 [ input
                     [ HA.class "input-field"
                     , HA.placeholder "Type here…"
+                    , HA.id "quick-input"
                     , HA.autocomplete False
                     , HA.attribute "autocorrect" "off"
                     , HA.attribute "spellcheck" "off"
-                    , HA.autofocus True
                     ]
                     []
                 -- , button

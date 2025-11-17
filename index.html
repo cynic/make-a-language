@@ -196,6 +196,64 @@
       setTimeout(doInitialLoad, 1, e.target.result);
     };
 
+    // ======= Focus on #quick-input whenever it appears.
+    // ======= Because the `autofocus` attribute only works on initial load
+    // ======= and this vast amount of code is, apparently, the normal and
+    // ======= accepted way to do things 🔥
+    // ======= and it is 2025 🔥🔥
+    // ======= and everything is fine 🔥🔥🔥
+
+    // Create a MutationObserver to watch for DOM changes
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        // Check if the quick-input element exists
+        const quickInput = document.getElementById('quick-input');
+        
+        if (quickInput) {
+          // Remove any existing event listeners to prevent duplicates
+          quickInput.removeEventListener('focus', preventDefaultFocus);
+          
+          // Focus on the element
+          quickInput.focus();
+          
+          // Add a temporary event listener to prevent default focus behavior
+          // This ensures our focus takes precedence
+          quickInput.addEventListener('focus', preventDefaultFocus, { once: true });
+        }
+      });
+    });
+
+    // Helper function to prevent default focus behavior
+    function preventDefaultFocus(e) {
+      e.preventDefault();
+    }
+
+    // Configure the observer to watch for:
+    // - Added nodes (childList: true)
+    // - Subtree changes to watch nested elements (subtree: true)
+    const observerConfig = {
+      childList: true,
+      subtree: true
+    };
+
+    // Start observing the document body
+    observer.observe(document.body, observerConfig);
+
+    // Also check immediately in case the element already exists
+    const existingQuickInput = document.getElementById('quick-input');
+    if (existingQuickInput) {
+      existingQuickInput.focus();
+    }
+
+    // To stop observing when no longer needed:
+    // observer.disconnect();
+
+    // Instead of the above, I could always use some sort of `Task`
+    // and `Process.sleep` and `Dom.focus` and all of that from Elm
+    // … just kidding, that stuff is so error-prone and janky that I'd
+    // be heisenbugging all over the place for years.
+    // No, I'll just go with JavaScript and call it a day.
+
    </script>
 </body>
 
