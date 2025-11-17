@@ -3835,8 +3835,100 @@ viewMainInterface model =
 viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
 viewConnectionEditor model uuid {source, dest, connection} =
   div
-    [ HA.class "connection-picker-container" ]
-    [ text "connection picker" ]
+    [ HA.class "modal" ]
+    [ div
+        [ HA.class "connection-editor" ]
+        [ div
+            [ HA.class "set-builder" ]
+            [ div -- set visualization area
+                [ HA.class "set-visualization" ]
+                [ div
+                    [ HA.class "set-left-bracket" ]
+                    [ text "{"
+                    ]
+                , div -- terminal items group
+                    [ HA.class "terminals" ]
+                    [ span [ HA.class "set-item" ] [ text "b" ]
+                    , span [ HA.class "set-item" ] [ text "B" ]
+                    ]
+                , div
+                    [ HA.class "set-separator" ]
+                    []
+                , div -- normal (non-terminal) items group
+                    [ HA.class "non-terminals" ]
+                    [ span [ HA.class "set-item" ] [ text "a" ]
+                    ]
+                , div
+                    [ HA.class "set-right-bracket" ]
+                    [ text "}"
+                    ]
+                ]
+            ]
+        , div -- quick input
+            [ HA.class "quick-input" ]
+            [ div
+                [ HA.class "quick-input-bar" ]
+                [ input
+                    [ HA.class "input-field"
+                    , HA.placeholder "Type here…"
+                    , HA.autocomplete False
+                    , HA.attribute "autocorrect" "off"
+                    , HA.attribute "spellcheck" "off"
+                    , HA.autofocus True
+                    ]
+                    []
+                -- , button
+                --     [ HA.class "action-button" ]
+                --     [ span [] [ text "🎨 Images" ] ]
+                -- , button
+                --     [ HA.class "action-button secondary" ]
+                --     [ span [] [ text "🔍 Browse All" ] ]
+                ]
+            , div
+                [ HA.class "instructions" ]
+                [ div
+                    []
+                    [ span [] [ text "Typing a character once adds it; typing it again promotes it to " ]
+                    , span [ HA.class "terminal-style" ] [ text "terminal" ]
+                    , span [] [ text " status; typing it a third time removes it." ]
+                    ]
+                , div
+                    []
+                    [ span [] [ text "Typing ` enters image-search mode.  Use the mouse to scroll and select a computation." ]
+                    ]
+                ]
+            ]
+        , div -- image palette
+            [ HA.class "image-palette" ]
+            [ div
+                [ HA.class "palette-grid" ]
+                ( List.filterMap
+                    (\view_uuid ->
+                        AutoDict.get view_uuid model.graph_views
+                        |> Maybe.map
+                          (\graph_view ->
+                            div
+                              [ HA.class "palette-item"
+                              , HE.onClick (UIMsg <| SelectPackage graph_view.package.userGraph.graphIdentifier)
+                              ]
+                              [ viewGraph graph_view
+                              , div
+                                  [ HA.class "description" ]
+                                  [ graph_view.package.description
+                                    |> Maybe.withDefault "(no description)"
+                                    |> text
+                                  ]
+                              ]
+                        )
+                    )
+                    model.computationsExplorer
+                )
+            , div
+                []
+                []
+            ]
+        ]
+    ]
 
 view : Model -> Html Msg
 view model =
