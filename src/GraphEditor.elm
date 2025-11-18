@@ -698,14 +698,18 @@ viewLink view_uuid (from, to) drawing_data =
             Nothing ->
               connectionToSvgText drawing_data.label
         linkClass =
-          case ( drawing_data.executionData, drawing_data.isPhantom ) of
-            ( Nothing, True ) ->
+          case ( drawing_data.executionData, drawing_data.highlighting ) of
+            ( Nothing, Just Phantom ) ->
               [ "link", "phantom" ]
-            ( Nothing, False ) ->
+            ( Nothing, Just Highlight ) ->
+              [ "link", "highlight" ]
+            ( Nothing, Nothing ) ->
               [ "link" ]
-            ( Just {smallest_recency}, True ) ->
+            ( Just {smallest_recency}, Just Phantom ) ->
               [ "link", "executed", "phantom", "recent-" ++ String.fromInt smallest_recency ]
-            ( Just {smallest_recency}, False ) ->
+            ( Just {smallest_recency}, Just Highlight ) ->
+              [ "link", "executed", "highlight", "recent-" ++ String.fromInt smallest_recency ]
+            ( Just {smallest_recency}, Nothing ) ->
               [ "link", "executed", "recent-" ++ String.fromInt smallest_recency ]
         x_ = drawing_data.pathBetween.transition_coordinates.x
         y_ = drawing_data.pathBetween.transition_coordinates.y
@@ -1715,7 +1719,7 @@ viewMainSvgContent graph_view =
     --     []
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
-      |> List.sortBy (\(_, data) -> if data.isPhantom then 1 else 0)
+      |> List.sortBy (\(_, data) -> if Maybe.isJust data.highlighting then 1 else 0)
       |> List.map (\((from, to), data) -> viewLink graph_view.id (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing

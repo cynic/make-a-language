@@ -200,7 +200,7 @@ linkDrawingForPackage package =
                   sourceNode.node.label
                   destNode.node.label
                   cardinality
-            , isPhantom = False
+            , highlighting = Nothing
             }
           )
     )
@@ -287,6 +287,49 @@ solvedViewFromPackage (w, h) location createFrozen pkg model =
   viewFromPackage
     (GraphEditor.computeGraphFully (w, h) pkg.userGraph)
     (w, h) location createFrozen pkg model
+
+centerAndHighlight : NodeId -> NodeId -> GraphView -> GraphView
+centerAndHighlight src dest graph_view =
+  Maybe.map2
+    (\srcContext destContext ->
+      let
+        bbox a b =
+          { min = { x = min a.x b.x, y = min a.y b.y }
+          , max = { x = max a.x b.x, y = max a.y b.y }
+          }
+        bounds =
+          bbox srcContext.node.label destContext.node.label
+        inner_padding = 60
+        adjusted =
+          { bounds
+            | min = { x = bounds.min.x - inner_padding, y = bounds.min.y - inner_padding }
+            , max = { x = bounds.max.x + inner_padding, y = bounds.max.y + inner_padding }
+          }
+      in
+        { graph_view
+          | drawingData =
+              let drawingData = graph_view.drawingData in
+                { drawingData
+                  | link_drawing =
+                      Dict.update (src, dest)
+                        (Maybe.map (\link ->
+                          { link | highlighting = Just Highlight }
+                        ))
+                        drawingData.link_drawing
+                }
+          , guest_coordinates =
+              ( adjusted.min.x, adjusted.min.y )
+          , guest_dimensions =
+              ( adjusted.max.x - adjusted.min.x, adjusted.max.y - adjusted.min.y )
+          , guest_inner_coordinates =
+              ( bounds.min.x, bounds.min.y )
+          , guest_inner_dimensions =
+              ( bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y )
+        }
+    )
+    (Graph.get src graph_view.package.userGraph.graph)
+    (Graph.get dest graph_view.package.userGraph.graph)
+  |> Maybe.withDefault graph_view
 
 -- MAIN
 
@@ -1708,6 +1751,11 @@ editConnection (x, y) src dest connection model =
                 { referenceList = uuids
                 , mainGraph = main_uuid
                 }
+          , graph_views =
+              updateGraphView main_uuid
+                (centerAndHighlight src dest >> Just)
+                model_.graph_views
+
         }
       )
   |> setProperties
@@ -1738,7 +1786,7 @@ selectSourceNode model view_uuid node_id =
                 Recursive
           , executionData = Nothing
           , label = AutoSet.empty transitionToString
-          , isPhantom = True
+          , highlighting = Just Phantom
           }
         interaction =
           ChoosingDestinationFor node_id
@@ -1791,7 +1839,7 @@ solidifyPhantoms view_uuid src phantom_id model =
         , link_drawing =
             ( Dict.update (src, phantom_id)
                 (Maybe.map (\existing_link ->
-                  { existing_link | isPhantom = False }
+                  { existing_link | highlighting = Nothing }
                 ))
                 drawingData.link_drawing
             )
@@ -1823,7 +1871,7 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
             Unidirectional
       , executionData = Nothing
       , label = AutoSet.empty transitionToString
-      , isPhantom = True
+      , highlighting = Just Phantom
       }
   in
     updateDrawingData view_uuid
@@ -1836,7 +1884,7 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
                 else
                   Dict.update (sourceNodeContext.node.id, existing_id)
                     (Maybe.map (\existing_link ->
-                      { existing_link | isPhantom = False }
+                      { existing_link | highlighting = Nothing }
                     ))
                     drawingData.link_drawing
               )
@@ -1868,7 +1916,7 @@ phantomLinkDrawingForExisting sourceNodeContext existingNodeContext =
           cardinality
     , executionData = Nothing
     , label = connection
-    , isPhantom = True
+    , highlighting = Just Phantom
     }
 
 switchFromPhantomToExisting : Uuid -> NodeId -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
@@ -2416,7 +2464,23 @@ deleteLinkFromView view_uuid source dest model =
               model.graph_views
       }
     else
-      model
+      { model
+        | graph_views =
+            AutoDict.update view_uuid
+              (Maybe.map (\graph_view ->
+                { graph_view
+                  | drawingData =
+                      let drawingData = graph_view.drawingData in
+                      { drawingData
+                        | link_drawing =
+                            Dict.update (source, dest)
+                              (Maybe.map (\link -> { link | highlighting = Nothing }))
+                              drawingData.link_drawing
+                      }
+                }
+              ))
+              model.graph_views
+      }
 
 deleteNodeFromView : Uuid -> NodeId -> NodeId -> Model -> Model
 deleteNodeFromView view_uuid source dest model =

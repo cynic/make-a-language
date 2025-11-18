@@ -335,6 +335,10 @@ type alias PathBetweenReturn =
   , target_connection_point : { x : Float, y : Float }
   }
 
+type LinkHighlighting
+  = Phantom
+  | Highlight
+
 type alias LinkDrawingData =
   { cardinality : Cardinality
   , pathBetween : PathBetweenReturn
@@ -345,7 +349,7 @@ type alias LinkDrawingData =
         , chosen : AutoDict.Dict String AcceptVia Int
         }
   , label : Connection
-  , isPhantom : Bool
+  , highlighting : Maybe LinkHighlighting
   }
 
 type ExclusiveNodeAttributes

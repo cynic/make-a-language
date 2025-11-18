@@ -327,6 +327,30 @@
       
     }
 
+    // Phantom edge group
+    &.highlight {
+      // Phantom edge background (the "stroke" effect)
+      &.background {
+        stroke: var(--background);
+        stroke-width: 6px;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.6;
+        pointer-events: none;
+      }
+      
+      // Main phantom edge path
+      &:not(.background) {
+        stroke: var(--pink);
+        stroke-width: 4px;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        pointer-events: none;
+        marker-end: url(#arrowhead);
+      }
+      
+    }
+
   }
 }
 
