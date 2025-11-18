@@ -129,7 +129,11 @@ type alias Main_Model =
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties : MainUIProperties
   , computationsExplorer : List Uuid
-  , connectionEditor : List Uuid
+  , connectionEditor :
+      Maybe
+        { referenceList : List Uuid
+        , mainGraph : Uuid
+        }
   }
 
 type InteractionState
@@ -373,6 +377,7 @@ type alias DrawingData =
 type InterfaceLocation -- for GraphView
   = Sidebar
   | MainEditor
+  | Independent
 
 type alias GraphView =
   { id : Uuid

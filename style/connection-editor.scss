@@ -11,6 +11,24 @@
     justify-items: flex-start;
     flex: 1;
     min-height: 0; // Important for flex child scrolling
+
+    .connection-editor-top {
+        display: flex;
+        gap: 16px;
+        width: 100%;
+
+        .top-left {
+            flex-grow: 1;
+        }
+
+        .top-right {
+            background: var(--background-light);
+            border-radius: 50%;
+            align-self: center;
+            justify-self: center;
+            border: solid 2px var(--comment);
+        }
+    }
   
     // ===== SET BUILDER (at top of connection editor) =====
     .set-builder {

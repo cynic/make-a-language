@@ -403,7 +403,7 @@ init flags =
       , properties =
           defaultMainProperties
       , computationsExplorer = []
-      , connectionEditor = []
+      , connectionEditor = Nothing
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -1272,6 +1272,9 @@ updateMainEditorDimensions ({uiState} as model) =
                       updateSidebar graph_view
                     else
                       graph_view -- don't bother.
+                  Independent ->
+                    -- no resizing.
+                    graph_view
             )
             model.graph_views
     }
@@ -1654,11 +1657,35 @@ update_ui ui_msg model =
           )
           model
         |> packagesToGraphViews (450, 9/16 * 450)
-        |> (\(uuids, model_) ->
+        |>  (\(uuids, model_) ->
+              AutoDict.get model.mainGraphView model.graph_views
+              |> Maybe.map (\gv ->
+                let
+                  ( main_view_id, updated_model ) =
+                    viewFromPackage
+                      ( 250
+                      , 250 --* 9/16
+                      )
+                      Independent
+                      True
+                      gv.package.userGraph.graphIdentifier
+                      model_
+                    |> Maybe.map (\({id}, model__) -> ( id, model__))
+                    |> Maybe.withDefault ( model.mainGraphView, model_ ) -- erk!! NOT FROZEN!!!!!
+                in
+                  (uuids, main_view_id, updated_model)
+               )
+              |> Maybe.withDefault ( uuids, model.mainGraphView, model_ )
+            )
+        |>  (\(uuids, main_uuid, model_) ->
               { model_
-                | connectionEditor = uuids
+                | connectionEditor =
+                    Just
+                      { referenceList = uuids
+                      , mainGraph = main_uuid
+                      }
               }
-           )
+            )
         |> setProperties
       , Cmd.none
       )
@@ -3848,68 +3875,85 @@ viewMainInterface model =
 
 viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
 viewConnectionEditor model uuid {source, dest, connection} =
+  let
+    editorData =
+      model.connectionEditor
+      |> Maybe.withDefault { referenceList = [], mainGraph = model.mainGraphView }
+  in
   div
     [ HA.class "modal" ]
     [ div
         [ HA.class "connection-editor" ]
         [ div
-            [ HA.class "set-builder" ]
-            [ div -- set visualization area
-                [ HA.class "set-visualization" ]
-                [ div
-                    [ HA.class "set-left-bracket" ]
-                    [ text "{"
-                    ]
-                , div -- terminal items group
-                    [ HA.class "terminals" ]
-                    [ span [ HA.class "set-item" ] [ text "b" ]
-                    , span [ HA.class "set-item" ] [ text "B" ]
-                    ]
-                , div
-                    [ HA.class "set-separator" ]
-                    []
-                , div -- normal (non-terminal) items group
-                    [ HA.class "non-terminals" ]
-                    [ span [ HA.class "set-item" ] [ text "a" ]
-                    ]
-                , div
-                    [ HA.class "set-right-bracket" ]
-                    [ text "}"
-                    ]
-                ]
-            ]
-        , div -- quick input
-            [ HA.class "quick-input" ]
+            [ HA.class "connection-editor-top" ]
             [ div
-                [ HA.class "quick-input-bar" ]
-                [ input
-                    [ HA.class "input-field"
-                    , HA.placeholder "Type here…"
-                    , HA.id "quick-input"
-                    , HA.autocomplete False
-                    , HA.attribute "autocorrect" "off"
-                    , HA.attribute "spellcheck" "off"
+                [ HA.class "top-left" ]
+                [ div
+                    [ HA.class "set-builder" ]
+                    [ div -- set visualization area
+                        [ HA.class "set-visualization" ]
+                        [ div
+                            [ HA.class "set-left-bracket" ]
+                            [ text "{"
+                            ]
+                        , div -- terminal items group
+                            [ HA.class "terminals" ]
+                            [ span [ HA.class "set-item" ] [ text "b" ]
+                            , span [ HA.class "set-item" ] [ text "B" ]
+                            ]
+                        , div
+                            [ HA.class "set-separator" ]
+                            []
+                        , div -- normal (non-terminal) items group
+                            [ HA.class "non-terminals" ]
+                            [ span [ HA.class "set-item" ] [ text "a" ]
+                            ]
+                        , div
+                            [ HA.class "set-right-bracket" ]
+                            [ text "}"
+                            ]
+                        ]
                     ]
-                    []
-                -- , button
-                --     [ HA.class "action-button" ]
-                --     [ span [] [ text "🎨 Images" ] ]
-                -- , button
-                --     [ HA.class "action-button secondary" ]
-                --     [ span [] [ text "🔍 Browse All" ] ]
+                , div -- quick input
+                    [ HA.class "quick-input" ]
+                    [ div
+                        [ HA.class "quick-input-bar" ]
+                        [ input
+                            [ HA.class "input-field"
+                            , HA.placeholder "Type here…"
+                            , HA.id "quick-input"
+                            , HA.autocomplete False
+                            , HA.attribute "autocorrect" "off"
+                            , HA.attribute "spellcheck" "off"
+                            ]
+                            []
+                        -- , button
+                        --     [ HA.class "action-button" ]
+                        --     [ span [] [ text "🎨 Images" ] ]
+                        -- , button
+                        --     [ HA.class "action-button secondary" ]
+                        --     [ span [] [ text "🔍 Browse All" ] ]
+                        ]
+                    , div
+                        [ HA.class "instructions" ]
+                        [ div
+                            []
+                            [ span [] [ text "Typing a character once adds it; typing it again promotes it to " ]
+                            , span [ HA.class "terminal-style" ] [ text "terminal" ]
+                            , span [] [ text " status; typing it a third time removes it." ]
+                            ]
+                        , div
+                            []
+                            [ span [] [ text "Typing ` enters image-search mode.  Use the mouse to scroll and select a computation." ]
+                            ]
+                        ]
+                    ]
                 ]
             , div
-                [ HA.class "instructions" ]
-                [ div
-                    []
-                    [ span [] [ text "Typing a character once adds it; typing it again promotes it to " ]
-                    , span [ HA.class "terminal-style" ] [ text "terminal" ]
-                    , span [] [ text " status; typing it a third time removes it." ]
-                    ]
-                , div
-                    []
-                    [ span [] [ text "Typing ` enters image-search mode.  Use the mouse to scroll and select a computation." ]
-                    ]
+                [ HA.class "top-right" ]
+                [ AutoDict.get editorData.mainGraph model.graph_views
+                  |> Maybe.map viewGraph
+                  |> Maybe.withDefault (text "")
                 ]
             ]
         , div -- image palette
@@ -3936,7 +3980,7 @@ viewConnectionEditor model uuid {source, dest, connection} =
                               ]
                         )
                     )
-                    model.computationsExplorer
+                    editorData.referenceList
                 )
             , div
                 []
