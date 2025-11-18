@@ -403,6 +403,7 @@ init flags =
       , properties =
           defaultMainProperties
       , computationsExplorer = []
+      , connectionEditor = []
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -1474,20 +1475,24 @@ panGraphView x y graph_view =
     else
       graph_view
 
+packagesToGraphViews : (Float, Float) -> Model -> (List Uuid, Model)
+packagesToGraphViews (w, h) model =
+  List.foldl
+    (\uuid (acc, model_) ->
+      case viewFromPackage (w, h) Sidebar True uuid model_ of
+        Nothing ->
+          (acc, model_)
+        Just (v, model__) ->
+          (v.id :: acc, model__)
+    )
+    ( [], model )
+    (AutoDict.keys model.packages)
+
 selectComputationsIcon : Model -> Model
 selectComputationsIcon model =
   let
     (computation_views, updated_model) =
-      List.foldl
-        (\uuid (acc, model_) ->
-          case viewFromPackage (sidebarGraphDimensions model.uiState) Sidebar True uuid model_ of
-            Nothing ->
-              (acc, model_)
-            Just (v, model__) ->
-              (v.id :: acc, model__)
-        )
-        ( [], model )
-        (AutoDict.keys model.packages)
+      packagesToGraphViews (sidebarGraphDimensions model.uiState) model
   in
     { updated_model
       | uiState =
@@ -1648,6 +1653,12 @@ update_ui ui_msg model =
               False
           )
           model
+        |> packagesToGraphViews (450, 9/16 * 450)
+        |> (\(uuids, model_) ->
+              { model_
+                | connectionEditor = uuids
+              }
+           )
         |> setProperties
       , Cmd.none
       )
@@ -3905,6 +3916,7 @@ viewConnectionEditor model uuid {source, dest, connection} =
             [ HA.class "image-palette" ]
             [ div
                 [ HA.class "palette-grid" ]
+                -- good width for a 4x? grid: 450-455px
                 ( List.filterMap
                     (\view_uuid ->
                         AutoDict.get view_uuid model.graph_views

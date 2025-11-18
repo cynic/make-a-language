@@ -129,6 +129,7 @@ type alias Main_Model =
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties : MainUIProperties
   , computationsExplorer : List Uuid
+  , connectionEditor : List Uuid
   }
 
 type InteractionState
