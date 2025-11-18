@@ -1700,14 +1700,29 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
-    EditConnection coordinates uuid src dest connection ->
-      ( pushInteractionForStack (Just uuid)
-          ( EditingConnection
-              { source = src, dest = dest, connection = connection }
-              False
-          )
-          model
-          |>  editConnection coordinates src dest connection
+    SelectNode view_uuid node_id ->
+      ( case peekInteraction (Just view_uuid) model of
+          Just (ChoosingDestinationFor src etc) ->
+            selectDestination view_uuid src etc model
+          _ -> -- includes 'Nothing'
+            -- this is the initial selection.
+            selectSourceNode model view_uuid node_id
+            |> setProperties
+      , Cmd.none
+      )
+
+    SelectSpace view_uuid ->
+      ( case peekInteraction (Just view_uuid) model of
+          Just (ChoosingDestinationFor src etc) ->
+            selectDestination view_uuid src etc model
+          _ ->
+            model
+      , Cmd.none
+      )
+    
+    MovePhantomNode view_uuid (x, y) ->
+      ( movePhantomNode view_uuid (x, y) model
+        |> setProperties
       , Cmd.none
       )
 
@@ -2534,32 +2549,6 @@ update msg model =
     UIMsg ui_msg ->
       update_ui ui_msg model
 
-    SelectNode view_uuid node_id ->
-      ( case peekInteraction (Just view_uuid) model of
-          Just (ChoosingDestinationFor src etc) ->
-            selectDestination view_uuid src etc model
-          _ -> -- includes 'Nothing'
-            -- this is the initial selection.
-            selectSourceNode model view_uuid node_id
-            |> setProperties
-      , Cmd.none
-      )
-
-    SelectSpace view_uuid ->
-      ( case peekInteraction (Just view_uuid) model of
-          Just (ChoosingDestinationFor src etc) ->
-            selectDestination view_uuid src etc model
-          _ ->
-            model
-      , Cmd.none
-      )
-    
-    MovePhantomNode view_uuid (x, y) ->
-      ( movePhantomNode view_uuid (x, y) model
-        |> setProperties
-      , Cmd.none
-      )
-
     Escape ->
       ( if model.properties.canEscape then
           case popMostRecentInteraction model of
@@ -2587,6 +2576,17 @@ update msg model =
               |> setProperties
         else
           model
+      , Cmd.none
+      )
+
+    EditConnection coordinates uuid src dest connection ->
+      ( pushInteractionForStack (Just uuid)
+          ( EditingConnection
+              { source = src, dest = dest, connection = connection }
+              False
+          )
+          model
+          |>  editConnection coordinates src dest connection
       , Cmd.none
       )
 
@@ -3544,6 +3544,7 @@ subscriptions model =
                       MovePhantomNode
                         uuid
                         (graph_view |> translateHostCoordinates (x, y))
+                      |> UIMsg
                     )
                     (D.field "clientX" D.float)
                     (D.field "clientY" D.float)

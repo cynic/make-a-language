@@ -733,7 +733,7 @@ viewLink view_uuid (from, to) drawing_data =
               , y <| y_
               -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , class ( "text" :: linkClass )
-              , onClick (UIMsg <| EditConnection (x_, y_) view_uuid from to drawing_data.label)
+              , onClick (EditConnection (x_, y_) view_uuid from to drawing_data.label)
               ]
               ( title [] [ text "Click to modify" ] :: labelText 
               )
@@ -857,7 +857,7 @@ viewNode properties id data =
     g
       [ class nodeClass
       , properties.canSelectNodes
-        |> thenPermitSvgInteraction (onClick <| SelectNode data.view_uuid id)
+        |> thenPermitSvgInteraction (onClick <| UIMsg <| SelectNode data.view_uuid id)
       -- , (properties.canSplitNodes && data.canSplit)
       --   |> thenPermitInteraction (onClick <| StartSplit id)
       ]
@@ -1876,7 +1876,7 @@ viewGraph graphView =
                   ]
               )
           , graphView.properties.canSelectEmptySpace
-            |> thenPermitSvgInteraction (onClick (SelectSpace graphView.id))
+            |> thenPermitSvgInteraction (onClick (UIMsg <| SelectSpace graphView.id))
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
             viewUndoRedoVisualisation graphView

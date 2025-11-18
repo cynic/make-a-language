@@ -90,15 +90,15 @@ type UIMsg
   | ReceiveCoordinates Uuid (Float, Float)
   | ResetPan Uuid
   | SelectPackage Uuid
-  | EditConnection (Float, Float) Uuid NodeId NodeId Connection
+  | SelectNode Uuid NodeId
+  | SelectSpace Uuid
+  | MovePhantomNode Uuid (Float, Float)
   -- | Zoom Uuid Float
 
 type Main_Msg
   = UIMsg UIMsg
-  | SelectNode Uuid NodeId
-  | SelectSpace Uuid
-  | MovePhantomNode Uuid (Float, Float)
   -- | EditTransition Uuid NodeId NodeId Connection
+  | EditConnection (Float, Float) Uuid NodeId NodeId Connection
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
   | Undo Uuid
