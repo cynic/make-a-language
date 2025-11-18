@@ -28,6 +28,18 @@
   }
 }
 
+.debug-gv-size {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  color: var(--red);
+  font-size: 12px;
+  pointer-events: none;
+  user-select: none;
+  font-weight: bold;
+  z-index: 250;
+}
+
 // ===== Borders, for debugging dimensions =====
 // svg {
   // border: solid 2px red;

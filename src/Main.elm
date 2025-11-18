@@ -205,80 +205,88 @@ linkDrawingForPackage package =
           )
     )
   |> Dict.fromList
-  
 
-{-| Creates a new GraphView from a GraphPackage within the `packages`
-    dictionary, and adds it to the `graph_views` dictionary in the `Model`.
-
-    If there is no such `GraphPackage`, then nothing is done and no
-    `GraphView` is returned.
+{-| Probably not the function you want. Look at `solvedViewFromPackage` and
+    `naiveViewFromPackage` instead.
 -}
-viewFromPackage : (Float, Float) -> InterfaceLocation -> Bool -> Uuid -> Model -> Maybe (GraphView, Model)
-viewFromPackage (w, h) location createFrozen package_uuid model =
+viewFromPackage : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
+viewFromPackage computed (w, h) location createFrozen pkg model =
   let
     (id, model_) = getUuid model
+    -- now that we have the positions, calculate the dimensions of
+    -- the viewport.
+    -- first, let's get the aspect ratio.  That will let us figure out
+    -- the height of the viewport "automatically" once we have the right width.
+    solved_pkg =
+      { pkg
+        | userGraph =
+          computed.solvedGraph
+          |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
+      }
+    guest_viewport =
+      calculateGuestDimensionsForHost
+        (w, h)
+        createFrozen
+        solved_pkg.userGraph.graph
+    properties = defaultViewProperties createFrozen solved_pkg
+    graph_view : GraphView
+    graph_view =
+      { id = id
+      , isFrozen = createFrozen
+      , package = solved_pkg
+      , interfaceLocation = location
+      , simulation = computed.simulation
+      , host_dimensions = (w, h)
+      , host_coordinates = (-1, -1)
+      , panBuffer = GraphEditor.panBufferAmount (w, h)
+      , guest_dimensions = guest_viewport.dimensions
+      , guest_coordinates = guest_viewport.coordinates
+      , guest_inner_coordinates = guest_viewport.inner_coordinates
+      , guest_inner_dimensions = guest_viewport.inner_dimensions
+      , forces = computed.forces
+      , specificForces = IntDict.empty
+      , zoom = 1.0
+      , pan = ( 0, 0)
+      , disconnectedNodes = Set.empty
+      , properties = properties
+      , drawingData =
+          { link_drawing = linkDrawingForPackage solved_pkg
+          , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id model
+          }
+      }
   in
-    AutoDict.get package_uuid model.packages
-    |> Maybe.map
-      (\pkg ->
-        let
-          computed : GraphEditor.ComputeGraphResult
-          computed = GraphEditor.computeGraphFully (w, h) pkg.userGraph
-          -- now that we have the positions, calculate the dimensions of
-          -- the viewport.
-          -- first, let's get the aspect ratio.  That will let us figure out
-          -- the height of the viewport "automatically" once we have the right width.
-          solved_pkg =
-            { pkg
-              | userGraph =
-                computed.solvedGraph
-                |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
-            }
-          guest_viewport =
-            calculateGuestDimensionsForHost
-              (w, h)
-              createFrozen
-              solved_pkg.userGraph.graph
-          properties = defaultViewProperties createFrozen solved_pkg
-          graph_view : GraphView
-          graph_view =
-            { id = id
-            , isFrozen = createFrozen
-            , package = solved_pkg
-            , interfaceLocation = location
-            , simulation = computed.simulation
-            , host_dimensions = (w, h)
-            , host_coordinates = (-1, -1)
-            , panBuffer = GraphEditor.panBufferAmount (w, h)
-            , guest_dimensions = guest_viewport.dimensions
-            , guest_coordinates = guest_viewport.coordinates
-            , guest_inner_coordinates = guest_viewport.inner_coordinates
-            , guest_inner_dimensions = guest_viewport.inner_dimensions
-            , forces = computed.forces
-            , specificForces = IntDict.empty
-            , zoom = 1.0
-            , pan = ( 0, 0)
-            , disconnectedNodes = Set.empty
-            , properties = properties
-            , drawingData =
-                { link_drawing = linkDrawingForPackage solved_pkg
-                , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id model
-                }
-            }
-        in
-          ( Just graph_view
-          , { model_
-              | graph_views =
-                  AutoDict.insert id graph_view model_.graph_views
-              , mainGraphView =
-                  if location == MainEditor then
-                    id
-                  else
-                    model.mainGraphView
-            }
-          )
-      )
-    |> Maybe.andThen Maybe.combineFirst
+    ( graph_view
+    , { model_
+        | graph_views =
+            AutoDict.insert id graph_view model_.graph_views
+        , mainGraphView =
+            if location == MainEditor then
+              id
+            else
+              model.mainGraphView
+      }
+    )
+
+{-| Creates a new GraphView from a provided GraphPackage, accepting the provided layout
+    uncritically, and adds the GraphView to the `graph_views` dictionary in the `Model`.
+-}
+naiveViewFromPackage : (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
+naiveViewFromPackage (w, h) location createFrozen pkg model =
+  viewFromPackage
+    { solvedGraph = pkg.userGraph
+    , simulation = Force.simulation []
+    , forces = []
+    }
+    (w, h) location createFrozen pkg model
+
+{-| Creates a new GraphView from a provided GraphPackage, solves the forces for the relevant
+    AutomatonGraph, and adds the GraphView to the `graph_views` dictionary in the `Model`.
+-}
+solvedViewFromPackage : (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
+solvedViewFromPackage (w, h) location createFrozen pkg model =
+  viewFromPackage
+    (GraphEditor.computeGraphFully (w, h) pkg.userGraph)
+    (w, h) location createFrozen pkg model
 
 -- MAIN
 
@@ -409,24 +417,19 @@ init flags =
       -- I _know_ that this will succeed, because I've added this
       -- exact one
       let
-        mainGraphView =
-          viewFromPackage
+        ( v, model_with_viewDict) =
+          solvedViewFromPackage
             state.dimensions.mainEditor
             MainEditor
             False
-            mainPackage.userGraph.graphIdentifier
+            mainPackage
             model_excl_views
       in
-        case mainGraphView of
-          Nothing ->
-            Debug.log "🚨 FAILURE! GraphView could not be created. `mainGraphView` WILL be incorrect!"
-            model_excl_views
-          Just (v, model_with_viewDict) ->
-            { model_with_viewDict
-              | mainGraphView =
-                  v.id
-                  -- |> debugLog_ "mainGraphView UUID" truncate_uuid
-            }
+        { model_with_viewDict
+          | mainGraphView =
+              v.id
+              -- |> debugLog_ "mainGraphView UUID" truncate_uuid
+        }
   in
     ( selectComputationsIcon model
     , Cmd.none
@@ -1478,18 +1481,18 @@ panGraphView x y graph_view =
     else
       graph_view
 
-packagesToGraphViews : (Float, Float) -> Model -> (List Uuid, Model)
+packagesToGraphViews : (Float, Float) -> Model -> (List GraphView, Model)
 packagesToGraphViews (w, h) model =
   List.foldl
     (\uuid (acc, model_) ->
-      case viewFromPackage (w, h) Sidebar True uuid model_ of
-        Nothing ->
-          (acc, model_)
-        Just (v, model__) ->
-          (v.id :: acc, model__)
+      let
+        ( v, model__) =
+          solvedViewFromPackage (w, h) Sidebar True uuid model_
+      in
+        (v :: acc, model__)
     )
     ( [], model )
-    (AutoDict.keys model.packages)
+    (AutoDict.values model.packages)
 
 selectComputationsIcon : Model -> Model
 selectComputationsIcon model =
@@ -1506,7 +1509,7 @@ selectComputationsIcon model =
               { selected | sideBar = ComputationsIcon }
           }
       , computationsExplorer =
-          computation_views
+          List.map .id computation_views
     }
 
 update_ui : UIMsg -> Model -> ( Model, Cmd Msg )
@@ -1643,52 +1646,71 @@ update_ui ui_msg model =
       )
 
     SelectPackage uuid ->
-      case viewFromPackage model.uiState.dimensions.mainEditor MainEditor False uuid model of
-        Nothing ->
-          ( model, Cmd.none )
-        Just (_, model_) ->
-          ( model_ |> setProperties, Cmd.none )
+      ( AutoDict.get uuid model.packages
+        |> Maybe.map
+          (\pkg ->
+            solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg model
+            |> Tuple.second
+            |> setProperties
+          )
+        |> Maybe.withDefault model
+      , Cmd.none
+      )
 
-    EditConnection uuid src dest connection ->
+    EditConnection coordinates uuid src dest connection ->
       ( pushInteractionForStack (Just uuid)
           ( EditingConnection
               { source = src, dest = dest, connection = connection }
               False
           )
           model
-        |> packagesToGraphViews (450, 9/16 * 450)
-        |>  (\(uuids, model_) ->
-              AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.map (\gv ->
-                let
-                  ( main_view_id, updated_model ) =
-                    viewFromPackage
-                      ( 250
-                      , 250 --* 9/16
-                      )
-                      Independent
-                      True
-                      gv.package.userGraph.graphIdentifier
-                      model_
-                    |> Maybe.map (\({id}, model__) -> ( id, model__))
-                    |> Maybe.withDefault ( model.mainGraphView, model_ ) -- erk!! NOT FROZEN!!!!!
-                in
-                  (uuids, main_view_id, updated_model)
-               )
-              |> Maybe.withDefault ( uuids, model.mainGraphView, model_ )
-            )
-        |>  (\(uuids, main_uuid, model_) ->
-              { model_
-                | connectionEditor =
-                    Just
-                      { referenceList = uuids
-                      , mainGraph = main_uuid
-                      }
-              }
-            )
-        |> setProperties
+          |>  editConnection coordinates src dest connection
       , Cmd.none
       )
+
+editConnection : (Float, Float) -> NodeId -> NodeId -> Connection -> Model -> Model
+editConnection (x, y) src dest connection model =
+  packagesToGraphViews (450, 9/16 * 450) model
+  |>  (\(graph_views, model_) ->
+        AutoDict.get model.mainGraphView model.graph_views
+        |> Maybe.map (\gv ->
+          let
+            pkg =
+              let package = gv.package in
+              { package
+                | userGraph =
+                    case Graph.get dest package.userGraph.graph of
+                      Nothing ->
+                        GraphEditor.newnode_graphchange src x y connection package.userGraph
+                      Just _ ->
+                        GraphEditor.updateLink_graphchange src dest connection package.userGraph
+              }
+            ( main_view, updated_model ) =
+              naiveViewFromPackage
+                ( 250
+                , 250 --* 9/16
+                )
+                Independent
+                True
+                pkg
+                model_
+            solidified_model =
+              solidifyPhantoms main_view.id src dest updated_model
+          in
+            (List.map .id graph_views, main_view.id, solidified_model)
+          )
+        |> Maybe.withDefault ( List.map .id graph_views, model.mainGraphView, model_ )
+      )
+  |>  (\(uuids, main_uuid, model_) ->
+        { model_
+          | connectionEditor =
+              Just
+                { referenceList = uuids
+                , mainGraph = main_uuid
+                }
+        }
+      )
+  |> setProperties
 
 unusedNodeId : AutomatonGraph -> NodeId
 unusedNodeId {graph} =
@@ -1749,7 +1771,8 @@ selectSourceNode model view_uuid node_id =
    an equaly ridiculous number of functions!!
 -}
 
-{-| Called to turn phantoms, in the node-drawing data only, into solid things. -}
+{-| Called to turn phantoms, in the node-drawing data only, into solid things
+-}
 solidifyPhantoms : Uuid -> NodeId -> NodeId -> Model -> Model
 solidifyPhantoms view_uuid src phantom_id model =
   updateDrawingData view_uuid
@@ -2317,7 +2340,7 @@ selectDestination view_uuid src possible_dest model =
       -- I've clicked on some kind of an empty space.  I'll want to create this node,
       -- and then proceed to edit the connection.
       createNewGraphNode view_uuid phantom_id (x, y) model
-      |> solidifyPhantoms view_uuid src phantom_id
+      -- |> solidifyPhantoms view_uuid src phantom_id
       |> replaceInteraction (Just view_uuid)
             ( EditingConnection
                 { source = src
@@ -2326,20 +2349,30 @@ selectDestination view_uuid src possible_dest model =
                 }
                 True
             )
-      |> setProperties
+      -- editConnection will call setProperties
+      |> editConnection (x, y) src phantom_id (AutoSet.empty transitionToString)
     ExistingNode dest_id conn ->
-      -- we already have a node selected, and now, an existing
-      -- node is being selected as the destination.
-      solidifyPhantoms view_uuid src dest_id model
-      |> replaceInteraction (Just view_uuid)
-        ( EditingConnection
-            { source = src
-            , dest = dest_id
-            , connection = conn
-            }
-            False
-        )
-      |> setProperties
+      let
+        (x, y) =
+          AutoDict.get view_uuid model.graph_views
+          |> Maybe.andThen (\gv -> Graph.get dest_id gv.package.userGraph.graph)
+          |> Maybe.map (\ctx -> (ctx.node.label.x, ctx.node.label.y))
+          |> Maybe.withDefault (0, 0)
+      in
+        -- we already have a node selected, and now, an existing
+        -- node is being selected as the destination.
+        -- solidifyPhantoms view_uuid src dest_id model
+        replaceInteraction (Just view_uuid)
+          ( EditingConnection
+              { source = src
+              , dest = dest_id
+              , connection = conn
+              }
+              False
+          )
+          model
+        -- editConnection will call setProperties
+        |> editConnection (x, y) src dest_id conn
 
 deleteLinkFromView : Uuid -> NodeId -> NodeId -> Model -> Model
 deleteLinkFromView view_uuid source dest model =
@@ -2419,6 +2452,18 @@ deleteNodeFromView view_uuid source dest model =
               model_.graph_views
       }
 
+clearEditingViews : Model -> Model
+clearEditingViews model =
+  { model
+    | graph_views =
+        model.connectionEditor
+        |> Maybe.map (\{referenceList, mainGraph} ->
+          List.foldl (AutoDict.remove) model.graph_views (mainGraph :: referenceList)
+        )
+        |> Maybe.withDefault model.graph_views
+    , connectionEditor = Nothing
+  }
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -2466,10 +2511,12 @@ update msg model =
             Just (Just uuid, EditingConnection {source, dest} deleteTargetIfCancelled, model_) ->
               if deleteTargetIfCancelled then
                 deleteNodeFromView uuid source dest model_
+                |> clearEditingViews
                 |> setProperties
               else
                 -- does deletion IF appropriate.
                 deleteLinkFromView uuid source dest model_
+                |> clearEditingViews
                 |> setProperties
             Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
@@ -3991,8 +4038,14 @@ viewConnectionEditor model uuid {source, dest, connection} =
 
 view : Model -> Html Msg
 view model =
-  case mostRecentInteraction model of
-    Just (Just uuid, EditingConnection alteration _) ->
-      viewConnectionEditor model uuid alteration
-    _ ->
-      viewMainInterface model
+  div
+    []
+    [ case mostRecentInteraction model of
+        Just (Just uuid, EditingConnection alteration _) ->
+          viewConnectionEditor model uuid alteration
+        _ ->
+          viewMainInterface model
+    , div
+        [ HA.class "debug-gv-size" ]
+        [ text <| String.fromInt <| AutoDict.size model.graph_views ]
+    ]

@@ -266,44 +266,44 @@ identifyDisconnectedNodes g =
   |> Set.fromList
 
 
--- newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
--- newnode_graphchange src x y conn g =
---   { g
---     | graph =
---         let
---           id = maxId g + 1
+newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
+newnode_graphchange src x y conn g =
+  { g
+    | graph =
+        let
+          id = maxId g + 1
 
---           initial = entity id NoEffect
---         in
---           Graph.insert
---             { node =
---               { label = initial |> setXY x y
---               , id = id
---               }
---             , incoming = IntDict.singleton src conn
---             , outgoing = IntDict.empty
---             }
---             g.graph
---   }
---   -- |> debugAutomatonGraph "[create_union_graphchange] updated graph"
+          initial = entity id NoEffect
+        in
+          Graph.insert
+            { node =
+              { label = initial |> setXY x y
+              , id = id
+              }
+            , incoming = IntDict.singleton src conn
+            , outgoing = IntDict.empty
+            }
+            g.graph
+  }
+  -- |> debugAutomatonGraph "[create_union_graphchange] updated graph"
 
--- updateLink_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph -> AutomatonGraph
--- updateLink_graphchange src dest conn g =
---   { g
---     | graph =
---         Graph.update dest
---           (Maybe.map (\node ->
---             { node | incoming = IntDict.insert src conn node.incoming }
---           ))
---           g.graph
---       -- if it's recursive, I must add it to both so that it reflects in the graph.
---       -- in other cases, this should do no harm.
---       |> Graph.update src
---         (Maybe.map (\node ->
---           { node | outgoing = IntDict.insert dest conn node.outgoing }
---         ))
---   }
---   -- |> debugAutomatonGraph "[create_update_graphchange] updated graph"
+updateLink_graphchange : NodeId -> NodeId -> Connection -> AutomatonGraph -> AutomatonGraph
+updateLink_graphchange src dest conn g =
+  { g
+    | graph =
+        Graph.update dest
+          (Maybe.map (\node ->
+            { node | incoming = IntDict.insert src conn node.incoming }
+          ))
+          g.graph
+      -- if it's recursive, I must add it to both so that it reflects in the graph.
+      -- in other cases, this should do no harm.
+      |> Graph.update src
+        (Maybe.map (\node ->
+          { node | outgoing = IntDict.insert dest conn node.outgoing }
+        ))
+  }
+  -- |> debugAutomatonGraph "[create_update_graphchange] updated graph"
 
 -- removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
 -- removeLink_graphchange src dest g =
@@ -707,6 +707,8 @@ viewLink view_uuid (from, to) drawing_data =
               [ "link", "executed", "phantom", "recent-" ++ String.fromInt smallest_recency ]
             ( Just {smallest_recency}, False ) ->
               [ "link", "executed", "recent-" ++ String.fromInt smallest_recency ]
+        x_ = drawing_data.pathBetween.transition_coordinates.x
+        y_ = drawing_data.pathBetween.transition_coordinates.y
       in
         g
           [ class [ "link-group" ] ]
@@ -723,11 +725,11 @@ viewLink view_uuid (from, to) drawing_data =
               ]
               [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
           , text_
-              [ x <| drawing_data.pathBetween.transition_coordinates.x
-              , y <| drawing_data.pathBetween.transition_coordinates.y
+              [ x <| x_
+              , y <| y_
               -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , class ( "text" :: linkClass )
-              , onClick (UIMsg <| EditConnection view_uuid from to drawing_data.label)
+              , onClick (UIMsg <| EditConnection (x_, y_) view_uuid from to drawing_data.label)
               ]
               ( title [] [ text "Click to modify" ] :: labelText 
               )
