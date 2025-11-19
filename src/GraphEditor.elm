@@ -637,51 +637,51 @@ executionData r =
 --       )
 --     |> Maybe.withDefault Dict.empty
 
--- viewGraphReference : Uuid.Uuid -> Float -> Float -> Svg a
--- viewGraphReference uuid x_ y_ =
---   let
---     pixels = getPalette uuid
---     pixelSize = 4
---   in
---     g
---       []
---       ( rect
---           [ x <| x_
---           , y <| y_
---           , width <| (7 * pixelSize) + 2
---           , height <| (4 * pixelSize) + 2
---           , rx 2
---           , ry 2
---           , fill <| Paint <| Color.black
---           ]
---           []
---       -- each one is a 4px square
---       :: Tuple.second
---           (List.foldl
---             (\color (i, acc) ->
---               ( i + 1
---               , rect
---                   [ x <| x_ + 1 + pixelSize * (modBy 7 i |> toFloat)
---                   , y <| y_ + 1 + pixelSize * (modBy 4 i |> toFloat)
---                   , width pixelSize
---                   , height pixelSize
---                   , fill <| Paint color
---                   -- , stroke <| Paint <| Color.black
---                   -- , strokeWidth 1
---                   , rx (pixelSize * 0.15)
---                   , ry (pixelSize * 0.15)
---                   ]
---                   []
---                 :: acc
---               )
---             )
---             (0, [])
---             pixels
---           )
---       )
+viewGraphReference : Uuid.Uuid -> Float -> Float -> Svg a
+viewGraphReference uuid x_ y_ =
+  let
+    pixels = getPalette uuid
+    pixelSize = 4
+  in
+    g
+      []
+      ( rect
+          [ x <| x_
+          , y <| y_
+          , width <| (7 * pixelSize) + 2
+          , height <| (4 * pixelSize) + 2
+          , rx 2
+          , ry 2
+          , fill <| Paint <| Color.black
+          ]
+          []
+      -- each one is a 4px square
+      :: Tuple.second
+          (List.foldl
+            (\color (i, acc) ->
+              ( i + 1
+              , rect
+                  [ x <| x_ + 1 + pixelSize * (modBy 7 i |> toFloat)
+                  , y <| y_ + 1 + pixelSize * (modBy 4 i |> toFloat)
+                  , width pixelSize
+                  , height pixelSize
+                  , fill <| Paint color
+                  -- , stroke <| Paint <| Color.black
+                  -- , strokeWidth 1
+                  , rx (pixelSize * 0.15)
+                  , ry (pixelSize * 0.15)
+                  ]
+                  []
+                :: acc
+              )
+            )
+            (0, [])
+            pixels
+          )
+      )
 
-viewLink : Uuid -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
-viewLink view_uuid (from, to) drawing_data =
+viewLink : Uuid -> GraphViewProperties -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
+viewLink view_uuid properties (from, to) drawing_data =
       let
         labelText =
           case drawing_data.executionData of
@@ -733,7 +733,8 @@ viewLink view_uuid (from, to) drawing_data =
               , y <| y_
               -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
               , class ( "text" :: linkClass )
-              , onClick (EditConnection (x_, y_) view_uuid from to drawing_data.label)
+              , properties.canSelectConnections
+                |> thenPermitSvgInteraction (onClick (EditConnection (x_, y_) view_uuid from to drawing_data.label))
               ]
               ( title [] [ text "Click to modify" ] :: labelText 
               )
@@ -785,37 +786,6 @@ nodeRadius = 7
 
 viewNode : GraphViewProperties -> NodeId -> NodeDrawingData -> Svg Msg
 viewNode properties id data =
-    -- permit_node_reselection =
-    --   Mouse.onWithOptions
-    --     "mousedown"
-    --     { stopPropagation = True, preventDefault = True }
-    --     (\e ->
-    --       if e.keys.shift then
-    --         NodeDragStart id
-    --       else if e.keys.ctrl && splittable then
-    --         StartSplit id
-    --       else
-    --         case interactionsDict of
-    --           Just (ModifyingGraph _ _) ->
-    --             -- ANY node is fine!  If it's the same node, that's also fine.  Recursive links are okay.
-    --             CreateOrUpdateLinkTo id
-    --           _ ->
-    --             SelectNode id
-    --     )
-
-    -- interactivity =
-    --   case interactionsDict of
-    --     Just (ModifyingGraph _ { dest }) ->
-    --       case dest of
-    --         NoDestination ->
-    --           [ permit_node_reselection ]
-    --         _ ->
-    --           []
-    --     _ ->
-    --       if Set.member id disconnectedNodes then
-    --         []
-    --       else
-    --         [ permit_node_reselection ]
   let
     nodeClass =
       conditionalList
@@ -871,158 +841,6 @@ viewNode properties id data =
       ]
 
 
--- viewPhantomSvg : { x : Float, y : Float } -> PathBetweenReturn -> Svg GraphView_Msg
--- viewPhantomSvg target positioning =
---   let
---     radius = 9
---   in
---     g
---       []
---       [ circle
---           [ r radius
---           , cx target.x
---           , cy target.y
---           , noFill
---           , strokeWidth 2
---           , strokeDasharray "1 5.2"
---           , strokeLinecap StrokeLinecapRound
---           , class ["phantom-state-node"]
---           ]
---           []
---       -- now draw the path to it
---       , path
---           [ strokeWidth 5
---           , stroke <| Paint <| paletteColors.background
---           , d positioning.pathString
---           , noFill
---           , class [ "link" ]
---           ]
---           []
---       , path
---           [ strokeWidth 3
---           , d positioning.pathString
---           , if positioning.length > 10 then markerEnd "url(#phantom-arrowhead)" else markerStart "invalid_ref"
---           , noFill
---           , strokeDasharray "1 5"
---           , strokeLinecap StrokeLinecapRound
---           , class [ "phantom-link" ]
---           ]
---           []
---       -- for debugging the paths.
---       -- , circle
---       --     [ cx <| positioning.control_point.x
---       --     , cy <| positioning.control_point.y
---       --     , r 3
---       --     , fill <| Paint <| Color.red
---       --     ]
---       --     []
---       -- , circle
---       --     [ cx <| positioning.source_connection_point.x
---       --     , cy <| positioning.source_connection_point.y
---       --     , r 3
---       --     , fill <| Paint <| Color.black
---       --     ]
---       --     []
---       -- , circle
---       --     [ cx <| positioning.target_connection_point.x
---       --     , cy <| positioning.target_connection_point.y
---       --     , r 3
---       --     , fill <| Paint <| Color.yellow
---       --     ]
---       --     []
---       ]
-
--- {-| A "phantom move" that the user MIGHT make, or might not.
---     This function is called when the user is still choosing.
---     `viewPhantomChosen` is called when the user has chosen.
--- -}
--- viewPhantomChoosing : Model -> (Float, Float) -> NodeContext Entity Connection -> Svg GraphView_Msg
--- viewPhantomChoosing model mouseCoords sourceNode =
---   let
---     ( xPan, yPan ) =
---       model.pan
---     nearby = nearby_node nearby_node_lockOnDistance mouseCoords model
---     ( center_x, center_y) =
---       -- Now, if the mouse is over an actual node, then we want to "lock" to that node.
---       -- But if the mouse is anywhere else, just use the mouse coordinates.
---       nearby
---       |> Maybe.map (\node -> (node.label.x - xPan, node.label.y - yPan))
---       |> Maybe.withDefault mouseCoords
---     target =
---       { x = center_x + xPan
---       , y = center_y + yPan
---       }
---     cardinality =
---       case nearby of
---         Nothing ->
---           Unidirectional
---         Just some_node ->
---           if some_node.id == sourceNode.node.id then
---             Recursive
---           else
---             case IntDict.get some_node.id sourceNode.incoming of
---               Just _ ->
---                 Bidirectional
---               Nothing ->
---                 Unidirectional
---     positioning =
---       path_between sourceNode.node.label target cardinality 7 9
---   in
---     viewPhantomSvg target positioning
-
--- {-| A "phantom move" that the user MIGHT make, or might not.
---     This function is called when the user has chosen their
---     phantom move.
--- -}
--- viewPhantomChosen : Model -> NodeContext Entity Connection -> (Float, Float) -> Cardinality -> Svg GraphView_Msg
--- viewPhantomChosen model sourceNode (dest_x, dest_y) cardinality =
---   let
---     ( xPan, yPan ) =
---       model.pan
---     target =
---       { x = dest_x + xPan
---       , y = dest_y + yPan
---       }
---     positioning =
---       path_between sourceNode.node.label target cardinality 7 9
---   in
---     viewPhantomSvg target positioning
-
--- {-| A "phantom move" that the user MIGHT make, or might not.
--- -}
--- viewPhantom : Model -> (Float, Float) -> NodeContext Entity Connection -> Svg GraphView_Msg
--- viewPhantom model mouseCoords sourceNode =
---   let
---     cardinalityOf nodeId =
---       if nodeId == sourceNode.node.id then
---         Recursive
---       else
---         case IntDict.get nodeId sourceNode.incoming of
---           Just _ ->
---             Bidirectional
---           Nothing ->
---             Unidirectional
---     nodeCoordinates id =
---       Graph.get id model.package.userGraph.graph
---       |> Maybe.map
---           (\ctx -> ( ctx.node.label.x, ctx.node.label.y ))
---       |> Maybe.withDefaultLazy
---           (\() -> ( 0, 0 ) |> Debug.log "Error K<UFOUDFI8") -- should never get here!
---   in
---     case model.interactionsDict of
---       Just (ModifyingGraph _ { dest }) ->
---         case dest of
---           NoDestination ->
---             viewPhantomChoosing model mouseCoords sourceNode
---           ExistingNode id ->
---             viewPhantomChosen model sourceNode
---               (nodeCoordinates id)
---               (cardinalityOf id)
---           NewNode coords ->
---             viewPhantomChosen model sourceNode coords Unidirectional
---       _ ->
---         g [] []
-
 arrowheadDefs : List (Svg msg)
 arrowheadDefs =
   let
@@ -1056,460 +874,7 @@ arrowheadDefs =
 -- transition_spacing : Float
 -- transition_spacing = 15
 
--- -- https://ishadeed.com/article/target-size/
--- viewSingleKey : Char -> Connection -> (Int, Int) -> Float -> Svg GraphView_Msg
--- viewSingleKey ch conn (gridX, gridY) y_offset =
---   let
---     buttonX = transition_spacing * toFloat (gridX + 1) + transition_buttonSize * toFloat gridX
---     buttonY = y_offset + transition_spacing * toFloat (gridY + 1) + transition_buttonSize * toFloat gridY
---     tr finality =
---       Transition finality (ViaCharacter ch)
---     isThisNodeTerminal = AutoSet.member (tr True) conn
---     keyClass =
---       if AutoSet.member (tr False) conn then
---         [ "transition-chooser-key", "selected" ]
---       else if isThisNodeTerminal then
---         [ "transition-chooser-key", "selected", "terminal" ]
---       else
---         [ "transition-chooser-key" ]
---   in
---   g
---     []
---     [ rect
---         [ x buttonX
---         , y buttonY
---         , Px.width transition_buttonSize
---         , Px.height transition_buttonSize
---         , Px.rx 5
---         , Px.ry 5
---         , strokeWidth 2
---         , stroke <| Paint <| Color.white
---         , class keyClass
---         , onClick <| ToggleSelectedTransition (ViaCharacter ch)
---         ]
---         ( if isThisNodeTerminal then [ title [] [ text "This is a terminal transition" ] ] else [] )
---     , text_
---         [ x <| buttonX + transition_buttonSize / 2
---         , y <| buttonY + transition_buttonSize / 2
---         , fontSize 20
---         , strokeWidth 0
---         , textAnchor AnchorMiddle
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , fontFamily ["sans-serif"]
---         ]
---         [ text <| String.fromChar ch ]
---     ]
 
--- viewSvgCharacterChooser : AutoSet.Set String Transition -> Float -> Float -> (Svg GraphView_Msg, Float)
--- viewSvgCharacterChooser conn y_offset w =
---   let
---     items_per_row = round ( (w - transition_spacing * 2) / (transition_buttonSize + transition_spacing) )
---     alphabet = String.toList "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890~`[{}]-_=\\|;:,.<>/?!@#$%^&*()+ abcdefghijklmnopqrstuvwxyz"
---     numRows = ceiling <| toFloat (List.length alphabet) / toFloat items_per_row
---     my_height = transition_spacing * toFloat (numRows + 2) + toFloat numRows * transition_buttonSize + transition_spacing
---     gridItemsAndCoordinates =
---       List.foldl
---         (\item (acc, ( col, row )) ->
---           if col + 1 >= items_per_row then
---             ((item, col, row) :: acc, (0, row + 1))
---           else
---             ((item, col, row) :: acc, (col + 1, row))
---         )
---         ([], (0, 0))
---         alphabet
---       |> Tuple.first
---     chooser_svg =
---       g
---         []
---         ( List.map
---             (\(item, col, row) ->
---               viewSingleKey
---                 item
---                 conn
---                 (col, row)
---                 y_offset
---             )
---             gridItemsAndCoordinates
---         )
---   in
---     ( chooser_svg, my_height )
-
--- -- viewSvgGraphRefChooser : Int -> Model -> AutoSet.Set String Transition -> Float -> Float -> (Svg GraphView_Msg, Float)
--- -- viewSvgGraphRefChooser focusedIndex model conn y_offset panelWidth =
--- --   let
--- --     -- this is the width of each thumbnail.
--- --     -- and it is ALSO the center position in the panel.
--- --     packages = model.packages
--- --     panelCenter = panelWidth / 2
--- --     width = panelWidth / 2
--- --     height = thumbnailHeight width
--- --     -- and here, confusingly, I use the meanings in both ways ^_^!
--- --     x_start = panelCenter - (width / 2)
--- --     y_start =
--- --       2 + -- the stroke-width
--- --       5 + -- the padding (top)
--- --       10 + -- margin (top)
--- --       y_offset
--- --     -- now, one of the thumbnails are going to be in-frame, and others will not be.
--- --     -- there will be a half-thumbnail to the left and to the right.
--- --     -- … with a gap between, too, so a bit less then a half.
--- --     gap_between = panelWidth * 0.05 -- the gap is 5% of the width
--- --     -- with extra margin at the bottom
--- --     thumbnailPosition idx =
--- --       x_start + (toFloat idx * (gap_between + width))
--- --     my_height = 4 + 10 + 40 + height + 90
--- --     makeThumbnail pkg =
--- --       viewComputationThumbnail (panelWidth / 2) model pkg
--- --     keys_and_thumbs =
--- --       AutoDict.toList packages
--- --       |> List.map (\(ref, v) -> (ref, makeThumbnail v))
--- --     thumbnail_carousel =
--- --       g
--- --         [ transform
--- --             [ Translate
--- --                 (-1 * (thumbnailPosition focusedIndex - width/2))
--- --                 0
--- --             ]
--- --         , class [ "thumbnail-carousel" ]
--- --         ]
--- --         ( List.indexedMap
--- --             (\i (ref, thumb) ->
--- --               let
--- --                 tr finality = Transition finality (ViaGraphReference ref)
--- --                 isSelected =
--- --                   AutoSet.member (tr True) conn || AutoSet.member (tr False) conn
--- --                 scale = height / 5
--- --               in
--- --                 g
--- --                   [ transform [ Translate (thumbnailPosition i) y_start ]
--- --                   ]
--- --                   [ -- give it a background
--- --                     rect
--- --                       [ x 0
--- --                       , y 0
--- --                       , TypedSvg.Attributes.InPx.width <| width
--- --                       , TypedSvg.Attributes.InPx.height <| height
--- --                       , fill <| Paint <|
--- --                           if isSelected then Color.rgb 0.596 0.984 0.596 else Color.rgb 1 1 0.941
--- --                       , rx 15
--- --                       , ry 15
--- --                       ]
--- --                       []
--- --                     -- there is nothing interactable in the thumbnail, so this is
--- --                     -- really just for getting the types to line up sensibly.
--- --                   , thumb |> Svg.map (\_ -> Tick)
--- --                   , -- cover it with a "top" which is interactable
--- --                     rect
--- --                       [ x -5
--- --                       , y -5
--- --                       , TypedSvg.Attributes.InPx.width <| width + 10
--- --                       , TypedSvg.Attributes.InPx.height <| height + 10
--- --                       , fill <| Paint <| Color.rgba 1 1 1 0.1
--- --                       , rx 15
--- --                       , ry 15
--- --                       , strokeWidth 2
--- --                       , stroke <| Paint <|
--- --                           if isSelected then Color.green else Color.black
--- --                       , cursor CursorPointer
--- --                       , onClick <| ToggleSelectedTransition (ViaGraphReference ref)
--- --                       ]
--- --                       []
--- --                   , -- if the item is selected, then put on a UI for things that can be
--- --                     -- changed about it.
--- --                     -- first up, a big checkbox to say "Yes! You're selected!"
--- --                     if isSelected then
--- --                       -- REMEMBER: I'm already translated! So everything is relative
--- --                       -- to the "frame" of this particular thumbnail.
--- --                       -- …which certainly is convenient in some respects…!
--- --                       g
--- --                         []
--- --                         [ circle
--- --                             [ cx <| width / 2
--- --                             , cy <| height - height / 5
--- --                             , r <| scale / 2
--- --                             , fill <| Paint <| if AutoSet.member (tr False) conn then Color.white else paletteColors.transition.final
--- --                             ]
--- --                             []
--- --                         , text_
--- --                             [ x <| width / 2
--- --                             , y <| height - height / 5 + 5
--- --                             , fill <| Paint <| Color.green
--- --                             , fontSize scale
--- --                             , dominantBaseline DominantBaselineMiddle
--- --                             -- , alignmentBaseline AlignmentCentral
--- --                             , textAnchor AnchorMiddle
--- --                             ]
--- --                             [ text "✔" ]
--- --                         ]
--- --                     else
--- --                       g [][]
--- --                   ]
--- --             )
--- --             keys_and_thumbs
--- --         )
--- --     with_ui =
--- --       g
--- --         []
--- --         [ thumbnail_carousel
--- --           -- the static UI. Must place this after the thumbnails so
--- --           -- that it appears on top; and must place it outside of
--- --           -- the transformed group, so it is relative to the screen.
--- --           -- move right, if such a thing is possible
--- --         , if focusedIndex < AutoDict.size packages - 1 then
--- --             g
--- --               []
--- --               [ rect
--- --                   [ x <| panelCenter + 30
--- --                   , y <| y_offset + height + 30
--- --                   , Px.width 60
--- --                   , Px.height 60
--- --                   , Px.rx 5
--- --                   , Px.ry 5
--- --                   , class [ "transition-chooser-key" ]
--- --                   , strokeWidth 2
--- --                   , stroke <| Paint <| Color.white
--- --                   , onClick SwitchToNextComputation
--- --                   ]
--- --                   []
--- --               , text_
--- --                   [ x <| panelCenter + 60
--- --                   , y <| y_offset + height + 60
--- --                   , fontSize 40
--- --                   , rx 15
--- --                   , ry 15
--- --                   , strokeWidth 0
--- --                   , textAnchor AnchorMiddle
--- --                   , alignmentBaseline AlignmentCentral
--- --                   , dominantBaseline DominantBaselineMiddle
--- --                   , pointerEvents "none"
--- --                   ]
--- --                   [ text <| "→" ]
--- --               , title
--- --                   []
--- --                   [ text "Next computation" ]
--- --               ]
--- --           else
--- --             g [] []
--- --         , if focusedIndex > 0 then
--- --             g
--- --               []
--- --               [ rect
--- --                   [ x <| panelCenter - 60
--- --                   , y <| y_offset + height + 30
--- --                   , Px.width 60
--- --                   , Px.height 60
--- --                   , Px.rx 5
--- --                   , Px.ry 5
--- --                   , class [ "transition-chooser-key" ]
--- --                   , strokeWidth 2
--- --                   , stroke <| Paint <| Color.white
--- --                   , onClick SwitchToPreviousComputation
--- --                   ]
--- --                   []
--- --               , text_
--- --                   [ x <| panelCenter - 30
--- --                   , y <| y_offset + height + 60
--- --                   , fontSize 40
--- --                   , rx 15
--- --                   , ry 15
--- --                   , strokeWidth 0
--- --                   , textAnchor AnchorMiddle
--- --                   , alignmentBaseline AlignmentCentral
--- --                   , dominantBaseline DominantBaselineMiddle
--- --                   , pointerEvents "none"
--- --                   ]
--- --                   [ text <| "←" ]
--- --               , title
--- --                   []
--- --                   [ text "Previous computation" ]
--- --               ]
--- --           else
--- --             g [] []
--- --         ]
-        
--- --   in
--- --     ( with_ui, my_height )
-
--- viewSvgTransitionChooser : AcceptChoice -> Model -> Svg GraphView_Msg
--- viewSvgTransitionChooser via model =
---   let
---     ( w, _ ) = model.dimensions
---     category_chooser_space = 80
---     conn =
---       case model.interactionsDict of
---         Just (ModifyingGraph _ { transitions }) ->
---           transitions
---         Just (AlteringConnection _ { transitions }) ->
---           transitions
---         _ ->
---           (AutoSet.empty transitionToString)
---           |> Debug.log "CXO<DPO(*EU I should not be here!"
---     ( chooser_svg, chooser_height) =
---       case via of
---         ChooseCharacter ->
---           viewSvgCharacterChooser conn category_chooser_space w
---         ChooseGraphReference idx ->
---           g [] []
---           -- viewSvgGraphRefChooser idx model conn category_chooser_space w
---     chooserButtonSize = 30
---   in
---   g
---     []
---     [ -- this is above the "keyboard"
---       text_
---         [ x <| w / 2
---         , y <| 16 + 8
---         , fill <| Paint <| Color.black
---         , textAnchor AnchorMiddle
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , fontFamily ["Serif"]
---         , fontSize 16
---         , stroke <| Paint <| paletteColors.background
---         , strokeWidth 2
---         , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---         ]
---         [ tspan
---           []
---           [ text <| "To make this jump, I should match…"
---           ]
---         ]
---     , text_
---         [ x <| w / 2
---         , y <| 32 + 23
---         , fill <| Paint <| Color.black
---         , textAnchor AnchorMiddle
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , fontSize 16
---         , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---         , fontFamily ["Serif"]
---         , stroke <| Paint <| paletteColors.background
---         , strokeWidth 2
---         ]
---         [ tspan
---           []
---           [ text <|
---               case via of
---                 ChooseCharacter -> "Single characters"
---                 ChooseGraphReference _ -> "Computations"
---           ]
---         ]
---       -- choose-next button
---     , g
---         []
---         [ rect
---             [ x <| (w / 2) + 100
---             , y <| 16 + 23
---             , Px.width chooserButtonSize
---             , Px.height chooserButtonSize
---             , Px.rx 5
---             , Px.ry 5
---             , class [ "transition-chooser-key" ]
---             , strokeWidth 2
---             , stroke <| Paint <| Color.white
---             , onClick <| SwitchVia <|
---                 case via of
---                   ChooseCharacter -> ChooseGraphReference 0
---                   ChooseGraphReference _ -> ChooseCharacter
---             ]
---             []
---         , text_
---             [ x <| (w / 2) + 100 + (chooserButtonSize / 2)
---             , y <| 39 + (chooserButtonSize / 2)
---             , fontSize 20
---             , strokeWidth 0
---             , textAnchor AnchorMiddle
---             , alignmentBaseline AlignmentCentral
---             , dominantBaseline DominantBaselineMiddle
---             , pointerEvents "none"
---             ]
---             [ text <| "→" ]
---         ]
---       -- chose-prev button
---     , g
---         []
---         [ rect
---             [ x <| (w / 2) - 100 - chooserButtonSize
---             , y <| 16 + 23
---             , Px.width chooserButtonSize
---             , Px.height chooserButtonSize
---             , Px.rx 5
---             , Px.ry 5
---             , class [ "transition-chooser-key" ]
---             , strokeWidth 2
---             , stroke <| Paint <| Color.white
---             , onClick <| SwitchVia <|
---                 case via of
---                   ChooseCharacter -> ChooseGraphReference 0
---                   ChooseGraphReference _ -> ChooseCharacter
---             ]
---             []
---         , text_
---             [ x <| (w / 2) - 100 - (chooserButtonSize / 2)
---             , y <| 39 + (chooserButtonSize / 2)
---             , fontSize 20
---             , strokeWidth 0
---             , textAnchor AnchorMiddle
---             , alignmentBaseline AlignmentCentral
---             , dominantBaseline DominantBaselineMiddle
---             , pointerEvents "none"
---             ]
---             [ text <| "←" ]
---         ]
---       -- this is below the "keyboard"
---     , text_
---         [ x <| w / 2
---         , y <| category_chooser_space + chooser_height
---         , fill <| Paint <| Color.black
---         , textAnchor AnchorMiddle
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , fontSize 24
---         , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---         , stroke <| Paint <| paletteColors.background
---         , strokeWidth 3
---         , class [ "link" ]
---         ]
---         ( tspan
---             [ fontFamily ["Serif"] ]
---             [ text "Selected transitions: " ] ::
---           ( if AutoSet.isEmpty conn then
---               [ tspan
---                   [ fontFamily ["sans-serif"] ]
---                   [ text "None" ]
---               ]
---             else
---               connectionToSvgText conn
---           )
---         )
---     , text_
---         [ x <| w / 2
---         , y <| category_chooser_space + chooser_height + 30
---         , fill <| Paint <| Color.darkCharcoal
---         , textAnchor AnchorMiddle
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , fontSize 16
---         , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---         , stroke <| Paint <| paletteColors.background
---         , strokeWidth 3
---         , fontFamily ["Serif"]
---         ]
---         ( if AutoSet.isEmpty conn then
---             [ tspan [] [ text "If there are no transitions, this link will be destroyed." ] ]
---           else
---             [ tspan [] [ text "Press «Enter» to confirm these transitions." ] ]
---         )
---       -- and lastly, this is the "keyboard"
---     , chooser_svg
---     ]
 
 -- viewSvgTransitionSplitter : Connection -> Connection -> Model -> Svg GraphView_Msg
 -- viewSvgTransitionSplitter left right model =
@@ -1720,7 +1085,7 @@ viewMainSvgContent graph_view =
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
       |> List.sortBy (\(_, data) -> if Maybe.isJust data.highlighting then 1 else 0)
-      |> List.map (\((from, to), data) -> viewLink graph_view.id (from, to) data)
+      |> List.map (\((from, to), data) -> viewLink graph_view.id graph_view.properties (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
       |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)
@@ -1969,23 +1334,6 @@ viewGraph graphView =
 -- onMouseScroll : (Float -> msg) -> Html.Attribute msg
 -- onMouseScroll msg =
 --   HE.on "wheel" <| D.map msg (D.field "deltaY" D.float)
-
--- onMouseMove : (Float -> Float -> msg) -> Html.Attribute msg
--- onMouseMove msg =
---   HE.on "mousemove"
---     ( D.at ["target", "tagName"] D.string
---       |> D.andThen
---         (\tagName ->
---           if String.toUpper tagName == "SVG" then
---             D.map2 msg
---               -- offset relative to the parent
---               -- …which is the SVG element.
---               (D.field "offsetX" D.float)
---               (D.field "offsetY" D.float)
---           else
---             D.fail "Ignoring non-SVG target"
---         )
---     )
 
 -- debugModel_ : String -> Model -> Model
 -- debugModel_ message model =

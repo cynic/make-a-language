@@ -56,6 +56,7 @@ import Automata.Debugging exposing (debugGraph)
 import Browser.Dom
 import Task
 import Process
+import TypedSvg.Attributes
 
 {-
 Quality / technology requirements:
@@ -490,47 +491,6 @@ persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
 
--- updateGraphViewsOnTick : Model -> Model
--- updateGraphViewsOnTick model =
---   let
---     updateView : GraphView -> GraphView
---     updateView v =
---       let
---         props = v.properties
---       in
---         if props.tickCount <= 300 && not props.isFrozen then
---           let
---             ( newSimulationState, list ) =
---                 Graph.nodes v.package.userGraph.graph
---                 |> List.map .label
---                 |> Force.tick v.simulation
---             pkg : GraphPackage
---             pkg = v.package
---             g : AutomatonGraph
---             g = pkg.userGraph
---             newGraph =
---               updateGraphWithList g.graph list
---           in
---           { v
---             | properties =
---                 { props | tickCount = props.tickCount + 1 }
---             , simulation = newSimulationState
---             , package =
---                 { pkg
---                   | userGraph =
---                       { g | graph = newGraph }
---                 }
---           }
---         else
---           v
---   in
---   { model
---     | graph_views =
---         AutoDict.map
---           (\_ -> updateView)
---           model.graph_views
---   }
-
 -- updateGraphInView : AutomatonGraph -> GraphView -> GraphView
 -- updateGraphInView g v =
 --   let
@@ -626,69 +586,6 @@ updateGraphView uuid f dict =
 updateGraphView : Uuid -> GraphView_Msg -> Model -> Model
 updateGraphView uuid msg model =
   case msg of
-    ViewportUpdated dim ->
-      { model
-        | graph_views =
-            updateGraphView uuid
-              (Just << resizeGraphView dim)
-              model.graph_views
-      }
-    NodeDragStart nodeId ->
-      { model
-      | interactionsDict = Just <| Dragging nodeId
-      -- , simulation = Force.reheat model.simulation
-      }
-
-    NodeDragEnd ->
-      case model.interactionsDict of
-        Just (Dragging nodeId) ->
-          let
-            ( x, y ) =
-              mapCorrespondingPair (+) model.pan model.mouseCoords
-            nearby =
-              nearby_nodes nearby_node_repulsionDistance model
-              -- |> Debug.log "Nearby nodes at end of drag"
-            sf =
-              IntDict.insert nodeId
-                [ Force.towardsX [{ node = nodeId, strength = 2, target = x }]
-                , Force.towardsY [{ node = nodeId, strength = 2, target = y }]
-                , Force.customLinks 2
-                    ( List.map
-                        (\node ->
-                            { source = nodeId
-                            , target = node.id
-                            -- in other words, 8 radii will separate the centers.
-                            -- This should be sufficient for directional arrows to show up correctly.
-                            , distance = nodeRadius * 10
-                            , strength = Just 1
-                            }
-                        )
-                        nearby
-                    )
-                ]
-                model.specificForces
-            pkg = model.package
-            g = pkg.userGraph
-            newGraph =
-              Graph.update nodeId
-                ( Maybe.map (updateNode (x,y) model.pan) )
-                g.graph
-          in
-            { model
-              | interactionsDict = Nothing
-              , currentPackage =
-                  { pkg
-                    | userGraph =
-                        { g | graph = newGraph }
-                        |> debugAutomatonGraphXY ("Dragging #" ++ String.fromInt nodeId ++ " ended with updated node")
-                  }
-              , specificForces = sf
-              , simulation = Force.simulation (List.concat (IntDict.values sf))
-            }
-
-        _ ->
-          model
-
     Zoom amount ->
       let
         zoomAmount = if amount < 0 then 0.05 else -0.05
@@ -701,42 +598,6 @@ updateGraphView uuid msg model =
 
     ResetView ->
       { model | zoom = 1.0, pan = ( 0, 0 ) }
-
-    MouseMove x y ->
-      let
-        pkg = model.package
-        ug = pkg.userGraph
-        newGraph =
-          case model.interactionsDict of
-            Just (Dragging nodeId) ->
-              { ug
-                | graph =
-                    Graph.update nodeId
-                      (Maybe.map
-                        (\ctx ->
-                          let
-                            node = ctx.node
-                            l = node.label
-                            ( node_x, node_y ) =
-                              mapCorrespondingPair (+) model.pan ( x, y )
-                          in
-                            { ctx
-                            | node =
-                              { node
-                              | label = l |> setXY node_x node_y
-                              }
-                            }
-                        )
-                      )
-                      ug.graph
-              }
-            _ ->
-              ug
-      in
-        { model
-          | mouseCoords = (x, y) -- |> Debug.log "Set mouse-coords"
-          , currentPackage = { pkg | userGraph = newGraph }
-        }
 
     UpdateCurrentPackage updated ->
       if updated.userGraph.graphIdentifier /= model.package.userGraph.graphIdentifier then
@@ -752,40 +613,6 @@ updateGraphView uuid msg model =
                 model.packages
         }
     
-    Pan xAmount yAmount ->
-      let
-        ( xPan, yPan ) = model.pan
-      in
-        { model
-        | pan =
-            case model.interactionsDict of
-              Just (ModifyingGraph _ { dest }) ->
-                case dest of
-                  NoDestination ->
-                    ( xPan + xAmount, yPan + yAmount )
-                  _ ->
-                    model.pan
-              Nothing ->
-                ( xPan + xAmount, yPan + yAmount )
-              Just (Dragging _) ->
-                ( xPan + xAmount, yPan + yAmount )
-              Just (AlteringConnection _ _) ->
-                model.pan
-              Just (Splitting _) ->
-                model.pan
-              Just (Executing _ _) ->
-                ( xPan + xAmount, yPan + yAmount )
-        }
-
-    SelectNode index ->
-      { model | interactionsDict = Just <| ModifyingGraph ChooseCharacter <| GraphModification index NoDestination (AutoSet.empty transitionToString) }
-
-    SetMouseOver ->
-      { model | mouseIsHere = True }
-
-    SetMouseOut ->
-      { model | mouseIsHere = False }
-
     CreateNewNodeAt ( x, y ) ->
       case model.interactionsDict of
         Just (ModifyingGraph _ { source, transitions }) ->
@@ -1726,9 +1553,104 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
+    ConnectionEditorInput input ->
+      let
+        -- first, let's figure out: what do we have here?
+        transition : Maybe AcceptVia
+        transition =
+          String.toList input
+          |> List.head
+          |> Maybe.map ViaCharacter
+      in
+        ( case mostRecentInteraction model of
+            Just (key_uuid, EditingConnection ({connection} as alteration) deleteTargetIfCancelled) ->
+              Maybe.map
+                (\t ->
+                  replaceInteraction key_uuid 
+                    ( EditingConnection
+                        { alteration | connection = toggleConnectionTransition t connection }
+                        deleteTargetIfCancelled
+                    )
+                    model
+                )
+                transition
+              |> Maybe.withDefault model
+            _ ->
+              model
+        , Cmd.none
+        )
+
+    ToggleConnectionTransition via ->
+        ( case mostRecentInteraction model of
+            Just (key_uuid, EditingConnection ({connection} as alteration) deleteTargetIfCancelled) ->
+              replaceInteraction key_uuid 
+                ( EditingConnection
+                    { alteration | connection = toggleConnectionTransition via connection }
+                    deleteTargetIfCancelled
+                )
+                model
+            _ ->
+              model
+        , Cmd.none
+        )
+
+toggleConnectionTransition : AcceptVia -> Connection -> Connection
+toggleConnectionTransition acceptCondition conn =
+  AutoSet.foldl
+    (\t (seen, state) ->
+      if t.via == acceptCondition then
+        -- I've found the right transition.  Now, update or remove or…?
+        if t.isFinal then
+          ( True, state ) -- skip it; i.e., remove it.
+        else
+          ( True
+          , AutoSet.insert { t | isFinal = True } state -- make it final
+          )
+      else
+        (seen, AutoSet.insert t state)
+    )
+    (False, AutoSet.empty transitionToString)
+    conn
+  |>  (\(seen, resultSet) ->
+        if seen then
+          resultSet -- I've handled this above.
+        else
+          -- need to insert it.
+          AutoSet.insert
+            (Transition
+              False
+              acceptCondition
+            )
+            resultSet
+      )
+
+-- toggleSelectedCondition : AcceptVia -> Model -> Model
+-- toggleSelectedCondition acceptCondition model =
+--   case model.interactionsDict of
+--     Just (ModifyingGraph via ({ transitions } as mod)) ->
+--       { model
+--         | interactionsDict =
+--             Just <| ModifyingGraph via <|
+--               { mod
+--                 | transitions = alterTransitions transitions
+--               }
+--       }
+--     Just (AlteringConnection via ({ transitions } as mod)) ->
+--       { model
+--         | interactionsDict =
+--             Just <| AlteringConnection
+--               via
+--               { mod
+--                 | transitions = alterTransitions transitions
+--               }
+--       }
+--     _ ->
+--       model
+
+
 editConnection : (Float, Float) -> NodeId -> NodeId -> Connection -> Model -> Model
 editConnection (x, y) src dest connection model =
-  packagesToGraphViews (450, 9/16 * 450) model
+  packagesToGraphViews (430, 3/6 * 430) model
   |>  (\(graph_views, model_) ->
         AutoDict.get model.mainGraphView model.graph_views
         |> Maybe.map (\gv ->
@@ -2318,10 +2240,10 @@ setProperties model =
           , canSelectEmptySpace = False
           , canSelectNodes = False
           , canSplitNodes = False
-          , canDragNodes = True
+          , canDragNodes = False
           , canInspectRefs = True
           , canPan = True
-          , canChooseInPackageList = package.undoBuffer == []
+          , canChooseInPackageList = False
           }
       , { canEscape = True
         , canDragSplitter = False
@@ -3635,9 +3557,9 @@ debugElement : String -> String -> Html a
 debugElement otherClass s =
   if debugViewDimensions then
     div
-      [ HA.class "debug-parent" ]
+      [ HA.class "debug dimensions-parent" ]
       [ div
-        [ HA.class <| "debug-dimensions " ++ otherClass ]
+        [ HA.class <| "dimensions " ++ otherClass ]
         [ text s ]
       ]
   else
@@ -3991,6 +3913,40 @@ viewConnectionEditor model uuid {source, dest, connection} =
     editorData =
       model.connectionEditor
       |> Maybe.withDefault { referenceList = [], mainGraph = model.mainGraphView }
+    (terminal, nonTerminal) =
+      AutoSet.partition (.isFinal) connection
+    htmlForTransition {via} =
+      case via of
+        ViaCharacter c ->
+          Just
+            ( span
+                [ HA.class "set-item character" ]
+                [ text <| String.fromChar c ]
+            )
+        ViaGraphReference pkg_uuid ->
+          AutoDict.get pkg_uuid model.packages
+          |> Maybe.map (\pkg ->
+            span
+              [ HA.class "set-item graph-reference" ]
+              [ div
+                  [ HA.class "package-badge"
+                  , HA.title "This unique badge identifies this specific computation."
+                  ]
+                  [ TypedSvg.svg
+                      [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
+                      [ GraphEditor.viewGraphReference pkg_uuid 0 0 ]
+                    |> Html.Styled.fromUnstyled
+                  ]
+              , case pkg.description of
+                  Just s ->
+                    div
+                      [ HA.class "description" ]
+                      [ text s ]
+                  Nothing ->
+                    text ""
+              ]
+              -- [ text <| Maybe.withDefault "(no description)" pkg.description ]
+          )
   in
   div
     [ HA.class "modal" ]
@@ -4010,16 +3966,17 @@ viewConnectionEditor model uuid {source, dest, connection} =
                             ]
                         , div -- terminal items group
                             [ HA.class "terminals" ]
-                            [ span [ HA.class "set-item" ] [ text "b" ]
-                            , span [ HA.class "set-item" ] [ text "B" ]
-                            ]
+                            ( AutoSet.toList terminal
+                              |> List.filterMap htmlForTransition
+                            )
                         , div
                             [ HA.class "set-separator" ]
                             []
                         , div -- normal (non-terminal) items group
                             [ HA.class "non-terminals" ]
-                            [ span [ HA.class "set-item" ] [ text "a" ]
-                            ]
+                            ( AutoSet.toList nonTerminal
+                              |> List.filterMap htmlForTransition
+                            )
                         , div
                             [ HA.class "set-right-bracket" ]
                             [ text "}"
@@ -4029,7 +3986,9 @@ viewConnectionEditor model uuid {source, dest, connection} =
                 , div -- quick input
                     [ HA.class "quick-input" ]
                     [ div
-                        [ HA.class "quick-input-bar" ]
+                        [ HA.class "quick-input-bar"
+                        , HE.onInput (UIMsg << ConnectionEditorInput)
+                        ]
                         [ input
                             [ HA.class "input-field"
                             , HA.placeholder "Type here…"
@@ -4037,6 +3996,7 @@ viewConnectionEditor model uuid {source, dest, connection} =
                             , HA.autocomplete False
                             , HA.attribute "autocorrect" "off"
                             , HA.attribute "spellcheck" "off"
+                            , HA.value ""
                             ]
                             []
                         -- , button
@@ -4078,9 +4038,18 @@ viewConnectionEditor model uuid {source, dest, connection} =
                         AutoDict.get view_uuid model.graph_views
                         |> Maybe.map
                           (\graph_view ->
+                            let
+                              via = ViaGraphReference graph_view.package.userGraph.graphIdentifier
+                              inTerminals = AutoSet.member (Transition True via) terminal
+                              inNonTerminals = AutoSet.member (Transition False via) nonTerminal
+                            in
                             div
-                              [ HA.class "palette-item"
-                              , HE.onClick (UIMsg <| SelectPackage graph_view.package.userGraph.graphIdentifier)
+                              [ HA.classList
+                                  [ ("palette-item", True)
+                                  , ("terminal", inTerminals)
+                                  , ("non-terminal", inNonTerminals)
+                                  ]
+                              , HE.onClick (UIMsg <| ToggleConnectionTransition via)
                               ]
                               [ viewGraph graph_view
                               , div
@@ -4089,6 +4058,18 @@ viewConnectionEditor model uuid {source, dest, connection} =
                                     |> Maybe.withDefault "(no description)"
                                     |> text
                                   ]
+                              , if inTerminals || inNonTerminals then
+                                  div
+                                    [ HA.class "package-badge"
+                                    , HA.title "This unique badge identifies this specific computation."
+                                    ]
+                                    [ TypedSvg.svg
+                                        [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
+                                        [ GraphEditor.viewGraphReference graph_view.package.userGraph.graphIdentifier 0 0 ]
+                                      |> Html.Styled.fromUnstyled
+                                    ]
+                                else
+                                  text ""
                               ]
                         )
                     )
@@ -4111,6 +4092,29 @@ view model =
         _ ->
           viewMainInterface model
     , div
-        [ HA.class "debug-gv-size" ]
+        [ HA.class "debug gv-size" ]
         [ text <| String.fromInt <| AutoDict.size model.graph_views ]
+    , div
+        [ HA.class "debug interactionsdict" ]
+        [ htmlInteractionsDictSummary model.interactionsDict ]
     ]
+
+htmlInteractionsDictSummary : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState) -> Html a
+htmlInteractionsDictSummary dict =
+  AutoDict.toList dict
+  |> List.sortBy (Tuple.second >> Tuple.first)
+  |> List.map (\(key, (_, stack)) ->
+    let
+      k =
+        case key of
+          Nothing -> "⯁"
+          Just uuid -> truncate_uuid uuid
+    in
+        k ++ " → " ++ String.fromInt (List.length stack)
+  )
+  |>
+    (\strings ->
+      Html.Styled.ol
+        []
+        ( List.map (\s -> Html.Styled.li [] [ text s ]) strings )
+    )

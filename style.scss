@@ -6,32 +6,45 @@
 @use 'style/panning';
 @use 'style/connection-editor';
 
-.debug-parent {
+.debug.dimensions-parent {
   position: relative;
   height: 0;
   top: 50%;
   opacity: 0.35;
-}
-.debug-dimensions {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  line-height: 0.8;
-  left: 50%;
 
-  &.width {
-    border-top: 1px solid red;
+  & > .dimensions {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    line-height: 0.8;
+    left: 50%;
+  
+    &.width {
+      border-top: 1px solid red;
+    }
+  
+    &.height {
+      border-left: 1px solid red;
+    }
   }
-
-  &.height {
-    border-left: 1px solid red;
-  }
 }
 
-.debug-gv-size {
+.debug.gv-size {
   position: absolute;
   left: 10px;
   top: 10px;
+  color: var(--red);
+  font-size: 12px;
+  pointer-events: none;
+  user-select: none;
+  font-weight: bold;
+  z-index: 250;
+}
+
+.debug.interactionsdict {
+  position: absolute;
+  bottom: 10px;
+  left: 30px;
   color: var(--red);
   font-size: 12px;
   pointer-events: none;

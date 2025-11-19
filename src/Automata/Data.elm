@@ -93,6 +93,8 @@ type UIMsg
   | SelectNode Uuid NodeId
   | SelectSpace Uuid
   | MovePhantomNode Uuid (Float, Float)
+  | ConnectionEditorInput String
+  | ToggleConnectionTransition AcceptVia
   -- | Zoom Uuid Float
 
 type Main_Msg
@@ -507,21 +509,7 @@ If @b : [ (0, !k, 1), (1, !z, 0) ], then flattening gives us:
 -}
 
 type alias Transition =
-  {
-  --| finality is specific to a particular tag; and tags are specific to a particular DFA.
-  -- But if I have a tag-specific dict, then what happens if I can't find a matching tag?
-  -- Or, what happens if the tag-set is empty?
-  -- Then, I think:
-  -- (1) It is an error in the code, and I should spit out a debugging message;
-  --     (AND I should write some tests for this!)
-  -- (2) I should, by default, say that it is NOT final.
-  --
-  -- But what happens when there are >1 tags in an allowed-set, during execution, and
-  -- one of them is final and the other one is not?  Then it is the finality which
-  -- takes preference, because legitimately, at least one of the "unioned" DFAs DOES
-  -- end at this point; and if the input ends here, for example, then that's a
-  -- definite case of "ACCEPT".
-    isFinal : Bool
+  { isFinal : Bool
   , via : AcceptVia
   }
 
