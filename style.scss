@@ -7,12 +7,12 @@
 @use 'style/connection-editor';
 
 .debug {
-  z-index: 250;
   pointer-events: none;
   user-select: none;
 
-  .dimensions-parent {
+  &.dimensions-parent {
     position: relative;
+    z-index: 250;
     height: 0;
     top: 50%;
     opacity: 0.35;
@@ -33,22 +33,24 @@
     }
   }
 
-  .gv-size {
+  &.gv-size {
     position: absolute;
     left: 10px;
     top: 10px;
     color: var(--red);
     font-size: 12px;
     font-weight: bold;
+    z-index: 250;
   }
 
-  .interactionsdict {
+  &.interactionsdict {
     position: absolute;
     bottom: 10px;
     left: 30px;
     color: var(--red);
     font-size: 12px;
     font-weight: bold;
+    z-index: 250;
   }
 }
 
