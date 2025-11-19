@@ -696,8 +696,21 @@ viewLink view_uuid properties (from, to) drawing_data =
               --     |> Maybe.withDefault []
               --   )
             Nothing ->
-              AutoSet.toList drawing_data.label
-              |> List.foldl
+              let
+                transitions = AutoSet.toList drawing_data.label
+                char_offset = 12                
+                graph_offset = 18
+                total_width =
+                  List.foldl
+                    (\{via} acc ->
+                      case via of
+                        ViaCharacter _ -> acc + char_offset
+                        ViaGraphReference _ -> acc + graph_offset
+                    )
+                    0
+                    transitions
+              in
+              List.foldl
                 (\{via, isFinal} (cur_x, cur_y, elems) ->
                   case via of
                     ViaCharacter ch ->
@@ -724,7 +737,8 @@ viewLink view_uuid properties (from, to) drawing_data =
                         ) :: elems
                       )
                 )
-                ( x_, y_, [] )
+                ( x_ - 0.5 * (total_width) + 9, y_, [] )
+                transitions
               |> (\(_, _, elems) -> g [] elems)
         linkClass =
           case ( drawing_data.executionData, drawing_data.highlighting ) of

@@ -2509,13 +2509,13 @@ update msg model =
               |> setProperties
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
               removePhantomLink uuid source dest model
-            Just (Just uuid, EditingConnection {source, dest, deleteTargetIfCancelled} {referenceList}, model_) ->
+            Just (Just uuid, EditingConnection {source, dest, deleteTargetIfCancelled} {referenceList, mainGraph}, model_) ->
               -- clear out the reference-list.
               let
                 model_without_editor_views =
                   { model_
                     | graph_views =
-                        List.foldl AutoDict.remove model_.graph_views referenceList
+                        List.foldl AutoDict.remove model_.graph_views (mainGraph :: referenceList)
                   }
               in
 
