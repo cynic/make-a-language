@@ -131,11 +131,6 @@ type alias Main_Model =
   , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
   , properties : MainUIProperties
   , computationsExplorer : List Uuid
-  , connectionEditor :
-      Maybe
-        { referenceList : List Uuid
-        , mainGraph : Uuid
-        }
   }
 
 type InteractionState
@@ -148,7 +143,7 @@ type InteractionState
   | DraggingNode NodeId
   | DraggingSplitter SplitterMovement
   | ChoosingDestinationFor NodeId PossibleDestination
-  | EditingConnection ConnectionAlteration Bool -- should-delete-target-if-empty-connection
+  | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   | Executing ExecutionResult
 
 type alias GraphPackage =
@@ -166,6 +161,17 @@ type alias GraphPackage =
   ForceDirectedGraph.elm
 --------------------------------------------------------}
 
+type ConnectionEditorMode
+  = CharacterInput
+  | GraphReferenceSearch String
+
+type alias ConnectionEditorProperties =
+  { referenceList : List Uuid
+  , shownList : List Uuid
+  , mainGraph : Uuid
+  , editingMode : ConnectionEditorMode
+  }
+
 type SplitterMovement = LeftRight | UpDown
 
 type AreaUITarget
@@ -176,6 +182,7 @@ type alias ConnectionAlteration =
   { source : NodeId
   , dest : NodeId
   , connection : Connection
+  , deleteTargetIfCancelled : Bool
   }
 
 {-  Let's go over UI interactions, and the state machine behind

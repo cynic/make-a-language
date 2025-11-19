@@ -455,7 +455,6 @@ init flags =
       , properties =
           defaultMainProperties
       , computationsExplorer = []
-      , connectionEditor = Nothing
       }
     model =
       -- I _know_ that this will succeed, because I've added this
@@ -1554,45 +1553,67 @@ update_ui ui_msg model =
       )
 
     ConnectionEditorInput input ->
-      let
-        -- first, let's figure out: what do we have here?
-        transition : Maybe AcceptVia
-        transition =
-          String.toList input
-          |> List.head
-          |> Maybe.map ViaCharacter
-      in
-        ( case mostRecentInteraction model of
-            Just (key_uuid, EditingConnection ({connection} as alteration) deleteTargetIfCancelled) ->
-              Maybe.map
-                (\t ->
-                  replaceInteraction key_uuid 
-                    ( EditingConnection
-                        { alteration | connection = toggleConnectionTransition t connection }
-                        deleteTargetIfCancelled
-                    )
-                    model
-                )
-                transition
-              |> Maybe.withDefault model
-            _ ->
-              model
-        , Cmd.none
-        )
+      ( case mostRecentInteraction model of
+          Just (key_uuid, EditingConnection alteration props) ->
+            handleConnectionEditorInput key_uuid input alteration props model
+          _ ->
+            model
+      , Cmd.none
+      )
 
     ToggleConnectionTransition via ->
         ( case mostRecentInteraction model of
-            Just (key_uuid, EditingConnection ({connection} as alteration) deleteTargetIfCancelled) ->
+            Just (key_uuid, EditingConnection ({connection} as alteration) props) ->
               replaceInteraction key_uuid 
                 ( EditingConnection
                     { alteration | connection = toggleConnectionTransition via connection }
-                    deleteTargetIfCancelled
+                    props
                 )
                 model
             _ ->
               model
         , Cmd.none
         )
+
+handleConnectionEditorInput : Maybe Uuid -> String -> ConnectionAlteration -> ConnectionEditorProperties -> Model -> Model
+handleConnectionEditorInput key_uuid input alteration props model =
+  case props.editingMode of
+    CharacterInput ->
+      String.toList input
+      |> List.head
+      |> Maybe.map
+        (\ch -> handleConnectionCharacterInput props key_uuid ch alteration model)
+      |> Maybe.withDefault model
+    GraphReferenceSearch _ ->
+      case input of
+        "`" ->
+          replaceInteraction key_uuid
+            ( EditingConnection alteration { props | editingMode = CharacterInput } )
+            model
+        _ ->
+          replaceInteraction key_uuid
+            ( EditingConnection alteration
+                { props
+                  | editingMode = GraphReferenceSearch input
+                  , shownList = filterConnectionEditorGraphs input props.referenceList model
+                }
+            )
+            model
+
+handleConnectionCharacterInput : ConnectionEditorProperties -> Maybe Uuid -> Char -> ConnectionAlteration -> Model -> Model
+handleConnectionCharacterInput props key_uuid ch alteration model =
+  case ch of
+    '`' ->
+      replaceInteraction key_uuid
+        ( EditingConnection alteration { props | editingMode = GraphReferenceSearch "" } )
+        model
+    _ ->
+      replaceInteraction key_uuid
+        ( EditingConnection
+            { alteration | connection = toggleConnectionTransition (ViaCharacter ch) alteration.connection }
+            props
+        )
+        model
 
 toggleConnectionTransition : AcceptVia -> Connection -> Connection
 toggleConnectionTransition acceptCondition conn =
@@ -1647,9 +1668,24 @@ toggleConnectionTransition acceptCondition conn =
 --     _ ->
 --       model
 
+filterConnectionEditorGraphs : String -> List Uuid -> Model -> List Uuid
+filterConnectionEditorGraphs s referenceList model =
+  let
+    v = String.toLower s
+  in
+  List.filterMap (\uuid -> AutoDict.get uuid model.graph_views) referenceList
+  |> List.filter
+    (\gv ->
+      case gv.package.description of
+        Nothing ->
+          True -- include; there's nothing to filter on.
+        Just desc ->
+          String.contains v (String.toLower desc)
+    )
+  |> List.map .id
 
-editConnection : (Float, Float) -> NodeId -> NodeId -> Connection -> Model -> Model
-editConnection (x, y) src dest connection model =
+editConnection : Maybe Uuid -> (Float, Float) -> ConnectionAlteration -> Model -> Model
+editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model =
   packagesToGraphViews (430, 3/6 * 430) model
   |>  (\(graph_views, model_) ->
         AutoDict.get model.mainGraphView model.graph_views
@@ -1661,9 +1697,9 @@ editConnection (x, y) src dest connection model =
                 | userGraph =
                     case Graph.get dest package.userGraph.graph of
                       Nothing ->
-                        GraphEditor.newnode_graphchange src x y connection package.userGraph
+                        GraphEditor.newnode_graphchange source x y connection package.userGraph
                       Just _ ->
-                        GraphEditor.updateLink_graphchange src dest connection package.userGraph
+                        GraphEditor.updateLink_graphchange source dest connection package.userGraph
               }
             ( main_view, updated_model ) =
               naiveViewFromPackage
@@ -1675,25 +1711,33 @@ editConnection (x, y) src dest connection model =
                 pkg
                 model_
             solidified_model =
-              solidifyPhantoms main_view.id src dest updated_model
+              solidifyPhantoms main_view.id source dest updated_model
           in
             (List.map .id graph_views, main_view.id, solidified_model)
           )
         |> Maybe.withDefault ( List.map .id graph_views, model.mainGraphView, model_ )
       )
   |>  (\(uuids, main_uuid, model_) ->
-        { model_
-          | connectionEditor =
-              Just
+        let
+          stackModify =
+            case peekInteraction view_uuid model_ of
+              Just (EditingConnection _ _) -> replaceInteraction
+              _ -> pushInteractionForStack
+        in
+          stackModify view_uuid
+            ( EditingConnection alteration
                 { referenceList = uuids
+                , shownList = uuids
                 , mainGraph = main_uuid
+                , editingMode = CharacterInput
                 }
-          , graph_views =
-              updateGraphView main_uuid
-                (centerAndHighlight src dest >> Just)
-                model_.graph_views
-
-        }
+            )
+            { model_
+              | graph_views =
+                  updateGraphView main_uuid
+                    (centerAndHighlight source dest >> Just)
+                    model_.graph_views
+            }
       )
   |> setProperties
 
@@ -2087,13 +2131,15 @@ cancelNewNodeCreation view_uuid model =
   in
     case popInteraction (Just view_uuid) model of
       Just (ChoosingDestinationFor source (NewNode dest _), model_) ->
-        -- println "Popped ChoosingDestinationFor"
         kill source dest model_
-      Just (EditingConnection {source, dest} True, model_) ->
-        -- println "Popped EditingConnection"
-        kill source dest model_
+      Just (EditingConnection {source, dest, deleteTargetIfCancelled} _, model_) ->
+        if deleteTargetIfCancelled then
+          kill source dest model_
+        else
+          println "🚨 ERROR WHMD(MWOEI" -- how am I in this function, if there's no new node??
+          model
       _ ->
-        println "🚨 ERROR $DBMWMGYERCC"
+        println "🚨 ERROR $DBMWMGYERCC" -- how am I in this function, if neither of these is cancelled??
         model
 
 createNewGraphNode : Uuid -> NodeId -> (Float, Float) -> Model -> Model
@@ -2235,7 +2281,7 @@ setProperties model =
       )
     whenEditingConnection : (GraphViewPropertySetter, MainPropertySetter)
     whenEditingConnection =
-      ( \package ->
+      ( \_ ->
           { canSelectConnections = False
           , canSelectEmptySpace = False
           , canSelectNodes = False
@@ -2325,17 +2371,13 @@ selectDestination view_uuid src possible_dest model =
       -- I've clicked on some kind of an empty space.  I'll want to create this node,
       -- and then proceed to edit the connection.
       createNewGraphNode view_uuid phantom_id (x, y) model
-      -- |> solidifyPhantoms view_uuid src phantom_id
-      |> replaceInteraction (Just view_uuid)
-            ( EditingConnection
-                { source = src
-                , dest = phantom_id
-                , connection = AutoSet.empty transitionToString
-                }
-                True
-            )
       -- editConnection will call setProperties
-      |> editConnection (x, y) src phantom_id (AutoSet.empty transitionToString)
+      |> editConnection (Just view_uuid) (x, y)
+          { source = src
+          , dest = phantom_id
+          , connection = AutoSet.empty transitionToString
+          , deleteTargetIfCancelled = True
+          }
     ExistingNode dest_id conn ->
       let
         (x, y) =
@@ -2346,18 +2388,14 @@ selectDestination view_uuid src possible_dest model =
       in
         -- we already have a node selected, and now, an existing
         -- node is being selected as the destination.
-        -- solidifyPhantoms view_uuid src dest_id model
-        replaceInteraction (Just view_uuid)
-          ( EditingConnection
-              { source = src
-              , dest = dest_id
-              , connection = conn
-              }
-              False
-          )
-          model
         -- editConnection will call setProperties
-        |> editConnection (x, y) src dest_id conn
+        editConnection (Just view_uuid) (x, y)
+          { source = src
+          , dest = dest_id
+          , connection = conn
+          , deleteTargetIfCancelled = False
+          }
+          model
 
 deleteLinkFromView : Uuid -> NodeId -> NodeId -> Model -> Model
 deleteLinkFromView view_uuid source dest model =
@@ -2453,17 +2491,6 @@ deleteNodeFromView view_uuid source dest model =
               model_.graph_views
       }
 
-clearEditingViews : Model -> Model
-clearEditingViews model =
-  { model
-    | graph_views =
-        model.connectionEditor
-        |> Maybe.map (\{referenceList, mainGraph} ->
-          List.foldl (AutoDict.remove) model.graph_views (mainGraph :: referenceList)
-        )
-        |> Maybe.withDefault model.graph_views
-    , connectionEditor = Nothing
-  }
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -2483,15 +2510,23 @@ update msg model =
               |> setProperties
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
               removePhantomLink uuid source dest model
-            Just (Just uuid, EditingConnection {source, dest} deleteTargetIfCancelled, model_) ->
+            Just (Just uuid, EditingConnection {source, dest, deleteTargetIfCancelled} {referenceList}, model_) ->
+              -- clear out the reference-list.
+              let
+                model_without_editor_views =
+                  { model_
+                    | graph_views =
+                        List.foldl AutoDict.remove model_.graph_views referenceList
+                  }
+              in
+
+
               if deleteTargetIfCancelled then
-                deleteNodeFromView uuid source dest model_
-                |> clearEditingViews
+                deleteNodeFromView uuid source dest model_without_editor_views
                 |> setProperties
               else
-                -- does deletion IF appropriate.
-                deleteLinkFromView uuid source dest model_
-                |> clearEditingViews
+                -- does deletion link deletion IF appropriate.
+                deleteLinkFromView uuid source dest model_without_editor_views
                 |> setProperties
             Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
@@ -2502,13 +2537,13 @@ update msg model =
       )
 
     EditConnection coordinates uuid src dest connection ->
-      ( pushInteractionForStack (Just uuid)
-          ( EditingConnection
-              { source = src, dest = dest, connection = connection }
-              False
-          )
+      ( editConnection (Just uuid) coordinates
+          { source = src
+          , dest = dest
+          , connection = connection
+          , deleteTargetIfCancelled = False
+          }
           model
-          |>  editConnection coordinates src dest connection
       , Cmd.none
       )
 
@@ -3907,12 +3942,9 @@ viewMainInterface model =
         text ""
     ]
 
-viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> Html Msg
-viewConnectionEditor model uuid {source, dest, connection} =
+viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> ConnectionEditorProperties -> Html Msg
+viewConnectionEditor model uuid {source, dest, connection} editorData =
   let
-    editorData =
-      model.connectionEditor
-      |> Maybe.withDefault { referenceList = [], mainGraph = model.mainGraphView }
     (terminal, nonTerminal) =
       AutoSet.partition (.isFinal) connection
     htmlForTransition {via} =
@@ -3996,7 +4028,10 @@ viewConnectionEditor model uuid {source, dest, connection} =
                             , HA.autocomplete False
                             , HA.attribute "autocorrect" "off"
                             , HA.attribute "spellcheck" "off"
-                            , HA.value ""
+                            , HA.value <|
+                                case editorData.editingMode of
+                                  CharacterInput -> ""
+                                  GraphReferenceSearch s -> s
                             ]
                             []
                         -- , button
@@ -4008,17 +4043,26 @@ viewConnectionEditor model uuid {source, dest, connection} =
                         ]
                     , div
                         [ HA.class "instructions" ]
-                        [ div
-                            []
-                            [ span [] [ text "Typing a character once adds it; typing it again promotes it to " ]
-                            , span [ HA.class "terminal-style" ] [ text "terminal" ]
-                            , span [] [ text " status; typing it a third time removes it." ]
-                            ]
-                        , div
-                            []
-                            [ span [] [ text "Typing ` enters image-search mode.  Use the mouse to scroll and select a computation." ]
-                            ]
-                        ]
+                        ( case editorData.editingMode of
+                            CharacterInput ->
+                              [ div
+                                  []
+                                  [ span [] [ text "Typing a character once adds it; typing it again promotes it to " ]
+                                  , span [ HA.class "terminal-style" ] [ text "terminal" ]
+                                  , span [] [ text " status; typing it a third time removes it.  Use the mouse to scroll and select computations." ]
+                                  ]
+                              , div
+                                  []
+                                  [ span [] [ text "Typing ` enters computation-search mode." ]
+                                  ]
+                              ]
+                            GraphReferenceSearch _ ->
+                              [ div
+                                  []
+                                  [ span [] [ text "Only computations with a matching description will be displayed.  Use the mouse to scroll and select computations." ]
+                                  ]
+                              ]
+                        )
                     ]
                 ]
             , div
@@ -4043,37 +4087,40 @@ viewConnectionEditor model uuid {source, dest, connection} =
                               inTerminals = AutoSet.member (Transition True via) terminal
                               inNonTerminals = AutoSet.member (Transition False via) nonTerminal
                             in
-                            div
-                              [ HA.classList
-                                  [ ("palette-item", True)
-                                  , ("terminal", inTerminals)
-                                  , ("non-terminal", inNonTerminals)
-                                  ]
-                              , HE.onClick (UIMsg <| ToggleConnectionTransition via)
-                              ]
-                              [ viewGraph graph_view
-                              , div
-                                  [ HA.class "description" ]
-                                  [ graph_view.package.description
-                                    |> Maybe.withDefault "(no description)"
-                                    |> text
-                                  ]
-                              , if inTerminals || inNonTerminals then
-                                  div
-                                    [ HA.class "package-badge"
-                                    , HA.title "This unique badge identifies this specific computation."
+                              -- case graph_view. graph_view.package.description of
+                              --   Nothing -> -- then display anyway.
+                              --   Just k ->
+                              div
+                                [ HA.classList
+                                    [ ("palette-item", True)
+                                    , ("terminal", inTerminals)
+                                    , ("non-terminal", inNonTerminals)
                                     ]
-                                    [ TypedSvg.svg
-                                        [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
-                                        [ GraphEditor.viewGraphReference graph_view.package.userGraph.graphIdentifier 0 0 ]
-                                      |> Html.Styled.fromUnstyled
+                                , HE.onClick (UIMsg <| ToggleConnectionTransition via)
+                                ]
+                                [ viewGraph graph_view
+                                , div
+                                    [ HA.class "description" ]
+                                    [ graph_view.package.description
+                                      |> Maybe.withDefault "(no description)"
+                                      |> text
                                     ]
-                                else
-                                  text ""
-                              ]
+                                , if inTerminals || inNonTerminals then
+                                    div
+                                      [ HA.class "package-badge"
+                                      , HA.title "This unique badge identifies this specific computation."
+                                      ]
+                                      [ TypedSvg.svg
+                                          [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
+                                          [ GraphEditor.viewGraphReference graph_view.package.userGraph.graphIdentifier 0 0 ]
+                                        |> Html.Styled.fromUnstyled
+                                      ]
+                                  else
+                                    text ""
+                                ]
                         )
                     )
-                    editorData.referenceList
+                    editorData.shownList
                 )
             , div
                 []
@@ -4087,8 +4134,8 @@ view model =
   div
     []
     [ case mostRecentInteraction model of
-        Just (Just uuid, EditingConnection alteration _) ->
-          viewConnectionEditor model uuid alteration
+        Just (Just uuid, EditingConnection alteration props) ->
+          viewConnectionEditor model uuid alteration props
         _ ->
           viewMainInterface model
     , div
