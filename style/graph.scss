@@ -246,7 +246,7 @@
     }
     
     // The main visible path
-    &:not(.background) {
+    &.foreground {
       stroke: var(--comment);
       stroke-width: 2px;
       stroke-linecap: round;
@@ -257,48 +257,55 @@
       // pointer-events: none; // NEW
     }
 
+    .current {
+      fill: var(--pink);
+      font-weight: 600;
+      animation: text-pulse 1s ease-in-out infinite;
+    }
+
     // Edge label styling
-    &.text {
-      fill: var(--foreground);
-      font-family: theme.$font-family-system;
-      font-size: 16px; // larger for better click target
-      font-weight: 500; // NEW
-      text-anchor: middle;
-      dominant-baseline: central;
-      pointer-events: all;
-      user-select: none;
-      
-      // Background for better readability
-      paint-order: stroke fill markers;
-      stroke: var(--background);
-      stroke-width: 6px; // MUCH thicker for better click-target
-      stroke-linecap: round;
-      stroke-linejoin: round;
+    .transition {
+      transition: all 0.2s ease; // NEW
 
-      // transition: all 0.2s ease; // NEW
-
-      .link.current & {
-        fill: var(--pink);
-        font-weight: 600;
-        animation: text-pulse 1s ease-in-out infinite;
+      &.text {
+        fill: var(--foreground);
+        font-family: theme.$font-family-system;
+        font-size: 16px; // larger for better click target
+        stroke-width: 2px;
+        font-weight: 500; // NEW
+        text-anchor: middle;
+        dominant-baseline: central;
+        pointer-events: all;
+        user-select: none;
+        
+        // Background for better readability
+        paint-order: stroke fill markers;
+        stroke: var(--background);
+        stroke-width: 6px; // MUCH thicker for better click-target
+        stroke-linecap: round;
+        stroke-linejoin: round;
       }
+
 
       .can-select-connections &:hover {
         // stroke: var(--cyan);
         stroke-width: 3px;
-        filter: drop-shadow(0 0 2px rgba(139, 233, 253, 0.4));
+        filter: drop-shadow(0 0 2px var(--purple));
         fill: var(--cyan);
         // font-weight: 600;
         font-size: 24px; // grow on hover, better target
         cursor: pointer; // NEW
         // stroke-width: 8px; // same
-
-        ~ * { // .link:not(.background) {
-          stroke:var(--cyan);
-          stroke-width: 3px;
-        }
+  
       }
+
+      // ~ * { // .link:not(.background) {
+      //   stroke:var(--cyan);
+      //   stroke-width: 3px;
+      // }
+
     }
+
 
     // Phantom edge group
     &.phantom {
@@ -340,7 +347,7 @@
       }
       
       // Main phantom edge path
-      &:not(.background) {
+      &.foreground {
         stroke: var(--pink);
         stroke-width: 4px;
         stroke-linecap: round;

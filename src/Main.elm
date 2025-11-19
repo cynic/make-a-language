@@ -1585,20 +1585,19 @@ handleConnectionEditorInput key_uuid input alteration props model =
         (\ch -> handleConnectionCharacterInput props key_uuid ch alteration model)
       |> Maybe.withDefault model
     GraphReferenceSearch _ ->
-      case input of
-        "`" ->
-          replaceInteraction key_uuid
-            ( EditingConnection alteration { props | editingMode = CharacterInput } )
-            model
-        _ ->
-          replaceInteraction key_uuid
-            ( EditingConnection alteration
-                { props
-                  | editingMode = GraphReferenceSearch input
-                  , shownList = filterConnectionEditorGraphs input props.referenceList model
-                }
-            )
-            model
+      if String.contains "`" input then
+        replaceInteraction key_uuid
+          ( EditingConnection alteration { props | editingMode = CharacterInput } )
+          model
+      else
+        replaceInteraction key_uuid
+          ( EditingConnection alteration
+              { props
+                | editingMode = GraphReferenceSearch input
+                , shownList = filterConnectionEditorGraphs input props.referenceList model
+              }
+          )
+          model
 
 handleConnectionCharacterInput : ConnectionEditorProperties -> Maybe Uuid -> Char -> ConnectionAlteration -> Model -> Model
 handleConnectionCharacterInput props key_uuid ch alteration model =
@@ -3966,7 +3965,7 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
                   ]
                   [ TypedSvg.svg
                       [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
-                      [ GraphEditor.viewGraphReference pkg_uuid 0 0 ]
+                      [ GraphEditor.viewGraphReference pkg_uuid 4 0 0 ]
                     |> Html.Styled.fromUnstyled
                   ]
               , case pkg.description of
@@ -4053,13 +4052,13 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
                                   ]
                               , div
                                   []
-                                  [ span [] [ text "Typing ` enters computation-search mode." ]
+                                  [ span [] [ text "Typing «`» enters computation-search mode." ]
                                   ]
                               ]
                             GraphReferenceSearch _ ->
                               [ div
                                   []
-                                  [ span [] [ text "Only computations with a matching description will be displayed.  Use the mouse to scroll and select computations." ]
+                                  [ span [] [ text "Only computations with a matching description will be displayed.  Use the mouse to scroll and select computations.  Type «`» to switch back to character mode." ]
                                   ]
                               ]
                         )
@@ -4112,7 +4111,7 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
                                       ]
                                       [ TypedSvg.svg
                                           [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
-                                          [ GraphEditor.viewGraphReference graph_view.package.userGraph.graphIdentifier 0 0 ]
+                                          [ GraphEditor.viewGraphReference graph_view.package.userGraph.graphIdentifier 4 0 0 ]
                                         |> Html.Styled.fromUnstyled
                                       ]
                                   else

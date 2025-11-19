@@ -407,8 +407,8 @@ textChar ch =
     _ ->
       String.fromChar ch
 
-transitionToTextSpan : Transition -> (AcceptVia -> List String) -> Svg msg
-transitionToTextSpan transition otherClasses =
+transitionToConnectionLabel : Transition -> (AcceptVia -> List String) -> Svg msg
+transitionToConnectionLabel transition otherClasses =
   case transition.via of
     ViaCharacter ch ->
       tspan
@@ -426,16 +426,6 @@ transitionToTextSpan transition otherClasses =
         [ text "Ω"
         , title [] [ text <| Uuid.toString ref ]
         ]
-
-connectionToSvgText : Connection -> List (Svg msg)
-connectionToSvgText =
-  AutoSet.toList
-  >> List.map (\t -> transitionToTextSpan t (\_ -> []))
-
-connectionToSvgTextHighlightingChars : Connection -> (AcceptVia -> List String) -> List (Svg msg)
-connectionToSvgTextHighlightingChars conn highlightFunction =
-  AutoSet.toList conn
-  |> List.map (\t -> transitionToTextSpan t highlightFunction)
 
 -- paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
 -- paletteColors =
@@ -637,11 +627,17 @@ executionData r =
 --       )
 --     |> Maybe.withDefault Dict.empty
 
-viewGraphReference : Uuid.Uuid -> Float -> Float -> Svg a
-viewGraphReference uuid x_ y_ =
+{-| (2+7n)×(2+4n)-pixel UUID-representing badges.
+    
+    Sensible sizes are:
+    - 2 = 16x10px badge
+    - 4 = 30x18px badge
+-}
+viewGraphReference : Uuid.Uuid -> Int -> Float -> Float -> Svg a
+viewGraphReference uuid scale x_ y_ =
   let
     pixels = getPalette uuid
-    pixelSize = 4
+    pixelSize = toFloat scale -- 4
   in
     g
       []
@@ -683,20 +679,53 @@ viewGraphReference uuid x_ y_ =
 viewLink : Uuid -> GraphViewProperties -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
 viewLink view_uuid properties (from, to) drawing_data =
       let
-        labelText =
+        x_ = drawing_data.pathBetween.transition_coordinates.x
+        y_ = drawing_data.pathBetween.transition_coordinates.y
+        transitionLabel : Svg Msg
+        transitionLabel =
           case drawing_data.executionData of
             Just {chosen} ->
-              connectionToSvgTextHighlightingChars
-                drawing_data.label
-                (\via ->
-                  AutoDict.get via chosen
-                  |> Maybe.map (\recency ->
-                    [ "executed", "recent-" ++ String.fromInt recency ]
-                  )
-                  |> Maybe.withDefault []
-                )
+              g [] []
+              -- connectionToSvgTextHighlightingChars
+              --   drawing_data.label
+              --   (\via ->
+              --     AutoDict.get via chosen
+              --     |> Maybe.map (\recency ->
+              --       [ "executed", "recent-" ++ String.fromInt recency ]
+              --     )
+              --     |> Maybe.withDefault []
+              --   )
             Nothing ->
-              connectionToSvgText drawing_data.label
+              AutoSet.toList drawing_data.label
+              |> List.foldl
+                (\{via, isFinal} (cur_x, cur_y, elems) ->
+                  case via of
+                    ViaCharacter ch ->
+                      ( cur_x + 12
+                      , cur_y
+                      , ( g
+                          [ class [ "transition", "text" ] ]
+                          [ text_
+                              [ x cur_x
+                              , y cur_y
+                              ]
+                              [ text <| String.fromChar ch ]
+                          ]
+                        ) :: elems
+                      )
+                    ViaGraphReference uuid ->
+                      ( cur_x + 18
+                      , cur_y
+                      , ( g
+                            [ class [ "transition", "graph-reference" ]
+                            ]
+                            [ viewGraphReference uuid 2 (cur_x - 8) (cur_y - 5)
+                            ]
+                        ) :: elems
+                      )
+                )
+                ( x_, y_, [] )
+              |> (\(_, _, elems) -> g [] elems)
         linkClass =
           case ( drawing_data.executionData, drawing_data.highlighting ) of
             ( Nothing, Just Phantom ) ->
@@ -711,8 +740,6 @@ viewLink view_uuid properties (from, to) drawing_data =
               [ "link", "executed", "highlight", "recent-" ++ String.fromInt smallest_recency ]
             ( Just {smallest_recency}, Nothing ) ->
               [ "link", "executed", "recent-" ++ String.fromInt smallest_recency ]
-        x_ = drawing_data.pathBetween.transition_coordinates.x
-        y_ = drawing_data.pathBetween.transition_coordinates.y
       in
         g
           [ class [ "link-group" ] ]
@@ -725,19 +752,17 @@ viewLink view_uuid properties (from, to) drawing_data =
               [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
           , path
               [ d drawing_data.pathBetween.pathString
-              , class linkClass
+              , class ( "foreground" :: linkClass )
               ]
               [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
-          , text_
-              [ x <| x_
-              , y <| y_
-              -- , Html.Attributes.attribute "paint-order" "stroke fill markers"
-              , class ( "text" :: linkClass )
+          , g
+              [ class linkClass
               , properties.canSelectConnections
                 |> thenPermitSvgInteraction (onClick (EditConnection (x_, y_) view_uuid from to drawing_data.label))
               ]
-              ( title [] [ text "Click to modify" ] :: labelText 
-              )
+              [ transitionLabel
+              , title [] [ text "Click to modify" ]
+              ]
           -- , rect
           --     [ x <| positioning.transition_coordinates.x
           --     , y <| positioning.transition_coordinates.y - 70
