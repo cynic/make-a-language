@@ -225,17 +225,26 @@
   }
 }
 
-
+.graph-badge {
+  .backing {
+    fill: var(--background-darker);
+  }
+}
 
 
 .link-group {
+
+  // .foreground + .transition:hover { // .link:not(.background) {
+  //   stroke:var(--cyan);
+  //   stroke-width: 3px;
+  // }
 
   // Base edge styling
   .link {
     // Remove default SVG styling
     fill: none;
     
-    // The background path (simulated stroke)
+  // The background path (simulated stroke)
     &.background {
       stroke: var(--background);
       stroke-width: 6px; // Wider than main path for the "stroke" effect
@@ -268,7 +277,6 @@
       transition: all 0.2s ease; // NEW
 
       &.text {
-        fill: var(--foreground);
         font-family: theme.$font-family-system;
         font-size: 16px; // larger for better click target
         font-weight: 500; // NEW
@@ -279,12 +287,25 @@
         
         // Background for better readability
         paint-order: stroke fill markers;
-        stroke: var(--background);
-        stroke-width: 6px; // MUCH thicker for better click-target
         stroke-linecap: round;
         stroke-linejoin: round;
+        stroke: var(--background);
+        stroke-width: 6px; // MUCH thicker for better click-target
+        &.nonfinal {
+          fill: var(--foreground);
+        }
+        &.final {
+          fill: var(--orange);
+        }
       }
 
+      &.graph-reference {
+        &.final {
+          .graph-badge .backing {
+            fill: var(--orange);
+          }
+        }
+      }
 
       .can-select-connections &:hover {
         // stroke: var(--cyan);
@@ -297,11 +318,6 @@
         // stroke-width: 8px; // same
   
       }
-
-      // ~ * { // .link:not(.background) {
-      //   stroke:var(--cyan);
-      //   stroke-width: 3px;
-      // }
 
     }
 

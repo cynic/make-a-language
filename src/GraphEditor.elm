@@ -640,7 +640,7 @@ viewGraphReference uuid scale x_ y_ =
     pixelSize = toFloat scale -- 4
   in
     g
-      []
+      [ class [ "graph-badge" ] ]
       ( rect
           [ x <| x_
           , y <| y_
@@ -648,7 +648,8 @@ viewGraphReference uuid scale x_ y_ =
           , height <| (4 * pixelSize) + 2
           , rx 2
           , ry 2
-          , fill <| Paint <| Color.black
+          -- , fill <| Paint <| Color.black
+          , class [ "backing" ]
           ]
           []
       -- each one is a 4px square
@@ -720,7 +721,7 @@ viewLink view_uuid properties (from, to) drawing_data =
                       ( cur_x + char_width + gap
                       , cur_y
                       , ( g
-                          [ class [ "transition", "text" ] ]
+                          [ class [ "transition", "text", if isFinal then "final" else "nonfinal" ] ]
                           [ text_
                               [ x cur_x
                               , y cur_y
@@ -733,7 +734,7 @@ viewLink view_uuid properties (from, to) drawing_data =
                       ( cur_x + badge_width + gap
                       , cur_y
                       , ( g
-                            [ class [ "transition", "graph-reference" ]
+                            [ class [ "transition", "graph-reference", if isFinal then "final" else "nonfinal" ]
                             ]
                             [ viewGraphReference uuid 2 (cur_x - 8) (cur_y - 5)
                             ]
@@ -763,7 +764,6 @@ viewLink view_uuid properties (from, to) drawing_data =
           [
             path
               [ d drawing_data.pathBetween.pathString
-              -- , noFill
               , class ( "background" :: linkClass )
               ]
               [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
