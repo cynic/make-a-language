@@ -351,13 +351,14 @@ type LinkHighlighting
 type alias LinkDrawingData =
   { cardinality : Cardinality
   , pathBetween : PathBetweenReturn
+  , graphReferenceDescriptions : AutoDict.Dict String Uuid String
   , executionData :
       Maybe
         { smallest_recency : Int
         -- map of chosen-transition → recency
         , chosen : AutoDict.Dict String AcceptVia Int
         }
-  , label : Connection
+  , connection : Connection
   , highlighting : Maybe LinkHighlighting
   }
 
@@ -453,68 +454,6 @@ type NodeEffect
   = NoEffect
   | SomeEffectFigureItOutLater
 
-{-
-When we make a union of DFAs, each transition is tagged with a set of values that represent
-which DFA(s) it is present in (i.e., which ones it "comes from").  When we are executing on
-that union'd DFA, we begin with the full set of tags from all of its constituents.  The rule
-is: we can only take a transition if its tag is in the allowed set.  As we select transitions,
-the tags get reduced at each step to the intersection between the allowed set and the tags
-on the followed transition.  This means that we end up with a smaller set of allowable
-outbound links that we can possibly take, while maintaining a single graph.
-
-Why do we want to do this?  To be able to represent multiple graphs in the union WITHOUT
-invalid cross-language transitions happening.  For example, consider:
-
-X : [ (0, p, 1), (1, !q, 0) ]
-Y : [ (0, !v, 1) ]
-
-Their union might be phrased as:
-
-Z : [ (0, p, 1), (1, !q, 0), 0, !v, 2) ]
-
-…but now, have a look at what's permitted.  Suddenly, the sequence "pqv" is accepted when it
-was NOT accepted in either X or Y.  But now, let's give them some tags in the union.
-
-Z : [ (0, {X}p, 1), (1, {X}!q, 0), 0, {Y}!v, 2) ]
-
-We begin with {X,Y}.  And given the input "pqv", we follow "p", and our allowed-set shrinks to
-{X,Y}-union-{X}={X}. That still lets us take "!q".  But we can no longer take "v", because the
-allowed-set does not contain {Y}, so we end our journey here.
--}
-
-{-
-A thought comes up: what am I supposed to do if I have a "sub-graph" whose transitions
-might be sub-graph transitions OR super-graph transitions?
-
-For example:
-
-@r : a → @b → c → !d
-
-where @b is: !k → c → !d ?
-
-Now, given the input "akcd", should we complete the sub-graph or the super-graph?
-
-Well, let's start by flattening.  We flatten by inserting the sub-graph, and then
-attaching the destination node of the connection to each of the terminals of that
-sub-graph.  In this case, this would result in:
-
-a → {b}!k → {b}c → {b}!d → c → !d [dest-node linked to sub-graph !d]
-     `-→ c → !d [dest-node linked to sub-graph !k]
-
-Which flattens to
-
-a → {b}!k → {b}c → {b}!d → c → !d , which is a final graph that will accept anything.
-
-If @b : k → !j , then flattening would end up with:
-
-a → {b}k → {b}!j → c → !d .
-
-If @b : [ (0, !k, 1), (1, !z, 0) ], then flattening gives us:
-
-@r : [ (0, a, 1), (2, c, 3), (3, !d, 4), (1, !k, 2), (2, !z, 1), (2, !z, 2) ]
-
--}
-
 type alias Transition =
   { isFinal : Bool
   , via : AcceptVia
@@ -528,18 +467,6 @@ type alias AutomatonGraph =
   , graphIdentifier : Uuid
   , root : NodeId
   }
-
--- type alias FlatTransition =
---   {
---     isFinal : Bool
---   , via : Char
---   }
--- type alias FlatConnection = AutoSet.Set String Transition -- a Connection is a link between two nodes.
--- type alias FlattenedGraph =
---   { graph : Graph Entity FlatConnection
---   , graphIdentifier : Uuid
---   , root : NodeId
---   }
 
 {- So with an DFA, I can basically do anything that's deterministic.
 

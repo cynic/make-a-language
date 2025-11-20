@@ -677,8 +677,66 @@ viewGraphReference uuid scale x_ y_ =
           )
       )
 
-viewLink : Uuid -> GraphViewProperties -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
-viewLink view_uuid properties (from, to) drawing_data =
+viewConnectionLabel : LinkDrawingData -> Svg Msg
+viewConnectionLabel drawing_data =
+  let
+    x_ = drawing_data.pathBetween.transition_coordinates.x
+    y_ = drawing_data.pathBetween.transition_coordinates.y
+    transitions = AutoSet.toList drawing_data.connection
+    char_width = 16 / 2.26 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
+    badge_width = 16 -- for a scale of "2".
+    gap = 2
+    sum_width =
+      List.foldl
+        (\{via} acc ->
+          case via of
+            ViaCharacter _ -> acc + char_width
+            ViaGraphReference _ -> acc + badge_width
+        )
+        0
+        transitions
+    sum_gap =  gap * ( toFloat <| List.length transitions - 1 )
+    est_width = sum_width + sum_gap
+  in
+  List.foldl
+    (\{via, isFinal} (cur_x, cur_y, elems) ->
+      case via of
+        ViaCharacter ch ->
+          ( cur_x + char_width + gap
+          , cur_y
+          , ( g
+              [ class [ "transition", "text", if isFinal then "final" else "nonfinal" ] ]
+              [ text_
+                  [ x cur_x
+                  , y cur_y
+                  ]
+                  [ text <| String.fromChar ch ]
+              ]
+            ) :: elems
+          )
+        ViaGraphReference uuid ->
+          ( cur_x + badge_width + gap
+          , cur_y
+          , ( g
+                [ class [ "transition", "graph-reference", if isFinal then "final" else "nonfinal" ]
+                ]
+                [ viewGraphReference uuid 2 cur_x (cur_y - 5)
+                , title
+                    []
+                    [ AutoDict.get uuid drawing_data.graphReferenceDescriptions
+                      |> Maybe.withDefault "(no description)"
+                      |> text
+                    ]
+                ]
+            ) :: elems
+          )
+    )
+    ( x_ - 0.5 * est_width, y_, [] )
+    transitions
+  |> (\(_, _, elems) -> g [] elems)
+
+viewLink : GraphView -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
+viewLink {id, properties} (from, to) drawing_data =
       let
         x_ = drawing_data.pathBetween.transition_coordinates.x
         y_ = drawing_data.pathBetween.transition_coordinates.y
@@ -686,7 +744,10 @@ viewLink view_uuid properties (from, to) drawing_data =
         transitionLabel =
           case drawing_data.executionData of
             Just {chosen} ->
-              g [] []
+              g
+                -- … will maybe figure out recency later on, in sha Allah…
+                [ class [ "executed" ] ]
+                [ viewConnectionLabel drawing_data ]
               -- connectionToSvgTextHighlightingChars
               --   drawing_data.label
               --   (\via ->
@@ -697,53 +758,7 @@ viewLink view_uuid properties (from, to) drawing_data =
               --     |> Maybe.withDefault []
               --   )
             Nothing ->
-              let
-                transitions = AutoSet.toList drawing_data.label
-                char_width = 16 / 2.26 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
-                badge_width = 16 -- for a scale of "2".
-                gap = 2
-                sum_width =
-                  List.foldl
-                    (\{via} acc ->
-                      case via of
-                        ViaCharacter _ -> acc + char_width
-                        ViaGraphReference _ -> acc + badge_width
-                    )
-                    0
-                    transitions
-                sum_gap =  gap * ( toFloat <| List.length transitions - 1 )
-                est_width = sum_width + sum_gap
-              in
-              List.foldl
-                (\{via, isFinal} (cur_x, cur_y, elems) ->
-                  case via of
-                    ViaCharacter ch ->
-                      ( cur_x + char_width + gap
-                      , cur_y
-                      , ( g
-                          [ class [ "transition", "text", if isFinal then "final" else "nonfinal" ] ]
-                          [ text_
-                              [ x cur_x
-                              , y cur_y
-                              ]
-                              [ text <| String.fromChar ch ]
-                          ]
-                        ) :: elems
-                      )
-                    ViaGraphReference uuid ->
-                      ( cur_x + badge_width + gap
-                      , cur_y
-                      , ( g
-                            [ class [ "transition", "graph-reference", if isFinal then "final" else "nonfinal" ]
-                            ]
-                            [ viewGraphReference uuid 2 (cur_x - 8) (cur_y - 5)
-                            ]
-                        ) :: elems
-                      )
-                )
-                ( x_ - 0.5 * est_width, y_, [] )
-                transitions
-              |> (\(_, _, elems) -> g [] elems)
+              viewConnectionLabel drawing_data
         linkClass =
           case ( drawing_data.executionData, drawing_data.highlighting ) of
             ( Nothing, Just Phantom ) ->
@@ -775,7 +790,8 @@ viewLink view_uuid properties (from, to) drawing_data =
           , g
               [ class linkClass
               , properties.canSelectConnections
-                |> thenPermitSvgInteraction (onClick (EditConnection (x_, y_) view_uuid from to drawing_data.label))
+                |> thenPermitSvgInteraction
+                    (onClick (EditConnection (x_, y_) id from to drawing_data.connection))
               ]
               [ transitionLabel
               , title [] [ text "Click to modify" ]
@@ -1127,7 +1143,7 @@ viewMainSvgContent graph_view =
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
       |> List.sortBy (\(_, data) -> if Maybe.isJust data.highlighting then 1 else 0)
-      |> List.map (\((from, to), data) -> viewLink graph_view.id graph_view.properties (from, to) data)
+      |> List.map (\((from, to), data) -> viewLink graph_view (from, to) data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
       |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)

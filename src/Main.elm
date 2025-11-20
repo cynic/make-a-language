@@ -175,37 +175,58 @@ identifyCardinality from to {package} =
     (\toContext -> identifyCardinalityViaContext from toContext)
   |> Maybe.withDefault Unidirectional
 
-linkDrawingForPackage : GraphPackage -> Dict (NodeId, NodeId) LinkDrawingData
-linkDrawingForPackage package =
-  Graph.edges package.userGraph.graph
+descriptionsForConnection : Connection -> Model -> AutoDict.Dict String Uuid String
+descriptionsForConnection connection model =
+  AutoSet.toList connection
   |> List.filterMap
-      (\edge ->
-        Maybe.map2
-          (\f t -> { sourceNode = f, destNode = t, label = edge.label })
-          (Graph.get edge.from package.userGraph.graph)
-          (Graph.get edge.to package.userGraph.graph)
-      )
-  |> List.map
-      (\{sourceNode, destNode, label} ->
-        let
-          cardinality : Cardinality
-          cardinality =
-            identifyCardinalityViaContext sourceNode.node.id destNode
-        in
-          ( (sourceNode.node.id, destNode.node.id)
-          , { cardinality = cardinality
-            , executionData = Nothing
-            , label = label
-            , pathBetween =
-                GraphEditor.path_between
-                  sourceNode.node.label
-                  destNode.node.label
-                  cardinality
-            , highlighting = Nothing
-            }
-          )
+    (\{via} ->
+        case via of
+          ViaCharacter _ ->
+            Nothing
+          ViaGraphReference uuid ->
+            AutoDict.get uuid model.packages
+            |> Maybe.andThen .description
+            |> Maybe.map (\s -> ( uuid, s ))
     )
-  |> Dict.fromList
+  |> AutoDict.fromList Uuid.toString
+
+linkDrawingForPackage : GraphPackage -> Model -> Dict (NodeId, NodeId) LinkDrawingData
+linkDrawingForPackage package model =
+  let
+    edgeContexts =
+      Graph.edges package.userGraph.graph
+      |> List.filterMap
+          (\edge ->
+            Maybe.map2
+              (\f t -> { sourceNode = f, destNode = t, label = edge.label })
+              (Graph.get edge.from package.userGraph.graph)
+              (Graph.get edge.to package.userGraph.graph)
+          )
+  in
+    edgeContexts
+    |> List.map
+        (\{sourceNode, destNode, label} ->
+          let
+            cardinality : Cardinality
+            cardinality =
+              identifyCardinalityViaContext sourceNode.node.id destNode
+          in
+            ( (sourceNode.node.id, destNode.node.id)
+            , { cardinality = cardinality
+              , executionData = Nothing
+              , graphReferenceDescriptions =
+                  descriptionsForConnection label model
+              , connection = label
+              , pathBetween =
+                  GraphEditor.path_between
+                    sourceNode.node.label
+                    destNode.node.label
+                    cardinality
+              , highlighting = Nothing
+              }
+            )
+      )
+    |> Dict.fromList
 
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
     `naiveViewFromPackage` instead.
@@ -251,7 +272,7 @@ viewFromPackage computed (w, h) location createFrozen pkg model =
       , disconnectedNodes = Set.empty
       , properties = properties
       , drawingData =
-          { link_drawing = linkDrawingForPackage solved_pkg
+          { link_drawing = linkDrawingForPackage solved_pkg model
           , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id model
           }
       }
@@ -1759,13 +1780,14 @@ selectSourceNode model view_uuid node_id =
         linkDrawingData : LinkDrawingData
         linkDrawingData =
           { cardinality = Recursive
+          , graphReferenceDescriptions = AutoDict.empty Uuid.toString
           , pathBetween =
               path_between
                 nodeContext.node.label
                 nodeContext.node.label
                 Recursive
           , executionData = Nothing
-          , label = AutoSet.empty transitionToString
+          , connection = AutoSet.empty transitionToString
           , highlighting = Just Phantom
           }
         interaction =
@@ -1844,13 +1866,14 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
       }
     linkData = -- this is the new calculated link-path
       { cardinality = Unidirectional
+      , graphReferenceDescriptions = AutoDict.empty Uuid.toString
       , pathBetween =
           path_between -- calculate the link path
             sourceNodeContext.node.label
             { x = x_, y = y_ }
             Unidirectional
       , executionData = Nothing
-      , label = AutoSet.empty transitionToString
+      , connection = AutoSet.empty transitionToString
       , highlighting = Just Phantom
       }
   in
@@ -1879,8 +1902,8 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
             ( NewNode phantom_nodeid (x_, y_) )
         )
 
-phantomLinkDrawingForExisting : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> LinkDrawingData
-phantomLinkDrawingForExisting sourceNodeContext existingNodeContext =
+phantomLinkDrawingForExisting : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> LinkDrawingData
+phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model =
   let
     cardinality =
       identifyCardinalityViaContext sourceNodeContext.node.id existingNodeContext
@@ -1889,13 +1912,15 @@ phantomLinkDrawingForExisting sourceNodeContext existingNodeContext =
       |> Maybe.withDefaultLazy (\() -> AutoSet.empty transitionToString)
   in
     { cardinality = cardinality
+    , graphReferenceDescriptions =
+        descriptionsForConnection connection model
     , pathBetween =
         path_between -- calculate the link path
           sourceNodeContext.node.label
           existingNodeContext.node.label
           cardinality
     , executionData = Nothing
-    , label = connection
+    , connection = connection
     , highlighting = Just Phantom
     }
 
@@ -1903,7 +1928,7 @@ switchFromPhantomToExisting : Uuid -> NodeId -> Graph.NodeContext Entity Connect
 switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext existingNodeContext model =
   let
     linkData = -- this is the new calculated link-path
-      phantomLinkDrawingForExisting sourceNodeContext existingNodeContext
+      phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model
   in
     updateDrawingData view_uuid
       (\drawingData ->
@@ -1921,14 +1946,14 @@ switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext existingNodeC
     -- we've made the changes, so set the interaction
     |> replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
-            ( ExistingNode existingNodeContext.node.id linkData.label )
+            ( ExistingNode existingNodeContext.node.id linkData.connection )
         )
 
 switchFromExistingToExisting : Uuid -> Bool -> NodeId -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
 switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNodeContext nearbyNodeContext model =
   let
     linkData = -- this is the new calculated link-path
-      phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext
+      phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext model
   in
     updateDrawingData view_uuid
       (\drawingData ->
@@ -1948,7 +1973,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNode
     -- we've made the changes, so set the interaction
     |> replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
-            ( ExistingNode nearbyNodeContext.node.id linkData.label )
+            ( ExistingNode nearbyNodeContext.node.id linkData.connection )
         )
 
 updatePhantomMovement : Uuid -> NodeId -> ( Float, Float ) -> Graph.NodeContext Entity Connection -> Model -> Model
