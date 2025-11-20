@@ -698,23 +698,26 @@ viewLink view_uuid properties (from, to) drawing_data =
             Nothing ->
               let
                 transitions = AutoSet.toList drawing_data.label
-                char_offset = 12                
-                graph_offset = 18
-                total_width =
+                char_width = 16 / 2.26 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
+                badge_width = 16 -- for a scale of "2".
+                gap = 2
+                sum_width =
                   List.foldl
                     (\{via} acc ->
                       case via of
-                        ViaCharacter _ -> acc + char_offset
-                        ViaGraphReference _ -> acc + graph_offset
+                        ViaCharacter _ -> acc + char_width
+                        ViaGraphReference _ -> acc + badge_width
                     )
                     0
                     transitions
+                sum_gap =  gap * ( toFloat <| List.length transitions - 1 )
+                est_width = sum_width + sum_gap
               in
               List.foldl
                 (\{via, isFinal} (cur_x, cur_y, elems) ->
                   case via of
                     ViaCharacter ch ->
-                      ( cur_x + 12
+                      ( cur_x + char_width + gap
                       , cur_y
                       , ( g
                           [ class [ "transition", "text" ] ]
@@ -727,7 +730,7 @@ viewLink view_uuid properties (from, to) drawing_data =
                         ) :: elems
                       )
                     ViaGraphReference uuid ->
-                      ( cur_x + 18
+                      ( cur_x + badge_width + gap
                       , cur_y
                       , ( g
                             [ class [ "transition", "graph-reference" ]
@@ -737,7 +740,7 @@ viewLink view_uuid properties (from, to) drawing_data =
                         ) :: elems
                       )
                 )
-                ( x_ - 0.5 * (total_width) + 9, y_, [] )
+                ( x_ - 0.5 * est_width, y_, [] )
                 transitions
               |> (\(_, _, elems) -> g [] elems)
         linkClass =
