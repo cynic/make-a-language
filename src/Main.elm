@@ -310,48 +310,41 @@ solvedViewFromPackage (w, h) location createFrozen pkg model =
     (GraphEditor.computeGraphFully (w, h) pkg.userGraph)
     (w, h) location createFrozen pkg model
 
-centerAndHighlight : NodeId -> NodeId -> GraphView -> GraphView
-centerAndHighlight src dest graph_view =
-  Maybe.map2
-    (\srcContext destContext ->
-      let
-        bbox a b =
-          { min = { x = min a.x b.x, y = min a.y b.y }
-          , max = { x = max a.x b.x, y = max a.y b.y }
-          }
-        bounds =
-          bbox srcContext.node.label destContext.node.label
-        inner_padding = 60
-        adjusted =
-          { bounds
-            | min = { x = bounds.min.x - inner_padding, y = bounds.min.y - inner_padding }
-            , max = { x = bounds.max.x + inner_padding, y = bounds.max.y + inner_padding }
-          }
-      in
-        { graph_view
-          | drawingData =
-              let drawingData = graph_view.drawingData in
-                { drawingData
-                  | link_drawing =
+centerAndHighlight : List (NodeId, NodeId) -> GraphView -> GraphView
+centerAndHighlight links graph_view =
+  let
+    bounds =
+      bounds_for
+        (List.foldl (\(a, b) acc -> a :: b :: acc) [] links)
+        graph_view.package.userGraph.graph
+    inner_padding = 60
+    adjusted =
+      expand_bounds inner_padding bounds
+  in
+    { graph_view
+      | drawingData =
+          let drawingData = graph_view.drawingData in
+            { drawingData
+              | link_drawing =
+                  List.foldl
+                    (\(src, dest) ->
                       Dict.update (src, dest)
                         (Maybe.map (\link ->
                           { link | highlighting = Just Highlight }
                         ))
-                        drawingData.link_drawing
-                }
-          , guest_coordinates =
-              ( adjusted.min.x, adjusted.min.y )
-          , guest_dimensions =
-              ( adjusted.max.x - adjusted.min.x, adjusted.max.y - adjusted.min.y )
-          , guest_inner_coordinates =
-              ( bounds.min.x, bounds.min.y )
-          , guest_inner_dimensions =
-              ( bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y )
-        }
-    )
-    (Graph.get src graph_view.package.userGraph.graph)
-    (Graph.get dest graph_view.package.userGraph.graph)
-  |> Maybe.withDefault graph_view
+                    )
+                    drawingData.link_drawing
+                    links
+            }
+      , guest_coordinates =
+          ( adjusted.min.x, adjusted.min.y )
+      , guest_dimensions =
+          ( adjusted.max.x - adjusted.min.x, adjusted.max.y - adjusted.min.y )
+      , guest_inner_coordinates =
+          ( bounds.min.x, bounds.min.y )
+      , guest_inner_dimensions =
+          ( bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y )
+    }
 
 -- MAIN
 
@@ -765,103 +758,6 @@ updateGraphView uuid msg model =
           Just (Executing _ _) ->
             model -- confirmation does nothing for execution
 
-    ToggleSelectedTransition acceptCondition ->
-      let
-        alterTransitions : Connection -> Connection
-        alterTransitions conn =
-          AutoSet.foldl
-            (\t (seen, state) ->
-              if t.via == acceptCondition then
-                -- I've found the right transition.  Now, update or remove or…?
-                if t.isFinal then
-                  ( True
-                  , state -- skip it; i.e., remove it.
-                  )
-                else
-                  ( True
-                  , AutoSet.insert
-                      ( { t
-                        | isFinal = True -- make it final.
-                        }
-                      )
-                      state
-                  )
-              else
-                (seen, AutoSet.insert t state)
-            )
-            (False, AutoSet.empty transitionToString)
-            conn
-          |>  (\(seen, resultSet) ->
-                if seen then
-                  resultSet -- I've handled this above.
-                else
-                  -- need to insert it.
-                  AutoSet.insert
-                    (Transition
-                      False
-                      acceptCondition
-                    )
-                    resultSet
-              )
-      in
-        case model.interactionsDict of
-          Just (ModifyingGraph via ({ transitions } as mod)) ->
-            { model
-              | interactionsDict =
-                  Just <| ModifyingGraph via <|
-                    { mod
-                      | transitions = alterTransitions transitions
-                    }
-            }
-          Just (AlteringConnection via ({ transitions } as mod)) ->
-            { model
-              | interactionsDict =
-                  Just <| AlteringConnection
-                    via
-                    { mod
-                      | transitions = alterTransitions transitions
-                    }
-            }
-          Just (Splitting { to_split, left, right }) ->
-            let
-              tr finality =
-                Transition
-                  finality
-                  acceptCondition
-              onLeft_0 = AutoSet.member (tr False) left
-              onLeft_1 = AutoSet.member (tr True) left
-              onRight_0 = AutoSet.member (tr False) right
-              onRight_1 = AutoSet.member (tr True) right
-              pushToRight t =
-                ( AutoSet.remove t left, AutoSet.insert t right )
-              pushToLeft t =
-                ( AutoSet.insert t left, AutoSet.remove t right )
-              ( newLeft, newRight ) =
-                if onLeft_0 && onLeft_1 then
-                  -- push the non-terminal to the right.
-                  pushToRight (tr False)
-                else if onLeft_1 then
-                  -- push the terminal to the right
-                  pushToRight (tr True)
-                else if onRight_0 && onRight_1 then
-                  -- push the non-terminal to the left
-                  pushToLeft (tr False)
-                else if onRight_1 then
-                  pushToLeft (tr True)
-                else if onLeft_0 then
-                  pushToRight (tr False)
-                else if onRight_0 then
-                  pushToLeft (tr False)
-                else
-                  ( left, right )
-            in
-              { model
-                | interactionsDict =
-                    Just <| Splitting <| Split to_split newLeft newRight
-              }
-          _ ->
-            model
-
     Reheat ->
       -- If I'm not doing anything else, permit auto-layout
       case model.interactionsDict of
@@ -1013,6 +909,50 @@ type alias GuestDimensions =
   , inner_dimensions : (Float, Float)
   }
 
+type alias Bounds =
+  { min : Coordinate {}
+  , max : Coordinate {}
+  }
+
+bounds_for : List NodeId -> Graph.Graph Entity Connection -> Bounds
+bounds_for nodeIds graph =
+  let
+    theoretical_max = 150.0 * toFloat (Graph.size graph)
+    contexts =
+      (Set.fromList >> Set.toList) nodeIds
+      |> List.filterMap (\id -> Graph.get id graph)
+  in
+  -- Now find out: where is the bounding box for the nodes?
+    case contexts of
+      [] ->
+        { min = { x = 0, y = 0 }, max = { x = 0, y = 0 } }
+        -- |> Debug.log "Default Bounds"
+      _ ->
+        List.foldl
+          (\ctx bounds ->
+            { min =
+                { x = min ctx.node.label.x bounds.min.x
+                , y = min ctx.node.label.y bounds.min.y
+                }
+            , max =
+                { x = max ctx.node.label.x bounds.max.x
+                , y = max ctx.node.label.y bounds.max.y
+                }
+            }
+          )
+          { max = { x = -1000, y = -1000 }
+          , min = { x = theoretical_max, y = theoretical_max }
+          }
+          contexts
+          -- |> Debug.log "Raw Bounds"
+
+expand_bounds : Float -> Bounds -> Bounds
+expand_bounds n bounds =
+  { bounds
+    | min = { x = bounds.min.x - n, y = bounds.min.y - n }
+    , max = { x = bounds.max.x + n, y = bounds.max.y + n }
+  }
+
 {-| Accepts host dimensions, view properties, and a graph, and calculates the
     appropriate guest coordinates & guest dimensions (i.e. viewport).
 -}
@@ -1023,28 +963,14 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     aspectRatio =
       w / h
       -- |> Debug.log "Viewport aspect-ratio"
-    theoretical_max = 150.0 * toFloat (Graph.size graph)
-    -- Now find out: where is the bounding box for the nodes?
-    ( (min_x_raw, max_x_raw), (min_y_raw, max_y_raw) ) =    
-      Graph.fold
-        (\ctx ((xmin, xmax), (ymin, ymax)) ->
-          ( ( min ctx.node.label.x xmin
-            , max ctx.node.label.x xmax
-            )
-          , ( min ctx.node.label.y ymin
-            , max ctx.node.label.y ymax
-            )
-          )
-        )
-        ((theoretical_max, -1000), (theoretical_max, -1000))
-        graph
-      -- |> Debug.log "Raw Bounds"
+    raw =
+      bounds_for (Graph.nodeIds graph) graph
     inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
     inner_pad =
       if isFrozen then
         -- we don't need any buffer.
         -- So, just put in a "buffer" for the node radius.
-        if max_x_raw - min_x_raw < 60 then
+        if raw.max.x - raw.min.x < 60 then
           60 -- this is the minimum amount. It is enough to show a single node.
         else
           10
@@ -1057,41 +983,40 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
     -- y-axis center.
     -- So I can take the number of nodes and multiply by, say, 150 and
     -- I shouldn't be too far off from a maximum.
-    ( (min_x, max_x), (min_y, max_y) ) =
-      ( (min_x_raw - inner_pad, max_x_raw + inner_pad)
-      , (min_y_raw - inner_pad, max_y_raw + inner_pad))
+    adjusted =
+      expand_bounds inner_pad raw
       -- |> Debug.log "After-padding Bounds"
     -- from this, I can figure out the appropriate coordinates
     center_y =
-      (min_y + max_y) / 2
+      (adjusted.min.y + adjusted.max.y) / 2
       -- |> Debug.log "center-y"
     autoHeight =
-      (max_x - min_x) / aspectRatio
+      (adjusted.max.x - adjusted.min.x) / aspectRatio
       -- |> Debug.log "Auto-height (via aspect-ratio)"
     -- now, we want a center within that autoHeight.
     guestCoordinates =
-      ( min_x, center_y - autoHeight / 2 )
+      ( adjusted.min.x, center_y - autoHeight / 2 )
       -- |> Debug.log "Top-left (X,Y) of SVG viewport"
     guestDimensions =
-      ( max_x - min_x, autoHeight )
+      ( adjusted.max.x - adjusted.min.x, autoHeight )
       -- |> Debug.log "(Width, Height) of SVG viewport" 
     pad_inner_x =
-      0.15 * (max_x_raw - min_x_raw)
+      0.15 * (raw.max.x - raw.min.x)
       -- |> Debug.log "Inner-rectangle X padding (for panning)"
     pad_inner_y =
-      0.15 * (max_y_raw - min_y_raw)
+      0.15 * (raw.max.y - raw.min.y)
       -- |> Debug.log "Inner-rectangle Y padding (for panning)"
     x_inner =
-      min_x_raw + pad_inner_x
+      raw.min.x + pad_inner_x
       -- |> Debug.log "Inner-rectangle X (for panning)"
     y_inner =
-      min_y_raw + pad_inner_y
+      raw.min.y + pad_inner_y
       -- |> Debug.log "Inner-rectangle Y (for panning)"
     width_inner =
-      (max_x_raw - pad_inner_x * 2) - min_x_raw
+      (raw.max.x - pad_inner_x * 2) - raw.min.x
       -- |> Debug.log "Inner-rectangle width (for panning)"
     height_inner =
-      (max_y_raw - pad_inner_y * 2) - min_y_raw
+      (raw.max.y - pad_inner_y * 2) - raw.min.y
       -- |> Debug.log "Inner-rectangle height (for panning)"
   in
     { dimensions = guestDimensions
@@ -1402,6 +1327,13 @@ selectComputationsIcon model =
           List.map .id computation_views
     }
 
+removeViews : List Uuid -> Model -> Model
+removeViews uuids model =
+  { model
+    | graph_views =
+        List.foldl AutoDict.remove model.graph_views uuids
+  }
+
 update_ui : UIMsg -> Model -> ( Model, Cmd Msg )
 update_ui ui_msg model =
   case ui_msg of
@@ -1426,11 +1358,11 @@ update_ui ui_msg model =
     DragSplitter shouldStop coord ->
       ( case popInteraction (Nothing) model of
           Just (DraggingSplitter movement, model_) ->
-            if shouldStop then
+            if shouldStop then -- do not, in fact, drag the splitter.
               model_
               |> updateMainEditorDimensions
               |> setProperties
-            else
+            else -- such a drag.
               { model
                 | uiState =
                     dragSplitter coord movement model.uiConstants model.uiState
@@ -1539,7 +1471,8 @@ update_ui ui_msg model =
       ( AutoDict.get uuid model.packages
         |> Maybe.map
           (\pkg ->
-            solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg model
+            removeViews [ model.mainGraphView ] model
+            |> solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg
             |> Tuple.second
             |> setProperties
           )
@@ -1573,10 +1506,16 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
-    ConnectionEditorInput input ->
+    QuickInput input ->
       ( case mostRecentInteraction model of
           Just (key_uuid, EditingConnection alteration props) ->
             handleConnectionEditorInput key_uuid input alteration props model
+          Just (key_uuid, SplittingNode data props) ->
+            String.toList input
+            |> List.head
+            |> Maybe.map
+                (\ch -> nodeSplitSwitch props key_uuid (ViaCharacter ch) data model)
+            |> Maybe.withDefault model
           _ ->
             model
       , Cmd.none
@@ -1595,6 +1534,46 @@ update_ui ui_msg model =
               model
         , Cmd.none
         )
+
+nodeSplitSwitch : SplitNodeInterfaceProperties -> Maybe Uuid -> AcceptVia -> NodeSplitData -> Model -> Model
+nodeSplitSwitch props key_uuid via ({left, right} as data) model =
+  let
+    tr finality =
+      Transition finality via
+    onLeft_0 = AutoSet.member (tr False) left
+    onLeft_1 = AutoSet.member (tr True) left
+    onRight_0 = AutoSet.member (tr False) right
+    onRight_1 = AutoSet.member (tr True) right
+    pushToRight t =
+      ( AutoSet.remove t left, AutoSet.insert t right )
+    pushToLeft t =
+      ( AutoSet.insert t left, AutoSet.remove t right )
+    ( newLeft, newRight ) =
+      if onLeft_0 && onLeft_1 then
+        -- push the non-terminal to the right.
+        pushToRight (tr False)
+      else if onLeft_1 then
+        -- push the terminal to the right
+        pushToRight (tr True)
+      else if onRight_0 && onRight_1 then
+        -- push the non-terminal to the left
+        pushToLeft (tr False)
+      else if onRight_1 then
+        pushToLeft (tr True)
+      else if onLeft_0 then
+        pushToRight (tr False)
+      else if onRight_0 then
+        pushToLeft (tr False)
+      else
+        ( left, right )
+  in
+    replaceInteraction key_uuid
+      ( SplittingNode
+          { data | left = newLeft, right = newRight } 
+          props
+      )
+      model
+    |> setProperties
 
 handleConnectionEditorInput : Maybe Uuid -> String -> ConnectionAlteration -> ConnectionEditorProperties -> Model -> Model
 handleConnectionEditorInput key_uuid input alteration props model =
@@ -1665,29 +1644,6 @@ toggleConnectionTransition acceptCondition conn =
             resultSet
       )
 
--- toggleSelectedCondition : AcceptVia -> Model -> Model
--- toggleSelectedCondition acceptCondition model =
---   case model.interactionsDict of
---     Just (ModifyingGraph via ({ transitions } as mod)) ->
---       { model
---         | interactionsDict =
---             Just <| ModifyingGraph via <|
---               { mod
---                 | transitions = alterTransitions transitions
---               }
---       }
---     Just (AlteringConnection via ({ transitions } as mod)) ->
---       { model
---         | interactionsDict =
---             Just <| AlteringConnection
---               via
---               { mod
---                 | transitions = alterTransitions transitions
---               }
---       }
---     _ ->
---       model
-
 filterConnectionEditorGraphs : String -> List Uuid -> Model -> List Uuid
 filterConnectionEditorGraphs s referenceList model =
   let
@@ -1723,13 +1679,8 @@ editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model
               }
             ( main_view, updated_model ) =
               naiveViewFromPackage
-                ( 250
-                , 250 --* 9/16
-                )
-                Independent
-                True
-                pkg
-                model_
+                ( 250 , 250 ) Independent True
+                pkg model_
             solidified_model =
               solidifyPhantoms main_view.id source dest updated_model
           in
@@ -1755,7 +1706,7 @@ editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model
             { model_
               | graph_views =
                   updateGraphView main_uuid
-                    (centerAndHighlight source dest >> Just)
+                    (centerAndHighlight [ (source, dest) ] >> Just)
                     model_.graph_views
             }
       )
@@ -2355,7 +2306,7 @@ setProperties model =
                     case peekInteraction (Just k) model of
                       Nothing ->
                         setLocalProperties default v.isFrozen v.package
-                      Just (SplittingNode _) ->
+                      Just (SplittingNode _ _) ->
                         setLocalProperties (whenSplittingNode v.isFrozen) v.package
                       Just (DraggingNode _) ->
                         setLocalProperties whenDraggingNode v.package
@@ -2372,7 +2323,7 @@ setProperties model =
             model.graph_views
       , properties =
           case mostRecentInteraction model of
-            Just (_, SplittingNode _) ->
+            Just (_, SplittingNode _ _) ->
               { mainProperties_base | canEscape = True }
             Just (_, DraggingNode _) ->
               mainProperties_base
@@ -2535,23 +2486,18 @@ update msg model =
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
               removePhantomLink uuid source dest model
             Just (Just uuid, EditingConnection {source, dest, deleteTargetIfCancelled} {referenceList, mainGraph}, model_) ->
-              -- clear out the reference-list.
-              let
-                model_without_editor_views =
-                  { model_
-                    | graph_views =
-                        List.foldl AutoDict.remove model_.graph_views (mainGraph :: referenceList)
-                  }
-              in
-
-
               if deleteTargetIfCancelled then
-                deleteNodeFromView uuid source dest model_without_editor_views
+                removeViews (mainGraph :: referenceList) model
+                |> deleteNodeFromView uuid source dest
                 |> setProperties
               else
                 -- does deletion link deletion IF appropriate.
-                deleteLinkFromView uuid source dest model_without_editor_views
+                removeViews (mainGraph :: referenceList) model
+                |> deleteLinkFromView uuid source dest
                 |> setProperties
+            Just (Just _, SplittingNode _ props, model_) ->
+              removeViews [ props.mainGraph ] model_
+              |> setProperties
             Just (_, _, model_) ->
               model_ -- yay, I could pop from the global
               |> setProperties
@@ -2626,6 +2572,63 @@ update msg model =
                 ))
                 model.graph_views
         }
+      , Cmd.none
+      )
+
+    StartSplit uuid nodeId ->
+      ( AutoDict.get uuid model.graph_views
+        |> Maybe.andThen
+            (\gv ->
+                ( gv
+                , gv.package.userGraph.graph |> Graph.get nodeId
+                ) |> Maybe.combineSecond
+            )
+        |> Maybe.map
+          (\(graph_view, nodeContext) ->
+            let
+              ( main_view, updated_model ) =
+                naiveViewFromPackage
+                  ( 250 , 250 ) Independent True
+                  graph_view.package model
+              edges_in =
+                IntDict.keys nodeContext.incoming
+                |> List.map (\to -> (to, nodeContext.node.id))
+              -- edges_out =
+              --   IntDict.keys nodeContext.outgoing
+              --   |> List.map (\to -> (nodeContext.node.id, to))
+            in
+              pushInteractionForStack (Just uuid)
+                ( SplittingNode
+                    { to_split = nodeId
+                    , left = AutoSet.empty transitionToString
+                    , right =
+                        IntDict.foldl
+                          (\k v acc ->
+                              if k /= nodeContext.node.id then
+                                AutoSet.union v acc
+                              else
+                                acc
+                          )
+                          (AutoSet.empty transitionToString)
+                          nodeContext.incoming
+                    }
+                    { mainGraph = main_view.id
+                    }
+                )
+                updated_model
+              |> (\model_ ->
+                    { model_
+                      | graph_views =
+                          updateGraphView main_view.id
+                            ( centerAndHighlight ( edges_in )
+                            >> Just
+                            )
+                            model_.graph_views
+                    }
+                )
+              |> setProperties
+          )
+        |> Maybe.withDefault model
       , Cmd.none
       )
 
@@ -2725,24 +2728,6 @@ update msg model =
     --     ( { model | fdg_model = FDG.reInitialize model.fdg_model }
     --     , Cmd.none
     --     )
-
-    -- SelectPackage uuid ->
-    --   case AutoDict.get uuid model.fdg_model.packages of
-    --     Nothing ->
-    --       ( model, Cmd.none )
-    --     Just pkg ->
-    --       let
-    --         fdg_model = model.fdg_model
-    --         newFdgModel =
-    --           { fdg_model | currentPackage = { pkg | dimensions = fdg_model.dimensions } }
-    --           |> FDG.update (FDG.ViewportUpdated model.fdg_model.dimensions)
-    --           |> FDG.update FDG.Reheat
-    --       in
-    --       ( { model
-    --           | fdg_model = newFdgModel
-    --         }
-    --       , Cmd.none
-    --       )
 
     -- DeletePackage uuid ->
     --   let
@@ -3966,43 +3951,54 @@ viewMainInterface model =
         text ""
     ]
 
-viewConnectionEditor : Model -> Uuid -> ConnectionAlteration -> ConnectionEditorProperties -> Html Msg
-viewConnectionEditor model uuid {source, dest, connection} editorData =
+htmlForTransition : Model -> Transition -> Maybe (Html Msg)
+htmlForTransition {packages} {via, isFinal} =
+  let
+    classes =
+      [ ("set-item", True)
+      , ("final", isFinal)
+      , ("non-final", not isFinal)
+      ]
+  in
+    case via of
+      ViaCharacter c ->
+        Just
+          ( span
+              [ HA.classList ( ("character", True) :: classes )
+              ]
+              [ text <| String.fromChar c ]
+          )
+      ViaGraphReference pkg_uuid ->
+        AutoDict.get pkg_uuid packages
+        |> Maybe.map (\pkg ->
+          span
+            [ HA.classList ( ("graph-reference", True) :: classes ) ]
+            [ div
+                [ HA.class "package-badge"
+                , HA.title "This unique badge identifies this specific computation."
+                ]
+                [ TypedSvg.svg
+                    [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
+                    [ GraphEditor.viewGraphReference pkg_uuid 4 0 0 ]
+                  |> Html.Styled.fromUnstyled
+                ]
+            , case pkg.description of
+                Just s ->
+                  div
+                    [ HA.class "description" ]
+                    [ text s ]
+                Nothing ->
+                  text ""
+            ]
+            -- [ text <| Maybe.withDefault "(no description)" pkg.description ]
+        )
+
+
+viewConnectionEditor : Model -> Connection -> ConnectionEditorProperties -> Html Msg
+viewConnectionEditor model connection editorData =
   let
     (terminal, nonTerminal) =
       AutoSet.partition (.isFinal) connection
-    htmlForTransition {via} =
-      case via of
-        ViaCharacter c ->
-          Just
-            ( span
-                [ HA.class "set-item character" ]
-                [ text <| String.fromChar c ]
-            )
-        ViaGraphReference pkg_uuid ->
-          AutoDict.get pkg_uuid model.packages
-          |> Maybe.map (\pkg ->
-            span
-              [ HA.class "set-item graph-reference" ]
-              [ div
-                  [ HA.class "package-badge"
-                  , HA.title "This unique badge identifies this specific computation."
-                  ]
-                  [ TypedSvg.svg
-                      [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
-                      [ GraphEditor.viewGraphReference pkg_uuid 4 0 0 ]
-                    |> Html.Styled.fromUnstyled
-                  ]
-              , case pkg.description of
-                  Just s ->
-                    div
-                      [ HA.class "description" ]
-                      [ text s ]
-                  Nothing ->
-                    text ""
-              ]
-              -- [ text <| Maybe.withDefault "(no description)" pkg.description ]
-          )
   in
   div
     [ HA.class "modal" ]
@@ -4017,13 +4013,13 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
                     [ div -- set visualization area
                         [ HA.class "set-visualization" ]
                         [ div
-                            [ HA.class "set-left-bracket" ]
+                            [ HA.class "set-bracket" ]
                             [ text "{"
                             ]
                         , div -- terminal items group
                             [ HA.class "terminals" ]
                             ( AutoSet.toList terminal
-                              |> List.filterMap htmlForTransition
+                              |> List.filterMap (htmlForTransition model)
                             )
                         , div
                             [ HA.class "set-separator" ]
@@ -4031,10 +4027,10 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
                         , div -- normal (non-terminal) items group
                             [ HA.class "non-terminals" ]
                             ( AutoSet.toList nonTerminal
-                              |> List.filterMap htmlForTransition
+                              |> List.filterMap (htmlForTransition model)
                             )
                         , div
-                            [ HA.class "set-right-bracket" ]
+                            [ HA.class "set-bracket" ]
                             [ text "}"
                             ]
                         ]
@@ -4043,7 +4039,7 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
                     [ HA.class "quick-input" ]
                     [ div
                         [ HA.class "quick-input-bar"
-                        , HE.onInput (UIMsg << ConnectionEditorInput)
+                        , HE.onInput (UIMsg << QuickInput)
                         ]
                         [ input
                             [ HA.class "input-field"
@@ -4153,13 +4149,96 @@ viewConnectionEditor model uuid {source, dest, connection} editorData =
         ]
     ]
 
+viewNodeSplitInterface : Model -> Uuid -> NodeSplitData -> SplitNodeInterfaceProperties -> Html Msg
+viewNodeSplitInterface model uuid {left, right} interfaceData =
+  div
+    [ HA.class "modal" ]
+    [ div
+        [ HA.class "node-split-interface" ]
+        [ div
+            [ HA.class "node-split-top" ]
+            [ div
+                [ HA.class "top-left" ]
+                [ div
+                    [ HA.class "set-builder" ]
+                    [ div -- set visualization area
+                        [ HA.class "set-visualization" ]
+                        [ div
+                            [ HA.class "set-bracket" ]
+                            [ text "{"
+                            ]
+                        , div -- terminal items group
+                            [ HA.class "left" ]
+                            ( AutoSet.toList left
+                              |> List.filterMap (htmlForTransition model)
+                            )
+                        , div
+                            [ HA.class "set-bracket" ]
+                            [ text "}"
+                            ]
+                        , div
+                            [ HA.class "set-separator" ]
+                            []
+                        , div
+                            [ HA.class "set-bracket" ]
+                            [ text "{"
+                            ]
+                        , div -- normal (non-terminal) items group
+                            [ HA.class "right" ]
+                            ( AutoSet.toList right
+                              |> List.filterMap (htmlForTransition model)
+                            )
+                        , div
+                            [ HA.class "set-bracket" ]
+                            [ text "}"
+                            ]
+                        ]
+                    ]
+                , div -- quick input
+                    [ HA.class "quick-input" ]
+                    [ div
+                        [ HA.class "quick-input-bar"
+                        , HE.onInput (UIMsg << QuickInput)
+                        ]
+                        [ input
+                            [ HA.class "input-field"
+                            , HA.placeholder "Type here…"
+                            , HA.id "quick-input"
+                            , HA.autocomplete False
+                            , HA.attribute "autocorrect" "off"
+                            , HA.attribute "spellcheck" "off"
+                            , HA.value ""
+                            ]
+                            []
+                        ]
+                    , div
+                        [ HA.class "instructions" ]
+                            [ div
+                                []
+                                [ span [] [ text "Typing a character will switch it from right to left, or vice-versa.  You can also click on items above, including computations, to switch their sides." ]
+                                ]
+                            ]
+                    ]
+                ]
+            , div
+                [ HA.class "top-right" ]
+                [ AutoDict.get interfaceData.mainGraph model.graph_views
+                  |> Maybe.map viewGraph
+                  |> Maybe.withDefault (text "")
+                ]
+            ]
+        ]
+    ]
+
 view : Model -> Html Msg
 view model =
   div
     []
     [ case mostRecentInteraction model of
-        Just (Just uuid, EditingConnection alteration props) ->
-          viewConnectionEditor model uuid alteration props
+        Just (Just _, EditingConnection {connection} props) ->
+          viewConnectionEditor model connection props
+        Just (Just uuid, SplittingNode data props) ->
+          viewNodeSplitInterface model uuid data props
         _ ->
           viewMainInterface model
     , div

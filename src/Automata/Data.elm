@@ -93,7 +93,7 @@ type UIMsg
   | SelectNode Uuid NodeId
   | SelectSpace Uuid
   | MovePhantomNode Uuid (Float, Float)
-  | ConnectionEditorInput String
+  | QuickInput String
   | ToggleConnectionTransition AcceptVia
   -- | Zoom Uuid Float
 
@@ -105,7 +105,7 @@ type Main_Msg
   | CrashWithMessage String
   | Undo Uuid
   | Redo Uuid
-  -- | StartSplit Uuid NodeId
+  | StartSplit Uuid NodeId
   -- more general messages
   -- | Confirm -- the universal "Yeah! Let's Go!" key & command
   -- | SetMouseOver Uuid Bool
@@ -135,11 +135,7 @@ type alias Main_Model =
 
 type InteractionState
     -- split a node into two, so I can work on the parts separately
-  = SplittingNode
-      { to_split : NodeId
-      , left : Connection
-      , right : Connection
-      }
+  = SplittingNode NodeSplitData SplitNodeInterfaceProperties
   | DraggingNode NodeId
   | DraggingSplitter SplitterMovement
   | ChoosingDestinationFor NodeId PossibleDestination
@@ -161,7 +157,17 @@ type alias GraphPackage =
   ForceDirectedGraph.elm
 --------------------------------------------------------}
 
-type ConnectionEditorMode
+type alias NodeSplitData =
+  { to_split : NodeId
+  , left : Connection
+  , right : Connection
+  }
+
+type alias SplitNodeInterfaceProperties =
+  { mainGraph : Uuid
+  }
+
+type QuickInputMode
   = CharacterInput
   | GraphReferenceSearch String
 
@@ -169,7 +175,7 @@ type alias ConnectionEditorProperties =
   { referenceList : List Uuid
   , shownList : List Uuid
   , mainGraph : Uuid
-  , editingMode : ConnectionEditorMode
+  , editingMode : QuickInputMode
   }
 
 type SplitterMovement = LeftRight | UpDown
@@ -335,13 +341,16 @@ type Cardinality
   | Unidirectional
   | Recursive
 
+type alias Coordinate a =
+  { a | x : Float, y : Float }
+
 type alias PathBetweenReturn =
   { pathString : String
-  , transition_coordinates : { x : Float, y : Float }
+  , transition_coordinates : Coordinate {}
   , length : Float
-  , control_point : { x : Float, y : Float }
-  , source_connection_point : { x : Float, y : Float }
-  , target_connection_point : { x : Float, y : Float }
+  , control_point : Coordinate {}
+  , source_connection_point : Coordinate {}
+  , target_connection_point : Coordinate {}
   }
 
 type LinkHighlighting
@@ -699,7 +708,7 @@ setY : Float -> { a | y : Float } -> { a | y : Float }
 setY new_y node =
   { node | y = if isNaN new_y then node.y + 0.002 else new_y }
 
-setXY : Float -> Float -> { a | x : Float, y : Float } -> { a | x : Float, y : Float }
+setXY : Float -> Float -> Coordinate a -> Coordinate a
 setXY new_x new_y node =
   node |> setX new_x |> setY new_y
 

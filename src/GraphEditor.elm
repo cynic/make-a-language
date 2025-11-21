@@ -48,6 +48,7 @@ import Automata.Debugging exposing (println)
 import TypedSvg.Types exposing (Opacity)
 import TypedSvg.Attributes exposing (stroke)
 import TypedSvg exposing (filter)
+import VirtualDom
 
 type alias Model = GraphView
 type alias Msg = Main_Msg
@@ -677,8 +678,8 @@ viewGraphReference uuid scale x_ y_ =
           )
       )
 
-viewConnectionLabel : LinkDrawingData -> Svg Msg
-viewConnectionLabel drawing_data =
+viewLinkLabel : LinkDrawingData -> Svg Msg
+viewLinkLabel drawing_data =
   let
     x_ = drawing_data.pathBetween.transition_coordinates.x
     y_ = drawing_data.pathBetween.transition_coordinates.y
@@ -747,7 +748,7 @@ viewLink {id, properties} (from, to) drawing_data =
               g
                 -- … will maybe figure out recency later on, in sha Allah…
                 [ class [ "executed" ] ]
-                [ viewConnectionLabel drawing_data ]
+                [ viewLinkLabel drawing_data ]
               -- connectionToSvgTextHighlightingChars
               --   drawing_data.label
               --   (\via ->
@@ -758,7 +759,7 @@ viewLink {id, properties} (from, to) drawing_data =
               --     |> Maybe.withDefault []
               --   )
             Nothing ->
-              viewConnectionLabel drawing_data
+              viewLinkLabel drawing_data
         linkClass =
           case ( drawing_data.executionData, drawing_data.highlighting ) of
             ( Nothing, Just Phantom ) ->
@@ -884,10 +885,27 @@ viewNode properties id data =
   in
     g
       [ class nodeClass
-      , properties.canSelectNodes
-        |> thenPermitSvgInteraction (onClick <| UIMsg <| SelectNode data.view_uuid id)
+      , if properties.canSelectNodes || (properties.canSplitNodes && data.canSplit) then
+          TypedSvg.Events.on "click"
+            (VirtualDom.Normal
+              ( D.field "ctrlKey" D.bool
+                |> D.andThen (\ctrlPressed ->
+                  if ctrlPressed then
+                    if data.canSplit && properties.canSplitNodes then
+                      D.succeed (StartSplit data.view_uuid id)
+                    else
+                        D.fail "Unwanted event"
+                  else if properties.canSelectNodes then
+                    D.succeed (UIMsg <| SelectNode data.view_uuid id)
+                  else
+                    D.fail "Unwanted event"
+                )
+              )
+            )
+        else
+          TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
       -- , (properties.canSplitNodes && data.canSplit)
-      --   |> thenPermitInteraction (onClick <| StartSplit id)
+      --   |> thenPermitSvgInteraction (onClick <| StartSplit data.view_uuid id)
       ]
       [ circle
           [ cx node_x
