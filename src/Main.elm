@@ -2685,16 +2685,17 @@ update msg model =
                       (Nothing, h::t) ->
                         let
                           pkg = graph_view.package
+                          updated_pkg =
+                            { pkg
+                              | undoBuffer = t
+                              , redoBuffer = graph_view.package.userGraph :: graph_view.package.redoBuffer
+                              , userGraph = h
+                            }
                         in
-                          { graph_view
-                            | package =
-                                { pkg
-                                  | undoBuffer = t
-                                  , redoBuffer = graph_view.package.userGraph :: graph_view.package.redoBuffer
-                                  , userGraph = h
-                                }
-                            , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
-                          } --|> ...
+                          mkGraphView
+                            graph_view.id h graph_view.host_dimensions
+                            graph_view.interfaceLocation graph_view.isFrozen
+                            updated_pkg model.packages model.interactionsDict
                 ))
                 model.graph_views
         }
@@ -2714,16 +2715,17 @@ update msg model =
                       (Nothing, h::t) ->
                         let
                           pkg = graph_view.package
+                          updated_pkg =
+                            { pkg
+                              | redoBuffer = t
+                              , undoBuffer = graph_view.package.userGraph :: graph_view.package.undoBuffer
+                              , userGraph = h
+                            }
                         in
-                          { graph_view
-                            | package =
-                                { pkg
-                                  | redoBuffer = t
-                                  , undoBuffer = graph_view.package.userGraph :: graph_view.package.undoBuffer
-                                  , userGraph = h
-                                }
-                            , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
-                          }
+                          mkGraphView
+                            graph_view.id h graph_view.host_dimensions
+                            graph_view.interfaceLocation graph_view.isFrozen
+                            updated_pkg model.packages model.interactionsDict
                 ))
                 model.graph_views
         }
