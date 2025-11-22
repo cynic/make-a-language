@@ -291,8 +291,8 @@
         font-family: theme.$font-family-system;
         font-size: 16px; // larger for better click target
         font-weight: 500; // NEW
-        // text-anchor: middle;
-        // dominant-baseline: central;
+        // text-anchor: middle;s-/
+        dominant-baseline: central;
         pointer-events: all;
         user-select: none;
         
