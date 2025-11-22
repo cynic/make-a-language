@@ -287,127 +287,30 @@ updateLink_graphchange src dest conn g =
   }
   -- |> debugAutomatonGraph "[create_update_graphchange] updated graph"
 
--- removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
--- removeLink_graphchange src dest g =
---   { g
---     | graph =
---         Graph.update dest
---           (Maybe.map
---             (\node ->
---               { node
---                 | incoming =
---                     IntDict.update src
---                       (Maybe.map (\_ -> AutoSet.empty transitionToString))
---                       node.incoming
---                 , outgoing =
---                     if src == dest then
---                       IntDict.update dest
---                         (Maybe.map (\_ -> AutoSet.empty transitionToString))
---                         node.outgoing
---                     else
---                       node.outgoing
---               })
---           )
---           g.graph
---   }
---   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
-
--- splitNode : NodeContext Entity Connection -> Connection -> Connection -> Model -> AutomatonGraph
--- splitNode node left _ model = -- turns out that "right" isn't needed. Hmmm!!!?
---   let
---     (recursive, nonRecursive) =
---       node.incoming
---       |> IntDict.partition (\k _ -> k == node.node.id)
---     recursive_connection =
---       recursive
---       |> IntDict.values
---       |> List.foldl AutoSet.union (AutoSet.empty transitionToString)
---     ( leftConnections, rightConnections ) =
---       nonRecursive
---       |> IntDict.foldl
---           (\k conn (l, r) ->
---             -- classify each transition into 'left' or 'right'.
---             AutoSet.foldl
---               (\transition (l_, r_) ->
---                 if AutoSet.member transition left then
---                   ( IntDict.update k
---                       ( Maybe.map (AutoSet.insert transition)
---                         >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
---                       )
---                       l_
---                   , r_
---                   )
---                 else
---                   ( l_
---                   , IntDict.update k
---                     ( Maybe.map (AutoSet.insert transition)
---                       >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
---                     )
---                     r_
---                   )
---               )
---               (l, r)
---               conn
---           )
---           (IntDict.empty, IntDict.empty)
---     ag = model.package.userGraph
---     id = maxId ag + 1
---     newUserGraph =
---       { ag
---         | graph =
---             ag.graph
---             |> Graph.insert
---               { node =
---                   { label = entity id NoEffect
---                   , id = id
---                   }
---               , incoming =
---                   leftConnections
---                   |> IntDict.insert id recursive_connection
---               , outgoing =
---                   node.outgoing
---                   |> IntDict.insert id recursive_connection
---               }
---             |> Graph.update node.node.id
---               (\_ ->
---                 Just <|
---                   { node
---                     | incoming =
---                         rightConnections
---                         |> IntDict.insert node.node.id recursive_connection
---                   }
---               )
---       }
---   in
---     newUserGraph
-
-textChar : Char -> String
-textChar ch =
-  case ch of
-    ' ' ->
-      "└┘"
-    _ ->
-      String.fromChar ch
-
-transitionToConnectionLabel : Transition -> (AcceptVia -> List String) -> Svg msg
-transitionToConnectionLabel transition otherClasses =
-  case transition.via of
-    ViaCharacter ch ->
-      tspan
-        [ class <|
-            (if .isFinal transition then "final" else "nonfinal")
-            :: otherClasses transition.via
-        ]
-        [ text <| textChar ch ]
-    ViaGraphReference ref ->
-      tspan
-        [ class <|
-            (if .isFinal transition then "final" else "nonfinal")
-            :: otherClasses transition.via
-        ]
-        [ text "Ω"
-        , title [] [ text <| Uuid.toString ref ]
-        ]
+removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
+removeLink_graphchange src dest g =
+  { g
+    | graph =
+        Graph.update dest
+          (Maybe.map
+            (\node ->
+              { node
+                | incoming =
+                    IntDict.update src
+                      (Maybe.map (\_ -> AutoSet.empty transitionToString))
+                      node.incoming
+                , outgoing =
+                    if src == dest then
+                      IntDict.update dest
+                        (Maybe.map (\_ -> AutoSet.empty transitionToString))
+                        node.outgoing
+                    else
+                      node.outgoing
+              })
+          )
+          g.graph
+  }
+  -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
 -- paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
 -- paletteColors =
@@ -665,7 +568,7 @@ viewLinkLabel drawing_data =
     x_ = drawing_data.pathBetween.transition_coordinates.x
     y_ = drawing_data.pathBetween.transition_coordinates.y
     transitions = AutoSet.toList drawing_data.connection
-    char_width = 16 / 2.26 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
+    char_width = 16 / 1.85 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
     badge_width = 16 -- for a scale of "2".
     gap = 2
     sum_width =
@@ -873,7 +776,7 @@ viewNode properties id data =
                 |> D.andThen (\ctrlPressed ->
                   if ctrlPressed then
                     if data.canSplit && properties.canSplitNodes then
-                      D.succeed (StartSplit data.view_uuid id)
+                      D.succeed (UIMsg <| StartSplit data.view_uuid id)
                     else
                         D.fail "Unwanted event"
                   else if properties.canSelectNodes then
@@ -949,13 +852,14 @@ arrowheadDefs =
 viewUndoRedoVisualisation : GraphView -> Svg a
 viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
   let
+    x_ = Tuple.first guest_coordinates
     h = Tuple.second guest_coordinates + Tuple.second guest_dimensions
     rect_width = 30
     rect_height = 10
     rect_spacing = 3
     num_undo = List.length package.undoBuffer
     idxToY idx =
-      h - (toFloat (40 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
+      h - (toFloat (15 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
 
     worst = Color.rgb255 0xfe 0x00 0x02 -- fire
     scale =
@@ -985,7 +889,7 @@ viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
                 , TypedSvg.Attributes.InPx.height rect_height
                 , fill <| Paint (List.getAt idx scale |> Maybe.withDefault worst)
                 , ry 2
-                , x 15
+                , x (x_ + 5)
                 , y <| idxToY idx
                 , class ["undo", if num_undo - 1 == idx then "current" else ""]
                 ]
@@ -1000,7 +904,7 @@ viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
                 [ TypedSvg.Attributes.InPx.width rect_width
                 , TypedSvg.Attributes.InPx.height rect_height
                 , ry 2
-                , x 15
+                , x (x_ + 5)
                 , y <| idxToY (idx + num_undo)
                 , class ["redo"]
                 ]

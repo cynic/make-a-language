@@ -640,45 +640,6 @@ updateGraphView uuid msg model =
         _ ->
           model
 
-    Escape ->
-      let
-        escapery =
-          case model.interactionsDict of
-            Just (ModifyingGraph via { source, dest, transitions }) ->
-              case dest of
-                NoDestination ->
-                  -- I must be escaping from something earlier.
-                  { model | interactionsDict = Nothing }
-                _ ->
-                  { model
-                    | interactionsDict =
-                        Just <| ModifyingGraph via <| GraphModification source NoDestination transitions
-                  }
-            Just (Splitting _) ->
-              { model | interactionsDict = Nothing }
-            Just (AlteringConnection _ _) ->
-              { model | interactionsDict = Nothing }
-            Nothing ->
-              model
-            Just (Dragging _) ->
-              -- stop dragging.
-              { model | interactionsDict = Nothing }
-            Just (Executing _ _) ->
-              model -- nothing to escape.
-              -- let
-              --   pkg = model.package
-              -- in
-              --   { model
-              --     | interactionsDict = Nothing
-              --     , currentPackage =
-              --         { pkg
-              --           | userGraph = original
-              --         }
-              --   }
-      in
-      -- ooh!  What are we "escaping" from, though?
-        escapery
-
     Confirm ->
       -- What am I confirming?
       let
@@ -770,32 +731,6 @@ updateGraphView uuid msg model =
           | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
           , specificForces = IntDict.empty -- cancel moves that were made before
           }
-        _ ->
-          model
-
-    SwitchVia newChosen ->
-      case model.interactionsDict of
-        Just (ModifyingGraph _ d) ->
-          { model | interactionsDict = Just <| ModifyingGraph newChosen d }
-        Just (AlteringConnection _ d) ->
-          { model | interactionsDict = Just <| AlteringConnection newChosen d }
-        _ -> model
-
-    SwitchToNextComputation ->
-      case model.interactionsDict of
-        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | interactionsDict = Just <| ModifyingGraph (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
-        Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | interactionsDict = Just <| AlteringConnection (ChooseGraphReference <| min (AutoDict.size model.packages - 1) (idx + 1)) d }
-        _ ->
-          model
-
-    SwitchToPreviousComputation ->
-      case model.interactionsDict of
-        Just (ModifyingGraph (ChooseGraphReference idx) d) ->
-          { model | interactionsDict = Just <| ModifyingGraph (ChooseGraphReference <| max 0 (idx - 1)) d }
-        Just (AlteringConnection (ChooseGraphReference idx) d) ->
-          { model | interactionsDict = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
         _ ->
           model
         
@@ -1529,6 +1464,90 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
+    StartSplit uuid nodeId ->
+      ( AutoDict.get uuid model.graph_views
+        |> Maybe.andThen
+            (\gv ->
+                ( gv
+                , gv.package.userGraph.graph |> Graph.get nodeId
+                ) |> Maybe.combineSecond
+            )
+        |> Maybe.map
+          (\(graph_view, nodeContext) ->
+            startSplit uuid graph_view nodeContext model
+          )
+        |> Maybe.withDefault model
+      , Cmd.none
+      )
+
+splitNode : Graph.NodeContext Entity Connection -> Connection -> GraphView -> AutomatonGraph
+splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!?
+  let
+    (recursive, nonRecursive) =
+      node.incoming
+      |> IntDict.partition (\k _ -> k == node.node.id)
+    recursive_connection =
+      recursive
+      |> IntDict.values
+      |> List.foldl AutoSet.union (AutoSet.empty transitionToString)
+    ( leftConnections, rightConnections ) =
+      nonRecursive
+      |> IntDict.foldl
+          (\k conn (l, r) ->
+            -- classify each transition into 'left' or 'right'.
+            AutoSet.foldl
+              (\transition (l_, r_) ->
+                if AutoSet.member transition left then
+                  ( IntDict.update k
+                      ( Maybe.map (AutoSet.insert transition)
+                        >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
+                      )
+                      l_
+                  , r_
+                  )
+                else
+                  ( l_
+                  , IntDict.update k
+                    ( Maybe.map (AutoSet.insert transition)
+                      >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
+                    )
+                    r_
+                  )
+              )
+              (l, r)
+              conn
+          )
+          (IntDict.empty, IntDict.empty)
+    ag = graph_view.package.userGraph
+    id = maxId ag + 1
+    newUserGraph =
+      { ag
+        | graph =
+            ag.graph
+            |> Graph.insert
+              { node =
+                  { label = entity id NoEffect
+                  , id = id
+                  }
+              , incoming =
+                  leftConnections
+                  |> IntDict.insert id recursive_connection
+              , outgoing =
+                  node.outgoing
+                  |> IntDict.insert id recursive_connection
+              }
+            |> Graph.update node.node.id
+              (\_ ->
+                Just <|
+                  { node
+                    | incoming =
+                        rightConnections
+                        |> IntDict.insert node.node.id recursive_connection
+                  }
+              )
+      }
+  in
+    newUserGraph
 
 
 nodeSplitSwitch : SplitNodeInterfaceProperties -> Maybe Uuid -> AcceptVia -> NodeSplitData -> Model -> Model
@@ -2558,6 +2577,47 @@ deleteNodeFromView view_uuid source dest model =
               model_.graph_views
       }
 
+startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -> Model
+startSplit uuid graph_view nodeContext model =
+  let
+    ( main_view, updated_model ) =
+      naiveViewFromPackage
+        ( 250 , 250 ) Independent True
+        graph_view.package model
+    edges_in =
+      IntDict.keys nodeContext.incoming
+      |> List.map (\to -> (to, nodeContext.node.id))
+  in
+    pushInteractionForStack (Just uuid)
+      ( SplittingNode
+          { to_split = nodeContext.node.id
+          , left = AutoSet.empty transitionToString
+          , right =
+              IntDict.foldl
+                (\k v acc ->
+                    if k /= nodeContext.node.id then
+                      AutoSet.union v acc
+                    else
+                      acc
+                )
+                (AutoSet.empty transitionToString)
+                nodeContext.incoming
+          }
+          { mainGraph = main_view.id
+          }
+      )
+      updated_model
+    |> (\model_ ->
+          { model_
+            | graph_views =
+                updateGraphView main_view.id
+                  ( centerAndHighlight ( edges_in {- ++ edges_out -} )
+                  >> Just
+                  )
+                  model_.graph_views
+          }
+      )
+    |> setProperties
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -2609,10 +2669,10 @@ update msg model =
       , Cmd.none
       )
 
-    Undo uuid ->
+    Undo ->
       ( { model
           | graph_views =
-              AutoDict.update uuid
+              AutoDict.update model.mainGraphView
                 (Maybe.map (\graph_view ->
                     case (mostRecentInteraction model, graph_view.package.undoBuffer) of
                       (_, []) ->
@@ -2638,10 +2698,10 @@ update msg model =
       , Cmd.none
       )
 
-    Redo uuid ->
+    Redo ->
       ( { model
           | graph_views =
-              AutoDict.update uuid
+              AutoDict.update model.mainGraphView
                 (Maybe.map (\graph_view ->
                     case (mostRecentInteraction model, graph_view.package.redoBuffer) of
                       (_, []) ->
@@ -2667,62 +2727,78 @@ update msg model =
       , Cmd.none
       )
 
-    StartSplit uuid nodeId ->
-      ( AutoDict.get uuid model.graph_views
-        |> Maybe.andThen
-            (\gv ->
-                ( gv
-                , gv.package.userGraph.graph |> Graph.get nodeId
-                ) |> Maybe.combineSecond
-            )
-        |> Maybe.map
-          (\(graph_view, nodeContext) ->
-            let
-              ( main_view, updated_model ) =
-                naiveViewFromPackage
-                  ( 250 , 250 ) Independent True
-                  graph_view.package model
-              edges_in =
-                IntDict.keys nodeContext.incoming
-                |> List.map (\to -> (to, nodeContext.node.id))
-              -- edges_out =
-              --   IntDict.keys nodeContext.outgoing
-              --   |> List.map (\to -> (nodeContext.node.id, to))
-            in
-              pushInteractionForStack (Just uuid)
-                ( SplittingNode
-                    { to_split = nodeId
-                    , left = AutoSet.empty transitionToString
-                    , right =
-                        IntDict.foldl
-                          (\k v acc ->
-                              if k /= nodeContext.node.id then
-                                AutoSet.union v acc
-                              else
-                                acc
-                          )
-                          (AutoSet.empty transitionToString)
-                          nodeContext.incoming
-                    }
-                    { mainGraph = main_view.id
-                    }
+    Confirm ->
+      -- What am I confirming?
+      let
+        {- Take an AutomatonGraph and push it into tho Model. -}
+        commit_change : GraphView -> AutomatonGraph -> Model -> Model
+        commit_change graph_view ag model_ =
+          let
+            pkg = graph_view.package
+            updated_package =
+              { pkg
+                | undoBuffer = pkg.userGraph :: graph_view.package.undoBuffer
+                , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+                , userGraph = ag
+              }
+          in
+            naiveViewFromPackage
+              graph_view.host_dimensions graph_view.interfaceLocation
+              graph_view.isFrozen updated_package model_
+            |> Tuple.second
+        
+        createNewNode : NodeId -> Connection -> Float -> Float -> GraphView -> Model -> Model
+        createNewNode src conn x y gv model_ =
+          GraphEditor.newnode_graphchange src x y conn gv.package.userGraph
+          |> \newGraph -> commit_change gv newGraph model_
+
+        updateExistingNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
+        updateExistingNode src dest conn gv model_ =
+          GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
+          |> \newGraph -> commit_change gv newGraph model_
+
+        removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
+        removeLink src dest gv model_ =
+          GraphEditor.removeLink_graphchange src dest gv.package.userGraph
+          |> \newGraph -> commit_change gv newGraph model_
+
+      in
+        ( case popMostRecentInteraction model of
+            Just (Just gv_uuid, SplittingNode { to_split, left, right } _, model_) ->
+              if AutoSet.isEmpty left || AutoSet.isEmpty right then
+                model_
+              else
+                AutoDict.get gv_uuid model_.graph_views
+                |> Maybe.andThen
+                  (\gv ->
+                    Maybe.combineSecond
+                      ( gv
+                      , Graph.get to_split gv.package.userGraph.graph
+                      )
+                  )
+                |> Maybe.map (\(gv, nodeContext) ->
+                  splitNode nodeContext left gv
+                  |> \newGraph -> commit_change gv newGraph model
                 )
-                updated_model
-              |> (\model_ ->
-                    { model_
-                      | graph_views =
-                          updateGraphView main_view.id
-                            ( centerAndHighlight ( edges_in {- ++ edges_out -} )
-                            >> Just
-                            )
-                            model_.graph_views
-                    }
+                |> Maybe.withDefault model_
+                |> setProperties
+            Just (Just gv_uuid, EditingConnection { source, dest, connection } _, model_) ->
+              -- create such an automatongraph
+              AutoDict.get (gv_uuid) model_.graph_views
+              |> Maybe.map
+                (\gv ->
+                  if AutoSet.isEmpty connection then
+                    removeLink source dest gv model_
+                    |> setProperties
+                  else
+                    updateExistingNode source dest connection gv model_
+                    |> setProperties
                 )
-              |> setProperties
-          )
-        |> Maybe.withDefault model
-      , Cmd.none
-      )
+              |> Maybe.withDefault model_
+            _ ->
+              model -- confirmation does nothing for execution
+        , Cmd.none
+        )
 
     CrashWithMessage err ->
       Debug.todo err
@@ -3447,8 +3523,8 @@ subscriptions model =
             (D.field "ctrlKey" D.bool)
           |> D.andThen
             (\(key, ctrlPressed) ->
-              case key of
-                ( "Escape" ) ->
+              case String.toLower key of
+                "escape" ->
                   if model.properties.canEscape then                        
                     case mostRecentInteraction model of
                       Just (_, EditingConnection _ _) ->
@@ -3464,7 +3540,31 @@ subscriptions model =
                       _ ->
                         D.succeed Escape
                   else
-                    D.fail "Esacpe not permitted at this point"
+                    D.fail "Escape not permitted at this point"
+                "enter" ->
+                  case mostRecentInteraction model of
+                    Just (_, EditingConnection _ _) ->
+                      if ctrlPressed then
+                        D.succeed Confirm
+                      else
+                        D.fail "Need to Ctrl-enter to confirm editing a connection"
+                    Just (_, SplittingNode _ _) ->
+                      if ctrlPressed then
+                        D.succeed Confirm
+                      else
+                        D.fail "Need to enter to confirm splitting a node"
+                    _ ->
+                      D.succeed Confirm
+                "z" ->
+                  if ctrlPressed then
+                    D.succeed Undo
+                  else
+                    D.fail "Need to Ctrl-z to undo"
+                "y" ->
+                  if ctrlPressed then
+                    D.succeed Redo
+                  else
+                    D.fail "Need to Ctrl-y to redo"
                 _ ->
                   D.fail "Untrapped"
             )
@@ -3595,20 +3695,6 @@ subscriptions model =
         nodeMoveSubscriptions ++
         splitterSubscriptions
       )
-  -- Sub.batch
-  --   [ -- , keyboardSubscription
-  --   -- , panSubscription
-  --     currentTimeSubscription
-  --   , Browser.Events.onAnimationFrame (always Tick)
-  --   , BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
-  --   , if model.isDraggingHorizontalSplitter || model.isDraggingVerticalSplitter then
-  --       Sub.batch
-  --         [ BE.onMouseMove (D.map2 MouseMove (D.field "clientX" D.float) (D.field "clientY" D.float))
-  --         , BE.onMouseUp (D.succeed StopDragging)
-  --         ]
-  --     else
-        -- Sub.none
-    -- ]
 
 
 

@@ -96,6 +96,7 @@ type UIMsg
   | StopDraggingNode Uuid
   | QuickInput String
   | ToggleConnectionTransition AcceptVia
+  | StartSplit Uuid NodeId
   -- | Zoom Uuid Float
 
 type Main_Msg
@@ -104,15 +105,12 @@ type Main_Msg
   | EditConnection (Float, Float) Uuid NodeId NodeId Connection
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
-  | Undo Uuid
-  | Redo Uuid
-  | StartSplit Uuid NodeId
+  | Undo
+  | Redo
+  | Confirm -- the universal "Yeah! Let's Go!" key & command
   -- more general messages
-  -- | Confirm -- the universal "Yeah! Let's Go!" key & command
   -- | Tick
   -- | Seconded Time.Posix
-  -- | KeyPressed Char
-  -- | MouseUp
   -- | UpdateTestPanelContent String TestExpectation
   -- | UpdateDescriptionPanelContent String
   -- | RunExecution
@@ -388,12 +386,7 @@ type alias NodeDrawingData =
   }
 
 type alias DrawingData =
-  { -- these are the nodes to allow interaction on.
-    -- allow_interaction :
-    --   { nodes : List NodeId
-    --   , edges : List (NodeId, NodeId, Cardinality)
-    --   }
-    link_drawing : Dict (NodeId, NodeId) LinkDrawingData
+  { link_drawing : Dict (NodeId, NodeId) LinkDrawingData
   , node_drawing : Dict NodeId NodeDrawingData
   }
 
