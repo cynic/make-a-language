@@ -2579,12 +2579,12 @@ update msg model =
               removePhantomLink uuid source dest model
             Just (Just uuid, EditingConnection {source, dest, deleteTargetIfCancelled} {referenceList, mainGraph}, model_) ->
               if deleteTargetIfCancelled then
-                removeViews (mainGraph :: referenceList) model
+                removeViews (mainGraph :: referenceList) model_
                 |> deleteNodeFromView uuid source dest
                 |> setProperties
               else
                 -- does deletion link deletion IF appropriate.
-                removeViews (mainGraph :: referenceList) model
+                removeViews (mainGraph :: referenceList) model_
                 |> deleteLinkFromView uuid source dest
                 |> setProperties
             Just (Just _, SplittingNode _ props, model_) ->
@@ -3145,10 +3145,6 @@ update msg model =
 --     [ text "🚮" ]
 --   ]
 
--- viewDescriptionPanelButtons : Model -> List (Html Msg)
--- viewDescriptionPanelButtons _ =
---   []
-
 -- viewBottomPanelHeader : Model -> Html Msg
 -- viewBottomPanelHeader model =
 --   let
@@ -3388,51 +3384,6 @@ update msg model =
 --           viewEditDescriptionPanelContent model
 --     ]
 
--- getBottomPanelTitle : BottomPanel -> ExecutionStage -> String
--- getBottomPanelTitle panel state =
---   case panel of
---     AddTestPanel ->
---       case state of
---         Ready -> "Testing // Ready"
---         ExecutionComplete -> "Testing // Execution complete" -- show execution output
---         StepThrough -> "Testing // Step-through"
---         NotReady -> "Testing // Not ready"
---     EditDescriptionPanel ->
---       "Describe computation"
-
--- getActionButtonClass : ExecutionStage -> Msg -> String
--- getActionButtonClass currentState buttonAction =
---   let
---     baseClass = "button action-button"
---     activeClass = case (currentState, buttonAction) of
---       (ExecutionComplete, RunExecution) -> " action-button--active"
---       (StepThrough, StepThroughExecution) -> " action-button--active"
---       _ -> ""
---   in
---   baseClass ++ activeClass
-
--- viewStatusBar : Model -> Html Msg
--- viewStatusBar model =
---   div 
---     [ HA.class "status-bar" ]
---     [ span [] [ text (getStatusMessage model.executionStage) ]
---     , div 
---       [ HA.class "status-bar__section" ]
---       [ div
---         [ HA.classList
---             [ ("button", True)
---             , ("status-bar__button", True)
---             , ("status-bar__button--active", model.rightBottomPanelOpen)
---             ]
---         , onClick ToggleBottomPanel
---         ]
---         [ text "Terminal" ]
---       ]
---     , span 
---       [ HA.class "status-bar__section--right" ]
---       [ text ("Viewport: " ++ String.fromFloat (Tuple.first model.mainPanelDimensions) ++ " × " ++ String.fromFloat (Tuple.second model.mainPanelDimensions)) ]
---     ]
-
 -- getStatusMessage : ExecutionStage -> String
 -- getStatusMessage state =
 --   case state of
@@ -3495,11 +3446,23 @@ subscriptions model =
             (D.field "key" D.string)
             (D.field "ctrlKey" D.bool)
           |> D.andThen
-            (\v ->
-              case v of
-                ( "Escape", False ) ->
-                  if model.properties.canEscape then
-                    D.succeed Escape
+            (\(key, ctrlPressed) ->
+              case key of
+                ( "Escape" ) ->
+                  if model.properties.canEscape then                        
+                    case mostRecentInteraction model of
+                      Just (_, EditingConnection _ _) ->
+                        if ctrlPressed then
+                          D.succeed Escape
+                        else
+                          D.fail "Need to Ctrl-escape out of editing a connection"
+                      Just (_, SplittingNode _ _) ->
+                        if ctrlPressed then
+                          D.succeed Escape
+                        else
+                          D.fail "Need to Ctrl-escape out of splitting a node"
+                      _ ->
+                        D.succeed Escape
                   else
                     D.fail "Esacpe not permitted at this point"
                 _ ->
