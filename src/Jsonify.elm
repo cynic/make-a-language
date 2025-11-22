@@ -9,7 +9,6 @@ import Automata.DFA as DFA
 import TypedSvg exposing (g)
 import AutoDict
 import Uuid exposing (Uuid)
-import UserInterface exposing (..)
 
 encodeTest : Test -> E.Value
 encodeTest { input, expectation } =

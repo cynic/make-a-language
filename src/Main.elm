@@ -39,7 +39,6 @@ import Automata.Debugging exposing (debugAutomatonGraph)
 import Svg.Styled exposing (svg)
 import Svg.Styled.Attributes
 import Automata.Debugging exposing (println)
-import UserInterface exposing (..)
 import GraphEditor
 import Dict exposing (Dict)
 import Jsonify exposing (..)
@@ -67,9 +66,6 @@ Quality / technology requirements:
    or impractical.  If impossible or impractical, a comment should be left to
    explain why that is the case.
 -}
-
-type alias Msg = Main_Msg
-type alias Model = Main_Model
 
 canExecute : Model -> Uuid -> Bool
 canExecute { graph_views } uuid =
@@ -1249,72 +1245,16 @@ removeViews uuids model =
         List.foldl AutoDict.remove model.graph_views uuids
   }
 
-update_ui : UIMsg -> Model -> ( Model, Cmd Msg )
-update_ui ui_msg model =
+update_graphview : Uuid -> GraphViewMsg -> Model -> ( Model, Cmd Msg )
+update_graphview uuid ui_msg model =
   case ui_msg of
-    ToggleAreaVisibility where_ ->
-      ( { model
-          | uiState = toggleAreaVisibility where_ model.uiState
-        }
-        |> updateMainEditorDimensions
+    StartDraggingNode nodeId ->
+      ( pushInteractionForStack (Just uuid) (DraggingNode nodeId) model
         |> setProperties
       , Cmd.none
       )
-    StartDraggingSplitter movement ->
-      ( pushInteractionForStack (Nothing) (DraggingSplitter movement) model
-        |> setProperties
-      , Cmd.none
-      )
-    StartDraggingNode graphView_uuid nodeId ->
-      ( pushInteractionForStack (Just graphView_uuid) (DraggingNode nodeId) model
-        |> setProperties
-      , Cmd.none
-      )
-    DragSplitter shouldStop coord ->
-      ( case popInteraction (Nothing) model of
-          Just (DraggingSplitter movement, model_) ->
-            if shouldStop then -- do not, in fact, drag the splitter.
-              model_
-              |> updateMainEditorDimensions
-              |> setProperties
-            else -- such a drag.
-              { model
-                | uiState =
-                    dragSplitter coord movement model.uiConstants model.uiState
-              }
-              |> updateMainEditorDimensions
-              |> setProperties
-          _ ->
-            model
-      , Cmd.none
-      )
-    SelectNavigation ComputationsIcon ->
-      ( selectComputationsIcon model
-      , Cmd.none
-      )
 
-    SelectNavigation _ ->
-      Debug.todo "SelectNavigation _ not implemented."
-
-    SelectTool item ->
-      ( { model
-          | uiState =
-              let uiState = model.uiState in
-              { uiState
-                | selected =
-                    let selected = uiState.selected in
-                    { selected | bottomPanel = item }
-              }
-        }
-      , Cmd.none
-      )
-
-    OnResize dims ->
-      ( resizeViewport dims model
-      , Cmd.none
-      )
-
-    ConsiderPan uuid rectangles ->
+    ConsiderPan rectangles ->
       ( model
       , E.object
           [ ("uuid", Uuid.encode uuid)
@@ -1334,7 +1274,7 @@ update_ui ui_msg model =
         |> considerPan
       )
 
-    Pan uuid x y ->
+    Pan x y ->
       ( { model
           | graph_views =
               AutoDict.update uuid
@@ -1348,12 +1288,12 @@ update_ui ui_msg model =
         |> Maybe.withDefaultLazy (\() -> stopPan (Uuid.toString uuid))
       )
 
-    StopPan uuid ->
+    StopPan ->
       ( model
       , stopPan (Uuid.toString uuid)
       )
 
-    ResetPan uuid ->
+    ResetPan ->
       ( { model
           | graph_views =
               AutoDict.update uuid
@@ -1365,12 +1305,12 @@ update_ui ui_msg model =
       , stopPan (Uuid.toString uuid)
       )
 
-    RequestCoordinates uuid ->
+    RequestCoordinates ->
       ( model
       , requestCoordinates (Uuid.toString uuid)
       )
 
-    ReceiveCoordinates uuid (x, y) ->
+    ReceiveCoordinates (x, y) ->
       ( { model
           | graph_views =
               AutoDict.update uuid
@@ -1382,89 +1322,47 @@ update_ui ui_msg model =
       , Cmd.none
       )
 
-    SelectPackage uuid ->
-      ( AutoDict.get uuid model.packages
-        |> Maybe.map
-          (\pkg ->
-            removeViews [ model.mainGraphView ] model
-            |> solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg
-            |> Tuple.second
-            |> setProperties
-          )
-        |> Maybe.withDefault model
-      , Cmd.none
-      )
-
-    SelectNode view_uuid node_id ->
-      ( case peekInteraction (Just view_uuid) model of
+    SelectNode node_id ->
+      ( case peekInteraction (Just uuid) model of
           Just (ChoosingDestinationFor src etc) ->
-            selectDestination view_uuid src etc model
+            selectDestination uuid src etc model
           _ -> -- includes 'Nothing'
             -- this is the initial selection.
-            selectSourceNode model view_uuid node_id
+            selectSourceNode model uuid node_id
             |> setProperties
       , Cmd.none
       )
 
-    SelectSpace view_uuid ->
-      ( case peekInteraction (Just view_uuid) model of
+    SelectSpace ->
+      ( case peekInteraction (Just uuid) model of
           Just (ChoosingDestinationFor src etc) ->
-            selectDestination view_uuid src etc model
+            selectDestination uuid src etc model
           _ ->
             model
       , Cmd.none
       )
     
-    MoveNode view_uuid (x, y) ->
-      ( case peekInteraction (Just view_uuid) model of
+    MoveNode (x, y) ->
+      ( case peekInteraction (Just uuid) model of
           Just (DraggingNode node_id) ->
-            dragNode view_uuid (x, y) node_id model
+            dragNode uuid (x, y) node_id model
             |> setProperties
           Just (ChoosingDestinationFor _ _) ->
-            movePhantomNode view_uuid (x, y) model
+            movePhantomNode uuid (x, y) model
             |> setProperties
           _ ->
             model
       , Cmd.none
       )
 
-    QuickInput input ->
-      ( case mostRecentInteraction model of
-          Just (key_uuid, EditingConnection alteration props) ->
-            handleConnectionEditorInput key_uuid input alteration props model
-          Just (key_uuid, SplittingNode data props) ->
-            String.toList input
-            |> List.head
-            |> Maybe.map
-                (\ch -> nodeSplitSwitch props key_uuid (ViaCharacter ch) data model)
-            |> Maybe.withDefault model
-          _ ->
-            model
-      , Cmd.none
-      )
-
-    ToggleConnectionTransition via ->
-        ( case mostRecentInteraction model of
-            Just (key_uuid, EditingConnection ({connection} as alteration) props) ->
-              replaceInteraction key_uuid 
-                ( EditingConnection
-                    { alteration | connection = toggleConnectionTransition via connection }
-                    props
-                )
-                model
-            _ ->
-              model
-        , Cmd.none
-        )
-
-    StopDraggingNode uuid ->
+    StopDraggingNode ->
       ( popInteraction (Just uuid) model
         |> Maybe.map (Tuple.second >> setProperties)
         |> Maybe.withDefault model
       , Cmd.none
       )
 
-    StartSplit uuid nodeId ->
+    StartSplit nodeId ->
       ( AutoDict.get uuid model.graph_views
         |> Maybe.andThen
             (\gv ->
@@ -2622,8 +2520,109 @@ startSplit uuid graph_view nodeContext model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
-    UIMsg ui_msg ->
-      update_ui ui_msg model
+    GraphViewMsg uuid gv_msg ->
+      update_graphview uuid gv_msg model
+
+    DragSplitter shouldStop coord ->
+      ( case popInteraction (Nothing) model of
+          Just (DraggingSplitter movement, model_) ->
+            if shouldStop then -- do not, in fact, drag the splitter.
+              model_
+              |> updateMainEditorDimensions
+              |> setProperties
+            else -- such a drag.
+              { model
+                | uiState =
+                    dragSplitter coord movement model.uiConstants model.uiState
+              }
+              |> updateMainEditorDimensions
+              |> setProperties
+          _ ->
+            model
+      , Cmd.none
+      )
+
+    QuickInput input ->
+      ( case mostRecentInteraction model of
+          Just (key_uuid, EditingConnection alteration props) ->
+            handleConnectionEditorInput key_uuid input alteration props model
+          Just (key_uuid, SplittingNode data props) ->
+            String.toList input
+            |> List.head
+            |> Maybe.map
+                (\ch -> nodeSplitSwitch props key_uuid (ViaCharacter ch) data model)
+            |> Maybe.withDefault model
+          _ ->
+            model
+      , Cmd.none
+      )
+
+    SelectPackage uuid ->
+      ( AutoDict.get uuid model.packages
+        |> Maybe.map
+          (\pkg ->
+            removeViews [ model.mainGraphView ] model
+            |> solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg
+            |> Tuple.second
+            |> setProperties
+          )
+        |> Maybe.withDefault model
+      , Cmd.none
+      )
+
+    ToggleConnectionTransition via ->
+        ( case mostRecentInteraction model of
+            Just (key_uuid, EditingConnection ({connection} as alteration) props) ->
+              replaceInteraction key_uuid 
+                ( EditingConnection
+                    { alteration | connection = toggleConnectionTransition via connection }
+                    props
+                )
+                model
+            _ ->
+              model
+        , Cmd.none
+        )
+
+    SelectNavigation ComputationsIcon ->
+      ( selectComputationsIcon model
+      , Cmd.none
+      )
+
+    SelectNavigation _ ->
+      Debug.todo "SelectNavigation _ not implemented."
+
+    SelectTool item ->
+      ( { model
+          | uiState =
+              let uiState = model.uiState in
+              { uiState
+                | selected =
+                    let selected = uiState.selected in
+                    { selected | bottomPanel = item }
+              }
+        }
+      , Cmd.none
+      )
+
+    OnResize dims ->
+      ( resizeViewport dims model
+      , Cmd.none
+      )
+
+    ToggleAreaVisibility where_ ->
+      ( { model
+          | uiState = toggleAreaVisibility where_ model.uiState
+        }
+        |> updateMainEditorDimensions
+        |> setProperties
+      , Cmd.none
+      )
+    StartDraggingSplitter movement ->
+      ( pushInteractionForStack (Nothing) (DraggingSplitter movement) model
+        |> setProperties
+      , Cmd.none
+      )
 
     Escape ->
       ( if model.properties.canEscape then
@@ -3508,7 +3507,7 @@ subscriptions model =
     panSubscription =
       pan
         ( D.decodeValue
-            ( D.map3 (\uuid x y -> Pan uuid x y |> UIMsg)
+            ( D.map3 (\uuid x y -> Pan x y |> GraphViewMsg uuid)
                 (D.field "uuid" Uuid.decoder)
                 (D.field "x" D.float)
                 (D.field "y" D.float)
@@ -3627,7 +3626,7 @@ subscriptions model =
     coordinateSubscription =
       receiveCoordinates
         ( D.decodeValue
-            (D.map3 (\uuid x y -> ReceiveCoordinates uuid (x, y) |> UIMsg)
+            (D.map3 (\uuid x y -> ReceiveCoordinates (x, y) |> GraphViewMsg uuid)
               (D.field "uuid" Uuid.decoder)
               (D.field "x" D.float)
               (D.field "y" D.float)
@@ -3636,7 +3635,7 @@ subscriptions model =
           -- >> Debug.log "Received coordinates"
         )
     resizeSubscription =
-      BE.onResize (\w h -> UIMsg <| OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
+      BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     splitterSubscriptions =
       case peekInteraction Nothing model of
         Just (DraggingSplitter LeftRight) ->
@@ -3644,12 +3643,12 @@ subscriptions model =
             -- navigatorbarwidth + splitterwidth/2
             offset = -(48 + 8 / 2)
           in
-            [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False >> UIMsg) (D.field "clientX" D.float))
-            , BE.onMouseUp (D.map ((+) offset >> DragSplitter True >> UIMsg) (D.field "clientX" D.float))
+            [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False) (D.field "clientX" D.float))
+            , BE.onMouseUp (D.map ((+) offset >> DragSplitter True) (D.field "clientX" D.float))
             ]
         Just (DraggingSplitter UpDown) ->
-          [ BE.onMouseMove (D.map (DragSplitter False >> UIMsg) (D.field "clientY" D.float))
-          , BE.onMouseUp (D.map (DragSplitter True >> UIMsg) (D.field "clientY" D.float))
+          [ BE.onMouseMove (D.map (DragSplitter False) (D.field "clientY" D.float))
+          , BE.onMouseUp (D.map (DragSplitter True) (D.field "clientY" D.float))
           ]
         _ ->
           []
@@ -3662,9 +3661,9 @@ subscriptions model =
                 BE.onMouseMove
                   ( D.map2
                       (\x y ->
-                        MoveNode uuid
+                        MoveNode
                           (graph_view |> translateHostCoordinates (x, y))
-                        |> UIMsg
+                        |> GraphViewMsg uuid
                       )
                       (D.field "clientX" D.float)
                       (D.field "clientY" D.float)
@@ -3681,7 +3680,7 @@ subscriptions model =
               (Just uuid, DraggingNode _ :: _) ->
                 Just <| Sub.batch 
                   [ createNodeMoveSubscription uuid
-                  , BE.onMouseUp (D.succeed (UIMsg <| StopDraggingNode uuid))
+                  , BE.onMouseUp (D.succeed (GraphViewMsg uuid <| StopDraggingNode))
                   ]
               _ ->
                 Nothing
@@ -3839,7 +3838,7 @@ viewNavigatorsArea model =
                   ]
               , HA.title "Computations"
               , (model.uiState.selected.sideBar /= ComputationsIcon)
-                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectNavigation ComputationsIcon))
+                |> thenPermitInteraction (HE.onClick (SelectNavigation ComputationsIcon))
               ]
               [ text "📁"]
           , button
@@ -3849,7 +3848,7 @@ viewNavigatorsArea model =
                   ]
               , HA.title "Tests"
               , (model.uiState.selected.sideBar /= TestsIcon)
-                |> thenPermitInteraction (HE.onClick (UIMsg <| SelectNavigation TestsIcon))
+                |> thenPermitInteraction (HE.onClick (SelectNavigation TestsIcon))
               ]
               [ text "🧪" ]
           ]
@@ -3902,7 +3901,7 @@ viewComputationsSidebar model =
                   (\graph_view ->
                     div
                       [ HA.class "package"
-                      , HE.onClick (UIMsg <| SelectPackage graph_view.package.userGraph.graphIdentifier)
+                      , HE.onClick (SelectPackage graph_view.package.userGraph.graphIdentifier)
                       ]
                       [ viewGraph graph_view
                       , div
@@ -3956,7 +3955,7 @@ viewCollapsedAreaButton movement =
     button
       [ HA.class <| "collapse-button " ++ movementClass ++ " collapsed"
       , HA.title "Expand"
-      , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+      , HE.onClick (ToggleAreaVisibility targetArea)
       ]
       [ collapseIcon ]
 
@@ -3989,14 +3988,14 @@ viewSplitter zIdx movement model areaOpen =
       , HA.css
           [ Css.zIndex (Css.int zIdx)
           ]
-      , HE.onMouseDown (UIMsg <| StartDraggingSplitter movement)
+      , HE.onMouseDown (StartDraggingSplitter movement)
       ]
       [ div
           [ HA.class <| "separator-handle " ++ movementClass ]
           [ button
               [ HA.class <| "collapse-button " ++ movementClass
               , HA.title "Collapse"
-              , HE.onClick (UIMsg <| ToggleAreaVisibility targetArea)
+              , HE.onClick (ToggleAreaVisibility targetArea)
               ]
               [ collapseIcon ]
           ]
@@ -4015,7 +4014,7 @@ viewToolsArea model =
                 ]
             , HA.title "Testing"
             , (model.uiState.selected.bottomPanel /= TestingToolIcon)
-              |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool TestingToolIcon))
+              |> thenPermitInteraction (HE.onClick (SelectTool TestingToolIcon))
             ]
             [ text "🔬"]
         , button
@@ -4025,7 +4024,7 @@ viewToolsArea model =
                 ]
             , HA.title "Tests"
             , (model.uiState.selected.bottomPanel /= MetadataToolIcon)
-              |> thenPermitInteraction (HE.onClick (UIMsg <| SelectTool MetadataToolIcon))
+              |> thenPermitInteraction (HE.onClick (SelectTool MetadataToolIcon))
             ]
             [ text "📝" ]
         ]
@@ -4185,7 +4184,7 @@ viewConnectionEditor model connection editorData =
                     [ HA.class "quick-input" ]
                     [ div
                         [ HA.class "quick-input-bar"
-                        , HE.onInput (UIMsg << QuickInput)
+                        , HE.onInput (QuickInput)
                         ]
                         [ input
                             [ HA.class "input-field"
@@ -4262,7 +4261,7 @@ viewConnectionEditor model connection editorData =
                                     , ("terminal", inTerminals)
                                     , ("non-terminal", inNonTerminals)
                                     ]
-                                , HE.onClick (UIMsg <| ToggleConnectionTransition via)
+                                , HE.onClick (ToggleConnectionTransition via)
                                 ]
                                 [ viewGraph graph_view
                                 , div
@@ -4344,7 +4343,7 @@ viewNodeSplitInterface model uuid {left, right} interfaceData =
                     [ HA.class "quick-input" ]
                     [ div
                         [ HA.class "quick-input-bar"
-                        , HE.onInput (UIMsg << QuickInput)
+                        , HE.onInput (QuickInput)
                         ]
                         [ input
                             [ HA.class "input-field"

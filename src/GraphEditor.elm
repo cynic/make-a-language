@@ -50,9 +50,6 @@ import TypedSvg.Attributes exposing (stroke)
 import TypedSvg exposing (filter)
 import VirtualDom
 
-type alias Model = GraphView
-type alias Msg = Main_Msg
-
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
 
@@ -776,11 +773,11 @@ viewNode properties id data =
                 |> D.andThen (\ctrlPressed ->
                   if ctrlPressed then
                     if data.canSplit && properties.canSplitNodes then
-                      D.succeed (UIMsg <| StartSplit data.view_uuid id)
+                      D.succeed (GraphViewMsg data.view_uuid <| StartSplit id)
                     else
                         D.fail "Unwanted event"
                   else if properties.canSelectNodes then
-                    D.succeed (UIMsg <| SelectNode data.view_uuid id)
+                    D.succeed (GraphViewMsg data.view_uuid <| SelectNode id)
                   else
                     D.fail "Unwanted event"
                 )
@@ -796,7 +793,7 @@ viewNode properties id data =
               ( D.field "shiftKey" D.bool
                 |> D.andThen (\shiftPressed ->
                   if shiftPressed then
-                    D.succeed (UIMsg <| StartDraggingNode data.view_uuid id)
+                    D.succeed (GraphViewMsg data.view_uuid <| StartDraggingNode id)
                   else
                     D.fail "Unwanted event"
                 )
@@ -1088,9 +1085,9 @@ viewGraph graphView =
             , Css.height (Css.px height)
             ]
           , graphView.properties.canPan
-            |> thenPermitInteraction (HE.onMouseOver (UIMsg (ConsiderPan graphView.id rectangles)))
+            |> thenPermitInteraction (HE.onMouseOver (GraphViewMsg graphView.id (ConsiderPan rectangles)))
           , graphView.properties.canPan
-            |> thenPermitInteraction (HE.onMouseOut (UIMsg (StopPan graphView.id)))
+            |> thenPermitInteraction (HE.onMouseOut (GraphViewMsg graphView.id StopPan))
           ]
           [ svg
               [ class [ "pan-arrow" ] 
@@ -1109,7 +1106,7 @@ viewGraph graphView =
           [ Css.width (Css.px host_width)
           , Css.height (Css.px host_height)
           ]
-      , HE.onMouseOver (UIMsg (RequestCoordinates graphView.id))
+      , HE.onMouseOver (GraphViewMsg graphView.id RequestCoordinates)
       ]
       [ svg
           ([ viewBox guest_x guest_y guest_width guest_height
@@ -1125,7 +1122,7 @@ viewGraph graphView =
                   ]
               )
           , graphView.properties.canSelectEmptySpace
-            |> thenPermitSvgInteraction (onClick (UIMsg <| SelectSpace graphView.id))
+            |> thenPermitSvgInteraction (onClick (GraphViewMsg graphView.id SelectSpace))
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
             viewUndoRedoVisualisation graphView
@@ -1162,7 +1159,7 @@ viewGraph graphView =
                           else
                             [ class [ "pan-reset" ]
                             , graphView.properties.canPan
-                              |> thenPermitSvgInteraction (onClick (UIMsg (ResetPan graphView.id)))
+                              |> thenPermitSvgInteraction (onClick (GraphViewMsg graphView.id ResetPan))
                             ]
                         )
                         [ text "🧭" ]

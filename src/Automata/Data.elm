@@ -75,33 +75,32 @@ type alias Rectangle =
   , h : Float
   }
 
-type UIMsg
-  = SelectNavigation NavigatorIcon
-  | SelectTool ToolIcon
-  | OnResize (Float, Float)
-  | StartDraggingNode Uuid NodeId
+type GraphViewMsg
+  = StartDraggingNode NodeId
+  | ConsiderPan (List Rectangle)
+  | Pan Float Float
+  | StopPan
+  | RequestCoordinates
+  | ReceiveCoordinates (Float, Float)
+  | ResetPan
+  | SelectNode NodeId
+  | SelectSpace
+  | MoveNode (Float, Float)
+  | StopDraggingNode
+  | StartSplit NodeId
+  -- | Zoom Float
+
+type Msg
+  = GraphViewMsg Uuid GraphViewMsg
+  | SelectNavigation NavigatorIcon
   | StartDraggingSplitter SplitterMovement
   | DragSplitter Bool Float -- stop-dragging, amount
-  | ToggleAreaVisibility AreaUITarget
-  | ConsiderPan Uuid (List Rectangle)
-  | Pan Uuid Float Float
-  | StopPan Uuid
-  | RequestCoordinates Uuid
-  | ReceiveCoordinates Uuid (Float, Float)
-  | ResetPan Uuid
   | SelectPackage Uuid
-  | SelectNode Uuid NodeId
-  | SelectSpace Uuid
-  | MoveNode Uuid (Float, Float)
-  | StopDraggingNode Uuid
+  | ToggleAreaVisibility AreaUITarget
+  | SelectTool ToolIcon
   | QuickInput String
   | ToggleConnectionTransition AcceptVia
-  | StartSplit Uuid NodeId
-  -- | Zoom Uuid Float
-
-type Main_Msg
-  = UIMsg UIMsg
-  -- | EditTransition Uuid NodeId NodeId Connection
+  | OnResize (Float, Float)
   | EditConnection (Float, Float) Uuid NodeId NodeId Connection
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
@@ -118,7 +117,7 @@ type Main_Msg
   -- | StepThroughExecution
   -- | CreateNewPackage
 
-type alias Main_Model =
+type alias Model =
   { graph_views : AutoDict.Dict String Uuid GraphView
   , mainGraphView : Uuid
   -- , executionStage : ExecutionStage -- this SHOULD be in a Tool.
