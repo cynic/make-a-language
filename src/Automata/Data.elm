@@ -92,7 +92,8 @@ type UIMsg
   | SelectPackage Uuid
   | SelectNode Uuid NodeId
   | SelectSpace Uuid
-  | MovePhantomNode Uuid (Float, Float)
+  | MoveNode Uuid (Float, Float)
+  | StopDraggingNode Uuid
   | QuickInput String
   | ToggleConnectionTransition AcceptVia
   -- | Zoom Uuid Float
@@ -108,7 +109,6 @@ type Main_Msg
   | StartSplit Uuid NodeId
   -- more general messages
   -- | Confirm -- the universal "Yeah! Let's Go!" key & command
-  -- | SetMouseOver Uuid Bool
   -- | Tick
   -- | Seconded Time.Posix
   -- | KeyPressed Char

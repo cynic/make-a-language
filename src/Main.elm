@@ -190,6 +190,28 @@ descriptionsForConnection connection model =
     )
   |> AutoDict.fromList Uuid.toString
 
+linkDrawingForEdge : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Connection -> Model -> ( (NodeId, NodeId), LinkDrawingData )
+linkDrawingForEdge sourceNode destNode connection model =
+  let
+    cardinality : Cardinality
+    cardinality =
+      identifyCardinalityViaContext sourceNode.node.id destNode
+  in
+    ( (sourceNode.node.id, destNode.node.id)
+    , { cardinality = cardinality
+      , executionData = Nothing
+      , graphReferenceDescriptions =
+          descriptionsForConnection connection model
+      , connection = connection
+      , pathBetween =
+          GraphEditor.path_between
+            sourceNode.node.label
+            destNode.node.label
+            cardinality
+      , highlighting = Nothing
+      }
+    )
+
 linkDrawingForPackage : GraphPackage -> Model -> Dict (NodeId, NodeId) LinkDrawingData
 linkDrawingForPackage package model =
   let
@@ -206,26 +228,8 @@ linkDrawingForPackage package model =
     edgeContexts
     |> List.map
         (\{sourceNode, destNode, label} ->
-          let
-            cardinality : Cardinality
-            cardinality =
-              identifyCardinalityViaContext sourceNode.node.id destNode
-          in
-            ( (sourceNode.node.id, destNode.node.id)
-            , { cardinality = cardinality
-              , executionData = Nothing
-              , graphReferenceDescriptions =
-                  descriptionsForConnection label model
-              , connection = label
-              , pathBetween =
-                  GraphEditor.path_between
-                    sourceNode.node.label
-                    destNode.node.label
-                    cardinality
-              , highlighting = Nothing
-              }
-            )
-      )
+          linkDrawingForEdge sourceNode destNode label model
+        )
     |> Dict.fromList
 
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
@@ -794,30 +798,6 @@ updateGraphView uuid msg model =
           { model | interactionsDict = Just <| AlteringConnection (ChooseGraphReference <| max 0 (idx - 1)) d }
         _ ->
           model
-
-    StartSplit nodeId ->
-      Graph.get nodeId model.package.userGraph.graph
-      |> Maybe.map
-        (\node ->
-          { model
-            | interactionsDict =
-                Just <| Splitting <|
-                  Split
-                    node.node.id
-                    ( IntDict.foldl
-                        (\k v acc ->
-                            if k /= node.node.id then
-                              AutoSet.union v acc
-                            else
-                              acc
-                        )
-                        (AutoSet.empty transitionToString)
-                        node.incoming
-                    )
-                    (AutoSet.empty transitionToString)
-          }
-        )
-      |> Maybe.withDefault model
         
     RunComputation ->
       let
@@ -1500,9 +1480,16 @@ update_ui ui_msg model =
       , Cmd.none
       )
     
-    MovePhantomNode view_uuid (x, y) ->
-      ( movePhantomNode view_uuid (x, y) model
-        |> setProperties
+    MoveNode view_uuid (x, y) ->
+      ( case peekInteraction (Just view_uuid) model of
+          Just (DraggingNode node_id) ->
+            dragNode view_uuid (x, y) node_id model
+            |> setProperties
+          Just (ChoosingDestinationFor _ _) ->
+            movePhantomNode view_uuid (x, y) model
+            |> setProperties
+          _ ->
+            model
       , Cmd.none
       )
 
@@ -1534,6 +1521,15 @@ update_ui ui_msg model =
               model
         , Cmd.none
         )
+
+    StopDraggingNode uuid ->
+      ( popInteraction (Just uuid) model
+        |> Maybe.map (Tuple.second >> setProperties)
+        |> Maybe.withDefault model
+      , Cmd.none
+      )
+
+
 
 nodeSplitSwitch : SplitNodeInterfaceProperties -> Maybe Uuid -> AcceptVia -> NodeSplitData -> Model -> Model
 nodeSplitSwitch props key_uuid via ({left, right} as data) model =
@@ -2063,6 +2059,102 @@ movePhantomNode : Uuid -> (Float, Float) -> Model -> Model
 movePhantomNode view_uuid (x_, y_) model =
   AutoDict.get view_uuid model.graph_views
   |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv (x_, y_) model)
+  |> Maybe.withDefault model
+
+dragNodeInView : Uuid -> GraphView -> (Float, Float) -> Graph.NodeContext Entity Connection -> Model -> Model
+dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
+  let
+    vertices_in =
+      IntDict.toList nodeContext.incoming
+      |> List.filterMap
+        (\(k, conn) ->
+          Graph.get k graph_view.package.userGraph.graph
+          |> Maybe.map
+            (\sourceCtx ->
+              linkDrawingForEdge sourceCtx nodeContext conn model
+            )
+        )
+    vertices_out =
+      IntDict.toList nodeContext.outgoing
+      |> List.filterMap
+        (\(k, conn) ->
+          Graph.get k graph_view.package.userGraph.graph
+          |> Maybe.map
+            (\targetCtx ->
+              linkDrawingForEdge nodeContext targetCtx conn model
+            )
+        )
+  in
+    updateDrawingData view_uuid
+      (\drawingData ->
+        { node_drawing =
+            Dict.update nodeContext.node.id
+              (Maybe.map (\node ->
+                { node | coordinates = (x_, y_) }
+              ))
+              drawingData.node_drawing
+        , link_drawing =
+            List.foldl
+              (\( (src, dest), data ) ->
+                Dict.insert (src, dest) data
+              )
+              drawingData.link_drawing
+              (vertices_in ++ vertices_out)
+        }
+      )
+      model
+
+dragNode : Uuid -> (Float, Float) -> NodeId -> Model -> Model
+dragNode view_uuid (x_, y_) nodeId model =
+  AutoDict.get view_uuid model.graph_views
+  |> Maybe.andThen
+    (\gv ->
+      Maybe.combineSecond
+        ( gv
+        , Graph.get nodeId gv.package.userGraph.graph
+        )
+    )
+  |> Maybe.map
+    (\(gv, nodeContext) ->
+      let
+        updatedCtx : Graph.NodeContext Entity Connection
+        updatedCtx =
+          { nodeContext
+            | node =
+                { id = nodeId
+                , label =
+                  let e = nodeContext.node.label in
+                  { e | x = x_, y = y_ }
+                }
+          }
+        gv_ : GraphView
+        gv_ = -- 🤮🤮🤮🤮🤮🤮🤮🤮🤮 seriously, Elm, this syntax is disgusting
+          -- yes, reader, I know about lenses.
+          -- no, reader, I don't spend my days crafting dozens of lines of
+          -- boilerplate because somebody can't figure out how to get the
+          -- language syntax right.
+          -- *sigh*…
+          -- { gv | package.userGraph.graph = … } is how this SHOULD go.
+          -- but I guess this is just where we are today!
+          { gv
+            | package =
+              let pkg = gv.package in
+              { pkg
+                | userGraph =
+                  let ag = pkg.userGraph in
+                  { ag
+                    | graph = Graph.insert updatedCtx ag.graph
+                  }
+              }
+          }
+        model_ =
+          { model
+            | graph_views =
+                updateGraphView view_uuid (\_ -> Just gv_) model.graph_views
+          }
+      in
+        dragNodeInView view_uuid gv_ (x_, y_) updatedCtx model_
+    )
   |> Maybe.withDefault model
 
 updateDrawingData : Uuid -> (DrawingData -> DrawingData) -> Model -> Model
@@ -2620,7 +2712,7 @@ update msg model =
                     { model_
                       | graph_views =
                           updateGraphView main_view.id
-                            ( centerAndHighlight ( edges_in )
+                            ( centerAndHighlight ( edges_in {- ++ edges_out -} )
                             >> Just
                             )
                             model_.graph_views
@@ -3504,25 +3596,30 @@ subscriptions model =
           AutoDict.get uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
-              BE.onMouseMove
-                ( D.map2
-                    (\x y ->
-                      MovePhantomNode
-                        uuid
-                        (graph_view |> translateHostCoordinates (x, y))
-                      |> UIMsg
-                    )
-                    (D.field "clientX" D.float)
-                    (D.field "clientY" D.float)
-                )
+                BE.onMouseMove
+                  ( D.map2
+                      (\x y ->
+                        MoveNode uuid
+                          (graph_view |> translateHostCoordinates (x, y))
+                        |> UIMsg
+                      )
+                      (D.field "clientX" D.float)
+                      (D.field "clientY" D.float)
+                  )
             )
+          |> Maybe.withDefault Sub.none
       in
         AutoDict.toList model.interactionsDict
         |> List.filterMap
           (\(maybeUuid, (_, stack)) ->
             case (maybeUuid, stack) of
               (Just uuid, ChoosingDestinationFor _ _ :: _) ->
-                createNodeMoveSubscription uuid
+                Just <| createNodeMoveSubscription uuid
+              (Just uuid, DraggingNode _ :: _) ->
+                Just <| Sub.batch 
+                  [ createNodeMoveSubscription uuid
+                  , BE.onMouseUp (D.succeed (UIMsg <| StopDraggingNode uuid))
+                  ]
               _ ->
                 Nothing
           )

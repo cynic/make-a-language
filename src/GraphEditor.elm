@@ -228,25 +228,6 @@ updateGraphWithList =
   in
     List.foldr (\node graph -> Graph.update node.id (graphUpdater node) graph)
 
--- {-| What is the amount to pan by, given the x-coordinate of the mouse? -}
--- xPanAt : Float -> Float -> Float -> Float
--- xPanAt width panBuffer x =
---   if x >= ( width - panBuffer ) then
---     1
---   else if x <= panBuffer then
---     -1
---   else
---     0
-
--- yPanAt : Float -> Float -> Float -> Float
--- yPanAt height panBuffer y =
---   if y >= ( height - panBuffer ) then
---     1
---   else if y <= panBuffer then
---     -1
---   else
---     0
-
 identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
 identifyDisconnectedNodes g =
   Graph.mapContexts
@@ -906,6 +887,20 @@ viewNode properties id data =
           TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
       -- , (properties.canSplitNodes && data.canSplit)
       --   |> thenPermitSvgInteraction (onClick <| StartSplit data.view_uuid id)
+      , if properties.canDragNodes then
+          TypedSvg.Events.on "mousedown"
+            (VirtualDom.Normal
+              ( D.field "shiftKey" D.bool
+                |> D.andThen (\shiftPressed ->
+                  if shiftPressed then
+                    D.succeed (UIMsg <| StartDraggingNode data.view_uuid id)
+                  else
+                    D.fail "Unwanted event"
+                )
+              )
+            )
+        else
+          TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
       ]
       [ circle
           [ cx node_x
@@ -950,97 +945,6 @@ arrowheadDefs =
 -- transition_spacing : Float
 -- transition_spacing = 15
 
-
-
--- viewSvgTransitionSplitter : Connection -> Connection -> Model -> Svg GraphView_Msg
--- viewSvgTransitionSplitter left right model =
---   let
---     ( w, _ ) = model.dimensions
---     paddingLeftRight = 15
---     calc_width n =
---       ( paddingLeftRight * 2 + -- padding on left & right
---         1 * font_size * -- space per character, with a weight factor
---         toFloat n -- multiplied by number of characters
---       )
---     max_box_width =
---       calc_width (AutoSet.size left + AutoSet.size right)
---     leftCenter = w / 2 - max_box_width
---     rightCenter = w / 2 + max_box_width
---     font_size = 24
---     box centerPosition set color =
---       rect
---         [ x <| centerPosition - calc_width (AutoSet.size set) / 2
---         , y <| 100 - font_size
---         , width <| calc_width (AutoSet.size set) 
---         , height <| font_size * 2
---         , fill <| Paint <| color
---         , rx 10
---         , ry 10
---         , class ["splitter-box"]
---         ]
---         []
---     box_text centerPosition set =
---       text_
---         [ x centerPosition
---         , y 100
---         , textAnchor AnchorMiddle
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , fontSize font_size
---         , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---         ]
---         ( connectionToSvgText set )
---     box_title centerPosition s =
---       text_
---         [ x centerPosition
---         , y <| (100 + font_size * 1.8)
---         , textAnchor AnchorMiddle
---         , fontSize <| font_size * 0.6
---         , alignmentBaseline AlignmentCentral
---         , dominantBaseline DominantBaselineMiddle
---         , pointerEvents "none"
---         , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---         , stroke <| Paint <| paletteColors.background
---         , strokeWidth 5
---         ]
---         [ text s ]
---   in
---     g
---       []
---       [ box leftCenter left Color.lightGreen
---       , box rightCenter right Color.lightPurple
---       , box_text leftCenter left
---       , box_text rightCenter right
---       , box_title leftCenter "Node “A”"
---       , box_title rightCenter "Node “B”"
---       , text_
---           [ x <| w / 2
---           , y <| 180
---           , fill <| Paint <| Color.darkCharcoal
---           , textAnchor AnchorMiddle
---           , alignmentBaseline AlignmentCentral
---           , dominantBaseline DominantBaselineMiddle
---           , pointerEvents "none"
---           , fontSize 16
---           , Html.Attributes.attribute "paint-order" "stroke fill markers" -- this is pretty important!
---           , stroke <| Paint <| paletteColors.background
---           , strokeWidth 4
---           ]
---           ( if AutoSet.isEmpty left || AutoSet.isEmpty right then
---               [ tspan [] [ text "If either side has no transitions, then no changes will be made." ] ]
---             else
---               [ tspan [] [ text "Press «Enter» to confirm this split, or «Esc» to cancel." ] ]
---           )
---       ]
---   -- rect
---   --   [ x 100
---   --   , y 100
---   --   , fill <| Paint Color.lightOrange
---   --   , width 150
---   --   , height 100
---   --   ]
---   --   []
 
 viewUndoRedoVisualisation : GraphView -> Svg a
 viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
@@ -1406,41 +1310,3 @@ viewGraph graphView =
               []
           )
       ]
-
--- onMouseScroll : (Float -> msg) -> Html.Attribute msg
--- onMouseScroll msg =
---   HE.on "wheel" <| D.map msg (D.field "deltaY" D.float)
-
--- debugModel_ : String -> Model -> Model
--- debugModel_ message model =
---   let
---     op =
---       case model.interactionsDict of
---         Just o -> "(" ++ Debug.toString o ++ ")"
---         Nothing -> "(no op)"
---     graph =
---       Automata.Debugging.printAutomatonGraph
---         model.package.userGraph
---     screen =
---       "(" ++ String.fromFloat (Tuple.first model.dimensions) ++ ", " ++ String.fromFloat (Tuple.second model.dimensions) ++
---       " : " ++ panToString model.pan ++ ")"
---     buffers =
---       String.fromInt (List.length model.package.undoBuffer) ++ " / " ++ String.fromInt (List.length model.package.redoBuffer) ++ " undo/redo"
---     disconnected =
---       "{ " ++ (Set.map String.fromInt model.disconnectedNodes |> Set.toList |> String.join ", ") ++ " }"
---     pending =
---       "Undobuffer: " ++
---       ( case model.package.undoBuffer of
---           [] -> "nothing"
---           _ ->
---             "\n" ++
---             ( model.package.undoBuffer
---               |> List.map (DFA.encodeAutomatonGraph >> Debug.toString >> String.padLeft 4 ' ')
---               |> String.join "\n"
---             )
---       )
---   in
---     Debug.log (message
---       ++ "\n" ++ op ++ " " ++ screen ++ " " ++ buffers ++ " " ++ disconnected ++ "\n" ++
---       pending ++ "\n" ++ graph) ()
---     |> \_ -> model
