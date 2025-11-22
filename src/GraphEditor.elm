@@ -948,7 +948,7 @@ matrixFromZoom (panX, panY) factor {- (pointerX, pointerY) -} =
 viewMainSvgContent : GraphView -> Svg Msg
 viewMainSvgContent graph_view =
   g -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-    [ transform [ matrixFromZoom graph_view.pan graph_view.zoom ]
+    [ transform [ matrixFromZoom graph_view.pan 1.0 ]
     ]
     [ defs [] arrowheadDefs
       -- this part is for debugging panning. If I uncomment it, I should also

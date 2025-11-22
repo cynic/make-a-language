@@ -86,8 +86,8 @@ getUuid model =
   in
     ( v, updatedModel )
 
-nodeDrawingForPackage : GraphPackage -> Bool -> Uuid -> Model -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package isFrozen graphView_uuid model =
+nodeDrawingForPackage : GraphPackage -> Bool -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage package isFrozen graphView_uuid interactions =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -112,7 +112,7 @@ nodeDrawingForPackage package isFrozen graphView_uuid model =
         in
           ( node.id
           , { exclusiveAttributes =
-                case peekInteraction (Just graphView_uuid) model of
+                case peekInteraction (Just graphView_uuid) interactions of
                   Just (DraggingNode node_id) ->
                     maybe_fromBool
                       (node.id == node_id)
@@ -171,8 +171,8 @@ identifyCardinality from to {package} =
     (\toContext -> identifyCardinalityViaContext from toContext)
   |> Maybe.withDefault Unidirectional
 
-descriptionsForConnection : Connection -> Model -> AutoDict.Dict String Uuid String
-descriptionsForConnection connection model =
+descriptionsForConnection : Connection -> PackageDict -> AutoDict.Dict String Uuid String
+descriptionsForConnection connection packages =
   AutoSet.toList connection
   |> List.filterMap
     (\{via} ->
@@ -180,14 +180,14 @@ descriptionsForConnection connection model =
           ViaCharacter _ ->
             Nothing
           ViaGraphReference uuid ->
-            AutoDict.get uuid model.packages
+            AutoDict.get uuid packages
             |> Maybe.andThen .description
             |> Maybe.map (\s -> ( uuid, s ))
     )
   |> AutoDict.fromList Uuid.toString
 
-linkDrawingForEdge : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Connection -> Model -> ( (NodeId, NodeId), LinkDrawingData )
-linkDrawingForEdge sourceNode destNode connection model =
+linkDrawingForEdge : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Connection -> PackageDict -> ( (NodeId, NodeId), LinkDrawingData )
+linkDrawingForEdge sourceNode destNode connection packages =
   let
     cardinality : Cardinality
     cardinality =
@@ -197,7 +197,7 @@ linkDrawingForEdge sourceNode destNode connection model =
     , { cardinality = cardinality
       , executionData = Nothing
       , graphReferenceDescriptions =
-          descriptionsForConnection connection model
+          descriptionsForConnection connection packages
       , connection = connection
       , pathBetween =
           GraphEditor.path_between
@@ -208,8 +208,8 @@ linkDrawingForEdge sourceNode destNode connection model =
       }
     )
 
-linkDrawingForPackage : GraphPackage -> Model -> Dict (NodeId, NodeId) LinkDrawingData
-linkDrawingForPackage package model =
+linkDrawingForPackage : GraphPackage -> PackageDict -> Dict (NodeId, NodeId) LinkDrawingData
+linkDrawingForPackage package packages =
   let
     edgeContexts =
       Graph.edges package.userGraph.graph
@@ -224,17 +224,13 @@ linkDrawingForPackage package model =
     edgeContexts
     |> List.map
         (\{sourceNode, destNode, label} ->
-          linkDrawingForEdge sourceNode destNode label model
+          linkDrawingForEdge sourceNode destNode label packages
         )
     |> Dict.fromList
 
-{-| Probably not the function you want. Look at `solvedViewFromPackage` and
-    `naiveViewFromPackage` instead.
--}
-viewFromPackage : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
-viewFromPackage computed (w, h) location createFrozen pkg model =
+mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> PackageDict -> InteractionsDict -> GraphView
+mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
   let
-    (id, model_) = getUuid model
     -- now that we have the positions, calculate the dimensions of
     -- the viewport.
     -- first, let's get the aspect ratio.  That will let us figure out
@@ -242,7 +238,7 @@ viewFromPackage computed (w, h) location createFrozen pkg model =
     solved_pkg =
       { pkg
         | userGraph =
-          computed.solvedGraph
+          ag
           |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
       }
     guest_viewport =
@@ -251,31 +247,37 @@ viewFromPackage computed (w, h) location createFrozen pkg model =
         createFrozen
         solved_pkg.userGraph.graph
     properties = defaultViewProperties createFrozen solved_pkg
-    graph_view : GraphView
+  in
+    { id = id
+    , isFrozen = createFrozen
+    , package = solved_pkg
+    , interfaceLocation = location
+    , host_dimensions = (w, h)
+    , host_coordinates = (-1, -1)
+    , panBuffer = GraphEditor.panBufferAmount (w, h)
+    , guest_dimensions = guest_viewport.dimensions
+    , guest_coordinates = guest_viewport.coordinates
+    , guest_inner_coordinates = guest_viewport.inner_coordinates
+    , guest_inner_dimensions = guest_viewport.inner_dimensions
+    , pan = ( 0, 0)
+    , disconnectedNodes = Set.empty
+    , properties = properties
+    , drawingData =
+        { link_drawing = linkDrawingForPackage solved_pkg packages
+        , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id interactions
+        }
+    }
+
+
+{-| Probably not the function you want. Look at `solvedViewFromPackage` and
+    `naiveViewFromPackage` instead.
+-}
+viewFromPackage : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
+viewFromPackage computed (w, h) location createFrozen pkg model =
+  let
+    (id, model_) = getUuid model
     graph_view =
-      { id = id
-      , isFrozen = createFrozen
-      , package = solved_pkg
-      , interfaceLocation = location
-      , simulation = computed.simulation
-      , host_dimensions = (w, h)
-      , host_coordinates = (-1, -1)
-      , panBuffer = GraphEditor.panBufferAmount (w, h)
-      , guest_dimensions = guest_viewport.dimensions
-      , guest_coordinates = guest_viewport.coordinates
-      , guest_inner_coordinates = guest_viewport.inner_coordinates
-      , guest_inner_dimensions = guest_viewport.inner_dimensions
-      , forces = computed.forces
-      , specificForces = IntDict.empty
-      , zoom = 1.0
-      , pan = ( 0, 0)
-      , disconnectedNodes = Set.empty
-      , properties = properties
-      , drawingData =
-          { link_drawing = linkDrawingForPackage solved_pkg model
-          , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id model
-          }
-      }
+      mkGraphView id computed.solvedGraph (w, h) location createFrozen pkg model_.packages model_.interactionsDict
   in
     ( graph_view
     , { model_
@@ -1154,9 +1156,9 @@ popMostRecentInteraction model =
     |> Maybe.map (\(interaction, model_) -> (uuid, interaction, model_))
   )
 
-peekInteraction : Maybe Uuid -> Model -> Maybe InteractionState
-peekInteraction uuid model =
-  AutoDict.get uuid model.interactionsDict
+peekInteraction : Maybe Uuid -> InteractionsDict -> Maybe InteractionState
+peekInteraction uuid interactions =
+  AutoDict.get uuid interactions
   |> Maybe.map Tuple.second
   |> Maybe.andThen List.head
 
@@ -1323,7 +1325,7 @@ update_graphview uuid ui_msg model =
       )
 
     SelectNode node_id ->
-      ( case peekInteraction (Just uuid) model of
+      ( case peekInteraction (Just uuid) model.interactionsDict of
           Just (ChoosingDestinationFor src etc) ->
             selectDestination uuid src etc model
           _ -> -- includes 'Nothing'
@@ -1334,7 +1336,7 @@ update_graphview uuid ui_msg model =
       )
 
     SelectSpace ->
-      ( case peekInteraction (Just uuid) model of
+      ( case peekInteraction (Just uuid) model.interactionsDict of
           Just (ChoosingDestinationFor src etc) ->
             selectDestination uuid src etc model
           _ ->
@@ -1343,7 +1345,7 @@ update_graphview uuid ui_msg model =
       )
     
     MoveNode (x, y) ->
-      ( case peekInteraction (Just uuid) model of
+      ( case peekInteraction (Just uuid) model.interactionsDict of
           Just (DraggingNode node_id) ->
             dragNode uuid (x, y) node_id model
             |> setProperties
@@ -1604,7 +1606,7 @@ editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model
   |>  (\(uuids, main_uuid, model_) ->
         let
           stackModify =
-            case peekInteraction view_uuid model_ of
+            case peekInteraction view_uuid model_.interactionsDict of
               Just (EditingConnection _ _) -> replaceInteraction
               _ -> pushInteractionForStack
         in
@@ -1777,7 +1779,7 @@ phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model =
   in
     { cardinality = cardinality
     , graphReferenceDescriptions =
-        descriptionsForConnection connection model
+        descriptionsForConnection connection model.packages
     , pathBetween =
         path_between -- calculate the link path
           sourceNodeContext.node.label
@@ -1913,7 +1915,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
 
   in
     -- first, let's find this thing.
-    case peekInteraction (Just view_uuid) model of
+    case peekInteraction (Just view_uuid) model.interactionsDict of
       Just (ChoosingDestinationFor source (NewNode phantom_id _)) ->
         -- okay, so there is a phantom node already there and active.
         -- in the easiest case, we just need to move its (x,y) coordinates, and be done.
@@ -1988,7 +1990,7 @@ dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
           Graph.get k graph_view.package.userGraph.graph
           |> Maybe.map
             (\sourceCtx ->
-              linkDrawingForEdge sourceCtx nodeContext conn model
+              linkDrawingForEdge sourceCtx nodeContext conn model.packages
             )
         )
     vertices_out =
@@ -1998,7 +2000,7 @@ dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
           Graph.get k graph_view.package.userGraph.graph
           |> Maybe.map
             (\targetCtx ->
-              linkDrawingForEdge nodeContext targetCtx conn model
+              linkDrawingForEdge nodeContext targetCtx conn model.packages
             )
         )
   in
@@ -2300,7 +2302,7 @@ setProperties model =
         }
       )
     mainProperties_base =
-      case peekInteraction (Nothing) model of
+      case peekInteraction (Nothing) model.interactionsDict of
         Just (DraggingSplitter movement) ->
           setMainProperties (whenDraggingSplitter movement)
         _ ->
@@ -2312,7 +2314,7 @@ setProperties model =
             (\k v ->
               { v
                 | properties =
-                    case peekInteraction (Just k) model of
+                    case peekInteraction (Just k) model.interactionsDict of
                       Nothing ->
                         setLocalProperties default v.isFrozen v.package
                       Just (SplittingNode _ _) ->
@@ -2342,6 +2344,8 @@ setProperties model =
               { mainProperties_base | canEscape = True, canAcceptCharacters = True }
             Just (_, Executing _) ->
               { mainProperties_base | canEscape = True }
+            Just (_, SimulatingForces _ _ _) ->
+              mainProperties_base
             Just (_, DraggingSplitter _) ->
               mainProperties_base
             Nothing ->
@@ -2690,7 +2694,7 @@ update msg model =
                                   , userGraph = h
                                 }
                             , disconnectedNodes = GraphEditor.identifyDisconnectedNodes h
-                          }
+                          } --|> ...
                 ))
                 model.graph_views
         }
@@ -3637,7 +3641,7 @@ subscriptions model =
     resizeSubscription =
       BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
     splitterSubscriptions =
-      case peekInteraction Nothing model of
+      case peekInteraction Nothing model.interactionsDict of
         Just (DraggingSplitter LeftRight) ->
           let
             -- navigatorbarwidth + splitterwidth/2

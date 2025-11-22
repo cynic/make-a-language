@@ -117,15 +117,24 @@ type Msg
   -- | StepThroughExecution
   -- | CreateNewPackage
 
+type alias PackageDict =
+  AutoDict.Dict String Uuid GraphPackage
+
+type alias GraphViewDict =
+  AutoDict.Dict String Uuid GraphView
+
+type alias InteractionsDict =
+  AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
+
 type alias Model =
-  { graph_views : AutoDict.Dict String Uuid GraphView
+  { graph_views : GraphViewDict
   , mainGraphView : Uuid
   -- , executionStage : ExecutionStage -- this SHOULD be in a Tool.
-  , packages : AutoDict.Dict String Uuid GraphPackage
+  , packages : PackageDict
   , uiState : UIState
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
-  , interactionsDict : AutoDict.Dict String (Maybe Uuid) (Int, List InteractionState)
+  , interactionsDict : InteractionsDict
   , properties : MainUIProperties
   , computationsExplorer : List Uuid
   }
@@ -137,6 +146,7 @@ type InteractionState
   | DraggingSplitter SplitterMovement
   | ChoosingDestinationFor NodeId PossibleDestination
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
+  | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
   | Executing ExecutionResult
 
 type alias GraphPackage =
@@ -397,7 +407,6 @@ type InterfaceLocation -- for GraphView
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
-  , simulation : Force.State NodeId
   , interfaceLocation : InterfaceLocation
   , host_dimensions : (Float, Float) -- (w,h) of svg element
   , host_coordinates : (Float, Float) -- (x,y) of svg element
@@ -412,9 +421,7 @@ type alias GraphView =
     -- - graph forces of attraction and repulsion
     -- - node forces to pull the root towards the center
     -- - viewport forces to center the graph
-  , forces : List (Force.Force NodeId)
-  , specificForces : IntDict.IntDict (List (Force.Force NodeId))
-  , zoom : Float -- zoom-factor
+  -- , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
   , isFrozen : Bool
