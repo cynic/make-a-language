@@ -5,6 +5,7 @@
 @use 'style/graph';
 @use 'style/panning';
 @use 'style/connection-editor';
+@use 'style/node-splitter';
 
 .debug {
   pointer-events: none;

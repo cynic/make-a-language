@@ -2783,13 +2783,13 @@ update msg model =
                   )
                 |> Maybe.map (\(gv, nodeContext) ->
                   splitNode nodeContext left gv
-                  |> \newGraph -> commit_change gv newGraph model
+                  |> \newGraph -> commit_change gv newGraph model_
                 )
                 |> Maybe.withDefault model_
                 |> setProperties
             Just (Just gv_uuid, EditingConnection { source, dest, connection } _, model_) ->
               -- create such an automatongraph
-              AutoDict.get (gv_uuid) model_.graph_views
+              AutoDict.get (gv_uuid) model_.graph_views   
               |> Maybe.map
                 (\gv ->
                   if AutoSet.isEmpty connection then
