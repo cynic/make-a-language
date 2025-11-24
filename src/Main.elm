@@ -262,7 +262,6 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
         (w, h)
         createFrozen
         solved_pkg.userGraph.graph
-    properties = defaultViewProperties createFrozen solved_pkg
   in
     { id = id
     , isFrozen = createFrozen
@@ -277,7 +276,7 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
     , guest_inner_dimensions = guest_viewport.inner_dimensions
     , pan = ( 0, 0 )
     , disconnectedNodes = Set.empty
-    , properties = properties
+    , properties = nilViewProperties
     , drawingData =
         { link_drawing = linkDrawingForPackage solved_pkg packages
         , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id interactions
@@ -487,8 +486,7 @@ init flags =
       , randomSeed = initialSeed
       -- , mouseCoords = (0, 0)
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
-      , properties =
-          defaultMainProperties
+      , properties = nilMainProperties
       , computationsExplorer = []
       }
     model =
@@ -2182,150 +2180,127 @@ createNewGraphNode view_uuid node_id (x, y) model =
             model.graph_views
     }
 
-defaultViewProperties : Bool -> GraphViewPropertySetter
-defaultViewProperties isFrozen package =
-  { canSelectConnections = not isFrozen
-  , canSelectEmptySpace = False
-  , canSelectNodes = not isFrozen
-  , canSplitNodes = not isFrozen
-  , canDragNodes = not isFrozen
-  , canInspectRefs = True
-  , canPan = True
-  , canChooseInPackageList = package.undoBuffer == []
-  }
-
-defaultMainProperties : MainUIProperties
-defaultMainProperties =
+nilMainProperties : MainUIProperties
+nilMainProperties =
   { canEscape = False
-  , canDragSplitter = True
+  , canDragSplitter = False
   , canAcceptCharacters = False
-  , dragDirection = Nothing
+  , canSelectNewPackage = False
+  , canCreateNewPackage = False
   }
 
-type alias GraphViewPropertySetter = GraphPackage -> GraphViewProperties
+nilViewProperties : GraphViewProperties
+nilViewProperties =
+  { canSelectConnections = False
+  , canSelectEmptySpace = False
+  , canSelectNodes = False
+  , canSplitNodes = False
+  , canDragNodes = False
+  , canInspectRefs = False
+  , canPan = False
+  }
+
+type alias GraphViewPropertySetter = GraphViewProperties
 type alias MainPropertySetter = MainUIProperties
 
 setProperties : Model -> Model
 setProperties model =
   let
-    setLocalProperties f a = (Tuple.first f) a
-    setMainProperties f = (Tuple.second f)
-    default : (Bool -> GraphViewPropertySetter, MainPropertySetter)
-    default = ( defaultViewProperties, defaultMainProperties )
-    whenSplittingNode : Bool -> (GraphViewPropertySetter, MainPropertySetter)
-    whenSplittingNode isFrozen =
-      ( \package ->
-          { canSelectConnections = False
-          , canSelectEmptySpace = False
-          , canSelectNodes = False
-          , canSplitNodes = False
-          , canDragNodes = not isFrozen
+    setLocalProperties = Tuple.first
+    setMainProperties = Tuple.second
+    whenSplittingNode : (GraphViewPropertySetter, MainPropertySetter)
+    whenSplittingNode =
+      ( { nilViewProperties
+          | canDragNodes = True
           , canInspectRefs = True
           , canPan = True
-          , canChooseInPackageList = package.undoBuffer == []
-          }
-      , { canEscape = True
-        , canDragSplitter = True
-        , canAcceptCharacters = False
-        , dragDirection = Nothing
+        }
+      , { nilMainProperties
+          | canEscape = True
+          , canDragSplitter = True
+          , canAcceptCharacters = True
         }
       )
     whenDraggingNode : (GraphViewPropertySetter, MainPropertySetter)
     whenDraggingNode =
-      ( \package ->
-          { canSelectConnections = False
-          , canSelectEmptySpace = False
-          , canSelectNodes = False
-          , canSplitNodes = False
-          , canDragNodes = False
-          , canInspectRefs = False
-          , canPan = True
-          , canChooseInPackageList = package.undoBuffer == []
-          }
-      , { canEscape = True
-        , canDragSplitter = False
-        , canAcceptCharacters = False
-        , dragDirection = Nothing
+      ( { nilViewProperties
+          | canPan = True
+        }
+      , { nilMainProperties
+          | canEscape = True
         }
       )
-    whenDraggingSplitter : SplitterMovement -> (GraphViewPropertySetter, MainPropertySetter)
-    whenDraggingSplitter movement =
-      ( \package ->
-          { canSelectConnections = False
-          , canSelectEmptySpace = False
-          , canSelectNodes = False
-          , canSplitNodes = False
-          , canDragNodes = False
-          , canInspectRefs = False
-          , canPan = False
-          , canChooseInPackageList = package.undoBuffer == []
-          }
-      , { canEscape = False
-        , canDragSplitter = False
-        , canAcceptCharacters = False
-        , dragDirection = Just movement
-        }
+    whenDraggingSplitter : (GraphViewPropertySetter, MainPropertySetter)
+    whenDraggingSplitter =
+      ( nilViewProperties
+      , nilMainProperties
       )
     whenSourceNodeSelected : (GraphViewPropertySetter, MainPropertySetter)
     whenSourceNodeSelected =
-      ( \package ->
-          { canSelectConnections = False
-          , canSelectEmptySpace = True
+      ( { nilViewProperties
+          | canSelectEmptySpace = True
           , canSelectNodes = True
           , canSplitNodes = True
           , canDragNodes = True
-          , canInspectRefs = False
           , canPan = True
-          , canChooseInPackageList = package.undoBuffer == []
-          }
-      , { canEscape = True
-        , canDragSplitter = True
-        , canAcceptCharacters = False
-        , dragDirection = Nothing
+        }
+      , { nilMainProperties
+          | canEscape = True
+          , canDragSplitter = True
+          , canSelectNewPackage = True
+          , canCreateNewPackage = True
         }
       )
     whenEditingConnection : (GraphViewPropertySetter, MainPropertySetter)
     whenEditingConnection =
-      ( \_ ->
-          { canSelectConnections = False
-          , canSelectEmptySpace = False
-          , canSelectNodes = False
-          , canSplitNodes = False
-          , canDragNodes = False
-          , canInspectRefs = True
+      ( { nilViewProperties
+          | canInspectRefs = True
           , canPan = True
-          , canChooseInPackageList = False
-          }
-      , { canEscape = True
-        , canDragSplitter = False
+        }
+      , { nilMainProperties
+        | canEscape = True
         , canAcceptCharacters = True
-        , dragDirection = Nothing
         }
       )
     whenExecuting : (GraphViewPropertySetter, MainPropertySetter)
     whenExecuting =
-      ( \package ->
-          { canSelectConnections = False
-          , canSelectEmptySpace = False
-          , canSelectNodes = False
-          , canSplitNodes = False
-          , canDragNodes = False
-          , canInspectRefs = True
-          , canPan = True
-          , canChooseInPackageList = package.undoBuffer == []
-          }
-      , { canEscape = True
+      ( { nilViewProperties
+          | canPan = True
+        }
+      , { nilMainProperties
+        | canEscape = True
         , canDragSplitter = True
-        , canAcceptCharacters = False
-        , dragDirection = Nothing
         }
       )
-    mainProperties_base =
-      case peekInteraction (Nothing) model.interactionsDict of
-        Just (DraggingSplitter movement) ->
-          setMainProperties (whenDraggingSplitter movement)
-        _ ->
-          setMainProperties default
+    whenSimulatingForces : (GraphViewPropertySetter, MainPropertySetter)
+    whenSimulatingForces =
+      ( { nilViewProperties
+          | canSelectConnections = True
+          , canSelectNodes = True
+          , canSplitNodes = True
+          , canPan = True
+        }
+      , { nilMainProperties
+          | canDragSplitter = True
+          , canSelectNewPackage = True
+          , canCreateNewPackage = True
+        }
+      )
+    otherwise : (GraphViewPropertySetter, MainPropertySetter)
+    otherwise =
+      ( { nilViewProperties
+          | canSelectNodes = True
+          , canSplitNodes = True
+          , canDragNodes = True
+          , canInspectRefs = True
+          , canPan = True
+        }
+      , { nilMainProperties
+          | canDragSplitter = True
+          , canSelectNewPackage = True
+          , canCreateNewPackage = True
+        }
+      )
   in
     { model
       | graph_views =
@@ -2334,41 +2309,43 @@ setProperties model =
               { v
                 | properties =
                     case peekInteraction (Just k) model.interactionsDict of
-                      Nothing ->
-                        setLocalProperties default v.isFrozen v.package
                       Just (SplittingNode _ _) ->
-                        setLocalProperties (whenSplittingNode v.isFrozen) v.package
+                        setLocalProperties whenSplittingNode
                       Just (DraggingNode _) ->
-                        setLocalProperties whenDraggingNode v.package
+                        setLocalProperties whenDraggingNode
                       Just (ChoosingDestinationFor _ _) ->
-                        setLocalProperties whenSourceNodeSelected v.package
-                      Just (Executing _) ->
-                        setLocalProperties whenExecuting v.package
+                        setLocalProperties whenSourceNodeSelected
                       Just (EditingConnection _ _) ->
-                        setLocalProperties whenEditingConnection v.package
-                      x ->
-                        Debug.todo <| "Received a local interaction for " ++ Debug.toString k ++ " that should never have been received… " ++ Debug.toString x
+                        setLocalProperties whenEditingConnection
+                      Just (Executing _) ->
+                        setLocalProperties whenExecuting
+                      Just (SimulatingForces _ _ _) ->
+                        setLocalProperties whenSimulatingForces
+                      Just (DraggingSplitter _) ->
+                        setLocalProperties whenDraggingSplitter
+                      Nothing ->
+                        setLocalProperties otherwise
               }
             )
             model.graph_views
       , properties =
           case mostRecentInteraction model of
             Just (_, SplittingNode _ _) ->
-              { mainProperties_base | canEscape = True }
+              setMainProperties whenSplittingNode
             Just (_, DraggingNode _) ->
-              mainProperties_base
+              setMainProperties whenDraggingNode
             Just (_, ChoosingDestinationFor _ _) ->
-              { mainProperties_base | canEscape = True }
+              setMainProperties whenSourceNodeSelected
             Just (_, EditingConnection _ _) ->
-              { mainProperties_base | canEscape = True, canAcceptCharacters = True }
+              setMainProperties whenEditingConnection
             Just (_, Executing _) ->
-              { mainProperties_base | canEscape = True }
+              setMainProperties whenExecuting
             Just (_, SimulatingForces _ _ _) ->
-              mainProperties_base
+              setMainProperties whenSimulatingForces
             Just (_, DraggingSplitter _) ->
-              mainProperties_base
+              setMainProperties whenDraggingSplitter
             Nothing ->
-              mainProperties_base
+              setMainProperties otherwise
     }
     
 selectDestination : Uuid -> NodeId -> PossibleDestination -> Model -> Model
@@ -2836,7 +2813,9 @@ update msg model =
                 )
               |> Maybe.withDefault model_
             _ ->
-              model -- confirmation does nothing for execution
+              -- _if_ there are things which are yet to be committed, in
+              -- the main, then commit them here.
+              model
         , Cmd.none
         )
 
@@ -4019,11 +3998,13 @@ viewSplitter zIdx movement model areaOpen =
             [ Svg.Styled.Attributes.d "M10 12L6 8l4-4" ]
             []
         ]
+    topOfStack =
+      peekInteraction Nothing model.interactionsDict
   in
     div
       [ HA.classList
           [ ("splitter-separator " ++ movementClass, True)
-          , ("dragging", model.properties.dragDirection == Just movement)
+          , ("dragging", topOfStack == Just (DraggingSplitter movement))
           , ( "draggable", model.properties.canDragSplitter && areaOpen)
           ]
       , HA.css

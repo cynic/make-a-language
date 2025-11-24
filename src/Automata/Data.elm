@@ -329,7 +329,8 @@ type alias MainUIProperties =
   { canEscape : Bool
   , canDragSplitter : Bool
   , canAcceptCharacters : Bool
-  , dragDirection : Maybe SplitterMovement
+  , canSelectNewPackage : Bool
+  , canCreateNewPackage : Bool
   }
 
 type alias GraphViewProperties =
@@ -340,7 +341,6 @@ type alias GraphViewProperties =
   , canDragNodes : Bool -- via shift-drag
   , canInspectRefs : Bool -- via shift-click
   , canPan : Bool -- via hover
-  , canChooseInPackageList : Bool
   }
 
 type Cardinality
