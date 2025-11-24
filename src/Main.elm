@@ -228,6 +228,22 @@ linkDrawingForPackage package packages =
         )
     |> Dict.fromList
 
+fitGraphViewToGraph : GraphView -> GraphView
+fitGraphViewToGraph graphView =
+  let
+    guest_viewport =
+      calculateGuestDimensionsForHost
+        graphView.host_dimensions
+        graphView.isFrozen
+        graphView.package.userGraph.graph
+  in
+    { graphView
+    | guest_dimensions = guest_viewport.dimensions
+    , guest_coordinates = guest_viewport.coordinates
+    , guest_inner_coordinates = guest_viewport.inner_coordinates
+    , guest_inner_dimensions = guest_viewport.inner_dimensions
+    }
+
 mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> PackageDict -> InteractionsDict -> GraphView
 mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
   let
@@ -259,7 +275,7 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
     , guest_coordinates = guest_viewport.coordinates
     , guest_inner_coordinates = guest_viewport.inner_coordinates
     , guest_inner_dimensions = guest_viewport.inner_dimensions
-    , pan = ( 0, 0)
+    , pan = ( 0, 0 )
     , disconnectedNodes = Set.empty
     , properties = properties
     , drawingData =
@@ -268,6 +284,17 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
         }
     }
 
+upsertGraphView : Uuid -> GraphView -> Model -> Model
+upsertGraphView uuid graph_view model =
+  { model
+    | graph_views =
+        AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
+    , mainGraphView =
+        if graph_view.interfaceLocation == MainEditor then
+          uuid
+        else
+          model.mainGraphView
+  }
 
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
     `naiveViewFromPackage` instead.
@@ -280,15 +307,7 @@ viewFromPackage computed (w, h) location createFrozen pkg model =
       mkGraphView id computed.solvedGraph (w, h) location createFrozen pkg model_.packages model_.interactionsDict
   in
     ( graph_view
-    , { model_
-        | graph_views =
-            AutoDict.insert id graph_view model_.graph_views
-        , mainGraphView =
-            if location == MainEditor then
-              id
-            else
-              model.mainGraphView
-      }
+    , upsertGraphView id graph_view model_
     )
 
 {-| Creates a new GraphView from a provided GraphPackage, accepting the provided layout
@@ -2742,15 +2761,27 @@ update msg model =
             pkg = graph_view.package
             updated_package =
               { pkg
-                | undoBuffer = pkg.userGraph :: graph_view.package.undoBuffer
+                | undoBuffer = pkg.userGraph :: pkg.undoBuffer
                 , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
                 , userGraph = ag
               }
           in
-            naiveViewFromPackage
-              graph_view.host_dimensions graph_view.interfaceLocation
-              graph_view.isFrozen updated_package model_
-            |> Tuple.second
+            upsertGraphView graph_view.id
+              ( { graph_view
+                  | package = updated_package
+                  , drawingData =
+                      { link_drawing = linkDrawingForPackage updated_package model_.packages
+                      , node_drawing = nodeDrawingForPackage updated_package graph_view.isFrozen graph_view.id model_.interactionsDict
+                      }
+                  , disconnectedNodes = GraphEditor.identifyDisconnectedNodes updated_package.userGraph
+                }
+                |> fitGraphViewToGraph
+              )
+              model_
+            -- naiveViewFromPackage
+            --   graph_view.host_dimensions graph_view.interfaceLocation
+            --   graph_view.isFrozen updated_package model_
+            -- |> Tuple.second
         
         createNewNode : NodeId -> Connection -> Float -> Float -> GraphView -> Model -> Model
         createNewNode src conn x y gv model_ =
@@ -2769,9 +2800,9 @@ update msg model =
 
       in
         ( case popMostRecentInteraction model of
-            Just (Just gv_uuid, SplittingNode { to_split, left, right } _, model_) ->
+            Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
               if AutoSet.isEmpty left || AutoSet.isEmpty right then
-                model_
+                removeViews [ mainGraph ] model_
               else
                 AutoDict.get gv_uuid model_.graph_views
                 |> Maybe.andThen
@@ -2783,20 +2814,24 @@ update msg model =
                   )
                 |> Maybe.map (\(gv, nodeContext) ->
                   splitNode nodeContext left gv
-                  |> \newGraph -> commit_change gv newGraph model_
+                  |> \newGraph ->
+                      removeViews [ mainGraph ] model_
+                      |> commit_change gv newGraph
                 )
                 |> Maybe.withDefault model_
                 |> setProperties
-            Just (Just gv_uuid, EditingConnection { source, dest, connection } _, model_) ->
+            Just (Just gv_uuid, EditingConnection { source, dest, connection } {mainGraph, referenceList}, model_) ->
               -- create such an automatongraph
               AutoDict.get (gv_uuid) model_.graph_views   
               |> Maybe.map
                 (\gv ->
                   if AutoSet.isEmpty connection then
-                    removeLink source dest gv model_
+                    removeViews (mainGraph :: referenceList) model_
+                    |> removeLink source dest gv
                     |> setProperties
                   else
-                    updateExistingNode source dest connection gv model_
+                    removeViews (mainGraph :: referenceList) model_
+                    |> updateExistingNode source dest connection gv
                     |> setProperties
                 )
               |> Maybe.withDefault model_
