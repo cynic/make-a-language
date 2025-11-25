@@ -508,6 +508,7 @@ init flags =
         }
   in
     ( selectComputationsIcon model
+      |> setProperties
     , Cmd.none
     )
 
@@ -1239,23 +1240,36 @@ packagesToGraphViews (w, h) model =
     ( [], model )
     (AutoDict.values model.packages)
 
-selectComputationsIcon : Model -> Model
-selectComputationsIcon model =
+{-| Expensive. Refresh all computations. -}
+refreshComputationsList : Model -> Model
+refreshComputationsList model =
   let
     (computation_views, updated_model) =
       packagesToGraphViews (sidebarGraphDimensions model.uiState) model
+    as_dict =
+      List.foldl (\v -> AutoDict.insert v.id v) (AutoDict.empty Uuid.toString) computation_views
   in
     { updated_model
-      | uiState =
-          let uiState = model.uiState in
-          { uiState
-            | selected =
-              let selected = uiState.selected in
-              { selected | sideBar = ComputationsIcon }
-          }
+      | graph_views =
+          List.foldl AutoDict.remove model.graph_views model.computationsExplorer
+          |> AutoDict.union as_dict
       , computationsExplorer =
-          List.map .id computation_views
+          List.sortBy (.package >> .created >> Time.posixToMillis >> (*) -1) computation_views
+          |> List.map .id
     }
+
+selectComputationsIcon : Model -> Model
+selectComputationsIcon model =
+  { model
+    | uiState =
+        let uiState = model.uiState in
+        { uiState
+          | selected =
+            let selected = uiState.selected in
+            { selected | sideBar = ComputationsIcon }
+        }
+  }
+  |> refreshComputationsList
 
 removeViews : List Uuid -> Model -> Model
 removeViews uuids model =
@@ -1342,9 +1356,9 @@ update_graphview uuid ui_msg model =
       )
 
     SelectNode node_id ->
-      ( case peekInteraction (Just uuid) model.interactionsDict of
-          Just (ChoosingDestinationFor src etc) ->
-            selectDestination uuid src etc model
+      ( case popInteraction (Just uuid) model of
+          Just (ChoosingDestinationFor src etc, model_) ->
+            selectDestination uuid src etc model_
           _ -> -- includes 'Nothing'
             -- this is the initial selection.
             selectSourceNode model uuid node_id
@@ -1353,9 +1367,9 @@ update_graphview uuid ui_msg model =
       )
 
     SelectSpace ->
-      ( case peekInteraction (Just uuid) model.interactionsDict of
-          Just (ChoosingDestinationFor src etc) ->
-            selectDestination uuid src etc model
+      ( case popInteraction (Just uuid) model of
+          Just (ChoosingDestinationFor src etc, model_) ->
+            selectDestination uuid src etc model_
           _ ->
             model
       , Cmd.none
@@ -2206,146 +2220,156 @@ type alias MainPropertySetter = MainUIProperties
 setProperties : Model -> Model
 setProperties model =
   let
-    setLocalProperties = Tuple.first
-    setMainProperties = Tuple.second
-    whenSplittingNode : (GraphViewPropertySetter, MainPropertySetter)
-    whenSplittingNode =
-      ( { nilViewProperties
-          | canDragNodes = True
-          , canInspectRefs = True
-          , canPan = True
-        }
-      , { nilMainProperties
+    setLocalProperties : GraphViewDict -> GraphViewDict
+    setLocalProperties =
+      let
+        whenSplittingNode : GraphViewPropertySetter
+        whenSplittingNode =
+          { nilViewProperties
+            | canDragNodes = True
+            , canInspectRefs = True
+            , canPan = True
+          }
+        whenDraggingNode : GraphViewPropertySetter
+        whenDraggingNode =
+          { nilViewProperties | canPan = True }
+        whenDraggingSplitter : GraphViewPropertySetter
+        whenDraggingSplitter =
+          nilViewProperties
+        whenSourceNodeSelected : Uuid -> GraphViewPropertySetter
+        whenSourceNodeSelected id =
+          { nilViewProperties
+            | canSelectEmptySpace = model.mainGraphView == id
+            , canSelectNodes = model.mainGraphView == id
+            , canSplitNodes = model.mainGraphView == id
+            , canDragNodes = model.mainGraphView == id
+            , canPan = True
+          }
+        whenEditingConnection : GraphViewPropertySetter
+        whenEditingConnection =
+          { nilViewProperties
+            | canInspectRefs = True
+            , canPan = True
+          }
+        whenExecuting : GraphViewPropertySetter
+        whenExecuting =
+          { nilViewProperties | canPan = True }
+        whenSimulatingForces : GraphViewPropertySetter
+        whenSimulatingForces =
+          { nilViewProperties
+            | canSelectConnections = True
+            , canSelectNodes = True
+            , canSplitNodes = True
+            , canPan = True
+          }
+        otherwise : Uuid -> GraphViewPropertySetter
+        otherwise id =
+          { nilViewProperties
+            | canSelectNodes = model.mainGraphView == id
+            , canSplitNodes = model.mainGraphView == id
+            , canDragNodes = model.mainGraphView == id
+            , canSelectConnections = model.mainGraphView == id
+            , canInspectRefs = True
+            , canPan = True
+          }
+      in
+        AutoDict.map
+          (\k v ->
+            { v
+              | properties =
+                  case peekInteraction (Just k) model.interactionsDict of
+                    Just (SplittingNode _ _) ->
+                      whenSplittingNode
+                    Just (DraggingNode _) ->
+                      whenDraggingNode
+                    Just (ChoosingDestinationFor _ _) ->
+                      whenSourceNodeSelected v.id
+                    Just (EditingConnection _ _) ->
+                      whenEditingConnection
+                    Just (Executing _) ->
+                      whenExecuting
+                    Just (SimulatingForces _ _ _) ->
+                      whenSimulatingForces
+                    Just (DraggingSplitter _) ->
+                      whenDraggingSplitter
+                    Nothing ->
+                     otherwise v.id
+            }
+          )
+
+    setMainProperties : MainUIProperties
+    setMainProperties =
+      let
+        whenSplittingNode : MainPropertySetter
+        whenSplittingNode =
+          { nilMainProperties
+            | canEscape = True
+            , canDragSplitter = True
+            , canAcceptCharacters = True
+          }
+        whenDraggingNode : MainPropertySetter
+        whenDraggingNode =
+          { nilMainProperties | canEscape = True }
+        whenDraggingSplitter : MainPropertySetter
+        whenDraggingSplitter =
+          nilMainProperties
+        whenSourceNodeSelected : MainPropertySetter
+        whenSourceNodeSelected =
+          { nilMainProperties
+            | canEscape = True
+            , canDragSplitter = True
+            , canSelectNewPackage = True
+            , canCreateNewPackage = True
+          }
+        whenEditingConnection : MainPropertySetter
+        whenEditingConnection =
+          { nilMainProperties
           | canEscape = True
-          , canDragSplitter = True
           , canAcceptCharacters = True
-        }
-      )
-    whenDraggingNode : (GraphViewPropertySetter, MainPropertySetter)
-    whenDraggingNode =
-      ( { nilViewProperties
-          | canPan = True
-        }
-      , { nilMainProperties
-          | canEscape = True
-        }
-      )
-    whenDraggingSplitter : (GraphViewPropertySetter, MainPropertySetter)
-    whenDraggingSplitter =
-      ( nilViewProperties
-      , nilMainProperties
-      )
-    whenSourceNodeSelected : (GraphViewPropertySetter, MainPropertySetter)
-    whenSourceNodeSelected =
-      ( { nilViewProperties
-          | canSelectEmptySpace = True
-          , canSelectNodes = True
-          , canSplitNodes = True
-          , canDragNodes = True
-          , canPan = True
-        }
-      , { nilMainProperties
+          }
+        whenExecuting : MainPropertySetter
+        whenExecuting =
+          { nilMainProperties
           | canEscape = True
           , canDragSplitter = True
-          , canSelectNewPackage = True
-          , canCreateNewPackage = True
-        }
-      )
-    whenEditingConnection : (GraphViewPropertySetter, MainPropertySetter)
-    whenEditingConnection =
-      ( { nilViewProperties
-          | canInspectRefs = True
-          , canPan = True
-        }
-      , { nilMainProperties
-        | canEscape = True
-        , canAcceptCharacters = True
-        }
-      )
-    whenExecuting : (GraphViewPropertySetter, MainPropertySetter)
-    whenExecuting =
-      ( { nilViewProperties
-          | canPan = True
-        }
-      , { nilMainProperties
-        | canEscape = True
-        , canDragSplitter = True
-        }
-      )
-    whenSimulatingForces : (GraphViewPropertySetter, MainPropertySetter)
-    whenSimulatingForces =
-      ( { nilViewProperties
-          | canSelectConnections = True
-          , canSelectNodes = True
-          , canSplitNodes = True
-          , canPan = True
-        }
-      , { nilMainProperties
-          | canDragSplitter = True
-          , canSelectNewPackage = True
-          , canCreateNewPackage = True
-        }
-      )
-    otherwise : (GraphViewPropertySetter, MainPropertySetter)
-    otherwise =
-      ( { nilViewProperties
-          | canSelectNodes = True
-          , canSplitNodes = True
-          , canDragNodes = True
-          , canInspectRefs = True
-          , canPan = True
-        }
-      , { nilMainProperties
-          | canDragSplitter = True
-          , canSelectNewPackage = True
-          , canCreateNewPackage = True
-        }
-      )
+          }
+        whenSimulatingForces : MainPropertySetter
+        whenSimulatingForces =
+          { nilMainProperties
+            | canDragSplitter = True
+            , canSelectNewPackage = True
+            , canCreateNewPackage = True
+          }
+        otherwise : MainPropertySetter
+        otherwise =
+          { nilMainProperties
+            | canDragSplitter = True
+            , canSelectNewPackage = True
+            , canCreateNewPackage = True
+          }
+      in
+        case mostRecentInteraction model of
+          Just (_, SplittingNode _ _) ->
+            whenSplittingNode
+          Just (_, DraggingNode _) ->
+            whenDraggingNode
+          Just (_, ChoosingDestinationFor _ _) ->
+            whenSourceNodeSelected
+          Just (_, EditingConnection _ _) ->
+            whenEditingConnection
+          Just (_, Executing _) ->
+            whenExecuting
+          Just (_, SimulatingForces _ _ _) ->
+            whenSimulatingForces
+          Just (_, DraggingSplitter _) ->
+            whenDraggingSplitter
+          Nothing ->
+            otherwise
+
   in
     { model
-      | graph_views =
-          AutoDict.map
-            (\k v ->
-              { v
-                | properties =
-                    case peekInteraction (Just k) model.interactionsDict of
-                      Just (SplittingNode _ _) ->
-                        setLocalProperties whenSplittingNode
-                      Just (DraggingNode _) ->
-                        setLocalProperties whenDraggingNode
-                      Just (ChoosingDestinationFor _ _) ->
-                        setLocalProperties whenSourceNodeSelected
-                      Just (EditingConnection _ _) ->
-                        setLocalProperties whenEditingConnection
-                      Just (Executing _) ->
-                        setLocalProperties whenExecuting
-                      Just (SimulatingForces _ _ _) ->
-                        setLocalProperties whenSimulatingForces
-                      Just (DraggingSplitter _) ->
-                        setLocalProperties whenDraggingSplitter
-                      Nothing ->
-                        setLocalProperties otherwise
-              }
-            )
-            model.graph_views
-      , properties =
-          case mostRecentInteraction model of
-            Just (_, SplittingNode _ _) ->
-              setMainProperties whenSplittingNode
-            Just (_, DraggingNode _) ->
-              setMainProperties whenDraggingNode
-            Just (_, ChoosingDestinationFor _ _) ->
-              setMainProperties whenSourceNodeSelected
-            Just (_, EditingConnection _ _) ->
-              setMainProperties whenEditingConnection
-            Just (_, Executing _) ->
-              setMainProperties whenExecuting
-            Just (_, SimulatingForces _ _ _) ->
-              setMainProperties whenSimulatingForces
-            Just (_, DraggingSplitter _) ->
-              setMainProperties whenDraggingSplitter
-            Nothing ->
-              setMainProperties otherwise
+      | graph_views = setLocalProperties model.graph_views
+      , properties = setMainProperties
     }
     
 selectDestination : Uuid -> NodeId -> PossibleDestination -> Model -> Model
@@ -2755,10 +2779,7 @@ update msg model =
                 |> fitGraphViewToGraph
               )
               model_
-            -- naiveViewFromPackage
-            --   graph_view.host_dimensions graph_view.interfaceLocation
-            --   graph_view.isFrozen updated_package model_
-            -- |> Tuple.second
+            |> refreshComputationsList
         
         createNewNode : NodeId -> Connection -> Float -> Float -> GraphView -> Model -> Model
         createNewNode src conn x y gv model_ =
@@ -2797,12 +2818,22 @@ update msg model =
                 )
                 |> Maybe.withDefault model_
                 |> setProperties
-            Just (Just gv_uuid, EditingConnection { source, dest, connection } {mainGraph, referenceList}, model_) ->
+            Just (Just gv_uuid, EditingConnection { source, dest, connection, deleteTargetIfCancelled } {mainGraph, referenceList}, model_) ->
               -- create such an automatongraph
               AutoDict.get (gv_uuid) model_.graph_views   
               |> Maybe.map
                 (\gv ->
-                  if AutoSet.isEmpty connection then
+                  if deleteTargetIfCancelled then
+                    let
+                      (x, y) =
+                        Graph.get dest gv.package.userGraph.graph
+                        |> Maybe.map (\ctx -> (ctx.node.label.x, ctx.node.label.y))
+                        |> Maybe.withDefault (0, 0)
+                    in
+                    removeViews (mainGraph :: referenceList) model_
+                    |> createNewNode source connection x y gv
+                    |> setProperties
+                  else if AutoSet.isEmpty connection then
                     removeViews (mainGraph :: referenceList) model_
                     |> removeLink source dest gv
                     |> setProperties
@@ -2816,6 +2847,47 @@ update msg model =
               -- _if_ there are things which are yet to be committed, in
               -- the main, then commit them here.
               model
+        , Cmd.none
+        )
+
+    CreateNewPackage ->
+      ( model
+      , Task.perform TimeValueForPackage Time.now
+      )
+
+    TimeValueForPackage posix ->
+      let
+        (testUuid, seed1) = Random.step Uuid.generator model.randomSeed
+        (mainUuid, seed2) = Random.step Uuid.generator seed1
+        pkg =
+          createNewPackage
+            testUuid
+            posix
+            ( { graph =
+                  Graph.fromNodesAndEdges
+                    [ Graph.Node 0 (entity 0 NoEffect |> (\e -> { e | x = 0, y = 0 }))
+                    ]
+                    []
+              , graphIdentifier = mainUuid
+              , root = 0
+              }
+            )
+        updated_model =
+          { model
+            | packages = AutoDict.insert mainUuid pkg model.packages
+            , randomSeed = seed2
+          }
+        ( _, with_graph_view ) =
+          solvedViewFromPackage
+            model.uiState.dimensions.mainEditor
+            MainEditor
+            False
+            pkg
+            updated_model
+      in
+        ( with_graph_view
+          |> refreshComputationsList
+          |> setProperties
         , Cmd.none
         )
 
@@ -3903,11 +3975,15 @@ viewComputationsSidebar model =
     [ h1
         [ HA.class "sidebar-title" ]
         [ text "Computations "
-        , button
-            [ HA.class "add-button"
-            , HA.title "Create new computation"
-            ]
-            [ text "➕" ]
+        , if model.properties.canCreateNewPackage then
+            button
+              [ HA.class "add-button"
+              , HA.title "Create new computation"
+              , HE.onClick CreateNewPackage
+              ]
+              [ text "➕" ]
+          else
+            text ""
         ]
     , div
         [ HA.class "computations-explorer" ]

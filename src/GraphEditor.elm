@@ -748,8 +748,12 @@ viewNode properties id data =
       else if data.isRoot then
         "Start of computation\n"
       else
-        "")
-      ++ "Shift-drag to reposition" ++
+        "") ++
+      (if properties.canDragNodes then
+          "Drag to reposition\n"
+        else
+          ""
+      ) ++
       (if data.canSplit && properties.canSplitNodes then
             "\nCtrl-click to split transitions"
           else

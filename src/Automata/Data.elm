@@ -107,6 +107,8 @@ type Msg
   | Undo
   | Redo
   | Confirm -- the universal "Yeah! Let's Go!" key & command
+  | CreateNewPackage
+  | TimeValueForPackage Time.Posix
   -- more general messages
   -- | Tick
   -- | Seconded Time.Posix
@@ -115,7 +117,6 @@ type Msg
   -- | RunExecution
   -- | ResetExecution
   -- | StepThroughExecution
-  -- | CreateNewPackage
 
 type alias PackageDict =
   AutoDict.Dict String Uuid GraphPackage
