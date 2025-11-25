@@ -620,114 +620,7 @@ updateGraphView uuid msg model =
 
     ResetView ->
       { model | zoom = 1.0, pan = ( 0, 0 ) }
-
-    UpdateCurrentPackage updated ->
-      if updated.userGraph.graphIdentifier /= model.package.userGraph.graphIdentifier then
-        -- I don't care; ignore this!
-        model
-      else
-        { model
-          | currentPackage = updated
-          , packages =
-              AutoDict.insert
-                updated.userGraph.graphIdentifier
-                updated
-                model.packages
-        }
     
-    CreateNewNodeAt ( x, y ) ->
-      case model.interactionsDict of
-        Just (ModifyingGraph _ { source, transitions }) ->
-          { model
-            | interactionsDict =
-                Just <| ModifyingGraph ChooseCharacter <| GraphModification source (NewNode ( x, y )) transitions
-          }
-        _ ->
-          model
-
-    Confirm ->
-      -- What am I confirming?
-      let
-        commit_change : AutomatonGraph -> Model -> Model
-        commit_change updatedGraph model_ =
-          let
-            basic =
-              basicForces updatedGraph (round <| Tuple.second model_.dimensions)
-            viewport =
-              viewportForces model_.dimensions updatedGraph.graph
-            pkg = model_.package
-          in
-            { model_
-            | interactionsDict = Nothing
-            , currentPackage =
-                { pkg
-                  | userGraph = updatedGraph
-                  , undoBuffer = model.package.userGraph :: model_.package.undoBuffer
-                  , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-                }
-                    -- NOTE ⬇ WELL! This isn't a typo!
-            , basicForces = basic
-            , viewportForces = viewport
-            , simulation = Force.simulation (basic ++ viewport)
-            , disconnectedNodes =
-                identifyDisconnectedNodes updatedGraph
-            }
-        
-        createNewNode : NodeId -> Connection -> Float -> Float -> Model
-        createNewNode src conn x y =
-          newnode_graphchange src x y conn model.package.userGraph
-          |> \newGraph -> commit_change newGraph model
-
-        updateExistingNode src dest conn =
-          updateLink_graphchange src dest conn model.package.userGraph
-          |> \newGraph -> commit_change newGraph model
-
-        removeLink : NodeId -> NodeId -> Model
-        removeLink src dest =
-          removeLink_graphchange src dest model.package.userGraph
-          |> \newGraph -> commit_change newGraph model
-
-      in
-        case model.interactionsDict of
-          Just (ModifyingGraph _ { source, dest, transitions }) ->
-            case dest of
-              ( NewNode ( x, y ) ) ->
-                -- create a totally new node, never before seen!
-                createNewNode source transitions x y
-              ( ExistingNode destination ) ->
-                if AutoSet.isEmpty transitions then
-                  removeLink source destination
-                else
-                  updateExistingNode source destination transitions
-              ( NoDestination ) ->
-                -- ??? Nothing for me to do!  The user is just pressing Enter because… uh… eh, who knows?
-                model
-          Just (AlteringConnection _ { source, dest, transitions }) ->
-                if AutoSet.isEmpty transitions then
-                  removeLink source dest
-                else
-                  updateExistingNode source dest transitions
-          Just (Splitting { to_split, left, right }) ->
-            if AutoSet.isEmpty left || AutoSet.isEmpty right then
-              { model | interactionsDict = Nothing }
-            else
-              Graph.get to_split model.package.userGraph.graph
-              |> Maybe.map (\node ->
-                splitNode node left right model
-                |> \g -> commit_change g model
-              )
-              |> Maybe.withDefault model
-          Nothing -> -- I'm not in an active operation. But do I have changes to confirm?
-            case model.package.undoBuffer of
-              [] -> -- no changes are proposed, so…
-                model -- …there is nothing for me to do!
-              _ ->
-                confirmChanges model
-          Just (Dragging _) ->
-            model -- confirmation does nothing for this (visual) operation.
-          Just (Executing _ _) ->
-            model -- confirmation does nothing for execution
-
     Reheat ->
       -- If I'm not doing anything else, permit auto-layout
       case model.interactionsDict of
@@ -951,6 +844,17 @@ sidebarGraphDimensions uiState =
     ( w, _ ) = uiState.dimensions.sideBar
   in
   ( w - 20 , 9/16 * ( w - 20 ) )
+
+handleConnectionRemoval : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
+handleConnectionRemoval uuid {source, dest, deleteTargetIfCancelled} viewsToRemove model =
+  if deleteTargetIfCancelled then
+    removeViews viewsToRemove model
+    |> deleteNodeFromView uuid source dest
+    |> setProperties
+  else
+    -- does deletion link deletion IF appropriate.
+    removeViews viewsToRemove model
+    |> deleteLinkFromView uuid source dest
 
 
 updateMainEditorDimensions : Model -> Model
@@ -2653,16 +2557,9 @@ update msg model =
               |> setProperties
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
               removePhantomLink uuid source dest model
-            Just (Just uuid, EditingConnection {source, dest, deleteTargetIfCancelled} {referenceList, mainGraph}, model_) ->
-              if deleteTargetIfCancelled then
-                removeViews (mainGraph :: referenceList) model_
-                |> deleteNodeFromView uuid source dest
-                |> setProperties
-              else
-                -- does deletion link deletion IF appropriate.
-                removeViews (mainGraph :: referenceList) model_
-                |> deleteLinkFromView uuid source dest
-                |> setProperties
+            Just (Just uuid, EditingConnection alteration {referenceList, mainGraph}, model_) ->
+              handleConnectionRemoval uuid alteration (mainGraph :: referenceList) model_ 
+              |> setProperties
             Just (Just _, SplittingNode _ props, model_) ->
               removeViews [ props.mainGraph ] model_
               |> setProperties
@@ -2773,6 +2670,24 @@ update msg model =
           GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
           |> \newGraph -> commit_change gv newGraph model_
 
+        confirmPhantomNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
+        confirmPhantomNode src dest conn gv model_ =
+          GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
+          |> \newGraph ->
+              commit_change
+                { gv
+                  | package =
+                      let pkg = gv.package in
+                      { pkg
+                        | userGraph =
+                          let ag = pkg.userGraph in
+                          { ag
+                            | graph = Graph.remove dest ag.graph
+                          }
+                      }
+                }
+                newGraph model_
+
         removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
         removeLink src dest gv model_ =
           GraphEditor.removeLink_graphchange src dest gv.package.userGraph
@@ -2800,31 +2715,34 @@ update msg model =
                 )
                 |> Maybe.withDefault model_
                 |> setProperties
-            Just (Just gv_uuid, EditingConnection { source, dest, connection, deleteTargetIfCancelled } {mainGraph, referenceList}, model_) ->
-              -- create such an automatongraph
-              AutoDict.get (gv_uuid) model_.graph_views   
-              |> Maybe.map
-                (\gv ->
-                  if deleteTargetIfCancelled then
-                    let
-                      (x, y) =
-                        Graph.get dest gv.package.userGraph.graph
-                        |> Maybe.map (\ctx -> (ctx.node.label.x, ctx.node.label.y))
-                        |> Maybe.withDefault (0, 0)
-                    in
-                    removeViews (mainGraph :: referenceList) model_
-                    |> createNewNode source connection x y gv
-                    |> setProperties
-                  else if AutoSet.isEmpty connection then
-                    removeViews (mainGraph :: referenceList) model_
-                    |> removeLink source dest gv
-                    |> setProperties
-                  else
-                    removeViews (mainGraph :: referenceList) model_
-                    |> updateExistingNode source dest connection gv
-                    |> setProperties
-                )
-              |> Maybe.withDefault model_
+            Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled } as alteration) {mainGraph, referenceList}, model_) ->
+              if AutoSet.isEmpty connection then
+                -- if anything, I should be _disconnecting_ nodes here!
+                handleConnectionRemoval gv_uuid alteration (mainGraph :: referenceList) model_
+                |> setProperties
+              else
+                -- create such an automatongraph
+                AutoDict.get (gv_uuid) model_.graph_views   
+                |> Maybe.map
+                  (\gv ->
+                    if deleteTargetIfCancelled then
+                      -- this one comes from a phantom node.
+                      removeViews (mainGraph :: referenceList) model_
+                      -- because this comes from a phantom node, ensure that we
+                      -- remove the 'dest' from the graph before confirming it as
+                      -- the previous graph.
+                      |> confirmPhantomNode source dest connection gv
+                      |> setProperties
+                    else if AutoSet.isEmpty connection then
+                      removeViews (mainGraph :: referenceList) model_
+                      |> removeLink source dest gv
+                      |> setProperties
+                    else
+                      removeViews (mainGraph :: referenceList) model_
+                      |> updateExistingNode source dest connection gv
+                      |> setProperties
+                  )
+                |> Maybe.withDefault model_
             _ ->
               -- _if_ there are things which are yet to be committed, in
               -- the main, then commit them here.
