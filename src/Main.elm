@@ -255,7 +255,7 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
       { pkg
         | userGraph =
           ag
-          |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
+          -- |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
       }
     guest_viewport =
       calculateGuestDimensionsForHost
@@ -512,6 +512,21 @@ init flags =
     , Cmd.none
     )
 
+updatePackageInView : GraphPackage -> GraphView -> Model -> Model
+updatePackageInView updated_package graph_view model =
+  upsertGraphView graph_view.id
+    ( { graph_view
+        | package = updated_package
+        , drawingData =
+            { link_drawing = linkDrawingForPackage updated_package model.packages
+            , node_drawing = nodeDrawingForPackage updated_package graph_view.isFrozen graph_view.id model.interactionsDict
+            }
+        , disconnectedNodes = GraphEditor.identifyDisconnectedNodes updated_package.userGraph
+      }
+      |> fitGraphViewToGraph
+    )
+    model
+
 -- UPDATE
 
 {-| Note: EVERYWHERE that I use persistPackage, I should ALSO
@@ -524,20 +539,10 @@ persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
 
--- updateGraphInView : AutomatonGraph -> GraphView -> GraphView
--- updateGraphInView g v =
---   let
---     (w, h)  = v.dimensions
---     forceGraph = toForceGraph (g {- |> Debug.log "Received by ForceDirectedGraph" -} )
---     forces = viewportForce (w, h) :: basicForces forceGraph (round h)
---     pkg = v.package
---   in
---     { v -- make sure we are referencing the correct Model!
---       | simulation = Force.simulation forces
---       , package = { pkg | userGraph = forceGraph }
---       , forces = forces
---       , specificForces = IntDict.empty
---     }
+updateGraphInView : AutomatonGraph -> GraphView -> GraphView
+updateGraphInView g v =
+  let pkg = v.package in
+  { v | package = { pkg | userGraph = g } }
 
 clearUndoBuffers : GraphPackage -> GraphPackage
 clearUndoBuffers pkg =
@@ -561,52 +566,36 @@ updateTestResultsFor resolutionDict pkg =
           pkg.tests
   }
 
--- updateViewAfterConfirmation : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
--- updateViewAfterConfirmation g resolutionDict v =
---   updateGraphInView g v
---   |>  ( \v_ ->
---         { v_
---           | package =
---               v.package
---               |> updateTestResultsFor resolutionDict
---               |> clearUndoBuffers
---         }
---       )
+updateViewAfterConfirmation : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
+updateViewAfterConfirmation g resolutionDict v =
+  updateGraphInView g v
+  |>  ( \v_ ->
+        { v_
+          | package =
+              v.package
+              |> updateTestResultsFor resolutionDict
+              |> clearUndoBuffers
+        }
+      )
 
--- applyChangesToGraph : AutomatonGraph -> AutomatonGraph
--- applyChangesToGraph g =
---   debugAutomatonGraph "Initial from user" g |> \_ ->
---   { g
---     | graph =
---         -- first, actually remove all disconnected nodes.
---         identifyDisconnectedNodes g
---         |> Set.foldl Graph.remove g.graph
---   }
---   |> debugAutomatonGraph "After removing disconnected"
---   |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
+applyChangesToGraph : AutomatonGraph -> AutomatonGraph
+applyChangesToGraph g =
+  debugAutomatonGraph "Initial from user" g |> \_ ->
+  { g
+    | graph =
+        -- first, actually remove all disconnected nodes.
+        GraphEditor.identifyDisconnectedNodes g
+        |> Set.foldl Graph.remove g.graph
+  }
+  |> debugAutomatonGraph "After removing disconnected"
+  |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
 
--- confirmChanges : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
--- confirmChanges g resolutionDict graphView =
---   updateViewAfterConfirmation
---     (applyChangesToGraph g)
---     resolutionDict
---     graphView
-
--- resizeGraphView : (Float, Float) -> GraphView -> GraphView
--- resizeGraphView dim v =
---   let
---     -- the center of the viewport may change.
---     forces = GraphEditor.forces v.package.userGraph (Tuple.mapBoth round round dim)
---   in
---   { v
---     | dimensions = dim
---     , forces = forces
---     , simulation =
---         Force.simulation
---           ( forces ++
---             List.concat (IntDict.values v.specificForces)
---           )
---   }
+confirmChanges : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
+confirmChanges g resolutionDict graphView =
+  updateViewAfterConfirmation
+    (applyChangesToGraph g)
+    resolutionDict
+    graphView
 
 updateGraphView : Uuid -> (GraphView -> Maybe GraphView) -> AutoDict.Dict String Uuid GraphView -> AutoDict.Dict String Uuid GraphView
 updateGraphView uuid f dict =
@@ -2541,6 +2530,10 @@ startSplit uuid graph_view nodeContext model =
       )
     |> setProperties
 
+toResolutionDict : PackageDict -> ResolutionDict
+toResolutionDict packages =
+  AutoDict.map (\_ -> .userGraph) packages
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -2767,18 +2760,7 @@ update msg model =
                 , userGraph = ag
               }
           in
-            upsertGraphView graph_view.id
-              ( { graph_view
-                  | package = updated_package
-                  , drawingData =
-                      { link_drawing = linkDrawingForPackage updated_package model_.packages
-                      , node_drawing = nodeDrawingForPackage updated_package graph_view.isFrozen graph_view.id model_.interactionsDict
-                      }
-                  , disconnectedNodes = GraphEditor.identifyDisconnectedNodes updated_package.userGraph
-                }
-                |> fitGraphViewToGraph
-              )
-              model_
+            updatePackageInView updated_package graph_view model_
             |> refreshComputationsList
         
         createNewNode : NodeId -> Connection -> Float -> Float -> GraphView -> Model -> Model
@@ -2846,7 +2828,29 @@ update msg model =
             _ ->
               -- _if_ there are things which are yet to be committed, in
               -- the main, then commit them here.
-              model
+              AutoDict.get model.mainGraphView model.graph_views
+              |> Maybe.map
+                (\gv ->
+                  case gv.package.undoBuffer of
+                    [] -> -- no changes are proposed, so…
+                      model -- …there is nothing for me to do!
+                    h::_ ->
+                      let
+                        new_gv =
+                          confirmChanges h
+                            (toResolutionDict model.packages)
+                            gv
+                        model_ =
+                          { model
+                            | packages =
+                                AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
+                          }
+                      in
+                        updatePackageInView
+                          new_gv.package gv model_
+                        |> refreshComputationsList
+                )
+              |> Maybe.withDefault model
         , Cmd.none
         )
 
@@ -3660,61 +3664,6 @@ subscriptions model =
                   D.fail "Untrapped"
             )
         )
-
-    -- keyboardSubscription =
-    --   Browser.Events.onKeyDown
-    --     ( D.map2
-    --         (\key ctrlPressed -> ( key, ctrlPressed ))
-    --         (D.field "key" D.string)
-    --         (D.field "ctrlKey" D.bool)
-    --       |> D.andThen
-    --         (\v ->
-    --           case v of
-    --             ( "1", True ) ->
-    --               -- Debug.log "yup" v |> \_ ->
-    --               D.succeed ResetView
-    --             ( "Enter", False ) ->
-    --               D.succeed Confirm
-    --             ( "Escape", False ) ->
-    --               D.succeed Escape
-    --             ( "Tab", False) ->
-    --               D.succeed Reheat
-    --             ( "z", True) ->
-    --               D.succeed Undo
-    --             ( "Z", True) ->
-    --               D.succeed Undo
-    --             ( "y", True) ->
-    --               D.succeed Redo
-    --             ( "Y", True) ->
-    --               D.succeed Redo
-    --             ( ch, _ ) ->
-    --               case String.toList ch of
-    --                 [char] ->
-    --                   D.succeed (KeyPressed char)
-    --                 _ ->
-    --                   D.fail "Not a character key"
-    --               -- in
-    --               -- case model.interactionsDict of
-    --               --   Just (ModifyingGraph ChooseCharacter { dest }) ->
-    --               --     case dest of
-    --               --       NoDestination ->
-    --               --         D.fail "Not a recognized key combination"
-    --               --       _ ->
-    --               --         decodeChar
-    --               --   Just (ModifyingGraph (ChooseGraphReference _) _) ->
-    --               --     D.fail "Not choosing characters"
-    --               --   Just (AlteringConnection ChooseCharacter _) ->
-    --               --     decodeChar
-    --               --   Just (AlteringConnection (ChooseGraphReference _) _) ->
-    --               --     D.fail "Not choosing characters"
-    --               --   Just (Splitting _) ->
-    --               --     decodeChar
-    --               --   _ ->
-    --               --     D.fail "Not a recognized key combination"
-    --         )
-    --     )
-    --   else
-    --     Sub.none
     coordinateSubscription =
       receiveCoordinates
         ( D.decodeValue
