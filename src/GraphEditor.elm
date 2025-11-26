@@ -286,6 +286,12 @@ updateLink_graphchange src dest conn g =
 
 removeLink_graphchange : NodeId -> NodeId -> AutomatonGraph -> AutomatonGraph
 removeLink_graphchange src dest g =
+  -- here, we "update" and set the connection to empty.
+  -- why not remove it?  That WOULD be more correct!
+  -- Because if we remove it, then the _forces_ link is gone, and
+  -- if the simulation runs, then the disconnected portion will fly off
+  -- somewhere into the ether.  That's not what we want to happen.
+  -- So, we fake it here, and figure it out and remove it later on.
   { g
     | graph =
         Graph.update dest

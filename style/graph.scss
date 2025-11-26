@@ -85,7 +85,7 @@
   }
 
   // 2. Terminal Nodes  
-  &.terminal:not(.start) {
+  &.terminal:not(.start):not(.disconnected) {
     fill: var(--red);
     stroke: var(--red);
     stroke-width: 3; // Thicker border for emphasis

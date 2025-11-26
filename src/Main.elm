@@ -216,8 +216,17 @@ linkDrawingForPackage package packages =
       Graph.edges package.userGraph.graph
       |> List.filterMap
           (\edge ->
-            Maybe.map2
-              (\f t -> { sourceNode = f, destNode = t, label = edge.label })
+            Maybe.andThen2
+              (\f t ->
+                -- this will happen when there is a "removed" edge,
+                -- but it hasn't been confirmed yet.
+                -- The "invisible" link will anchor with forces, rather
+                -- than having the disconnected nodes fly off into the
+                -- wild blue yonder…
+                if AutoSet.isEmpty edge.label then
+                  Nothing
+                else
+                  Just { sourceNode = f, destNode = t, label = edge.label })
               (Graph.get edge.from package.userGraph.graph)
               (Graph.get edge.to package.userGraph.graph)
           )
@@ -543,63 +552,43 @@ persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
 
-updateGraphInView : AutomatonGraph -> GraphView -> GraphView
-updateGraphInView g v =
-  let pkg = v.package in
-  { v | package = { pkg | userGraph = g } }
-
-clearUndoBuffers : GraphPackage -> GraphPackage
-clearUndoBuffers pkg =
-  { pkg
-    | undoBuffer = []
-    , redoBuffer = []
-  }
-
-updateTestResultsFor : ResolutionDict -> GraphPackage -> GraphPackage
-updateTestResultsFor resolutionDict pkg =
-  { pkg
-    | tests =
-        AutoDict.map
-          (\_ entry ->
-            { entry
-              | result =
-                  DFA.load entry.input resolutionDict pkg.userGraph
-                  |> DFA.run
-            }
-          )
-          pkg.tests
-  }
-
-updateViewAfterConfirmation : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
-updateViewAfterConfirmation g resolutionDict v =
-  updateGraphInView g v
-  |>  ( \v_ ->
-        { v_
-          | package =
-              v.package
-              |> updateTestResultsFor resolutionDict
-              |> clearUndoBuffers
-        }
-      )
-
-applyChangesToGraph : AutomatonGraph -> AutomatonGraph
-applyChangesToGraph g =
-  debugAutomatonGraph "Initial from user" g |> \_ ->
-  { g
-    | graph =
-        -- first, actually remove all disconnected nodes.
-        GraphEditor.identifyDisconnectedNodes g
-        |> Set.foldl Graph.remove g.graph
-  }
-  |> debugAutomatonGraph "After removing disconnected"
-  |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
-
 confirmChanges : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
 confirmChanges g resolutionDict graphView =
-  updateViewAfterConfirmation
-    (applyChangesToGraph g)
-    resolutionDict
-    graphView
+  let
+    finalGraph =
+      debugAutomatonGraph "Initial from user" g |> \_ ->
+      { g
+        | graph =
+            -- first, actually remove all disconnected nodes.
+            GraphEditor.identifyDisconnectedNodes g
+            |> Debug.log "Disconnected nodes identified"
+            |> Set.foldl Graph.remove g.graph
+      }
+      |> debugAutomatonGraph "After removing disconnected"
+      |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
+    finalPackage =
+      let pkg = graphView.package in
+      { pkg
+        | userGraph = finalGraph
+        -- clear the undo/redo buffers
+        , undoBuffer = []
+        , redoBuffer = []
+        -- run the tests
+        , tests =
+            AutoDict.map
+              (\_ entry ->
+                { entry
+                  | result =
+                      DFA.load entry.input resolutionDict finalGraph
+                      |> DFA.run
+                }
+              )
+              pkg.tests
+      }
+  in
+    { graphView
+      | package = finalPackage
+    }
 
 updateGraphView : Uuid -> (GraphView -> Maybe GraphView) -> AutoDict.Dict String Uuid GraphView -> AutoDict.Dict String Uuid GraphView
 updateGraphView uuid f dict =
@@ -2743,24 +2732,23 @@ update msg model =
               AutoDict.get model.mainGraphView model.graph_views
               |> Maybe.map
                 (\gv ->
-                  case gv.package.undoBuffer of
-                    [] -> -- no changes are proposed, so…
-                      model -- …there is nothing for me to do!
-                    h::_ ->
-                      let
-                        new_gv =
-                          confirmChanges h
-                            (toResolutionDict model.packages)
-                            gv
-                        model_ =
-                          { model
-                            | packages =
-                                AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
-                          }
-                      in
-                        updatePackageInView
-                          (\_ -> new_gv.package) gv model_
-                        |> refreshComputationsList
+                  if List.isEmpty gv.package.undoBuffer then
+                    model -- …there is nothing for me to do!
+                  else
+                    let
+                      new_gv =
+                        confirmChanges gv.package.userGraph
+                          (toResolutionDict model.packages)
+                          gv
+                      model_ =
+                        { model
+                          | packages =
+                              AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
+                        }
+                    in
+                      updatePackageInView
+                        (\_ -> new_gv.package) gv model_
+                      |> refreshComputationsList
                 )
               |> Maybe.withDefault model
         , Cmd.none
