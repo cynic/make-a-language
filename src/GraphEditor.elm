@@ -101,7 +101,7 @@ coordinateForces root graph =
   let
     num_nodes = Graph.size graph
     x_target : Float
-    x_target = toFloat <| num_nodes * (80 + 18)
+    x_target = toFloat <| num_nodes * (200 + 18)
   in
     -- links are the "springs"
     -- manyBody is the "repulsion"
@@ -110,31 +110,31 @@ coordinateForces root graph =
         let
         -- for all outgoing links that AREN'T recursive, create a link-Force.
           linkForce =
-            IntDict.keys ctx.outgoing
-            |> List.filter ((/=) ctx.node.id)
+            IntDict.toList ctx.outgoing
+            |> List.filter (Tuple.first >> (/=) ctx.node.id)
             |> List.foldl
-                (\k forces_ ->
+                (\(k, conn) forces_ ->
                   { source = ctx.node.id
                   , target = k
-                  , distance = 80 -- 35-40 seems like a good distance
-                  , strength = Just 1.0 -- * (toFloat <| Set.size v)
+                  , distance = 50 + linkLabelWidth conn -- 35-40 seems like a good distance
+                  , strength = Just 1.5 -- * (toFloat <| Set.size v)
                   } :: forces_
                 )
                 link
         in
           if ctx.node.id == root then
             { toX =
-                { node = ctx.node.id , strength = 20.0 , target = 0 } :: toX
+                { node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
             , toY =
-                { node = ctx.node.id , strength = 20.0 , target = 0 } :: toY
+                { node = ctx.node.id , strength = 10.0 , target = 0 } :: toY
             , link = linkForce
             , manyBody = ctx.node.id :: manyBody
             }
           else
             { toX =
-                { node = ctx.node.id , strength = 0.03 , target = x_target } :: toX
+                { node = ctx.node.id , strength = 0.02 , target = x_target } :: toX
             , toY =
-                { node = ctx.node.id , strength = 0.03 , target = 0 } :: toY
+                { node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
             , link = linkForce
             , manyBody = ctx.node.id :: manyBody
             }
@@ -146,7 +146,7 @@ coordinateForces root graph =
             [ Force.towardsX toX
             , Force.towardsY toY
             , Force.customLinks 3 link
-            , Force.manyBodyStrength -20.0 manyBody
+            , Force.manyBodyStrength -350.0 manyBody
             ]
           else
             []
@@ -559,28 +559,35 @@ viewGraphReference uuid scale x_ y_ =
           )
       )
 
-viewLinkLabel : LinkDrawingData -> Svg Msg
-viewLinkLabel drawing_data =
+char_width = 16 / 1.85 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
+badge_width = 16 -- for a scale of "2".
+gap = 2
+
+linkLabelWidth : Connection -> Float
+linkLabelWidth connection =
   let
-    x_ = drawing_data.pathBetween.transition_coordinates.x
-    y_ = drawing_data.pathBetween.transition_coordinates.y
-    transitions = AutoSet.toList drawing_data.connection
-    char_width = 16 / 1.85 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
-    badge_width = 16 -- for a scale of "2".
-    gap = 2
     sum_width =
-      List.foldl
+      AutoSet.foldl
         (\{via} acc ->
           case via of
             ViaCharacter _ -> acc + char_width
             ViaGraphReference _ -> acc + badge_width
         )
         0
-        transitions
-    sum_gap =  gap * ( toFloat <| List.length transitions - 1 )
-    est_width = sum_width + sum_gap
+        connection
+    sum_gap =  gap * ( toFloat <| AutoSet.size connection - 1 )
   in
-  List.foldl
+    -- this is an estimate.
+    sum_width + sum_gap
+
+viewLinkLabel : LinkDrawingData -> Svg Msg
+viewLinkLabel drawing_data =
+  let
+    x_ = drawing_data.pathBetween.transition_coordinates.x
+    y_ = drawing_data.pathBetween.transition_coordinates.y
+    est_width = linkLabelWidth drawing_data.connection
+  in
+  AutoSet.foldl
     (\{via, isFinal} (cur_x, cur_y, elems) ->
       case via of
         ViaCharacter ch ->
@@ -614,7 +621,7 @@ viewLinkLabel drawing_data =
           )
     )
     ( x_ - 0.5 * est_width, y_, [] )
-    transitions
+    drawing_data.connection
   |> (\(_, _, elems) -> g [] elems)
 
 viewLink : GraphView -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg

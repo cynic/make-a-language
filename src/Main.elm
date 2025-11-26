@@ -734,7 +734,7 @@ type alias Bounds =
 bounds_for : List NodeId -> Graph.Graph Entity Connection -> Bounds
 bounds_for nodeIds graph =
   let
-    theoretical_max = 150.0 * toFloat (Graph.size graph)
+    theoretical_max = 250.0 * toFloat (Graph.size graph)
     contexts =
       (Set.fromList >> Set.toList) nodeIds
       |> List.filterMap (\id -> Graph.get id graph)
@@ -808,7 +808,9 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
       (adjusted.min.y + adjusted.max.y) / 2
       -- |> Debug.log "center-y"
     autoHeight =
-      (adjusted.max.x - adjusted.min.x) / aspectRatio
+      max
+        ((adjusted.max.x - adjusted.min.x) / aspectRatio) -- aspect-ratio calc
+        (raw.max.y - raw.min.y) -- bounds calc
       -- |> Debug.log "Auto-height (via aspect-ratio)"
     -- now, we want a center within that autoHeight.
     guestCoordinates =
@@ -2708,11 +2710,11 @@ update msg model =
                 |> Maybe.withDefault model_
                 |> setProperties
             Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled } as alteration) {mainGraph, referenceList}, model_) ->
-              if AutoSet.isEmpty connection then
-                -- if anything, I should be _disconnecting_ nodes here!
-                handleConnectionRemoval gv_uuid alteration (mainGraph :: referenceList) model_
-                |> setProperties
-              else
+              -- if AutoSet.isEmpty connection then
+              --   -- if anything, I should be _disconnecting_ nodes here!
+              --   handleConnectionRemoval gv_uuid alteration (mainGraph :: referenceList) model_
+              --   |> setProperties
+              -- else
                 -- create such an automatongraph
                 AutoDict.get (gv_uuid) model_.graph_views   
                 |> Maybe.map
