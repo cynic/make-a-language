@@ -56,6 +56,7 @@ import Browser.Dom
 import Task
 import Process
 import TypedSvg.Attributes
+import GraphEditor exposing (identifyDisconnectedNodes)
 
 {-
 Quality / technology requirements:
@@ -512,16 +513,19 @@ init flags =
     , Cmd.none
     )
 
-updatePackageInView : GraphPackage -> GraphView -> Model -> Model
-updatePackageInView updated_package graph_view model =
+updatePackageInView : (GraphPackage -> GraphPackage) -> GraphView -> Model -> Model
+updatePackageInView update_package graph_view model =
+  let
+    pkg = update_package graph_view.package
+  in
   upsertGraphView graph_view.id
     ( { graph_view
-        | package = updated_package
+        | package = pkg
         , drawingData =
-            { link_drawing = linkDrawingForPackage updated_package model.packages
-            , node_drawing = nodeDrawingForPackage updated_package graph_view.isFrozen graph_view.id model.interactionsDict
+            { link_drawing = linkDrawingForPackage pkg model.packages
+            , node_drawing = nodeDrawingForPackage pkg graph_view.isFrozen graph_view.id model.interactionsDict
             }
-        , disconnectedNodes = GraphEditor.identifyDisconnectedNodes updated_package.userGraph
+        , disconnectedNodes = GraphEditor.identifyDisconnectedNodes pkg.userGraph
       }
       |> fitGraphViewToGraph
     )
@@ -846,15 +850,14 @@ sidebarGraphDimensions uiState =
   ( w - 20 , 9/16 * ( w - 20 ) )
 
 handleConnectionRemoval : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
-handleConnectionRemoval uuid {source, dest, deleteTargetIfCancelled} viewsToRemove model =
+handleConnectionRemoval uuid {source, dest, connection, deleteTargetIfCancelled} viewsToRemove model =
   if deleteTargetIfCancelled then
     removeViews viewsToRemove model
     |> deleteNodeFromView uuid source dest
-    |> setProperties
   else
-    -- does deletion link deletion IF appropriate.
+    -- does link deletion IF appropriate.
     removeViews viewsToRemove model
-    |> deleteLinkFromView uuid source dest
+    |> deleteLinkFromView uuid source dest connection
 
 
 updateMainEditorDimensions : Model -> Model
@@ -1803,7 +1806,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
     -- phantom node gets too close to a REAL node, then it should switch to that node;
     -- and when it is far enough away, then it should switch back.
     nearby_node_lockOnDistance : Float
-    nearby_node_lockOnDistance = 20
+    nearby_node_lockOnDistance = 36 -- min distance before arrow inverts…
 
     ( xPan, yPan ) =
       graph_view.pan
@@ -2298,65 +2301,53 @@ selectDestination view_uuid src possible_dest model =
           }
           model
 
-deleteLinkFromView : Uuid -> NodeId -> NodeId -> Model -> Model
-deleteLinkFromView view_uuid source dest model =
+deleteLinkFromView : Uuid -> NodeId -> NodeId -> Connection -> Model -> Model
+deleteLinkFromView view_uuid source dest conn model =
   let
-    conn =
-      AutoDict.get view_uuid model.graph_views
-      |> Maybe.andThen (\gv -> Graph.get dest gv.package.userGraph.graph)
-      |> Maybe.andThen (\{incoming} -> IntDict.get source incoming)
-      |> Maybe.withDefault (AutoSet.empty transitionToString)
+    emptyConnection : GraphView -> Model
+    emptyConnection graph_view =
+      let
+        alterPackage pkg =
+          { pkg
+            | userGraph =
+              let ag = pkg.userGraph in
+              { ag
+                | graph =
+                    Graph.update dest
+                      (Maybe.map (\destContext ->
+                        { destContext
+                          | incoming =
+                              IntDict.remove source destContext.incoming
+                        }
+                      ))
+                      ag.graph
+              }
+          }
+      in
+        updatePackageInView alterPackage graph_view model
   in
-    if AutoSet.isEmpty conn then
-      { model
-        | graph_views =
-            AutoDict.update view_uuid
-              (Maybe.map (\graph_view ->
-                { graph_view
-                  | drawingData =
-                      let drawingData = graph_view.drawingData in
-                      { drawingData
-                        | link_drawing = Dict.remove (source, dest) drawingData.link_drawing
-                      }
-                  , package =
-                      let pkg = graph_view.package in
-                      { pkg
-                        | userGraph =
-                          let ag = pkg.userGraph in
-                          { ag
-                            | graph =
-                                Graph.update dest
-                                  (Maybe.map (\destContext ->
-                                    { destContext
-                                      | incoming =
-                                          IntDict.remove source destContext.incoming
-                                    }
-                                  ))
-                                  ag.graph
-                          }
-                      }
-                }
-              ))
-              model.graph_views
-      }
-    else
-      { model
-        | graph_views =
-            AutoDict.update view_uuid
-              (Maybe.map (\graph_view ->
-                { graph_view
-                  | drawingData =
-                      let drawingData = graph_view.drawingData in
-                      { drawingData
-                        | link_drawing =
-                            Dict.update (source, dest)
-                              (Maybe.map (\link -> { link | highlighting = Nothing }))
-                              drawingData.link_drawing
-                      }
-                }
-              ))
-              model.graph_views
-      }
+  if AutoSet.isEmpty conn then
+    AutoDict.get view_uuid model.graph_views
+    |> Maybe.map emptyConnection
+    |> Maybe.withDefault model
+  else
+    { model
+      | graph_views =
+          AutoDict.update view_uuid
+            (Maybe.map (\graph_view ->
+              { graph_view
+                | drawingData =
+                    let drawingData = graph_view.drawingData in
+                    { drawingData
+                      | link_drawing =
+                          Dict.update (source, dest)
+                            (Maybe.map (\link -> { link | highlighting = Nothing }))
+                            drawingData.link_drawing
+                    }
+              }
+            ))
+            model.graph_views
+    }
 
 deleteNodeFromView : Uuid -> NodeId -> NodeId -> Model -> Model
 deleteNodeFromView view_uuid source dest model =
@@ -2598,7 +2589,7 @@ update msg model =
                           updated_pkg =
                             { pkg
                               | undoBuffer = t
-                              , redoBuffer = graph_view.package.userGraph :: graph_view.package.redoBuffer
+                              , redoBuffer = pkg.userGraph :: pkg.redoBuffer
                               , userGraph = h
                             }
                         in
@@ -2609,6 +2600,7 @@ update msg model =
                 ))
                 model.graph_views
         }
+        |> setProperties
       , Cmd.none
       )
 
@@ -2628,7 +2620,7 @@ update msg model =
                           updated_pkg =
                             { pkg
                               | redoBuffer = t
-                              , undoBuffer = graph_view.package.userGraph :: graph_view.package.undoBuffer
+                              , undoBuffer = pkg.userGraph :: pkg.undoBuffer
                               , userGraph = h
                             }
                         in
@@ -2639,6 +2631,7 @@ update msg model =
                 ))
                 model.graph_views
         }
+        |> setProperties
       , Cmd.none
       )
 
@@ -2648,17 +2641,16 @@ update msg model =
         {- Take an AutomatonGraph and push it into tho Model. -}
         commit_change : GraphView -> AutomatonGraph -> Model -> Model
         commit_change graph_view ag model_ =
-          let
-            pkg = graph_view.package
-            updated_package =
-              { pkg
-                | undoBuffer = pkg.userGraph :: pkg.undoBuffer
-                , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-                , userGraph = ag
-              }
-          in
-            updatePackageInView updated_package graph_view model_
-            |> refreshComputationsList
+          updatePackageInView
+            (\pkg ->
+                { pkg
+                  | undoBuffer = pkg.userGraph :: pkg.undoBuffer
+                  , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+                  , userGraph = ag
+                }
+            )
+            graph_view model_
+          |> refreshComputationsList
         
         createNewNode : NodeId -> Connection -> Float -> Float -> GraphView -> Model -> Model
         createNewNode src conn x y gv model_ =
@@ -2765,7 +2757,7 @@ update msg model =
                           }
                       in
                         updatePackageInView
-                          new_gv.package gv model_
+                          (\_ -> new_gv.package) gv model_
                         |> refreshComputationsList
                 )
               |> Maybe.withDefault model

@@ -62,7 +62,7 @@
   }
 
   &.disconnected {
-    r: 6px; // Slightly smaller for disconnected
+    r: 6.5px; // Slightly smaller for disconnected
     stroke-width: 1;
   }
 
@@ -111,10 +111,8 @@
   
   // 3. Disconnected Nodes
   &.disconnected {
-    fill: transparent;
-    stroke: var(--comment);
-    stroke-width: 2;
-    stroke-dasharray: 5, 3; // Dashed border
+    fill: var(--background-dark);
+    stroke: var(--background-darker);
     
     .can-select-nodes &:hover {
       stroke: var(--comment);
