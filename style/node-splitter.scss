@@ -119,6 +119,11 @@
             border-top: 1px solid var(--current-line);
             max-width: 70px;
           }
+
+          &:hover {
+            cursor: pointer;
+            transform: scale(1.2);
+          }
         }
 
         & .terminal {

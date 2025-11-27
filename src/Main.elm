@@ -2821,6 +2821,8 @@ update msg model =
                     props
                 )
                 model
+            Just (key_uuid, SplittingNode data props) ->
+              nodeSplitSwitch props key_uuid via data model
             _ ->
               model
         , Cmd.none
@@ -4488,7 +4490,8 @@ viewNodeSplitInterface model uuid {left, right} interfaceData =
                         , div -- terminal items group
                             [ HA.class "left" ]
                             ( AutoSet.toList left
-                              |> List.filterMap (htmlForTransition model)
+                              |> List.filterMap (\t -> Maybe.combineSecond (t, htmlForTransition model t))
+                              |> List.map (\({via}, e) -> div [ HE.onClick (ToggleConnectionTransition via) ] [ e ])
                             )
                         , div
                             [ HA.class "set-bracket" ]
@@ -4504,7 +4507,8 @@ viewNodeSplitInterface model uuid {left, right} interfaceData =
                         , div -- normal (non-terminal) items group
                             [ HA.class "right" ]
                             ( AutoSet.toList right
-                              |> List.filterMap (htmlForTransition model)
+                              |> List.filterMap (\t -> Maybe.combineSecond (t, htmlForTransition model t))
+                              |> List.map (\({via}, e) -> div [ HE.onClick (ToggleConnectionTransition via) ] [ e ])
                             )
                         , div
                             [ HA.class "set-bracket" ]
