@@ -95,7 +95,7 @@ type Msg
   | SelectNavigation NavigatorIcon
   | StartDraggingSplitter SplitterMovement
   | DragSplitter Bool Float -- stop-dragging, amount
-  | SelectPackage Uuid
+  | SelectPackage Uuid -- package-uuid
   | ToggleAreaVisibility AreaUITarget
   | SelectTool ToolIcon
   | QuickInput String
@@ -109,6 +109,8 @@ type Msg
   | Confirm -- the universal "Yeah! Let's Go!" key & command
   | CreateNewPackage
   | TimeValueForPackage Time.Posix
+  | DeletePackage Uuid -- package-uuid
+  
   -- more general messages
   -- | Tick
   -- | Seconded Time.Posix
@@ -149,6 +151,7 @@ type InteractionState
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
   | Executing ExecutionResult
+  | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =
   { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
@@ -169,6 +172,14 @@ type alias NodeSplitData =
   { to_split : NodeId
   , left : Connection
   , right : Connection
+  }
+
+type alias DeletingPackageProperties =
+  { affectedPackages : List Uuid
+  , indirectlyAffectedPackages : List Uuid
+  , mainGraph : Uuid
+  , directViews : List Uuid
+  , indirectViews : List Uuid
   }
 
 type alias SplitNodeInterfaceProperties =
@@ -342,6 +353,8 @@ type alias GraphViewProperties =
   , canDragNodes : Bool -- via shift-drag
   , canInspectRefs : Bool -- via shift-click
   , canPan : Bool -- via hover
+  , canDeletePackage : Bool
+  , canSelectPackage: Bool
   }
 
 type Cardinality

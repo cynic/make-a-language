@@ -29,7 +29,7 @@ import Html.Styled exposing (h2, h4)
 import AutoSet
 import AutoDict
 import Uuid exposing (Uuid)
-import Basics.Extra as Basics
+import Basics.Extra exposing (..)
 import Automata.Debugging
 import IntDict
 import Set
@@ -57,6 +57,7 @@ import Task
 import Process
 import TypedSvg.Attributes
 import GraphEditor exposing (identifyDisconnectedNodes)
+import Html.Styled exposing (ol)
 
 {-
 Quality / technology requirements:
@@ -2099,6 +2100,8 @@ nilViewProperties =
   , canDragNodes = False
   , canInspectRefs = False
   , canPan = False
+  , canDeletePackage = False
+  , canSelectPackage = False
   }
 
 type alias GraphViewPropertySetter = GraphViewProperties
@@ -2116,7 +2119,7 @@ setProperties model =
             | canDragNodes = True
             , canInspectRefs = True
             , canPan = True
-          }
+          } -- this is a message. the quick brown fox jumps over the lazy dog.
         whenDraggingNode : GraphViewPropertySetter
         whenDraggingNode =
           { nilViewProperties | canPan = True }
@@ -2158,7 +2161,12 @@ setProperties model =
             , canSelectConnections = model.mainGraphView == id
             , canInspectRefs = True
             , canPan = True
+            , canSelectPackage = List.member id model.computationsExplorer
+            , canDeletePackage = List.member id model.computationsExplorer
           }
+        whenDeletingPackage : GraphViewPropertySetter
+        whenDeletingPackage =
+          { nilViewProperties | canPan = True }
       in
         AutoDict.map
           (\k v ->
@@ -2179,11 +2187,12 @@ setProperties model =
                       whenSimulatingForces
                     Just (DraggingSplitter _) ->
                       whenDraggingSplitter
+                    Just (DeletingPackage _ _) ->
+                      whenDeletingPackage
                     Nothing ->
                      otherwise v.id
             }
           )
-
     setMainProperties : MainUIProperties
     setMainProperties =
       let
@@ -2234,6 +2243,9 @@ setProperties model =
             , canSelectNewPackage = True
             , canCreateNewPackage = True
           }
+        whenDeletingPackage : MainPropertySetter
+        whenDeletingPackage =
+          { nilMainProperties | canEscape = True }
       in
         case mostRecentInteraction model of
           Just (_, SplittingNode _ _) ->
@@ -2250,9 +2262,10 @@ setProperties model =
             whenSimulatingForces
           Just (_, DraggingSplitter _) ->
             whenDraggingSplitter
+          Just (_, DeletingPackage _ _) ->
+            whenDeletingPackage
           Nothing ->
             otherwise
-
   in
     { model
       | graph_views = setLocalProperties model.graph_views
@@ -2420,6 +2433,321 @@ toResolutionDict : PackageDict -> ResolutionDict
 toResolutionDict packages =
   AutoDict.map (\_ -> .userGraph) packages
 
+hasSamePackage : Uuid -> Uuid -> Model -> Bool
+hasSamePackage uuid1 uuid2 model =
+  Maybe.map2
+    (\gv1 gv2 ->
+      gv1.package.userGraph.graphIdentifier == gv2.package.userGraph.graphIdentifier
+    )
+    (AutoDict.get uuid1 model.graph_views)
+    (AutoDict.get uuid2 model.graph_views)
+  |> Maybe.withDefault False
+
+deletePackageFromModel : Uuid -> Model -> Model
+deletePackageFromModel uuid model =
+  let
+    filterTransition : Transition -> Bool
+    filterTransition {via} =
+      case via of
+        ViaGraphReference ref ->
+          ref /= uuid
+        _ ->
+          True
+    filterConnection : Connection -> Connection
+    filterConnection conn =
+      AutoSet.filter filterTransition conn
+  in
+  { model
+    | packages =
+        AutoDict.remove uuid model.packages
+        -- and now get rid of this package from the connections.
+        -- I'm NOT putting this in.
+        -- I may change my mind later.
+        -- But it causes some pretty widespread disruption, AND
+        -- a bunch of invalid AutomatonGraphs…
+        -- So for now: just no.
+        -- And I will have some invalid Graph references instead.
+{-
+        |> AutoDict.map
+          (\_ pkg ->
+            { pkg
+              | userGraph =
+                  let ag = pkg.userGraph in
+                  { ag
+                    | graph =
+                        Graph.mapEdges filterConnection  ag.graph
+                  }
+            }
+          )
+-}
+  }
+
+commitOrConfirm : Model -> Model
+commitOrConfirm model =
+  -- What am I confirming?
+  let
+    {- Take an AutomatonGraph and push it into tho Model. -}
+    commit_change : GraphView -> AutomatonGraph -> Model -> Model
+    commit_change graph_view ag model_ =
+      updatePackageInView
+        (\pkg ->
+            { pkg
+              | undoBuffer = pkg.userGraph :: pkg.undoBuffer
+              , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+              , userGraph = ag
+            }
+        )
+        graph_view model_
+      |> refreshComputationsList
+    
+    updateExistingNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
+    updateExistingNode src dest conn gv model_ =
+      GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
+      |> \newGraph -> commit_change gv newGraph model_
+
+    confirmPhantomNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
+    confirmPhantomNode src dest conn gv model_ =
+      GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
+      |> \newGraph ->
+          commit_change
+            { gv
+              | package =
+                  let pkg = gv.package in
+                  { pkg
+                    | userGraph =
+                      let ag = pkg.userGraph in
+                      { ag
+                        | graph = Graph.remove dest ag.graph
+                      }
+                  }
+            }
+            newGraph model_
+
+    removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
+    removeLink src dest gv model_ =
+      GraphEditor.removeLink_graphchange src dest gv.package.userGraph
+      |> \newGraph -> commit_change gv newGraph model_
+
+  in
+    case popMostRecentInteraction model of
+      Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
+        if AutoSet.isEmpty left || AutoSet.isEmpty right then
+          removeViews [ mainGraph ] model_
+        else
+          AutoDict.get gv_uuid model_.graph_views
+          |> Maybe.andThen
+            (\gv ->
+              Maybe.combineSecond
+                ( gv
+                , Graph.get to_split gv.package.userGraph.graph
+                )
+            )
+          |> Maybe.map (\(gv, nodeContext) ->
+            splitNode nodeContext left gv
+            |> \newGraph ->
+                removeViews [ mainGraph ] model_
+                |> commit_change gv newGraph
+          )
+          |> Maybe.withDefault model_
+          |> setProperties
+      Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled } as alteration) {mainGraph, referenceList}, model_) ->
+          -- create such an automatongraph
+          AutoDict.get (gv_uuid) model_.graph_views   
+          |> Maybe.map
+            (\gv ->
+              if deleteTargetIfCancelled then
+                -- this one comes from a phantom node.
+                removeViews (mainGraph :: referenceList) model_
+                -- because this comes from a phantom node, ensure that we
+                -- remove the 'dest' from the graph before confirming it as
+                -- the previous graph.
+                |> confirmPhantomNode source dest connection gv
+                |> setProperties
+              else if AutoSet.isEmpty connection then
+                removeViews (mainGraph :: referenceList) model_
+                |> removeLink source dest gv
+                |> setProperties
+              else
+                removeViews (mainGraph :: referenceList) model_
+                |> updateExistingNode source dest connection gv
+                |> setProperties
+            )
+          |> Maybe.withDefault model_
+      Just (Nothing, DeletingPackage to_delete props, model_) ->
+        removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
+        |> deletePackageFromModel to_delete
+        |> refreshComputationsList
+        |> setProperties
+      _ ->
+        -- _if_ there are things which are yet to be committed, in
+        -- the main, then commit them here.
+        AutoDict.get model.mainGraphView model.graph_views
+        |> Maybe.map
+          (\gv ->
+            if List.isEmpty gv.package.undoBuffer then
+              model -- …there is nothing for me to do!
+            else
+              let
+                new_gv =
+                  confirmChanges gv.package.userGraph
+                    (toResolutionDict model.packages)
+                    gv
+                model_ =
+                  { model
+                    | packages =
+                        AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
+                  }
+              in
+                updatePackageInView
+                  (\_ -> new_gv.package) gv model_
+                |> refreshComputationsList
+          )
+        |> Maybe.withDefault model
+
+viewsContainingPackage : Uuid -> Model -> List GraphView
+viewsContainingPackage package_uuid m =
+  AutoDict.values m.graph_views
+  |> List.filter
+    (\gv ->
+      gv.package.userGraph.graphIdentifier == package_uuid
+    )
+
+packagesAndRefs : Model -> List (Uuid, AutoSet.Set String Uuid)
+packagesAndRefs {packages} =
+  AutoDict.values packages
+  |> List.foldl
+    (\pkg acc ->
+      ( pkg.userGraph.graphIdentifier
+      , Graph.edges pkg.userGraph.graph
+        |> List.foldl
+            (\{label} set ->
+              AutoSet.foldl
+                (\{via} set_ ->
+                  case via of
+                    ViaGraphReference ref ->
+                      AutoSet.insert ref set_
+                    _ ->
+                      set_
+                )
+                set
+                label
+            )
+            (AutoSet.empty Uuid.toString)
+      ) :: acc
+    )
+    []
+
+packagesAffectedBy : Uuid -> Model -> List Uuid
+packagesAffectedBy uuid model =
+  packagesAndRefs model
+  |> List.filterMap
+    (\(package_uuid, refs) ->
+      if AutoSet.member uuid refs then
+        Just package_uuid
+      else
+        Nothing
+    )
+
+deletePackage : GraphPackage -> Model -> Model
+deletePackage package model =
+  -- find out which packages are affected by this one.
+  let
+    package_uuid = package.userGraph.graphIdentifier
+    affected : List Uuid
+    affected =
+      packagesAffectedBy package_uuid model
+  in
+    case affected of
+      [] ->
+        -- meh, one thing, nobody cares about it. Toss it!
+        let
+          without_package =
+            { model | packages = AutoDict.remove package_uuid model.packages }
+          relevant_views =
+            viewsContainingPackage package_uuid without_package
+            |> List.map .id
+        in
+          removeViews relevant_views without_package
+      _ ->
+        -- Erk; it depends on whether you're okay with the consequences.
+        let
+          all_packages : List (Uuid, AutoSet.Set String Uuid)
+          all_packages = packagesAndRefs model
+          indirectlyAffected to_check known_indirect =
+            let
+              (i, o) =
+                List.partition
+                  (\(_, refs) ->
+                    AutoSet.size (AutoSet.intersect refs known_indirect) > 0
+                  )
+                  to_check
+            in
+              case i of
+                [] ->
+                  -- there is nothing more that matches; we're done!
+                  known_indirect
+                xs ->
+                  List.map Tuple.first xs
+                  |> AutoSet.fromList Uuid.toString
+                  |> AutoSet.union known_indirect
+                  |> indirectlyAffected o
+          affectedSet =
+            AutoSet.fromList Uuid.toString affected
+            |> Debug.log "affected"
+          indirectSet =
+            indirectlyAffected
+              -- exclude everything in the affectedSet from consideration.
+              (List.filter (\(u, _) -> not (AutoSet.member u affectedSet)) all_packages)
+              (affectedSet)
+            -- and now remove those which are directly affected.
+            |> (\s -> AutoSet.diff s affectedSet)
+          indirect =
+            AutoSet.toList indirectSet
+            |> Debug.log "indirect"
+          (mainGraph, model_) =
+            solvedViewFromPackage
+              (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiState.dimensions.viewport)
+              Independent True package model
+          (directViews, model__) =
+            affected
+            |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
+            |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
+            |> List.foldl
+              (\pkg (acc, m) ->
+                let
+                  (v, m_) =
+                    solvedViewFromPackage
+                      (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
+                      Independent True pkg m
+                in
+                  (v :: acc, m_)
+              )
+              ([], model_)
+          (indirectViews, model___) =
+            indirect
+            |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
+            |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
+            |> List.foldl
+              (\pkg (acc, m) ->
+                let
+                  (v, m_) =
+                    solvedViewFromPackage
+                      (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
+                      Independent True pkg m
+                in
+                  (v :: acc, m_)
+              )
+              ([], model__)
+          props =
+            { affectedPackages = affected
+            , indirectlyAffectedPackages = indirect
+            , mainGraph = mainGraph.id
+            , directViews = directViews |> List.map .id
+            , indirectViews = indirectViews |> List.map .id
+            }
+        in
+        pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
@@ -2545,9 +2873,11 @@ update msg model =
             Just (Just _, SplittingNode _ props, model_) ->
               removeViews [ props.mainGraph ] model_
               |> setProperties
-            Just (_, _, model_) ->
-              model_ -- yay, I could pop from the global
+            Just (Nothing, DeletingPackage _ {mainGraph, directViews, indirectViews}, model_) ->
+              removeViews (mainGraph :: directViews ++ indirectViews) model_
               |> setProperties
+            Just (_, _, model_) ->
+              setProperties model_ -- yay, I could pop from the global
         else
           model
       , Cmd.none
@@ -2627,136 +2957,20 @@ update msg model =
       )
 
     Confirm ->
-      -- What am I confirming?
-      let
-        {- Take an AutomatonGraph and push it into tho Model. -}
-        commit_change : GraphView -> AutomatonGraph -> Model -> Model
-        commit_change graph_view ag model_ =
-          updatePackageInView
-            (\pkg ->
-                { pkg
-                  | undoBuffer = pkg.userGraph :: pkg.undoBuffer
-                  , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-                  , userGraph = ag
-                }
-            )
-            graph_view model_
-          |> refreshComputationsList
-        
-        createNewNode : NodeId -> Connection -> Float -> Float -> GraphView -> Model -> Model
-        createNewNode src conn x y gv model_ =
-          GraphEditor.newnode_graphchange src x y conn gv.package.userGraph
-          |> \newGraph -> commit_change gv newGraph model_
-
-        updateExistingNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
-        updateExistingNode src dest conn gv model_ =
-          GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
-          |> \newGraph -> commit_change gv newGraph model_
-
-        confirmPhantomNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
-        confirmPhantomNode src dest conn gv model_ =
-          GraphEditor.updateLink_graphchange src dest conn gv.package.userGraph
-          |> \newGraph ->
-              commit_change
-                { gv
-                  | package =
-                      let pkg = gv.package in
-                      { pkg
-                        | userGraph =
-                          let ag = pkg.userGraph in
-                          { ag
-                            | graph = Graph.remove dest ag.graph
-                          }
-                      }
-                }
-                newGraph model_
-
-        removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
-        removeLink src dest gv model_ =
-          GraphEditor.removeLink_graphchange src dest gv.package.userGraph
-          |> \newGraph -> commit_change gv newGraph model_
-
-      in
-        ( case popMostRecentInteraction model of
-            Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
-              if AutoSet.isEmpty left || AutoSet.isEmpty right then
-                removeViews [ mainGraph ] model_
-              else
-                AutoDict.get gv_uuid model_.graph_views
-                |> Maybe.andThen
-                  (\gv ->
-                    Maybe.combineSecond
-                      ( gv
-                      , Graph.get to_split gv.package.userGraph.graph
-                      )
-                  )
-                |> Maybe.map (\(gv, nodeContext) ->
-                  splitNode nodeContext left gv
-                  |> \newGraph ->
-                      removeViews [ mainGraph ] model_
-                      |> commit_change gv newGraph
-                )
-                |> Maybe.withDefault model_
-                |> setProperties
-            Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled } as alteration) {mainGraph, referenceList}, model_) ->
-              -- if AutoSet.isEmpty connection then
-              --   -- if anything, I should be _disconnecting_ nodes here!
-              --   handleConnectionRemoval gv_uuid alteration (mainGraph :: referenceList) model_
-              --   |> setProperties
-              -- else
-                -- create such an automatongraph
-                AutoDict.get (gv_uuid) model_.graph_views   
-                |> Maybe.map
-                  (\gv ->
-                    if deleteTargetIfCancelled then
-                      -- this one comes from a phantom node.
-                      removeViews (mainGraph :: referenceList) model_
-                      -- because this comes from a phantom node, ensure that we
-                      -- remove the 'dest' from the graph before confirming it as
-                      -- the previous graph.
-                      |> confirmPhantomNode source dest connection gv
-                      |> setProperties
-                    else if AutoSet.isEmpty connection then
-                      removeViews (mainGraph :: referenceList) model_
-                      |> removeLink source dest gv
-                      |> setProperties
-                    else
-                      removeViews (mainGraph :: referenceList) model_
-                      |> updateExistingNode source dest connection gv
-                      |> setProperties
-                  )
-                |> Maybe.withDefault model_
-            _ ->
-              -- _if_ there are things which are yet to be committed, in
-              -- the main, then commit them here.
-              AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.map
-                (\gv ->
-                  if List.isEmpty gv.package.undoBuffer then
-                    model -- …there is nothing for me to do!
-                  else
-                    let
-                      new_gv =
-                        confirmChanges gv.package.userGraph
-                          (toResolutionDict model.packages)
-                          gv
-                      model_ =
-                        { model
-                          | packages =
-                              AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
-                        }
-                    in
-                      updatePackageInView
-                        (\_ -> new_gv.package) gv model_
-                      |> refreshComputationsList
-                )
-              |> Maybe.withDefault model
-        , Cmd.none
-        )
+      ( commitOrConfirm model
+      , Cmd.none
+      )
 
     CreateNewPackage ->
       ( model
       , Task.perform TimeValueForPackage Time.now
+      )
+
+    DeletePackage package_uuid ->
+      ( AutoDict.get package_uuid model.packages
+        |> Maybe.map (\package -> deletePackage package model)
+        |> Maybe.withDefault model
+      , Cmd.none
       )
 
     TimeValueForPackage posix ->
@@ -3839,14 +4053,15 @@ viewComputationsSidebar model =
         ( List.filterMap
             (\uuid ->
               let
-                isMain = Uuid.toString uuid == Uuid.toString model.mainGraphView
+                isMain = hasSamePackage uuid model.mainGraphView model
               in
                 AutoDict.get uuid model.graph_views
                 |> Maybe.map
                   (\graph_view ->
                     div
                       [ HA.class "package"
-                      , HE.onClick (SelectPackage graph_view.package.userGraph.graphIdentifier)
+                      , graph_view.properties.canSelectPackage
+                        |> thenPermitInteraction (HE.onClick (SelectPackage graph_view.package.userGraph.graphIdentifier))
                       ]
                       [ viewGraph graph_view
                       , div
@@ -3862,13 +4077,13 @@ viewComputationsSidebar model =
   --             HA.title "Apply or cancel the pending changes before deleting a package."
   --         ]
   --         [ text "🚮" ]
-                      , if isMain then
+                      , if isMain || not graph_view.properties.canDeletePackage then
                           text ""
                         else
                           div
                             [ HA.class "delete-button"
                             , HA.title "Delete"
-                            -- , HE.onClick (DeletePackage graph_view.package.userGraph.graphIdentifier)
+                            , HE.onClick (DeletePackage graph_view.package.userGraph.graphIdentifier)
                             ]
                             [ text "🚮" ]
                       ]
@@ -4322,6 +4537,78 @@ viewNodeSplitInterface model uuid {left, right} interfaceData =
         ]
     ]
 
+viewPackageDeletionWarning : DeletingPackageProperties -> Model -> Html Msg
+viewPackageDeletionWarning props model =
+  let
+    viewGraphItem uuid =
+      AutoDict.get uuid model.graph_views
+      |> Maybe.map
+        (\graph_view ->
+          div
+            [ HA.class "graph-item" ]
+            [ viewGraph graph_view
+            , div
+                [ HA.class "description" ]
+                [ graph_view.package.description
+                  |> Maybe.withDefault "(no description)"
+                  |> text
+                ]
+            ]
+        )
+  in
+  div
+    [ HA.class "modal" ]
+    [ div
+        [ HA.class "deletion-warning" ]
+        [ div
+            [ HA.class "title" ]
+            [ text "Are you sure you want to delete this?"
+            ]
+        , div
+            [ HA.class "graph-to-delete" ]
+            [ viewGraphItem props.mainGraph
+              |> Maybe.withDefault (text "")
+            ]
+        , div
+            [ HA.class "details" ]
+            [ div
+              [ HA.class "panel left" ]
+              [ div
+                  [ HA.class "info" ]
+                  [ text "Deletion will directly affect" ]
+              , div
+                  [ HA.class "affected" ]
+                  ( List.filterMap viewGraphItem props.directViews )
+              ]
+            , div
+              [ HA.class "panel right" ]
+              [ div
+                  [ HA.class "info" ]
+                  [ text "Deletion will indirectly affect" ]
+              , div
+                  [ HA.class "affected" ]
+                  ( List.filterMap viewGraphItem props.indirectViews )
+              ]
+            ]
+        , div
+            [ HA.class "buttons" ]
+            [ button
+                [ HE.onClick Confirm
+                , HA.class "button danger"
+                ]
+                [ text "Delete this graph"
+                ]
+            , button
+                [ HE.onClick Escape
+                , HA.class "button"
+                ]
+                [ text "Keep this graph"
+                ]
+            ]
+        ]
+    ]
+    
+
 view : Model -> Html Msg
 view model =
   div
@@ -4331,6 +4618,8 @@ view model =
           viewConnectionEditor model connection props
         Just (Just uuid, SplittingNode data props) ->
           viewNodeSplitInterface model uuid data props
+        Just (Nothing, DeletingPackage _ props) ->
+          viewPackageDeletionWarning props model
         _ ->
           viewMainInterface model
     , div
