@@ -1309,6 +1309,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
       recursive
       |> IntDict.values
       |> List.foldl AutoSet.union (AutoSet.empty transitionToString)
+      |> debugLog_ "recursive_connection" AutoSet.toList
     ( leftConnections, rightConnections ) =
       nonRecursive
       |> IntDict.foldl
@@ -1322,6 +1323,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                         >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
                       )
                       l_
+                    |> debugLog_ "Added to Left" IntDict.toList
                   , r_
                   )
                 else
@@ -1331,13 +1333,16 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                       >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
                     )
                     r_
+                    |> debugLog_ "Added to Right" IntDict.toList
                   )
               )
               (l, r)
               conn
           )
           (IntDict.empty, IntDict.empty)
-    ag = graph_view.package.userGraph
+    ag =
+      graph_view.package.userGraph
+      |> debugAutomatonGraph "Before node-split"
     id = maxId ag + 1
     newUserGraph =
       { ag
@@ -1350,11 +1355,14 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                   }
               , incoming =
                   leftConnections
-                  |> IntDict.insert id recursive_connection
+                  |>if AutoSet.isEmpty recursive_connection then identity
+                    else IntDict.insert id recursive_connection
               , outgoing =
                   node.outgoing
-                  |> IntDict.insert id recursive_connection
+                  |>if AutoSet.isEmpty recursive_connection then identity
+                    else IntDict.insert id recursive_connection
               }
+              |> debugGraph "After inserting left connections"
             |> Graph.update node.node.id
               (\_ ->
                 Just <|
@@ -1364,9 +1372,11 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                         |> IntDict.insert node.node.id recursive_connection
                   }
               )
+              |> debugGraph "After inserting right connections"
       }
   in
     newUserGraph
+    |> debugAutomatonGraphXY "After node-split"
 
 
 nodeSplitSwitch : SplitNodeInterfaceProperties -> Maybe Uuid -> AcceptVia -> NodeSplitData -> Model -> Model
