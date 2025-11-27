@@ -2601,6 +2601,7 @@ commitOrConfirm model =
                 updatePackageInView
                   (\_ -> new_gv.package) gv model_
                 |> refreshComputationsList
+                |> setProperties
           )
         |> Maybe.withDefault model
 
