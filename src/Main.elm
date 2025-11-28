@@ -3842,7 +3842,7 @@ viewNavigatorsArea model =
           [ HA.class "navigation-bar" ]
           [ button
               [ HA.classList
-                  [ ("navigation-icon", True)
+                  [ ("navigation-icon computation-icon", True)
                   , ("active", model.uiState.selected.sideBar == ComputationsIcon)
                   ]
               , HA.title "Computations"
@@ -3852,14 +3852,75 @@ viewNavigatorsArea model =
               [ text "📁"]
           , button
               [ HA.classList
-                  [ ("navigation-icon", True)
+                  [ ("navigation-icon test-icon", True)
                   , ("active", model.uiState.selected.sideBar == TestsIcon)
                   ]
               , HA.title "Tests"
               , (model.uiState.selected.sideBar /= TestsIcon)
                 |> thenPermitInteraction (HE.onClick (SelectNavigation TestsIcon))
               ]
-              [ text "🧪" ]
+              [ text "🧪"
+              , AutoDict.get model.mainGraphView model.graph_views
+                |> Maybe.map
+                  (\graph_view ->
+                    let
+                      (pass, fail, error) =
+                        AutoDict.toList graph_view.package.tests
+                        |> List.foldl
+                          (\(_, {expectation, result}) (p, f, e) ->
+                            case isAccepted result of
+                              Just True ->
+                                if expectation == ExpectAccepted then
+                                  (p + 1, f, e)
+                                else
+                                  (p, f + 1, e)
+                              Just False ->
+                                if expectation == ExpectRejected then
+                                  (p + 1, f, e)
+                                else
+                                  (p, f + 1, e)
+                              Nothing -> (p, f, e + 1)
+                          )
+                          (0, 0, 0)
+                      (testClass, number, testTitle) =
+                        case (pass, fail, error) of
+                          (0, 0, 0) ->
+                            ( "nothing" -- --dracula-foreground
+                            , "…"
+                            , "No tests exist"
+                            )
+                          (_, 0, 0) -> -- no failures, no errors, and only passes.
+                            ( "all-pass" -- --dracula-green
+                            , "💯"
+                            , "All tests passed!"
+                            )
+                          (0, _, 0) -> -- no passes, no errors, only failures.
+                            ( "all-fail" -- --dracula-red
+                            , "😵‍💫"
+                            , "All tests failed!"
+                            )
+                          (_, _, 0) -> -- some passes, some failures, no errors
+                            ( "some-fail" -- --dracula-pink
+                            , String.fromInt fail
+                            , if fail == 1 then
+                                "1 test failed"
+                              else
+                                String.fromInt fail ++ " tests failed"
+                            )
+                          _ -> -- internal error exists!
+                            ( "internal-error" -- --dracula-yellow
+                            , "❓"
+                            , "Some tests did not complete due to an internal error! This indicates a problem with the computation system. Please report it to the developer."
+                            )
+                    in
+                      div
+                        [ HA.class ("quick-status " ++ testClass)
+                        , HA.title testTitle
+                        ]
+                        [ text number ]
+                  )
+                |> Maybe.withDefault (text "")
+              ]
           ]
     , if not model.uiState.open.sideBar then
         text ""
@@ -3880,14 +3941,14 @@ viewNavigatorsArea model =
                 viewComputationsSidebar model
               TestsIcon ->
                 AutoDict.get model.mainGraphView model.graph_views
-                |> Maybe.map (flip viewTestsSidebar model)
+                |> Maybe.map viewTestsSidebar
                 |> Maybe.withDefault
                   (div [ HA.class "error graph-not-loaded" ] [ text "⚠ No graph is loaded in the editor" ])
           ]
     ]
 
-viewTestsSidebar : GraphView -> Model -> Html Msg
-viewTestsSidebar graph_view model =
+viewTestsSidebar : GraphView -> Html Msg
+viewTestsSidebar graph_view =
   let
     (expectAccept, expectReject) =
       graph_view.package.tests
@@ -3907,7 +3968,9 @@ viewTestsSidebar graph_view model =
                   |> List.map
                     (\(key, test) ->
                       li
-                        [ HA.class "test-input" ]
+                        [ HA.class "test-input"
+                        , HA.title "Edit"
+                        ]
                         [ viewTestItemInPanel (key, test) ]
                     )
                 )
@@ -3923,35 +3986,15 @@ viewTestsSidebar graph_view model =
               , ("passing", testStatus == Just False)
               , ("error", testStatus == Nothing)
               ]
-          -- , onClick (SelectTest key)
+          , HE.onClick (GraphViewMsg graph_view.id <| LoadTestInput key)
           ]
           [ span
-              [ HA.css
-                []
-                -- [ Css.width (Css.pct 100)
-                -- -- , Css.whiteSpace Css.nowrap
-                -- , Css.overflow Css.hidden
-                -- , Css.textOverflow Css.ellipsis
-                -- , Css.whiteSpace Css.pre
-                -- , Css.fontFamilyMany
-                --     [ "Fira Code", "Inconsolata", "DejaVu Sans Mono"
-                --     , "Liberation Mono", "Ubuntu Mono", "Cascadia Code"
-                --     , "Cascadia Mono", "Consolas", "Lucida Console"
-                --     , "Courier New" ]
-                --     Css.monospace
-                -- ]
-              , HA.class "test-input-container"
-              ]
+              [ HA.class "test-input-container" ]
               [ text test.input ]
           , div
-              [ HA.css
-                  [ Css.position Css.absolute
-                  , Css.right (Css.px 5)
-                  , Css.top (Css.px 5)
-                  ]
-              , HA.class "button"
+              [ HA.class "button"
               , HA.title "Delete test"
-              -- , onClick (DeleteTest key)
+              , HE.onClick (GraphViewMsg graph_view.id <| DeleteTestInput key)
               ]
               [ text "🚮" ]
           ]
@@ -3960,11 +4003,11 @@ viewTestsSidebar graph_view model =
       [ HA.class "sidebar-content tests-explorer" ]
       [ h1
           [ HA.class "sidebar-title" ]
-          [ text "Tests "
+          [ text "Test Inputs "
           , button
               [ HA.class "add-button"
               , HA.title "Add new test"
-                -- , HE.onClick CreateNewTest
+              , HE.onClick (GraphViewMsg graph_view.id CreateNewTestInput)
               ]
               [ text "➕" ]
           ]

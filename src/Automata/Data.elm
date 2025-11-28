@@ -88,6 +88,9 @@ type GraphViewMsg
   | MoveNode (Float, Float)
   | StopDraggingNode
   | StartSplit NodeId
+  | CreateNewTestInput
+  | DeleteTestInput Uuid
+  | LoadTestInput Uuid
   -- | Zoom Float
 
 type Msg
@@ -119,7 +122,6 @@ type Msg
   -- | RunExecution
   -- | ResetExecution
   -- | StepThroughExecution
-
 type alias PackageDict =
   AutoDict.Dict String Uuid GraphPackage
 

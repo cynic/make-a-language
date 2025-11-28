@@ -30,11 +30,12 @@
 
 // Left-bar icons that open "Navigators"
 .navigation-icon {
-  width: 44px;
-  height: 44px;
+  width: 100%;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
+  text-align: center;
   color: var(--comment);
   border: none;
   background: none;
@@ -42,20 +43,23 @@
   border-radius: 4px;
   position: relative;
   transition: all 0.2s ease;
+  font-size: 2.5rem;
   cursor: pointer;
   
   &:not(.active):hover {
     color: var(--foreground);
     background-color: var(--purple); // Use one of Dracula's accent colors
-    font-size: 120%;
-    // transform: scale(1.05); // Subtle "pop" effect
+    // font-size: 120%;
+    transform: scale(1.2); // Subtle "pop" effect
   }
   
   &.active {
     color: var(--foreground);
-    background-color: var(--background-lighter);
+    background-color: var(--comment);
     border-radius: 0;
-    font-size: 130%;
+    // text-shadow: 0 0 2px var(--orange), 0 0 2px var(--orange), 0 0 2px var(--orange), 0 0 2px var(--orange);
+    font-size: 2.7rem;
+    height: 54px;
     
     &::before {
       content: '';
@@ -69,6 +73,42 @@
       border-radius: 0 2px 2px 0;
     }
   }
+
+  &.test-icon {
+    .quick-status {
+      text-shadow: none;
+      pointer-events: none;
+      user-select: none;
+      color: var(--background);
+      border-radius: 50%;
+      position: absolute;
+      left: 60%;
+      top: 60%;
+      padding: 2px;
+      width: 1.4em;
+      height: 1.4em;
+      line-height: 1.2em;
+      text-align: center;
+      font-weight: bold;
+      font-size: 1.2rem;
+
+      &.nothing {
+        background-color: var(--foreground);
+      }
+      &.all-pass {
+        background-color: var(--green);
+      }
+      &.all-fail {
+        background-color: var(--red);
+      }
+      &.some-fail {
+        background-color: var(--pink);
+      }
+      &.internal-error {
+        background-color: var(--yellow);
+      }
+    }
+  }
 }
 
 // Sidebar content areas
@@ -80,6 +120,7 @@
   & .sidebar-title {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     font-size: 2.1rem;
 
     & .add-button {
@@ -160,7 +201,7 @@
 
     .test-inputs {
       padding: 10px;
-      border-bottom: solid 1px var(--comment);
+      border-bottom: solid 1px var(--comment);      
 
       &.expect-rejected .emphasis {
         color: var(--red);
@@ -174,6 +215,31 @@
         font-size: 1.2rem;
         // display: flex;
         // justify-items: space-around;
+        // background-color: blue;
+        border-top-right-radius: 7px;
+        border-bottom-right-radius: 7px;
+        border-bottom: solid 1px transparent;
+        border-top: solid 1px transparent;
+        border-right: solid 1px transparent;
+        transition: all 0.2s ease;
+        position: relative;
+
+        &:hover {
+          text-shadow: 0 0 2px var(--comment);
+          cursor: pointer;
+          border-bottom: solid 1px var(--pink);
+          border-top: solid 1px var(--pink);
+          border-right: solid 1px var(--pink);
+          transform: translateX(10px);
+        }
+
+        .button {
+          position: absolute;
+          right: 5px;
+          top: 2px;
+          padding: 1px;
+          background-color: transparent;
+        }
       }
 
       .failing {
