@@ -518,7 +518,8 @@ init flags =
               -- |> debugLog_ "mainGraphView UUID" truncate_uuid
         }
   in
-    ( selectComputationsIcon model
+    ( selectNavIcon ComputationsIcon model
+      |> refreshComputationsList
       |> setProperties
     , Cmd.none
     )
@@ -1146,18 +1147,17 @@ refreshComputationsList model =
           |> List.map .id
     }
 
-selectComputationsIcon : Model -> Model
-selectComputationsIcon model =
+selectNavIcon : NavigatorIcon -> Model -> Model
+selectNavIcon icon model =
   { model
     | uiState =
         let uiState = model.uiState in
         { uiState
           | selected =
             let selected = uiState.selected in
-            { selected | sideBar = ComputationsIcon }
+            { selected | sideBar = icon }
         }
   }
-  |> refreshComputationsList
 
 removeViews : List Uuid -> Model -> Model
 removeViews uuids model =
@@ -2829,12 +2829,20 @@ update msg model =
         )
 
     SelectNavigation ComputationsIcon ->
-      ( selectComputationsIcon model
+      ( selectNavIcon ComputationsIcon model
+        |> refreshComputationsList
+        |> setProperties
       , Cmd.none
       )
 
-    SelectNavigation _ ->
-      Debug.todo "SelectNavigation _ not implemented."
+    SelectNavigation TestsIcon ->
+      ( selectNavIcon TestsIcon model
+        |> setProperties
+      , Cmd.none
+      )
+
+    -- SelectNavigation _ ->
+    --   Debug.todo "SelectNavigation _ not implemented."
 
     SelectTool item ->
       ( { model
@@ -3170,24 +3178,24 @@ update msg model =
     --     , persistPackage updatedPackage
     --     )
 
--- isAccepted : ExecutionResult -> Maybe Bool
--- isAccepted result =
---   case result of
---     InternalError -> Nothing
---     CanContinue _ -> Nothing
---     EndOfInput (Accepted _) -> Just True
---     _ -> Just False
+isAccepted : ExecutionResult -> Maybe Bool
+isAccepted result =
+  case result of
+    InternalError -> Nothing
+    CanContinue _ -> Nothing
+    EndOfInput (Accepted _) -> Just True
+    _ -> Just False
 
--- isPassingTest : Test -> Maybe Bool
--- isPassingTest test =
---   isAccepted test.result
---   |> Maybe.map
---     (\v ->
---       (test.expectation == ExpectAccepted && v) || (test.expectation == Automata.Data.ExpectRejected && not v)
---     )
+isPassingTest : Test -> Maybe Bool
+isPassingTest test =
+  isAccepted test.result
+  |> Maybe.map
+    (\v ->
+      (test.expectation == ExpectAccepted && v) || (test.expectation == Automata.Data.ExpectRejected && not v)
+    )
 
--- isFailingTest : Test -> Maybe Bool
--- isFailingTest = isPassingTest >> Maybe.map not
+isFailingTest : Test -> Maybe Bool
+isFailingTest = isPassingTest >> Maybe.map not
 
 -- viewIconBar : Model -> Html Msg
 -- viewIconBar model =
@@ -3293,119 +3301,6 @@ update msg model =
 
 
 
-
--- viewTestItemInPanel : (Uuid, Test) -> Html Msg
--- viewTestItemInPanel (key, test) =
---   let
---     testStatus = isFailingTest test
---   in
---     div 
---       [ HA.classList
---           [ ("left-panel__testItem", True)
---           , ("left-panel__testItem--failing", testStatus == Just True)
---           , ("left-panel__testItem--passing", testStatus == Just False)
---           , ("left-panel__testItem--error", testStatus == Nothing)
---           ]
---       , onClick (SelectTest key)
---       ]
---       [ span
---           [ HA.css
---             [ Css.width (Css.pct 100)
---             -- , Css.whiteSpace Css.nowrap
---             , Css.overflow Css.hidden
---             , Css.textOverflow Css.ellipsis
---             , Css.whiteSpace Css.pre
---             , Css.fontFamilyMany
---                 [ "Fira Code", "Inconsolata", "DejaVu Sans Mono"
---                 , "Liberation Mono", "Ubuntu Mono", "Cascadia Code"
---                 , "Cascadia Mono", "Consolas", "Lucida Console"
---                 , "Courier New" ]
---                 Css.monospace
---             ]
---           ]
---           [ text test.input ]
---       , div
---           [ HA.css
---               [ Css.position Css.absolute
---               , Css.right (Css.px 5)
---               , Css.top (Css.px 5)
---               ]
---           , HA.class "button"
---           , HA.title "Delete test"
---           , onClick (DeleteTest key)
---           ]
---           [ text "🚮" ]
---       ]
-
--- viewLeftTestPanel : Model -> Html Msg
--- viewLeftTestPanel model =
---   let
---     (expectAccept, expectReject) =
---       model.fdg_model.package.tests
---       |> AutoDict.toList
---       |> List.partition (Tuple.second >> .expectation >> (==) ExpectAccepted)
---     displayTests headingHtml tx =
---       case tx of
---         [] ->
---           text ""
---         _ ->
---           div
---             []
---             [ h4 [] headingHtml
---             , ul []
---               ( List.sortBy (Tuple.second >> .input) tx
---                 |> List.map
---                   (\(key, test) ->
---                     li
---                       []
---                       [ viewTestItemInPanel (key, test) ]
---                   )
---               )
---             ]
---   in
---     div
---       [ HA.css
---           [ Css.backgroundColor <| Css.rgb 0x28 0x2a 0x36 -- --dracula-background
---           , Css.color <| Css.rgb 0xf8 0xf8 0xf2 -- --dracula-foreground
---           ]
---       ]
---       [ h2
---           []
---           [ text "Tests "
---           , div
---               [ HA.class "button button--primary"
---               , onClick CreateNewTest
---               , HA.title "Create new test"
---               ]
---               [ text "➕" ]
---           ]
---       , model.fdg_model.package.description
---         |> Maybe.map
---           (\desc ->
---             div
---               [ HA.css
---                   [ Css.fontStyle Css.italic
---                   , Css.fontSize (Css.rem 0.8)
---                   , Css.whiteSpace Css.preWrap
---                   ]
---               ]
---               [ text "“"
---               , text desc
---               , text "”"
---               ]
---           )
---         |> Maybe.withDefault (text "")
---       , displayTests
---           [ span [] [ text "Should be " ]
---           , span [ HA.css [ Css.color <| Css.rgb 0x50 0xfa 0x7b ] ] [ text "accepted" ]
---           ]
---           expectAccept
---       , displayTests
---           [ span [] [ text "Should be " ]
---           , span [ HA.css [ Css.color <| Css.rgb 0xff 0x79 0xc6 ] ] [ text "rejected" ]
---           ]
---         expectReject
---       ]
 
 
 -- viewTestPanelButtons : Model -> List (Html Msg)
@@ -3936,60 +3831,6 @@ debugWidth : Float -> Html a
 debugWidth w =
   debugElement "width" (String.fromFloat w)
 
--- viewPackageItem : Model -> GraphPackage -> Html Msg
--- viewPackageItem model package =
---   let
---     displaySvg =
---       FDG.viewComputationThumbnail (model.leftPanelWidth - 15) model.fdg_model package
---     canSelect =
---       -- we can select this EITHER if there are no pending changes, OR
---       -- if this is the currently-loaded package (i.e. to "reset"/"refresh" it)
---       model.fdg_model.package.undoBuffer == [] ||
---       package.userGraph.graphIdentifier == model.fdg_model.package.userGraph.graphIdentifier
---   in
---   div 
---     [ HA.classList
---         [ ("left-panel__packageItem", True)
---         , ("left-panel__packageItem--disabled", not canSelect)
---         ]
---     , HA.css
---         [ Css.position Css.relative
---         , Css.borderRadius (Css.px 5)
---         , Css.borderWidth (Css.px 1)
---         , Css.borderColor (Css.rgb 0x28 0x2a 0x36) -- --dracula-background
---         , Css.borderStyle Css.solid
---         , Css.userSelect Css.none
---         , if canSelect then
---             Css.cursor Css.pointer
---           else
---             Css.cursor Css.notAllowed
---         ]
---     , if canSelect then
---         onClick (SelectPackage package.userGraph.graphIdentifier)
---       else
---         HA.title "Apply or cancel the pending changes before selecting another package."
---     ]
---     [ Html.Styled.fromUnstyled <| Html.map ForceDirectedMsg displaySvg
---     , div
---         [ HA.css
---             [ Css.position Css.absolute
---             , Css.right (Css.px 5)
---             , Css.top (Css.px 0)
---             ]
---         , HA.classList
---             [ ("button", canSelect)
---             , ("button--disabled", not canSelect)
---             ]
---         , HA.title "Delete computation"
---         , if canSelect then
---             onClick (DeletePackage package.userGraph.graphIdentifier)
---           else
---             HA.title "Apply or cancel the pending changes before deleting a package."
---         ]
---         [ text "🚮" ]
---     ]
-
-
 viewNavigatorsArea : Model -> Html Msg
 viewNavigatorsArea model =
   div
@@ -4021,7 +3862,7 @@ viewNavigatorsArea model =
               [ text "🧪" ]
           ]
     , if not model.uiState.open.sideBar then
-        div [] []
+        text ""
       else
         div
           [ HA.class "sidebar"
@@ -4038,10 +3879,127 @@ viewNavigatorsArea model =
               ComputationsIcon ->
                 viewComputationsSidebar model
               TestsIcon ->
-                div
-                    [ HA.class "sidebar-content" ]
-                    [ text "Hello world B" ]
+                AutoDict.get model.mainGraphView model.graph_views
+                |> Maybe.map (flip viewTestsSidebar model)
+                |> Maybe.withDefault
+                  (div [ HA.class "error graph-not-loaded" ] [ text "⚠ No graph is loaded in the editor" ])
           ]
+    ]
+
+viewTestsSidebar : GraphView -> Model -> Html Msg
+viewTestsSidebar graph_view model =
+  let
+    (expectAccept, expectReject) =
+      graph_view.package.tests
+      |> AutoDict.toList
+      |> List.partition (Tuple.second >> .expectation >> (==) ExpectAccepted)
+    displayTests headingHtml tx =
+      case tx of
+        [] ->
+          text ""
+        _ ->
+          div
+            []
+            [ headingHtml
+            , ul
+                [ HA.class "input-list" ]
+                ( List.sortBy (Tuple.second >> .input) tx
+                  |> List.map
+                    (\(key, test) ->
+                      li
+                        [ HA.class "test-input" ]
+                        [ viewTestItemInPanel (key, test) ]
+                    )
+                )
+            ]
+    viewTestItemInPanel : (Uuid, Test) -> Html Msg
+    viewTestItemInPanel (key, test) =
+      let
+        testStatus = isFailingTest test
+      in
+        div 
+          [ HA.classList
+              [ ("failing", testStatus == Just True)
+              , ("passing", testStatus == Just False)
+              , ("error", testStatus == Nothing)
+              ]
+          -- , onClick (SelectTest key)
+          ]
+          [ span
+              [ HA.css
+                []
+                -- [ Css.width (Css.pct 100)
+                -- -- , Css.whiteSpace Css.nowrap
+                -- , Css.overflow Css.hidden
+                -- , Css.textOverflow Css.ellipsis
+                -- , Css.whiteSpace Css.pre
+                -- , Css.fontFamilyMany
+                --     [ "Fira Code", "Inconsolata", "DejaVu Sans Mono"
+                --     , "Liberation Mono", "Ubuntu Mono", "Cascadia Code"
+                --     , "Cascadia Mono", "Consolas", "Lucida Console"
+                --     , "Courier New" ]
+                --     Css.monospace
+                -- ]
+              , HA.class "test-input-container"
+              ]
+              [ text test.input ]
+          , div
+              [ HA.css
+                  [ Css.position Css.absolute
+                  , Css.right (Css.px 5)
+                  , Css.top (Css.px 5)
+                  ]
+              , HA.class "button"
+              , HA.title "Delete test"
+              -- , onClick (DeleteTest key)
+              ]
+              [ text "🚮" ]
+          ]
+  in
+    div
+      [ HA.class "sidebar-content tests-explorer" ]
+      [ h1
+          [ HA.class "sidebar-title" ]
+          [ text "Tests "
+          , button
+              [ HA.class "add-button"
+              , HA.title "Add new test"
+                -- , HE.onClick CreateNewTest
+              ]
+              [ text "➕" ]
+          ]
+      , div
+          [ HA.class "package-description" ]
+          [ graph_view.package.description
+            |> Maybe.map text
+            |> Maybe.withDefault (text "")
+          ]
+      , div
+          [ HA.class "test-inputs expect-accepted" ]
+          [ displayTests
+              ( div
+                  [ HA.class "title" ]
+                  [ span [] [ text "Should be " ]
+                  , span [ HA.class "emphasis" ] [ text "accepted" ]
+                  ]
+              )
+              expectAccept
+          ]
+      , div
+          [ HA.class "test-inputs expect-rejected" ]
+          [ displayTests
+              ( div
+                  [ HA.class "title" ]
+                  [ span [] [ text "Should be " ]
+                  , span [ HA.class "emphasis" ] [ text "rejected" ]
+                  ]
+              )
+              expectReject
+          ]
+
+
+
+
     ]
 
 viewComputationsSidebar : Model -> Html Msg
@@ -4083,13 +4041,6 @@ viewComputationsSidebar model =
                             |> Maybe.withDefault "(no description)"
                             |> text
                           ]
-  --         , HA.title "Delete computation"
-  --         , if canSelect then
-  --             onClick (DeletePackage package.userGraph.graphIdentifier)
-  --           else
-  --             HA.title "Apply or cancel the pending changes before deleting a package."
-  --         ]
-  --         [ text "🚮" ]
                       , if isMain || not graph_view.properties.canDeletePackage then
                           text ""
                         else
