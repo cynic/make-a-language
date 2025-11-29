@@ -1,9 +1,8 @@
 module GraphEditor exposing (..)
-import Browser.Events
 import Color
 import Force
 import Css
-import Graph exposing (Edge, Graph, NodeContext, NodeId)
+import Graph exposing (Graph, NodeContext, NodeId)
 import Html.Styled.Events as HE
 import Html.Styled exposing
   (Html, div)
@@ -30,24 +29,18 @@ import TypedSvg.Attributes.InPx as Px
 import Set exposing (Set)
 import AutoSet
 import IntDict
-import Time
 import Dict
 import List.Extra as List
 import Automata.DFA as DFA exposing (fromAutomatonGraph, toAutomatonGraph)
 import Automata.Data exposing (..)
 import Dict exposing (Dict)
 import Maybe.Extra as Maybe
-import Automata.Debugging
 import Uuid
 import Uuid exposing (Uuid)
 import AutoDict
-import Random.Pcg.Extended as Random
 import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
-import TypedSvg.Types exposing (Opacity)
-import TypedSvg.Attributes exposing (stroke)
-import TypedSvg exposing (filter)
 import VirtualDom
 
   -- to add: Execute, Step, Stop

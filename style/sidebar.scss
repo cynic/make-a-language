@@ -180,6 +180,11 @@
     flex-direction: column;
     // gap: 10px;
 
+    .disabled {
+      filter: saturate(0%);
+      opacity: 0.5;
+    }
+
     .package-description {
       border-top: solid 1px var(--comment);
       padding: 5px;
@@ -225,12 +230,22 @@
         transition: all 0.2s ease;
         position: relative;
 
-        &:hover {
-          text-shadow: 0 0 2px var(--comment);
+        &.selected {
+          background: linear-gradient(to right, transparent, var(--purple) 100%);
+          border-bottom-color: var(--cyan);
+          border-right-color: var(--cyan);
+          border-right-width: 5px;
+          margin-left: 10px;
+        }
+
+        &:hover:not(.disabled) {
           cursor: pointer;
           border-bottom: solid 1px var(--pink);
           border-top: solid 1px var(--pink);
           border-right: solid 1px var(--pink);
+        }
+        &:hover:not(.selected):not(.disabled) {
+          text-shadow: 0 0 2px var(--comment);
           transform: translateX(10px);
         }
 

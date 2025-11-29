@@ -2099,6 +2099,9 @@ nilMainProperties =
   , canAcceptCharacters = False
   , canSelectNewPackage = False
   , canCreateNewPackage = False
+  , canLoadTestInput = False
+  , canDeleteTestInput = False
+  , canCreateTestInput = False
   }
 
 nilViewProperties : GraphViewProperties
@@ -2238,6 +2241,9 @@ setProperties model =
           { nilMainProperties
           | canEscape = True
           , canDragSplitter = True
+          , canLoadTestInput = True
+          , canDeleteTestInput = True
+          , canCreateTestInput = True
           }
         whenSimulatingForces : MainPropertySetter
         whenSimulatingForces =
@@ -2245,6 +2251,9 @@ setProperties model =
             | canDragSplitter = True
             , canSelectNewPackage = True
             , canCreateNewPackage = True
+            , canLoadTestInput = True
+            , canDeleteTestInput = True
+            , canCreateTestInput = True
           }
         otherwise : MainPropertySetter
         otherwise =
@@ -2252,6 +2261,9 @@ setProperties model =
             | canDragSplitter = True
             , canSelectNewPackage = True
             , canCreateNewPackage = True
+            , canLoadTestInput = True
+            , canDeleteTestInput = True
+            , canCreateTestInput = True
           }
         whenDeletingPackage : MainPropertySetter
         whenDeletingPackage =
@@ -2789,6 +2801,23 @@ deletePackage package model =
 
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
+  let
+    new_test : GraphPackage -> Test
+    new_test pkg =
+      { input = ""
+      , expectation = ExpectAccepted
+      , result =
+          EndOfInput
+            ( Rejected
+                { transitions = []
+                , remainingData = []
+                , currentNode = pkg.userGraph.root
+                , computation = pkg.userGraph
+                , resolutionDict = toResolutionDict model.packages
+                }
+            ) 
+      }
+  in
   case msg of
     SelectPackage ->
       ( AutoDict.get pkg_uuid model.packages
@@ -2814,43 +2843,23 @@ update_package pkg_uuid msg model =
         (\pkg ->
           let
             (test_uuid, newSeed) = Random.step Uuid.generator model.randomSeed
-            new_test =
-              { input = ""
-              , expectation = ExpectAccepted
-              , result =
-                  EndOfInput
-                    ( Rejected
-                        { transitions = []
-                        , remainingData = []
-                        , currentNode = pkg.userGraph.root
-                        , computation = pkg.userGraph
-                        , resolutionDict = toResolutionDict model.packages
-                        }
-                    ) 
-              }
-            updated_pkg =
-              { pkg
+            the_test = new_test pkg
+            update_pkg p =
+              { p
                 | currentTestKey = test_uuid
                 , tests =
-                    AutoDict.insert test_uuid new_test pkg.tests
+                    AutoDict.insert test_uuid the_test p.tests
               }
             updated_model =
               { model
-                | packages = AutoDict.insert pkg_uuid updated_pkg model.packages
+                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
                 , randomSeed = newSeed
                 , graph_views =
                     viewsWithPackage pkg_uuid model
                     |> List.foldl
                       (\gv ->
                         AutoDict.insert gv.id
-                          { gv
-                            | package =
-                                let p = gv.package in
-                                  { p
-                                    | currentTestKey = test_uuid
-                                    , tests =
-                                        AutoDict.insert test_uuid new_test p.tests
-                                  }
+                          { gv | package = update_pkg gv.package
                           }
                       )
                       model.graph_views
@@ -2863,10 +2872,72 @@ update_package pkg_uuid msg model =
       |> Maybe.withDefault ( model, Cmd.none )
 
     LoadTestInput test_uuid ->
-      Debug.todo "Whoopsy-daisy!"
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get test_uuid p.tests))
+      |> Maybe.map
+        (\(pkg, test) ->
+          let
+            update_pkg p =
+              { p | currentTestKey = test_uuid }
+            execStart =
+              DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
+            updated_model =
+              { model
+                | packages =
+                    AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
+                , graph_views =
+                    viewsWithPackage pkg_uuid model
+                    |> List.foldl
+                      (\gv ->
+                        AutoDict.insert gv.id
+                          { gv | package = update_pkg gv.package }
+                      )
+                      model.graph_views
+              }
+          in
+            -- make it global, not view-specific.
+            -- Is this the correct decision?
+            case peekInteraction Nothing model.interactionsDict of
+              Just ( Executing _ ) ->
+                ( replaceInteraction Nothing (Executing execStart) updated_model
+                  |> setProperties
+                , Cmd.none
+                )
+              _ ->
+                ( pushInteractionForStack Nothing (Executing execStart) updated_model
+                  |> setProperties
+                , Cmd.none
+                )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
 
     DeleteTestInput test_uuid ->
-      Debug.todo "Who put that crash there?!"
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.map
+        (\pkg ->
+          let
+            update_pkg p =
+              -- it's okay to have a test-uuid with no corresponding test.
+              -- When we write to it, the data will appear.
+              { p | tests = AutoDict.remove test_uuid p.tests }
+            updated_model =
+              { model
+                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
+                , graph_views =
+                    viewsWithPackage pkg_uuid model
+                    |> List.foldl
+                      (\gv ->
+                        AutoDict.insert gv.id
+                          { gv | package = update_pkg gv.package }
+                      )
+                      model.graph_views
+              }
+          in
+            ( updated_model
+            , Cmd.none -- persistPackage pkg_uuid
+            )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -3202,43 +3273,6 @@ update msg model =
     --   , Cmd.none
     --   )
 
-    -- SelectBottomPanel p ->
-    --   ( { model | selectedBottomPanel = p }
-    --   , Cmd.none
-    --   )
-
-    -- CreateNewPackage ->
-    --     ( { model | fdg_model = FDG.reInitialize model.fdg_model }
-    --     , Cmd.none
-    --     )
-
-    -- DeletePackage uuid ->
-    --   let
-    --     fdg_model = model.fdg_model
-    --     newPackages = AutoDict.remove uuid model.fdg_model.packages
-    --     newFdgModel = { fdg_model | packages = newPackages }
-    --   in
-    --     ( if uuid == fdg_model.package.userGraph.graphIdentifier then
-    --         { model | fdg_model = FDG.reInitialize newFdgModel }
-    --       else
-    --         { model | fdg_model = newFdgModel }
-    --     , Ports.deleteFromStorage (Uuid.toString uuid)
-    --     )
-
-    -- CreateNewTest ->
-    --   let
-    --     fdg_model = model.fdg_model
-    --     currentPackage = fdg_model.package
-    --     (uuid, newSeed) = Random.step Uuid.generator fdg_model.uuidSeed
-    --     newFdgModel =
-    --       { fdg_model
-    --         | currentPackage = { currentPackage | currentTestKey = uuid }
-    --         , uuidSeed = newSeed
-    --       }
-    --   in
-    --     ( { model | fdg_model = newFdgModel }
-    --     , Cmd.none
-    --     )
 
     -- SelectTest key ->
     --   let
@@ -3251,17 +3285,6 @@ update msg model =
     --     , Cmd.none -- no need to persist this though
     --     )
 
-    -- DeleteTest key ->
-    --   let
-    --     currentPackage = model.fdg_model.package
-    --     updatedPackage =
-    --       { currentPackage | tests = AutoDict.remove key currentPackage.tests }
-    --   in
-    --     ( { model
-    --         | fdg_model = FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
-    --       }
-    --     , persistPackage updatedPackage
-    --     )
 
 isAccepted : ExecutionResult -> Maybe Bool
 isAccepted result =
@@ -4026,14 +4049,14 @@ viewNavigatorsArea model =
                 viewComputationsSidebar model
               TestsIcon ->
                 AutoDict.get model.mainGraphView model.graph_views
-                |> Maybe.map viewTestsSidebar
+                |> Maybe.map (flip viewTestsSidebar model)
                 |> Maybe.withDefault
                   (div [ HA.class "error graph-not-loaded" ] [ text "⚠ No graph is loaded in the editor" ])
           ]
     ]
 
-viewTestsSidebar : GraphView -> Html Msg
-viewTestsSidebar graph_view =
+viewTestsSidebar : GraphView -> Model -> Html Msg
+viewTestsSidebar graph_view {properties} =
   let
     (expectAccept, expectReject) =
       graph_view.package.tests
@@ -4053,7 +4076,11 @@ viewTestsSidebar graph_view =
                   |> List.map
                     (\(key, test) ->
                       li
-                        [ HA.class "test-input"
+                        [ HA.classList
+                            [ ("test-input", True)
+                            , ("selected", key == graph_view.package.currentTestKey)
+                            , ("disabled", not properties.canLoadTestInput)
+                            ]
                         , HA.title "Edit"
                         ]
                         [ viewTestItemInPanel (key, test) ]
@@ -4071,17 +4098,28 @@ viewTestsSidebar graph_view =
               , ("passing", testStatus == Just False)
               , ("error", testStatus == Nothing)
               ]
-          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| LoadTestInput key)
+          , properties.canLoadTestInput
+            |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| LoadTestInput key))
           ]
           [ span
-              [ HA.class "test-input-container" ]
-              [ text test.input ]
-          , div
-              [ HA.class "button"
-              , HA.title "Delete test"
-              , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| DeleteTestInput key)
+              [ HA.classList
+                  [ ("test-input-container", True)
+                  , ("disabled", not properties.canLoadTestInput)
+                  ]
               ]
-              [ text "🚮" ]
+              [ text test.input ]
+          , if properties.canDeleteTestInput && not (key == graph_view.package.currentTestKey) then
+              div
+                [ HA.classList
+                    [ ("button", True)
+                    , ("disabled", not properties.canDeleteTestInput)
+                    ]
+                , HA.title "Delete test"
+                , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| DeleteTestInput key)
+                ]
+                [ text "🚮" ]
+            else
+              text ""
           ]
   in
     div
@@ -4089,12 +4127,15 @@ viewTestsSidebar graph_view =
       [ h1
           [ HA.class "sidebar-title" ]
           [ text "Test Inputs "
-          , button
-              [ HA.class "add-button"
-              , HA.title "Add new test"
-              , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier CreateNewTestInput)
-              ]
-              [ text "➕" ]
+          , if properties.canCreateTestInput then
+              button
+                [ HA.class "add-button"
+                , HA.title "Add new test"
+                , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier CreateNewTestInput)
+                ]
+                [ text "➕" ]
+            else
+              text ""
           ]
       , div
           [ HA.class "package-description" ]

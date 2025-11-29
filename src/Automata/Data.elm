@@ -348,6 +348,9 @@ type alias MainUIProperties =
   , canAcceptCharacters : Bool
   , canSelectNewPackage : Bool
   , canCreateNewPackage : Bool
+  , canLoadTestInput : Bool
+  , canDeleteTestInput : Bool
+  , canCreateTestInput : Bool
   }
 
 type alias GraphViewProperties =
