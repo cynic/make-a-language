@@ -88,17 +88,21 @@ type GraphViewMsg
   | MoveNode (Float, Float)
   | StopDraggingNode
   | StartSplit NodeId
-  | CreateNewTestInput
-  | DeleteTestInput Uuid
-  | LoadTestInput Uuid
   -- | Zoom Float
+
+type PackageMsg
+  = SelectPackage
+  | DeletePackage
+  | CreateNewTestInput
+  | LoadTestInput Uuid
+  | DeleteTestInput Uuid
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg
+  | PackageMsg Uuid PackageMsg
   | SelectNavigation NavigatorIcon
   | StartDraggingSplitter SplitterMovement
   | DragSplitter Bool Float -- stop-dragging, amount
-  | SelectPackage Uuid -- package-uuid
   | ToggleAreaVisibility AreaUITarget
   | SelectTool ToolIcon
   | QuickInput String
@@ -112,7 +116,6 @@ type Msg
   | Confirm -- the universal "Yeah! Let's Go!" key & command
   | CreateNewPackage
   | TimeValueForPackage Time.Posix
-  | DeletePackage Uuid -- package-uuid
   
   -- more general messages
   -- | Tick

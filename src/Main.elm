@@ -525,9 +525,9 @@ init flags =
     )
 
 updatePackageInView : (GraphPackage -> GraphPackage) -> GraphView -> Model -> Model
-updatePackageInView update_package graph_view model =
+updatePackageInView package_updater graph_view model =
   let
-    pkg = update_package graph_view.package
+    pkg = package_updater graph_view.package
   in
   upsertGraphView graph_view.id
     ( { graph_view
@@ -2453,6 +2453,11 @@ hasSamePackage uuid1 uuid2 model =
     (AutoDict.get uuid2 model.graph_views)
   |> Maybe.withDefault False
 
+viewsWithPackage : Uuid -> Model -> List GraphView
+viewsWithPackage uuid model =
+  AutoDict.values model.graph_views
+  |> List.filter (\{package} -> package.userGraph.graphIdentifier == uuid)
+
 deletePackageFromModel : Uuid -> Model -> Model
 deletePackageFromModel uuid model =
   let
@@ -2782,11 +2787,95 @@ deletePackage package model =
         , Cmd.none
         )
 
+update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
+update_package pkg_uuid msg model =
+  case msg of
+    SelectPackage ->
+      ( AutoDict.get pkg_uuid model.packages
+        |> Maybe.map
+          (\pkg ->
+            removeViews [ model.mainGraphView ] model
+            |> solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg
+            |> Tuple.second
+            |> setProperties
+          )
+        |> Maybe.withDefault model
+      , Cmd.none
+      )
+
+    DeletePackage ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.map (flip deletePackage model)
+      |> Maybe.withDefault ( model, Cmd.none )
+
+    CreateNewTestInput ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.map
+        (\pkg ->
+          let
+            (test_uuid, newSeed) = Random.step Uuid.generator model.randomSeed
+            new_test =
+              { input = ""
+              , expectation = ExpectAccepted
+              , result =
+                  EndOfInput
+                    ( Rejected
+                        { transitions = []
+                        , remainingData = []
+                        , currentNode = pkg.userGraph.root
+                        , computation = pkg.userGraph
+                        , resolutionDict = toResolutionDict model.packages
+                        }
+                    ) 
+              }
+            updated_pkg =
+              { pkg
+                | currentTestKey = test_uuid
+                , tests =
+                    AutoDict.insert test_uuid new_test pkg.tests
+              }
+            updated_model =
+              { model
+                | packages = AutoDict.insert pkg_uuid updated_pkg model.packages
+                , randomSeed = newSeed
+                , graph_views =
+                    viewsWithPackage pkg_uuid model
+                    |> List.foldl
+                      (\gv ->
+                        AutoDict.insert gv.id
+                          { gv
+                            | package =
+                                let p = gv.package in
+                                  { p
+                                    | currentTestKey = test_uuid
+                                    , tests =
+                                        AutoDict.insert test_uuid new_test p.tests
+                                  }
+                          }
+                      )
+                      model.graph_views
+              }
+          in
+            ( updated_model
+            , Cmd.none -- persistPackage pkg_uuid
+            )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
+
+    LoadTestInput test_uuid ->
+      Debug.todo "Whoopsy-daisy!"
+
+    DeleteTestInput test_uuid ->
+      Debug.todo "Who put that crash there?!"
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
   case msg {- |> (\v -> if v == ForceDirectedMsg FDG.Tick then v else Debug.log "MESSAGE" v) -} of
     GraphViewMsg uuid gv_msg ->
       update_graphview uuid gv_msg model
+
+    PackageMsg uuid pkg_msg ->
+      update_package uuid pkg_msg model
 
     DragSplitter shouldStop coord ->
       ( case popInteraction (Nothing) model of
@@ -2819,19 +2908,6 @@ update msg model =
             |> Maybe.withDefault model
           _ ->
             model
-      , Cmd.none
-      )
-
-    SelectPackage uuid ->
-      ( AutoDict.get uuid model.packages
-        |> Maybe.map
-          (\pkg ->
-            removeViews [ model.mainGraphView ] model
-            |> solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg
-            |> Tuple.second
-            |> setProperties
-          )
-        |> Maybe.withDefault model
       , Cmd.none
       )
 
@@ -3008,11 +3084,6 @@ update msg model =
       , Task.perform TimeValueForPackage Time.now
       )
 
-    DeletePackage package_uuid ->
-      AutoDict.get package_uuid model.packages
-      |> Maybe.map (\package -> deletePackage package model)
-      |> Maybe.withDefault ( model, Cmd.none )
-
     TimeValueForPackage posix ->
       let
         (testUuid, seed1) = Random.step Uuid.generator model.randomSeed
@@ -3051,11 +3122,6 @@ update msg model =
 
     CrashWithMessage err ->
       Debug.todo err
-
-    -- GraphViewMsg uuid submsg ->
-    --   AutoDict.get uuid model.graph_views
-    --   |> Maybe.map (updateGraphView submsg)
-    --   |> Maybe.withDefault ( model, Cmd.none )
 
     -- UpdateTestPanelContent newInput expectation ->
     --   let
@@ -3174,7 +3240,7 @@ update msg model =
     --     , Cmd.none
     --     )
 
-     -- SelectTest key ->
+    -- SelectTest key ->
     --   let
     --     currentPackage = model.fdg_model.package
     --     updatedPackage = { currentPackage | currentTestKey = key }
@@ -4005,7 +4071,7 @@ viewTestsSidebar graph_view =
               , ("passing", testStatus == Just False)
               , ("error", testStatus == Nothing)
               ]
-          , HE.onClick (GraphViewMsg graph_view.id <| LoadTestInput key)
+          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| LoadTestInput key)
           ]
           [ span
               [ HA.class "test-input-container" ]
@@ -4013,7 +4079,7 @@ viewTestsSidebar graph_view =
           , div
               [ HA.class "button"
               , HA.title "Delete test"
-              , HE.onClick (GraphViewMsg graph_view.id <| DeleteTestInput key)
+              , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| DeleteTestInput key)
               ]
               [ text "🚮" ]
           ]
@@ -4026,7 +4092,7 @@ viewTestsSidebar graph_view =
           , button
               [ HA.class "add-button"
               , HA.title "Add new test"
-              , HE.onClick (GraphViewMsg graph_view.id CreateNewTestInput)
+              , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier CreateNewTestInput)
               ]
               [ text "➕" ]
           ]
@@ -4094,7 +4160,7 @@ viewComputationsSidebar model =
                     div
                       [ HA.class "package"
                       , graph_view.properties.canSelectPackage
-                        |> thenPermitInteraction (HE.onClick (SelectPackage graph_view.package.userGraph.graphIdentifier))
+                        |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier SelectPackage))
                       ]
                       [ viewGraph graph_view
                       , div
@@ -4109,7 +4175,7 @@ viewComputationsSidebar model =
                           div
                             [ HA.class "delete-button"
                             , HA.title "Delete"
-                            , HE.onClick (DeletePackage graph_view.package.userGraph.graphIdentifier)
+                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier DeletePackage)
                             ]
                             [ text "🚮" ]
                       ]
