@@ -2492,7 +2492,7 @@ deletePackageFromModel uuid model =
 -}
   }
 
-commitOrConfirm : Model -> Model
+commitOrConfirm : Model -> (Model, Cmd Msg)
 commitOrConfirm model =
   -- What am I confirming?
   let
@@ -2541,53 +2541,63 @@ commitOrConfirm model =
   in
     case popMostRecentInteraction model of
       Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
-        if AutoSet.isEmpty left || AutoSet.isEmpty right then
-          removeViews [ mainGraph ] model_
-        else
-          AutoDict.get gv_uuid model_.graph_views
-          |> Maybe.andThen
-            (\gv ->
-              Maybe.combineSecond
-                ( gv
-                , Graph.get to_split gv.package.userGraph.graph
-                )
+        ( if AutoSet.isEmpty left || AutoSet.isEmpty right then
+            removeViews [ mainGraph ] model_
+          else
+            AutoDict.get gv_uuid model_.graph_views
+            |> Maybe.andThen
+              (\gv ->
+                Maybe.combineSecond
+                  ( gv
+                  , Graph.get to_split gv.package.userGraph.graph
+                  )
+              )
+            |> Maybe.map (\(gv, nodeContext) ->
+              splitNode nodeContext left gv
+              |> \newGraph ->
+                  removeViews [ mainGraph ] model_
+                  |> commit_change gv newGraph
             )
-          |> Maybe.map (\(gv, nodeContext) ->
-            splitNode nodeContext left gv
-            |> \newGraph ->
-                removeViews [ mainGraph ] model_
-                |> commit_change gv newGraph
-          )
-          |> Maybe.withDefault model_
-          |> setProperties
+            |> Maybe.withDefault model_
+            |> setProperties
+        , Cmd.none
+        )
       Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled } as alteration) {mainGraph, referenceList}, model_) ->
           -- create such an automatongraph
-          AutoDict.get (gv_uuid) model_.graph_views   
-          |> Maybe.map
-            (\gv ->
-              if deleteTargetIfCancelled then
-                -- this one comes from a phantom node.
-                removeViews (mainGraph :: referenceList) model_
-                -- because this comes from a phantom node, ensure that we
-                -- remove the 'dest' from the graph before confirming it as
-                -- the previous graph.
-                |> confirmPhantomNode source dest connection gv
-                |> setProperties
-              else if AutoSet.isEmpty connection then
-                removeViews (mainGraph :: referenceList) model_
-                |> removeLink source dest gv
-                |> setProperties
-              else
-                removeViews (mainGraph :: referenceList) model_
-                |> updateExistingNode source dest connection gv
-                |> setProperties
-            )
-          |> Maybe.withDefault model_
+          ( AutoDict.get (gv_uuid) model_.graph_views   
+            |> Maybe.map
+              (\gv ->
+                if deleteTargetIfCancelled then
+                  -- this one comes from a phantom node.
+                  removeViews (mainGraph :: referenceList) model_
+                  -- because this comes from a phantom node, ensure that we
+                  -- remove the 'dest' from the graph before confirming it as
+                  -- the previous graph.
+                  |> confirmPhantomNode source dest connection gv
+                  |> setProperties
+                else if AutoSet.isEmpty connection then
+                  removeViews (mainGraph :: referenceList) model_
+                  |> removeLink source dest gv
+                  |> setProperties
+                else
+                  removeViews (mainGraph :: referenceList) model_
+                  |> updateExistingNode source dest connection gv
+                  |> setProperties
+              )
+            |> Maybe.withDefault model_
+          , Cmd.none
+          )
       Just (Nothing, DeletingPackage to_delete props, model_) ->
-        removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
-        |> deletePackageFromModel to_delete
-        |> refreshComputationsList
-        |> setProperties
+        let
+          updated_model =
+            removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
+            |> deletePackageFromModel to_delete
+            |> refreshComputationsList
+            |> setProperties
+        in
+          ( updated_model
+          , Ports.deleteFromStorage (Uuid.toString to_delete)
+          )
       _ ->
         -- _if_ there are things which are yet to be committed, in
         -- the main, then commit them here.
@@ -2595,25 +2605,30 @@ commitOrConfirm model =
         |> Maybe.map
           (\gv ->
             if List.isEmpty gv.package.undoBuffer then
-              model -- …there is nothing for me to do!
+              ( model -- …there is nothing for me to do!
+              , Cmd.none
+              )
             else
               let
                 new_gv =
                   confirmChanges gv.package.userGraph
                     (toResolutionDict model.packages)
                     gv
-                model_ =
+                updated_model =
                   { model
                     | packages =
                         AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
                   }
+                  |> updatePackageInView
+                    (\_ -> new_gv.package) gv
+                  |> refreshComputationsList
+                  |> setProperties
               in
-                updatePackageInView
-                  (\_ -> new_gv.package) gv model_
-                |> refreshComputationsList
-                |> setProperties
+                ( updated_model
+                , persistPackage new_gv.package
+                )
           )
-        |> Maybe.withDefault model
+        |> Maybe.withDefault ( model, Cmd.none )
 
 viewsContainingPackage : Uuid -> Model -> List GraphView
 viewsContainingPackage package_uuid m =
@@ -2659,7 +2674,88 @@ packagesAffectedBy uuid model =
         Nothing
     )
 
-deletePackage : GraphPackage -> Model -> Model
+beginDeletionInteraction : Uuid -> List Uuid -> GraphPackage -> Model -> Model
+beginDeletionInteraction package_uuid affected package model =
+  -- Erk; it depends on whether you're okay with the consequences.
+  let
+    all_packages : List (Uuid, AutoSet.Set String Uuid)
+    all_packages = packagesAndRefs model
+    indirectlyAffected to_check known_indirect =
+      let
+        (i, o) =
+          List.partition
+            (\(_, refs) ->
+              AutoSet.size (AutoSet.intersect refs known_indirect) > 0
+            )
+            to_check
+      in
+        case i of
+          [] ->
+            -- there is nothing more that matches; we're done!
+            known_indirect
+          xs ->
+            List.map Tuple.first xs
+            |> AutoSet.fromList Uuid.toString
+            |> AutoSet.union known_indirect
+            |> indirectlyAffected o
+    affectedSet =
+      AutoSet.fromList Uuid.toString affected
+      |> Debug.log "affected"
+    indirectSet =
+      indirectlyAffected
+        -- exclude everything in the affectedSet from consideration.
+        (List.filter (\(u, _) -> not (AutoSet.member u affectedSet)) all_packages)
+        (affectedSet)
+      -- and now remove those which are directly affected.
+      |> (\s -> AutoSet.diff s affectedSet)
+    indirect =
+      AutoSet.toList indirectSet
+      |> Debug.log "indirect"
+    (mainGraph, model_) =
+      solvedViewFromPackage
+        (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiState.dimensions.viewport)
+        Independent True package model
+    (directViews, model__) =
+      affected
+      |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
+      |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
+      |> List.foldl
+        (\pkg (acc, m) ->
+          let
+            (v, m_) =
+              solvedViewFromPackage
+                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
+                Independent True pkg m
+          in
+            (v :: acc, m_)
+        )
+        ([], model_)
+    (indirectViews, model___) =
+      indirect
+      |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
+      |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
+      |> List.foldl
+        (\pkg (acc, m) ->
+          let
+            (v, m_) =
+              solvedViewFromPackage
+                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
+                Independent True pkg m
+          in
+            (v :: acc, m_)
+        )
+        ([], model__)
+    props =
+      { affectedPackages = affected
+      , indirectlyAffectedPackages = indirect
+      , mainGraph = mainGraph.id
+      , directViews = directViews |> List.map .id
+      , indirectViews = indirectViews |> List.map .id
+      }
+  in
+    pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
+
+deletePackage : GraphPackage -> Model -> ( Model, Cmd Msg )
 deletePackage package model =
   -- find out which packages are affected by this one.
   let
@@ -2678,86 +2774,13 @@ deletePackage package model =
             viewsContainingPackage package_uuid without_package
             |> List.map .id
         in
-          removeViews relevant_views without_package
+          ( removeViews relevant_views without_package
+          , Ports.deleteFromStorage (Uuid.toString package_uuid)
+          )
       _ ->
-        -- Erk; it depends on whether you're okay with the consequences.
-        let
-          all_packages : List (Uuid, AutoSet.Set String Uuid)
-          all_packages = packagesAndRefs model
-          indirectlyAffected to_check known_indirect =
-            let
-              (i, o) =
-                List.partition
-                  (\(_, refs) ->
-                    AutoSet.size (AutoSet.intersect refs known_indirect) > 0
-                  )
-                  to_check
-            in
-              case i of
-                [] ->
-                  -- there is nothing more that matches; we're done!
-                  known_indirect
-                xs ->
-                  List.map Tuple.first xs
-                  |> AutoSet.fromList Uuid.toString
-                  |> AutoSet.union known_indirect
-                  |> indirectlyAffected o
-          affectedSet =
-            AutoSet.fromList Uuid.toString affected
-            |> Debug.log "affected"
-          indirectSet =
-            indirectlyAffected
-              -- exclude everything in the affectedSet from consideration.
-              (List.filter (\(u, _) -> not (AutoSet.member u affectedSet)) all_packages)
-              (affectedSet)
-            -- and now remove those which are directly affected.
-            |> (\s -> AutoSet.diff s affectedSet)
-          indirect =
-            AutoSet.toList indirectSet
-            |> Debug.log "indirect"
-          (mainGraph, model_) =
-            solvedViewFromPackage
-              (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiState.dimensions.viewport)
-              Independent True package model
-          (directViews, model__) =
-            affected
-            |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
-            |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
-            |> List.foldl
-              (\pkg (acc, m) ->
-                let
-                  (v, m_) =
-                    solvedViewFromPackage
-                      (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
-                      Independent True pkg m
-                in
-                  (v :: acc, m_)
-              )
-              ([], model_)
-          (indirectViews, model___) =
-            indirect
-            |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
-            |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
-            |> List.foldl
-              (\pkg (acc, m) ->
-                let
-                  (v, m_) =
-                    solvedViewFromPackage
-                      (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
-                      Independent True pkg m
-                in
-                  (v :: acc, m_)
-              )
-              ([], model__)
-          props =
-            { affectedPackages = affected
-            , indirectlyAffectedPackages = indirect
-            , mainGraph = mainGraph.id
-            , directViews = directViews |> List.map .id
-            , indirectViews = indirectViews |> List.map .id
-            }
-        in
-        pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
+        ( beginDeletionInteraction package_uuid affected package model
+        , Cmd.none
+        )
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -2978,9 +3001,7 @@ update msg model =
       )
 
     Confirm ->
-      ( commitOrConfirm model
-      , Cmd.none
-      )
+      commitOrConfirm model
 
     CreateNewPackage ->
       ( model
@@ -2988,11 +3009,9 @@ update msg model =
       )
 
     DeletePackage package_uuid ->
-      ( AutoDict.get package_uuid model.packages
-        |> Maybe.map (\package -> deletePackage package model)
-        |> Maybe.withDefault model
-      , Cmd.none
-      )
+      AutoDict.get package_uuid model.packages
+      |> Maybe.map (\package -> deletePackage package model)
+      |> Maybe.withDefault ( model, Cmd.none )
 
     TimeValueForPackage posix ->
       let
@@ -3027,7 +3046,7 @@ update msg model =
         ( with_graph_view
           |> refreshComputationsList
           |> setProperties
-        , Cmd.none
+        , persistPackage pkg
         )
 
     CrashWithMessage err ->
@@ -3155,7 +3174,7 @@ update msg model =
     --     , Cmd.none
     --     )
 
-    -- SelectTest key ->
+     -- SelectTest key ->
     --   let
     --     currentPackage = model.fdg_model.package
     --     updatedPackage = { currentPackage | currentTestKey = key }

@@ -565,8 +565,11 @@ viewGraphReference uuid scale x_ y_ =
           )
       )
 
+char_width : Float
 char_width = 16 / 1.85 -- FCC is probably anywhere from ≈2.2-2.55 for sans serif. Can be adjusted.
+badge_width : Float
 badge_width = 16 -- for a scale of "2".
+gap : Float
 gap = 2
 
 linkLabelWidth : Connection -> Float
