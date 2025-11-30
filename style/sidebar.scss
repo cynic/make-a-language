@@ -102,12 +102,22 @@
         background-color: var(--red);
       }
       &.some-fail {
-        background-color: var(--pink);
+        // background-color: var(--red);
+        animation: red-pink-pulse 10s linear infinite;
       }
       &.internal-error {
         background-color: var(--yellow);
       }
     }
+  }
+}
+
+@keyframes red-pink-pulse {
+  0%, 95%, 100% {
+    background-color: var(--pink);
+  }
+  97.5% {
+    background-color: var(--red);
   }
 }
 
