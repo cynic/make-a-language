@@ -106,6 +106,20 @@
       }
     }
 
+    .step-through {
+      position: relative;
+      height: 100%;
+      display: flex;
+
+      .progress-area {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 8px;
+        font-size: 1.2rem;
+      }
+    }
+
     .tools-strip {
       background-color: var(--background-light);
       width: 40px;

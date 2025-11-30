@@ -92,8 +92,9 @@ type PackageMsg
   | DeleteTestInput Uuid
   -- | LoadTestInput
   | UpdateTestInput String
-  | StartStepping
+  | Step
   | Run
+  | ResetComputation
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg

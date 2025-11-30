@@ -2914,31 +2914,28 @@ update_package pkg_uuid msg model =
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
-    StartStepping ->
+    Step ->
       AutoDict.get pkg_uuid model.packages
       |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
       |> Maybe.map
         (\(pkg, test) ->
-          let
-            execution =
-              DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
-              |> DFA.step
-            props =
-              { expandedStep = Nothing }
-          in
-            -- make it global, not view-specific.
-            -- Is this the correct decision?
-            case peekInteraction Nothing model.interactionsDict of
-              Just ( Executing _ _ ) ->
-                ( replaceInteraction Nothing (Executing [execution] props) model
-                  |> setProperties
-                , Cmd.none
-                )
+          ( case peekInteraction Nothing model.interactionsDict of
+              Just ( Executing (h::rest) props ) ->
+                replaceInteraction Nothing (Executing (DFA.step h :: (h::rest)) props) model
+                |> setProperties
               _ ->
-                ( pushInteractionForStack Nothing (Executing [execution] props) model
-                  |> setProperties
-                , Cmd.none
-                )
+                pushInteractionForStack Nothing
+                  (Executing
+                    [ DFA.load test.input
+                        (toResolutionDict model.packages) pkg.userGraph
+                      |> DFA.step
+                    ]
+                    { expandedStep = Nothing }
+                  )
+                  model
+                |> setProperties
+          , Cmd.none
+          )
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
@@ -2947,28 +2944,32 @@ update_package pkg_uuid msg model =
       |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
       |> Maybe.map
         (\(pkg, test) ->
-          let
-            execution =
-              DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
-              |> DFA.run
-            props =
-              { expandedStep = Nothing }
-          in
-            -- make it global, not view-specific.
-            -- Is this the correct decision?
-            case peekInteraction Nothing model.interactionsDict of
-              Just ( Executing _ _ ) ->
-                ( replaceInteraction Nothing (Executing execution props) model
-                  |> setProperties
-                , Cmd.none
-                )
+          ( case peekInteraction Nothing model.interactionsDict of
+              Just ( Executing (h::rest) props ) ->
+                replaceInteraction Nothing (Executing (DFA.run h ++ (h::rest)) props) model
+                |> setProperties
               _ ->
-                ( pushInteractionForStack Nothing (Executing execution props) model
-                  |> setProperties
-                , Cmd.none
-                )
+                pushInteractionForStack Nothing
+                  (Executing
+                    ( DFA.load test.input
+                        (toResolutionDict model.packages) pkg.userGraph
+                      |> DFA.run
+                    )
+                    { expandedStep = Nothing }
+                  )
+                  model
+                |> setProperties
+          , Cmd.none
+          )
         )
       |> Maybe.withDefault ( model, Cmd.none )
+
+    ResetComputation ->
+      case popInteraction Nothing model of
+        Just ( Executing _ _ , model_ ) ->
+          ( setProperties model_, Cmd.none )
+        _ ->
+          ( model, Cmd.none )
 
     UpdateTestInput s ->
       AutoDict.get pkg_uuid model.packages
@@ -4302,26 +4303,54 @@ viewTestingTool graph_view test model =
           Just (Executing ((h::t) as results) props) ->
             div
               [ HA.class "step-through" ]
-              [ div
-                  [ HA.class "tools-strip" ]
-                  [ button
-                      [ HA.class "tool-icon continue-stepping"
-                      , HA.title "Continue"
-                      ]
-                      [ text "⏯️" ]
-                  , button
-                      [ HA.class "tool-icon stop-stepping"
-                      , HA.title "Stop / Reset"
-                      ]
-                      [ text "⏹️" ]
-                  ]
-              , div
-                  [ HA.class "progress-area" ]
-                  [ div
-                      []
-                      [ text "°not implemented°" ]
-                  ]
-              ]
+              ( case h.finalResult of
+                  Just result ->
+                    [ div
+                        [ HA.class "tools-strip" ]
+                        [ button
+                            [ HA.class "tool-icon reset"
+                            , HA.title "Reset"
+                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier ResetComputation)
+                            ]
+                            [ text "🔁" ]
+                        ]
+                    , div
+                        [ HA.class "progress-area" ]
+                        [ div
+                            []
+                            [ text "//not implemented//" ]
+                        ]
+                    ]
+                  Nothing ->
+                    [ div
+                        [ HA.class "tools-strip" ]
+                        [ button
+                            [ HA.class "tool-icon continue-stepping"
+                            , HA.title "Continue"
+                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Step)
+                            ]
+                            [ text "⏯️" ]
+                        , button
+                            [ HA.class "tool-icon stop-stepping"
+                            , HA.title "Run to end"
+                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Run)
+                            ]
+                            [ text "▶️" ]
+                        , button
+                            [ HA.class "tool-icon stop-stepping"
+                            , HA.title "Stop / Reset"
+                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier ResetComputation)
+                            ]
+                            [ text "⏹️" ]
+                        ]
+                    , div
+                        [ HA.class "progress-area" ]
+                        [ div
+                            []
+                            [ text "°not implemented°" ]
+                        ]
+                    ]
+              )
           _ ->
             div
               [ HA.class "edit-input" ]
@@ -4330,7 +4359,7 @@ viewTestingTool graph_view test model =
                   [ button
                       [ HA.class "tool-icon start-stepping"
                       , HA.title "Step through"
-                      , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier StartStepping)
+                      , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Step)
                       ]
                       [ text "⏯️" ]
                   , button
