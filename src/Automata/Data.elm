@@ -30,10 +30,8 @@ import VirtualDom
 --------------------------------------------------------}
 
 type ExecutionStage
-  = Ready
-  | NotReady
-  | ExecutionComplete
-  | StepThrough
+  = ExecutionComplete -- for a pause at the end, to work through what's happened.
+  | StepThrough -- we are actively going from one thing to another.
 
 type alias Flags =
   { width : Float
@@ -94,8 +92,9 @@ type PackageMsg
   = SelectPackage
   | DeletePackage
   | CreateNewTestInput
-  | LoadTestInput Uuid
+  | SelectTest Uuid
   | DeleteTestInput Uuid
+  | LoadTestInput
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg
@@ -155,7 +154,7 @@ type InteractionState
   | ChoosingDestinationFor NodeId PossibleDestination
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
-  | Executing ExecutionResult
+  | Executing ExecutionStage (List ExecutionResult) ExecutionProperties
   | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =
@@ -534,6 +533,10 @@ type alias TransitionTakenData =
 
 type alias ResolutionDict =
   AutoDict.Dict String Uuid AutomatonGraph
+
+type alias ExecutionProperties =
+  { expandedStep : Maybe Int
+  }
 
 type alias ExecutionData =
   { transitions : List TransitionTakenData

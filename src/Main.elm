@@ -119,9 +119,9 @@ nodeDrawingForPackage package isFrozen graphView_uuid interactions =
                     maybe_fromBool
                       (node.id == node_id)
                       DrawSelected
-                  Just (Executing result) ->
+                  Just (Executing _ (result::_) _) ->
                     maybe_fromBool
-                      ( GraphEditor.executionData result
+                      ( executionData result
                         |> Maybe.map (.currentNode >> (==) node.id)
                         |> Maybe.withDefault False
                       )
@@ -2194,7 +2194,7 @@ setProperties model =
                       whenSourceNodeSelected v.id
                     Just (EditingConnection _ _) ->
                       whenEditingConnection
-                    Just (Executing _) ->
+                    Just (Executing _ _ _) ->
                       whenExecuting
                     Just (SimulatingForces _ _ _) ->
                       whenSimulatingForces
@@ -2278,7 +2278,7 @@ setProperties model =
             whenSourceNodeSelected
           Just (_, EditingConnection _ _) ->
             whenEditingConnection
-          Just (_, Executing _) ->
+          Just (_, Executing _ _ _) ->
             whenExecuting
           Just (_, SimulatingForces _ _ _) ->
             whenSimulatingForces
@@ -2871,16 +2871,13 @@ update_package pkg_uuid msg model =
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
-    LoadTestInput test_uuid ->
+    SelectTest test_uuid ->
       AutoDict.get pkg_uuid model.packages
-      |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get test_uuid p.tests))
       |> Maybe.map
-        (\(pkg, test) ->
+        (\pkg ->
           let
             update_pkg p =
               { p | currentTestKey = test_uuid }
-            execStart =
-              DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
             updated_model =
               { model
                 | packages =
@@ -2895,19 +2892,7 @@ update_package pkg_uuid msg model =
                       model.graph_views
               }
           in
-            -- make it global, not view-specific.
-            -- Is this the correct decision?
-            case peekInteraction Nothing model.interactionsDict of
-              Just ( Executing _ ) ->
-                ( replaceInteraction Nothing (Executing execStart) updated_model
-                  |> setProperties
-                , Cmd.none
-                )
-              _ ->
-                ( pushInteractionForStack Nothing (Executing execStart) updated_model
-                  |> setProperties
-                , Cmd.none
-                )
+            ( updated_model, Cmd.none )
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
@@ -2936,6 +2921,33 @@ update_package pkg_uuid msg model =
             ( updated_model
             , Cmd.none -- persistPackage pkg_uuid
             )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
+
+    LoadTestInput ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
+      |> Maybe.map
+        (\(pkg, test) ->
+          let
+            execStart =
+              DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
+            props =
+              { expandedStep = Nothing }
+          in
+            -- make it global, not view-specific.
+            -- Is this the correct decision?
+            case peekInteraction Nothing model.interactionsDict of
+              Just ( Executing _ _ _ ) ->
+                ( replaceInteraction Nothing (Executing StepThrough [execStart] props) model
+                  |> setProperties
+                , Cmd.none
+                )
+              _ ->
+                ( pushInteractionForStack Nothing (Executing StepThrough [execStart] props) model
+                  |> setProperties
+                , Cmd.none
+                )
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
@@ -3274,18 +3286,6 @@ update msg model =
     --   )
 
 
-    -- SelectTest key ->
-    --   let
-    --     currentPackage = model.fdg_model.package
-    --     updatedPackage = { currentPackage | currentTestKey = key }
-    --   in
-    --     ( { model
-    --         | fdg_model = FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
-    --       }
-    --     , Cmd.none -- no need to persist this though
-    --     )
-
-
 isAccepted : ExecutionResult -> Maybe Bool
 isAccepted result =
   case result of
@@ -3304,104 +3304,6 @@ isPassingTest test =
 
 isFailingTest : Test -> Maybe Bool
 isFailingTest = isPassingTest >> Maybe.map not
-
--- viewIconBar : Model -> Html Msg
--- viewIconBar model =
---   let
---     (pass, fail, error) =
---       AutoDict.toList model.fdg_model.package.tests
---       |> List.foldl
---         (\(_, {expectation, result}) (p, f, e) ->
---           case isAccepted result of
---             Just True ->
---               if expectation == ExpectAccepted then
---                 (p + 1, f, e)
---               else
---                 (p, f + 1, e)
---             Just False ->
---               if expectation == ExpectRejected then
---                 (p + 1, f, e)
---               else
---                 (p, f + 1, e)
---             Nothing -> (p, f, e + 1)
---         )
---         (0, 0, 0)
---     (testBackgroundColor, number, testTitle) =
---       case (pass, fail, error) of
---         (0, 0, 0) ->
---           ( Css.rgb 0xf8 0xf8 0xf2 -- --dracula-foreground
---           , "…"
---           , "No tests exist"
---           )
---         (_, 0, 0) -> -- no failures, no errors, and only passes.
---           ( Css.rgb 0x8c 0xf1 0x8c -- --dracula-green
---           , "💯"
---           , "All tests passed!"
---           )
---         (0, _, 0) -> -- no passes, no errors, only failures.
---           ( Css.rgb 0xff 0x55 0x55 -- --dracula-red
---           , "😵‍💫"
---           , "All tests failed!"
---           )
---         (_, _, 0) -> -- some passes, some failures, no errors
---           ( Css.rgb 0xf1 0x8c 0x8c -- --dracula-pink
---           , String.fromInt fail
---           , if fail == 1 then
---               "1 test failed"
---             else
---               String.fromInt fail ++ " tests failed"
---           )
---         _ -> -- internal error exists!
---           ( Css.rgb 0xf1 0xfa 0x8c -- --dracula-yellow
---           , "❓"
---           , "Some tests did not complete due to an internal error! This indicates a problem with the computation system. Please report it to the developer."
---           )
---     testsExtra =
---       [ div
---           [ HA.class "test-panel__number"
---           , HA.css
---               [ Css.backgroundColor <| testBackgroundColor
---               , Css.color <| Css.rgb 0x28 0x2a 0x36 -- --dracula-background
---               , Css.borderRadius (Css.pct 50)
---               -- , Css.borderColor <| Css.rgb 0x44 0x47 0x5a -- --dracula-current-line
---               -- , Css.borderWidth (Css.px 1)
---               -- , Css.borderStyle Css.solid
---               , Css.position Css.absolute
---               , Css.left (Css.pct 50)
---               , Css.top (Css.pct 50)
---               -- , Css.fontSize (Css.pct 60)
---               , Css.padding (Css.px 2)
---               -- , Css.opacity (Css.num 0.8)
---               , Css.userSelect Css.none
---               , Css.width (Css.em 1.2)
---               , Css.height (Css.em 1.2)
---               , Css.lineHeight (Css.em 1.2)
---               , Css.textAlign Css.center
---               , Css.fontWeight Css.bold
---               -- , let
---               --     o = 0.5
---               --     blur = 1
---               --   in
---               --     Css.textShadowMany
---               --     [ { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px o, offsetY = Css.px o, color = Just <| testBackgroundColor }
---               --     , { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px -o, offsetY = Css.px -o, color = Just <| testBackgroundColor }
---               --     , { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px -o, offsetY = Css.px o, color = Just <| testBackgroundColor }
---               --     , { defaultTextShadow | blurRadius = Just <| Css.px blur, offsetX = Css.px o, offsetY = Css.px -o, color = Just <| testBackgroundColor }
---               --     ]
---               ]
---           , HA.title testTitle
---           ]
---           [ text number ]
---       ]
---   in
---     div 
---       [ HA.class "icon-bar" ]
---       [ viewIcon ComputationsIcon "📁" [] model
---       , viewIcon TestsIcon "🧪" testsExtra model
---       , viewIcon SearchIcon "🔍" [] model
---       , viewIcon GitIcon "🌿" [] model
---       , viewIcon ExtensionsIcon "🧩" [] model
---       ]
 
 
 
@@ -4099,7 +4001,7 @@ viewTestsSidebar graph_view {properties} =
               , ("error", testStatus == Nothing)
               ]
           , properties.canLoadTestInput
-            |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| LoadTestInput key))
+            |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| SelectTest key))
           ]
           [ span
               [ HA.classList
@@ -4296,6 +4198,117 @@ viewSplitter zIdx movement model areaOpen =
           ]
       ]
 
+executionData : ExecutionResult -> Maybe ExecutionData
+executionData r =
+  let
+    getData s =
+      case s of
+        Accepted d -> d
+        Rejected d -> d
+        RequestedNodeDoesNotExist d -> d
+        NoPossibleTransition d -> d
+  in
+  case r of
+    InternalError -> Nothing
+    EndOfInput s -> Just <| getData s
+    EndOfComputation s -> Just <| getData s
+    CanContinue s -> Just <| getData s
+
+viewTestingTool : GraphView -> Test -> Model -> Html Msg
+viewTestingTool graph_view test model =
+  let
+    viewInputProcessing : AcceptVia -> List String -> Html msg
+    viewInputProcessing via classes =
+      span
+        [ HA.classList <| List.map (\v -> (v, True)) classes ]
+        [ text <| acceptConditionToString via ]
+    testExpectationElement =
+      div
+        [ HA.css
+            [ Css.whiteSpace Css.preWrap
+            , Css.padding4 (Css.px 0) (Css.px 0) (Css.px 15) (Css.px 15)
+            , Css.userSelect Css.none
+            ]
+        ]
+        [ span
+            []
+            [ text "When this input is received, the computation should " ]
+        -- , span
+        --     [ HA.class "button"
+        --     , HA.css
+        --         [ Css.backgroundColor <| Css.rgb 0x62 0x72 0xa4 -- --dracula-comment
+        --         ]
+        --     , onClick <| UpdateTestPanelContent testInput <|
+        --         if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
+        --     ]
+        --     [ text "⇄"
+        --     ]
+        -- , text " "
+        , span
+            [ HA.classList
+                [ ("test_panel__accept-text", test.expectation == ExpectAccepted)
+                , ("test_panel__reject-text", test.expectation == ExpectRejected)
+                ]
+            , HA.css
+                [ Css.fontWeight Css.bold
+                , Css.textDecorationLine Css.underline
+                , Css.textDecorationStyle Css.dashed
+                , Css.cursor Css.pointer
+                , Css.color <|
+                    if test.expectation == ExpectAccepted then
+                      Css.rgb 0x50 0xfa 0x7b -- --dracula-green
+                    else
+                      Css.rgb 0xff 0x79 0xc6 -- --dracula-pink
+                ]
+            -- , onClick <| UpdateTestPanelContent testInput <|
+            --     if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
+            ]
+            [ text
+                ( case test.expectation of
+                    ExpectAccepted -> "accept"
+                    ExpectRejected -> "reject"
+                )
+            ]
+        , span
+            [ HA.css
+                [ Css.whiteSpace Css.preWrap
+                ]
+            ]
+            [ text " it." ]
+        ]
+  in
+    div
+      [ HA.class "tool-content testing" ]
+      [ case peekInteraction Nothing model.interactionsDict of
+          Just (Executing StepThrough ((CanContinue _::_) as results) props) ->
+            div
+              [ HA.class "step-through" ]
+              [ div
+                  [ HA.class "tools-strip" ]
+                  [ button
+                      [ HA.class "tool-icon continue-stepping"
+                      , HA.title "Continue"
+                      ]
+                      [ text "⏯️" ]
+                  , button
+                      [ HA.class "tool-icon stop-stepping"
+                      , HA.title "Stop / Reset"
+                      ]
+                      [ text "⏹️" ]
+                  ]
+              , div
+                  [ HA.class "progress-area" ]
+                  [ div
+                      []
+                      [ text "°not implemented°" ]
+                  ]
+              ]
+          _ ->
+            div 
+              []
+              [ text "not implemented" ]
+      ]
+
 viewToolsArea : Model -> Html Msg
 viewToolsArea model =
   div
@@ -4340,9 +4353,16 @@ viewToolsArea model =
                 [ HA.class "tool-content" ]
                 [ text "Hello world A" ]
             TestingToolIcon ->
-              div
-                [ HA.class "tool-content" ]
-                [ text "Hello world B" ]
+              AutoDict.get model.mainGraphView model.graph_views
+              |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
+              |> Maybe.map (\(gv, test) ->
+                viewTestingTool gv test model
+              )
+              |> Maybe.withDefault
+                ( div
+                    [ HA.class "tool-content no-tests" ]
+                    [ text "There are no tests for this computation." ]
+                )
         ]
     ]
 

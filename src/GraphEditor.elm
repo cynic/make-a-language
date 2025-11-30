@@ -463,22 +463,6 @@ path_between sourceXY_orig destXY_orig cardinality =
     , target_connection_point = shorten_target
     }
 
-executionData : ExecutionResult -> Maybe ExecutionData
-executionData r =
-  let
-    getData s =
-      case s of
-        Accepted d -> d
-        Rejected d -> d
-        RequestedNodeDoesNotExist d -> d
-        NoPossibleTransition d -> d
-  in
-  case r of
-    InternalError -> Nothing
-    EndOfInput s -> Just <| getData s
-    EndOfComputation s -> Just <| getData s
-    CanContinue s -> Just <| getData s
-
 -- executionResultAutomatonGraph : ExecutionResult -> Maybe AutomatonGraph
 -- executionResultAutomatonGraph executionResult =
 --   executionData executionResult
