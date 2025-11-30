@@ -29,10 +29,6 @@ import VirtualDom
   Main.elm
 --------------------------------------------------------}
 
-type ExecutionStage
-  = ExecutionComplete -- for a pause at the end, to work through what's happened.
-  | StepThrough -- we are actively going from one thing to another.
-
 type alias Flags =
   { width : Float
   , height : Float
@@ -94,7 +90,10 @@ type PackageMsg
   | CreateNewTestInput
   | SelectTest Uuid
   | DeleteTestInput Uuid
-  | LoadTestInput
+  -- | LoadTestInput
+  | UpdateTestInput String
+  | StartStepping
+  | Run
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg
@@ -154,7 +153,7 @@ type InteractionState
   | ChoosingDestinationFor NodeId PossibleDestination
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
-  | Executing ExecutionStage (List ExecutionData) ExecutionProperties
+  | Executing (List ExecutionData) ExecutionProperties
   | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =

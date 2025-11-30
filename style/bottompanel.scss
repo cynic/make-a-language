@@ -78,10 +78,49 @@
 // Sidebar content areas
 .tool-content {
   flex: 1;
-  padding: 10px;
+  // padding: 10px;
+  position: relative;
   
-  &.explorer-view {
-    // File tree specific styles
+  &.testing {
+    .edit-input {
+      position: relative;
+      height: 100%;      
+      display: flex;
+
+      .input-textarea {
+        flex-grow: 1;
+        font-size: 1.2rem;
+        padding: 8px;
+        background-color: var(--background);
+        border: none;
+        color: var(--foreground);
+        resize: none;
+        transition: background-color 0.35s ease;
+        scrollbar-width: thin;
+        overflow: auto;
+
+        &:focus {
+          border: none;
+          outline: none;
+        }
+      }
+    }
+
+    .tools-strip {
+      background-color: var(--background-light);
+      width: 40px;
+      border-right: solid 1px var(--comment);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 100%;
+      
+      .tool-icon {
+        font-size: 1.5rem;
+      }
+    }
+
   }
   
   &.search-view {

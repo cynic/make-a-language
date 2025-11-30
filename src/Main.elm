@@ -119,7 +119,7 @@ nodeDrawingForPackage package isFrozen graphView_uuid interactions =
                     maybe_fromBool
                       (node.id == node_id)
                       DrawSelected
-                  Just (Executing _ (result::_) _) ->
+                  Just (Executing (result::_) _) ->
                     maybe_fromBool
                       ( result.currentNode == node.id )
                       DrawCurrentExecutionNode
@@ -2194,7 +2194,7 @@ setProperties model =
                       whenSourceNodeSelected v.id
                     Just (EditingConnection _ _) ->
                       whenEditingConnection
-                    Just (Executing _ _ _) ->
+                    Just (Executing _ _) ->
                       whenExecuting
                     Just (SimulatingForces _ _ _) ->
                       whenSimulatingForces
@@ -2278,7 +2278,7 @@ setProperties model =
             whenSourceNodeSelected
           Just (_, EditingConnection _ _) ->
             whenEditingConnection
-          Just (_, Executing _ _ _) ->
+          Just (_, Executing _ _) ->
             whenExecuting
           Just (_, SimulatingForces _ _ _) ->
             whenSimulatingForces
@@ -2914,32 +2914,94 @@ update_package pkg_uuid msg model =
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
-    LoadTestInput ->
+    StartStepping ->
       AutoDict.get pkg_uuid model.packages
       |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
       |> Maybe.map
         (\(pkg, test) ->
           let
-            execStart =
+            execution =
               DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
+              |> DFA.step
             props =
               { expandedStep = Nothing }
           in
             -- make it global, not view-specific.
             -- Is this the correct decision?
             case peekInteraction Nothing model.interactionsDict of
-              Just ( Executing _ _ _ ) ->
-                ( replaceInteraction Nothing (Executing StepThrough [execStart] props) model
+              Just ( Executing _ _ ) ->
+                ( replaceInteraction Nothing (Executing [execution] props) model
                   |> setProperties
                 , Cmd.none
                 )
               _ ->
-                ( pushInteractionForStack Nothing (Executing StepThrough [execStart] props) model
+                ( pushInteractionForStack Nothing (Executing [execution] props) model
                   |> setProperties
                 , Cmd.none
                 )
         )
       |> Maybe.withDefault ( model, Cmd.none )
+
+    Run ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
+      |> Maybe.map
+        (\(pkg, test) ->
+          let
+            execution =
+              DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
+              |> DFA.run
+            props =
+              { expandedStep = Nothing }
+          in
+            -- make it global, not view-specific.
+            -- Is this the correct decision?
+            case peekInteraction Nothing model.interactionsDict of
+              Just ( Executing _ _ ) ->
+                ( replaceInteraction Nothing (Executing execution props) model
+                  |> setProperties
+                , Cmd.none
+                )
+              _ ->
+                ( pushInteractionForStack Nothing (Executing execution props) model
+                  |> setProperties
+                , Cmd.none
+                )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
+
+    UpdateTestInput s ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.map
+        (\pkg ->
+          let
+            update_pkg p =
+              -- it's okay to have a test-uuid with no corresponding test.
+              -- When we write to it, the data will appear.
+              { p | tests =
+                AutoDict.update pkg.currentTestKey
+                  (Maybe.map (\test -> { test | input = s }))
+                  p.tests
+              }
+            updated_model =
+              { model
+                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
+                , graph_views =
+                    viewsWithPackage pkg_uuid model
+                    |> List.foldl
+                      (\gv ->
+                        AutoDict.insert gv.id
+                          { gv | package = update_pkg gv.package }
+                      )
+                      model.graph_views
+              }
+          in
+            ( updated_model
+            , Cmd.none -- persistPackage pkg_uuid
+            )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
+
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -4201,17 +4263,6 @@ viewTestingTool graph_view test model =
         [ span
             []
             [ text "When this input is received, the computation should " ]
-        -- , span
-        --     [ HA.class "button"
-        --     , HA.css
-        --         [ Css.backgroundColor <| Css.rgb 0x62 0x72 0xa4 -- --dracula-comment
-        --         ]
-        --     , onClick <| UpdateTestPanelContent testInput <|
-        --         if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
-        --     ]
-        --     [ text "⇄"
-        --     ]
-        -- , text " "
         , span
             [ HA.classList
                 [ ("test_panel__accept-text", test.expectation == ExpectAccepted)
@@ -4248,7 +4299,7 @@ viewTestingTool graph_view test model =
     div
       [ HA.class "tool-content testing" ]
       [ case peekInteraction Nothing model.interactionsDict of
-          Just (Executing StepThrough ((h::t) as results) props) ->
+          Just (Executing ((h::t) as results) props) ->
             div
               [ HA.class "step-through" ]
               [ div
@@ -4272,9 +4323,31 @@ viewTestingTool graph_view test model =
                   ]
               ]
           _ ->
-            div 
-              []
-              [ text "not implemented" ]
+            div
+              [ HA.class "edit-input" ]
+              [ div
+                  [ HA.class "tools-strip" ]
+                  [ button
+                      [ HA.class "tool-icon start-stepping"
+                      , HA.title "Step through"
+                      , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier StartStepping)
+                      ]
+                      [ text "⏯️" ]
+                  , button
+                      [ HA.class "tool-icon run"
+                      , HA.title "Run"
+                      , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Run)
+                      ]
+                      [ text "▶️" ]
+                  ]
+              , textarea
+                  [ HA.class "input-textarea"
+                  , HA.value test.input
+                  , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.userGraph.graphIdentifier)
+                  , HA.placeholder "Enter your test input here"
+                  ]
+                  []
+              ]
       ]
 
 viewToolsArea : Model -> Html Msg
