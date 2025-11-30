@@ -87,21 +87,47 @@
       height: 100%;      
       display: flex;
 
-      .input-textarea {
+      .edit-panel {
         flex-grow: 1;
-        font-size: 1.2rem;
-        padding: 8px;
-        background-color: var(--background);
-        border: none;
-        color: var(--foreground);
-        resize: none;
-        transition: background-color 0.35s ease;
-        scrollbar-width: thin;
-        overflow: auto;
+        display: flex;
+        flex-direction: column;
 
-        &:focus {
+        .acceptance-condition {
+          padding: 8px;
+          user-select: none;
+          white-space: pre-wrap;
+
+          .expect-accept, .expect-reject {
+            font-weight: bold;
+            text-decoration: underline dashed;
+            cursor: pointer;
+          }
+
+          .expect-accept {
+            color: var(--green);
+          }
+
+          .expect-reject {
+            color: var(--red);
+          }
+        }
+  
+        .input-textarea {
+          flex-grow: 1;
+          font-size: 1.2rem;
+          padding: 8px;
+          background-color: var(--background);
           border: none;
-          outline: none;
+          color: var(--foreground);
+          resize: none;
+          transition: background-color 0.35s ease;
+          scrollbar-width: thin;
+          overflow: auto;
+
+          &:focus {
+            border: none;
+            outline: none;
+          }
         }
       }
     }

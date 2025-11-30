@@ -3003,6 +3003,47 @@ update_package pkg_uuid msg model =
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
+    FlipAcceptanceCondition ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.map
+        (\pkg ->
+          let
+            update_pkg p =
+              -- it's okay to have a test-uuid with no corresponding test.
+              -- When we write to it, the data will appear.
+              { p | tests =
+                AutoDict.update pkg.currentTestKey
+                  (Maybe.map
+                    (\test ->
+                      { test
+                        | expectation =
+                            case test.expectation of
+                              ExpectAccepted -> ExpectRejected
+                              ExpectRejected -> ExpectAccepted
+                      }
+                    )
+                  )
+                  p.tests
+              }
+            updated_model =
+              { model
+                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
+                , graph_views =
+                    viewsWithPackage pkg_uuid model
+                    |> List.foldl
+                      (\gv ->
+                        AutoDict.insert gv.id
+                          { gv | package = update_pkg gv.package }
+                      )
+                      model.graph_views
+              }
+          in
+            ( updated_model
+            , Cmd.none -- persistPackage pkg_uuid
+            )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
+
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
@@ -3478,107 +3519,6 @@ isFailingTest = isPassingTest >> Maybe.map not
 --   span
 --     [ HA.classList <| List.map (\v -> (v, True)) classes ]
 --     [ text <| acceptConditionToString via ]
-
--- viewAddTestPanelContent : Model -> Html Msg
--- viewAddTestPanelContent model =
---   let
---     test =
---       AutoDict.get model.fdg_model.package.currentTestKey model.fdg_model.package.tests
---     testInput =
---       Maybe.map .input test 
---       |> Maybe.withDefault ""
---     testExpected =
---       Maybe.map .expectation test
---       |> Maybe.withDefault ExpectAccepted
---     testExpectationElement =
---       case testInput of
---         "" ->
---           text ""
---         _ ->
---           div
---             [ HA.css
---                 [ Css.whiteSpace Css.preWrap
---                 , Css.padding4 (Css.px 0) (Css.px 0) (Css.px 15) (Css.px 15)
---                 , Css.userSelect Css.none
---                 ]
---             ]
---             [ span
---                 []
---                 [ text "When this input is received, the computation should " ]
---             -- , span
---             --     [ HA.class "button"
---             --     , HA.css
---             --         [ Css.backgroundColor <| Css.rgb 0x62 0x72 0xa4 -- --dracula-comment
---             --         ]
---             --     , onClick <| UpdateTestPanelContent testInput <|
---             --         if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
---             --     ]
---             --     [ text "⇄"
---             --     ]
---             -- , text " "
---             , span
---                 [ HA.classList
---                     [ ("test_panel__accept-text", testExpected == ExpectAccepted)
---                     , ("test_panel__reject-text", testExpected == ExpectRejected)
---                     ]
---                 , HA.css
---                     [ Css.fontWeight Css.bold
---                     , Css.textDecorationLine Css.underline
---                     , Css.textDecorationStyle Css.dashed
---                     , Css.cursor Css.pointer
---                     , Css.color <|
---                         if testExpected == ExpectAccepted then
---                           Css.rgb 0x50 0xfa 0x7b -- --dracula-green
---                         else
---                           Css.rgb 0xff 0x79 0xc6 -- --dracula-pink
---                     ]
---                 , onClick <| UpdateTestPanelContent testInput <|
---                     if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
---                 ]
---                 [ text
---                     ( case testExpected of
---                         ExpectAccepted -> "accept"
---                         ExpectRejected -> "reject"
---                     )
---                 ]
---             , span
---                 [ HA.css
---                     [ Css.whiteSpace Css.preWrap
---                     ]
---                 ]
---                 [ text " it." ]
---             ]
---     testContentArea =
---       textarea 
---         [ HA.class "right-bottom-panel__textarea"
---         , HA.value testInput
---         , onInput (\v -> UpdateTestPanelContent v testExpected)
---         , HA.placeholder "Enter your test input here"
---         , HA.disabled <| Maybe.Extra.isJust model.fdg_model.interactionsDict
---         ]
---         []
---   in
---     case model.executionStage of
---       Ready ->
---         div
---           [ HA.class "bottom-panel__content"]
---           [ testExpectationElement
---           , testContentArea
---           ]
-
---       NotReady ->
---         div 
---           [ HA.class "notready-output" ]
---           [ p [ HA.class "output-line" ] [ text "All changes must be committed or undone before you can execute." ] ]
-      
---       ExecutionComplete ->
---         div 
---           [ HA.class "execution-output" ]
---           [ executionText model ]
---       StepThrough ->
---         div 
---           [ HA.class "debug-output" ]
---           [ executionText model ]
 
 -- viewEditDescriptionPanelContent : Model -> Html Msg
 -- viewEditDescriptionPanelContent model =
@@ -4305,6 +4245,7 @@ viewTestingTool graph_view test model =
               [ HA.class "step-through" ]
               ( case h.finalResult of
                   Just result ->
+                    -- final; show it.
                     [ div
                         [ HA.class "tools-strip" ]
                         [ button
@@ -4322,6 +4263,7 @@ viewTestingTool graph_view test model =
                         ]
                     ]
                   Nothing ->
+                    -- non-final; we're continuing.
                     [ div
                         [ HA.class "tools-strip" ]
                         [ button
@@ -4369,13 +4311,34 @@ viewTestingTool graph_view test model =
                       ]
                       [ text "▶️" ]
                   ]
-              , textarea
-                  [ HA.class "input-textarea"
-                  , HA.value test.input
-                  , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.userGraph.graphIdentifier)
-                  , HA.placeholder "Enter your test input here"
+              , div
+                  [ HA.class "edit-panel" ]
+                  [ div
+                      [ HA.class "acceptance-condition" ]
+                      [ text "When this input is received, the computation should "
+                      , span
+                          [ HA.classList
+                              [ ("expect-accept", test.expectation == ExpectAccepted)
+                              , ("expect-reject", test.expectation == ExpectRejected)
+                              ]
+                          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier FlipAcceptanceCondition)
+                          ]
+                          [ text
+                              ( case test.expectation of
+                                  ExpectAccepted -> "accept"
+                                  ExpectRejected -> "reject"
+                              )
+                          ]
+                      , text " it."
+                      ]
+                  , textarea
+                      [ HA.class "input-textarea"
+                      , HA.value test.input
+                      , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.userGraph.graphIdentifier)
+                      , HA.placeholder "Enter your test input here"
+                      ]
+                      []
                   ]
-                  []
               ]
       ]
 

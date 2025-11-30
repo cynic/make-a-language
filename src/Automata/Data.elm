@@ -90,11 +90,11 @@ type PackageMsg
   | CreateNewTestInput
   | SelectTest Uuid
   | DeleteTestInput Uuid
-  -- | LoadTestInput
   | UpdateTestInput String
   | Step
   | Run
   | ResetComputation
+  | FlipAcceptanceCondition
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg
@@ -526,13 +526,13 @@ type alias ExtDFA =
   , unusedId : NodeId
   }
 
+type alias ResolutionDict =
+  AutoDict.Dict String Uuid AutomatonGraph
+
 type alias TransitionTakenData =
   { dest : NodeId
   , matching : Transition
   }
-
-type alias ResolutionDict =
-  AutoDict.Dict String Uuid AutomatonGraph
 
 type alias ExecutionProperties =
   { expandedStep : Maybe Int
