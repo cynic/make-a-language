@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <title>Make You A Language</title>
   <link rel="stylesheet" href="style.scss">
   <style>
@@ -168,14 +169,13 @@
       // So I'm reasonably happy with how the period is matching up here.
 
     function doInitialLoad(db) {
-      getAll_request = // yeccch, why is JavaScript so UGLY?! blegh
-        db.transaction(["computations"], "readonly")
-        .objectStore("computations")
-        .getAll()
-        .onsuccess = (e) => {
-          console.log(e.target.result);
-          setTimeout(startElm, 1, db, e.target.result);
-        };
+      db.transaction(["computations"], "readonly")
+      .objectStore("computations")
+      .getAll()
+      .onsuccess = (e) => {
+        console.log(e.target.result);
+        setTimeout(startElm, 1, db, e.target.result);
+      };
     }
 
     // right, let's create and initialize a database!

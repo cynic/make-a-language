@@ -9,6 +9,8 @@ import Automata.DFA as DFA
 import TypedSvg exposing (g)
 import AutoDict
 import Uuid exposing (Uuid)
+import List.Extra as List
+import Automata.Debugging exposing (debugLog_)
 
 encodeTest : Test -> E.Value
 encodeTest { input, expectation } =
@@ -27,6 +29,10 @@ decodeTest resolutionDict g =
       , result =
           DFA.load input resolutionDict g
           |> DFA.run
+          -- |> debugLog_ ("Results for '" ++ input ++ "'") (List.map .finalResult)
+          |> List.last
+          |> Maybe.andThen .finalResult
+          |> Maybe.withDefault (InternalError "Failed to run test")
       })
     (D.field "input" D.string)
     (D.field "expectation" <| D.map (\b -> if b then ExpectAccepted else ExpectRejected) D.bool)

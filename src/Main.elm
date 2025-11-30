@@ -121,10 +121,7 @@ nodeDrawingForPackage package isFrozen graphView_uuid interactions =
                       DrawSelected
                   Just (Executing _ (result::_) _) ->
                     maybe_fromBool
-                      ( executionData result
-                        |> Maybe.map (.currentNode >> (==) node.id)
-                        |> Maybe.withDefault False
-                      )
+                      ( result.currentNode == node.id )
                       DrawCurrentExecutionNode
                   Just (ChoosingDestinationFor _ (NewNode phantom _)) ->
                     maybe_fromBool
@@ -583,6 +580,9 @@ confirmChanges g resolutionDict graphView =
                   | result =
                       DFA.load entry.input resolutionDict finalGraph
                       |> DFA.run
+                      |> List.last
+                      |> Maybe.andThen .finalResult
+                      |> Maybe.withDefault (InternalError "no result received from test execution")
                 }
               )
               pkg.tests
@@ -2802,20 +2802,11 @@ deletePackage package model =
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
   let
-    new_test : GraphPackage -> Test
-    new_test pkg =
+    new_test : Test
+    new_test =
       { input = ""
       , expectation = ExpectAccepted
-      , result =
-          EndOfInput
-            ( Rejected
-                { transitions = []
-                , remainingData = []
-                , currentNode = pkg.userGraph.root
-                , computation = pkg.userGraph
-                , resolutionDict = toResolutionDict model.packages
-                }
-            ) 
+      , result = Rejected
       }
   in
   case msg of
@@ -2843,12 +2834,11 @@ update_package pkg_uuid msg model =
         (\pkg ->
           let
             (test_uuid, newSeed) = Random.step Uuid.generator model.randomSeed
-            the_test = new_test pkg
             update_pkg p =
               { p
                 | currentTestKey = test_uuid
                 , tests =
-                    AutoDict.insert test_uuid the_test p.tests
+                    AutoDict.insert test_uuid new_test p.tests
               }
             updated_model =
               { model
@@ -3285,22 +3275,13 @@ update msg model =
     --   , Cmd.none
     --   )
 
-
-isAccepted : ExecutionResult -> Maybe Bool
-isAccepted result =
-  case result of
-    InternalError -> Nothing
-    CanContinue _ -> Nothing
-    EndOfInput (Accepted _) -> Just True
-    _ -> Just False
-
 isPassingTest : Test -> Maybe Bool
 isPassingTest test =
-  isAccepted test.result
-  |> Maybe.map
-    (\v ->
-      (test.expectation == ExpectAccepted && v) || (test.expectation == Automata.Data.ExpectRejected && not v)
-    )
+  case test.result of
+    InternalError _ -> Nothing
+    Accepted -> Just <| test.expectation == ExpectAccepted
+    Rejected -> Just <| test.expectation == ExpectRejected
+    NoMatchingTransitions -> Just False
 
 isFailingTest : Test -> Maybe Bool
 isFailingTest = isPassingTest >> Maybe.map not
@@ -3877,8 +3858,8 @@ viewNavigatorsArea model =
                       (pass, fail, error) =
                         AutoDict.toList graph_view.package.tests
                         |> List.foldl
-                          (\(_, {expectation, result}) (p, f, e) ->
-                            case isAccepted result of
+                          (\(_, {expectation} as test) (p, f, e) ->
+                            case isPassingTest test of
                               Just True ->
                                 if expectation == ExpectAccepted then
                                   (p + 1, f, e)
@@ -4008,6 +3989,9 @@ viewTestsSidebar graph_view {properties} =
                   [ ("test-input-container", True)
                   , ("disabled", not properties.canLoadTestInput)
                   ]
+              , case test.result of
+                  InternalError s -> HA.title s
+                  _ -> HA.hidden False -- … pretty irrelevant. Which is what I want.
               ]
               [ text test.input ]
           , if properties.canDeleteTestInput && not (key == graph_view.package.currentTestKey) then
@@ -4198,22 +4182,6 @@ viewSplitter zIdx movement model areaOpen =
           ]
       ]
 
-executionData : ExecutionResult -> Maybe ExecutionData
-executionData r =
-  let
-    getData s =
-      case s of
-        Accepted d -> d
-        Rejected d -> d
-        RequestedNodeDoesNotExist d -> d
-        NoPossibleTransition d -> d
-  in
-  case r of
-    InternalError -> Nothing
-    EndOfInput s -> Just <| getData s
-    EndOfComputation s -> Just <| getData s
-    CanContinue s -> Just <| getData s
-
 viewTestingTool : GraphView -> Test -> Model -> Html Msg
 viewTestingTool graph_view test model =
   let
@@ -4280,7 +4248,7 @@ viewTestingTool graph_view test model =
     div
       [ HA.class "tool-content testing" ]
       [ case peekInteraction Nothing model.interactionsDict of
-          Just (Executing StepThrough ((CanContinue _::_) as results) props) ->
+          Just (Executing StepThrough ((h::t) as results) props) ->
             div
               [ HA.class "step-through" ]
               [ div

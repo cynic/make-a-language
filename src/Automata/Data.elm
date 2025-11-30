@@ -154,7 +154,7 @@ type InteractionState
   | ChoosingDestinationFor NodeId PossibleDestination
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
-  | Executing ExecutionStage (List ExecutionResult) ExecutionProperties
+  | Executing ExecutionStage (List ExecutionData) ExecutionProperties
   | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =
@@ -538,25 +538,28 @@ type alias ExecutionProperties =
   { expandedStep : Maybe Int
   }
 
+  -- there can be multiple possible outcomes.
+  -- 1. End of computation, with more input remaining.
+  -- 2. End of input, with either
+  --  2.1. Acceptance, or
+  --  2.2. Rejection.
+  --
+  -- I identify these explicitly.
+type ExecutionResult
+  = Accepted
+  | Rejected
+  | NoMatchingTransitions
+  | InternalError String
+
 type alias ExecutionData =
   { transitions : List TransitionTakenData
   , remainingData : List Char
   , currentNode : NodeId
   , computation : AutomatonGraph
   , resolutionDict : ResolutionDict
+  -- until we reach some form of resolution, this is `Nothing`.
+  , finalResult : Maybe ExecutionResult
   }
-
-type ExecutionState
-  = Accepted ExecutionData
-  | Rejected ExecutionData
-  | RequestedNodeDoesNotExist ExecutionData -- this is an internal error
-  | NoPossibleTransition ExecutionData
-
-type ExecutionResult
-  = EndOfInput ExecutionState
-  | EndOfComputation ExecutionState -- no transition possible, though more input exists
-  | CanContinue ExecutionState
-  | InternalError
 
 type TestExpectation
   = ExpectAccepted

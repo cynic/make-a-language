@@ -431,164 +431,146 @@ expand e resolutionDict src =
       e
 
 -- if I can't make another transition, return `Nothing`
-oneTransition : ExecutionData -> Maybe ExecutionState
+oneTransition : ExecutionData -> ExecutionData
 oneTransition data =
-  case data.remainingData of
-    [] ->
-      Nothing -- we're done! Can't go any further! ExecutionState would stay the same…
-    h::remainingData ->
-      let
-        expanded =
-          expand data.computation data.resolutionDict data.currentNode
-        -- the node-ids may well have changed.  So, find out where we are.
-        canTakeTransition t autoset =
-          AutoSet.member t autoset
-        takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection)
-        takeTransition t fan =
-          IntDict.toList fan
-          |> List.filter (\(_, conn) -> canTakeTransition t conn)
-          |> List.head -- no NFAs allowed
-          |> Maybe.andThen (\(id, _) -> Graph.get id expanded.graph)
-        followPath : Transition -> (List TransitionTakenData, Maybe (NodeContext Entity Connection)) -> (List TransitionTakenData, Maybe (NodeContext Entity Connection))
-        followPath t (acc, lastContext) =
-          case lastContext of
-            Nothing ->
-              (acc, Nothing)
-            Just ctx ->
-              -- debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
-              ( TransitionTakenData ctx.node.id t :: acc
-              , takeTransition t ctx.outgoing
-              )
-        (transitions_taken, currentNode) =
-          List.map (.matching) data.transitions
-          |> List.foldl
-              followPath
-              ([], Graph.get expanded.root expanded.graph)
-          |> Tuple.mapFirst List.reverse
-        thisMove : Maybe (Transition, NodeContext Entity Connection)
-        thisMove =
-          Maybe.andThen
-            (\ctx ->
-                takeTransition
-                  (Transition True (ViaCharacter h))
-                  ( ctx.outgoing
-                    -- |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan
+  case data.finalResult of
+    Just _ ->
+      data -- we have a final resolution. So stick to it.
+    Nothing ->
+      case data.remainingData of
+        [] ->
+          -- we're done! Can't go any further! ExecutionState would stay the same…
+          { data
+            | finalResult =
+                Just (InternalError "I'm done; I shouldn't be being called at all. Good day to you, and good-bye!")
+          }
+        h::remainingData ->
+          let
+            expanded =
+              expand data.computation data.resolutionDict data.currentNode
+            -- the node-ids may well have changed.  So, find out where we are.
+            canTakeTransition t autoset =
+              AutoSet.member t autoset
+            takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection)
+            takeTransition t fan =
+              IntDict.toList fan
+              |> List.filter (\(_, conn) -> canTakeTransition t conn)
+              |> List.head -- no NFAs allowed
+              |> Maybe.andThen (\(id, _) -> Graph.get id expanded.graph)
+            followPath : Transition -> (List TransitionTakenData, Maybe (NodeContext Entity Connection)) -> (List TransitionTakenData, Maybe (NodeContext Entity Connection))
+            followPath t (acc, lastContext) =
+              case lastContext of
+                Nothing ->
+                  (acc, Nothing)
+                Just ctx ->
+                  -- debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
+                  ( TransitionTakenData ctx.node.id t :: acc
+                  , takeTransition t ctx.outgoing
                   )
-                |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
-                |> Maybe.Extra.orElseLazy
-                    (\() ->
-                      takeTransition (Transition False (ViaCharacter h)) ctx.outgoing
-                      |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
-                    )
-                -- |> debugLog_ ("[oneTransition] this-move result") (Maybe.map <| \(t, _) -> transitionToString t)
-            )
-            currentNode
-      in
-        case thisMove of
-          Nothing ->
-            -- why??
-            case currentNode of
+            (transitions_taken, currentNode) =
+              List.map (.matching) data.transitions
+              |> List.foldl
+                  followPath
+                  ([], Graph.get expanded.root expanded.graph)
+              |> Tuple.mapFirst List.reverse
+            thisMove : Maybe (Transition, NodeContext Entity Connection)
+            thisMove =
+              Maybe.andThen
+                (\ctx ->
+                    takeTransition
+                      (Transition True (ViaCharacter h))
+                      ( ctx.outgoing
+                        -- |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan
+                      )
+                    |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
+                    |> Maybe.Extra.orElseLazy
+                        (\() ->
+                          takeTransition (Transition False (ViaCharacter h)) ctx.outgoing
+                          |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
+                        )
+                    -- |> debugLog_ ("[oneTransition] this-move result") (Maybe.map <| \(t, _) -> transitionToString t)
+                )
+                currentNode
+          in
+            case thisMove of
               Nothing ->
-                -- ah; I failed somewhere on the path TO here.
-                -- This should be impossible; it seems to indicate that a path
-                -- which previously existed has now gone missing.
-                -- This is a bug.
-                -- And I will die on this hill…
-                Just <| RequestedNodeDoesNotExist data
-                -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
-              Just x ->
-                -- println ("[oneTransition] Searched for '" ++ String.fromChar h ++ "' but no possible transition from #" ++ String.fromInt x.node.id)
-                -- so I got up to this point, and NOW there's a problem.
-                Just <| NoPossibleTransition
-                  { data
-                    | transitions = transitions_taken
-                    , currentNode = x.node.id -- couldn't get past this one.
+                -- I can't proceed any further.  But: why??
+                case currentNode of
+                  Nothing ->
+                    -- ah; I failed somewhere on the path TO here.
+                    -- This should be impossible; it seems to indicate that a path
+                    -- which previously existed has now gone missing.
+                    -- This is a bug.
+                    -- And I will die on this hill…
+                    { data
+                      | finalResult =
+                          Just <|
+                            InternalError "I failed somewhere on the path.  This should be impossible; it seems to indicate that a path which previously existed has now gone missing. This extremely likely to be a bug or, even worse, some unexpected effect that I have simply never considered before.  Please investigate what's going on thoroughly!"
+                    }
+                    -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
+                  Just x ->
+                    -- println ("[oneTransition] Searched for '" ++ String.fromChar h ++ "' but no possible transition from #" ++ String.fromInt x.node.id)
+                    -- so I got up to this point, and NOW there's a problem.
+                    { data
+                      | transitions = transitions_taken
+                      , currentNode = x.node.id -- couldn't get past this one.
+                      , computation = expanded
+                      , finalResult =
+                          Just NoMatchingTransitions
+                    }
+              Just (t, newNode) ->
+                -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
+                { data
+                  | transitions =
+                      transitions_taken ++ [TransitionTakenData newNode.node.id t]
+                      -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
+                    , remainingData = remainingData
+                    , currentNode = newNode.node.id
                     , computation = expanded
-                  }
-          Just (t, newNode) ->
-            -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
-            { data
-              | transitions =
-                  transitions_taken ++
-                  [TransitionTakenData newNode.node.id t]
-                  -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
-                , remainingData = remainingData
-                , currentNode = newNode.node.id
-                , computation = expanded
-            }
-            |> (\d -> if t.isFinal then Accepted d else Rejected d)
-            |> Just
+                    , finalResult =
+                        case remainingData of
+                          [] ->
+                            if t.isFinal then Just Accepted
+                            else Just Rejected
+                          _ ->
+                            -- we can plausibly continue on, so there is no
+                            -- final determination at this point in the time.
+                            Nothing
+                }
 
-step : ExecutionResult -> ExecutionResult
-step executionResult =
-  let
-    switchUp : ExecutionState -> ExecutionResult
-    switchUp state =
-      case state of
-        Accepted ({ remainingData } as d) ->
-          case remainingData of
-            [] -> EndOfInput (Accepted d)
-            _ -> CanContinue (Accepted d)
-        Rejected ({ remainingData } as d) ->
-          case remainingData of
-            [] -> EndOfInput (Rejected d)
-            _ -> CanContinue (Rejected d)
-        RequestedNodeDoesNotExist d ->
-          debugAutomatonGraph ("INTERNAL ERROR! NODE DOES NOT EXIST, path=" ++ Debug.toString d.transitions) d.computation |> \_ ->
-          InternalError
-        NoPossibleTransition d ->
-          -- I only arrive here when there IS remaining data,
-          -- but there IS NOT a matching transition for it.
-          case d.transitions of
-            [] ->
-              -- Finality is stored on the TRANSITION, not the STATE.
-              -- Therefore, I must take at least one TRANSITION to
-              -- accept.  Otherwise—by default—I will reject.
-              EndOfComputation (Rejected d)
-            {matching}::_ ->
-              EndOfComputation
-                ( (if matching.isFinal then Accepted else Rejected) d )
-  in
-    case executionResult {- |> Debug.log "Step with" -} of
-      CanContinue executionState ->
-        case executionState of
-          Accepted d ->
-            oneTransition d
-            |> Maybe.map switchUp
-            |> Maybe.withDefault executionResult
-          Rejected d ->
-            oneTransition d
-            |> Maybe.map switchUp
-            |> Maybe.withDefault executionResult
-          RequestedNodeDoesNotExist _ ->
-            executionResult
-          NoPossibleTransition _ ->
-            executionResult
-      EndOfInput _ ->
-        executionResult
-      EndOfComputation _ ->
-        executionResult
-      InternalError ->
-        executionResult
+step : ExecutionData -> ExecutionData
+step executionData =
+  case executionData.finalResult {- |> Debug.log "Step with" -} of
+    Just _ ->
+      -- we have a final result; there's nothing more for us to do, thanks.
+      executionData
+    Nothing ->
+      oneTransition executionData
 
-run : ExecutionResult -> ExecutionResult
-run r =
-  let
-    execute result =
-      case step result of
-        (CanContinue _) as okay ->
-          execute okay
-        x ->
-          x
-  in
-    execute r
+run : ExecutionData -> List ExecutionData
+run start =
+  start ::
+    List.unfoldr
+      (\current ->
+        case current.finalResult of
+          Just _ ->
+            Nothing
+          Nothing ->
+            let next = step current in
+            Just (next, next)
+      )
+      start
 
-load : String -> ResolutionDict -> AutomatonGraph -> ExecutionResult
+load : String -> ResolutionDict -> AutomatonGraph -> ExecutionData
 load s resolutionDict g =
   step
-    (CanContinue <| Rejected <|
-      ExecutionData [] (String.toList s) g.root g resolutionDict
-    )
+    { transitions = []
+    , remainingData = String.toList s
+    , currentNode = g.root
+    , computation = g
+    , resolutionDict = resolutionDict
+    , finalResult = Nothing
+    }
 
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph
 automatonGraph_union g1 g2 =
