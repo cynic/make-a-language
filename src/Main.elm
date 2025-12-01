@@ -2802,11 +2802,75 @@ deletePackage package model =
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
   let
-    new_test : Test
-    new_test =
-      { input = ""
-      , expectation = ExpectAccepted
-      , result = Rejected
+    change_input s key p =
+      -- it's okay to have a test-uuid with no corresponding test.
+      -- When we write to it, the data will appear.
+      if String.isEmpty s then
+        delete_test key p
+      else
+        { p | tests =
+          AutoDict.update key
+            ( Maybe.map
+                (\test ->
+                  { test
+                    | input = s
+                    , result =
+                        DFA.load s (toResolutionDict model.packages) p.userGraph
+                        |> DFA.run
+                        |> List.head
+                        |> Maybe.andThen .finalResult
+                        |> Maybe.withDefault (InternalError "no result")
+                  }
+                )
+              >> Maybe.orElse
+                (Just { input = s
+                  , expectation = ExpectAccepted
+                  , result =
+                      DFA.load s (toResolutionDict model.packages) p.userGraph
+                      |> DFA.run
+                      |> List.head
+                      |> Maybe.andThen .finalResult
+                      |> Maybe.withDefault (InternalError "no result")
+                  })
+            )
+            p.tests
+        }
+    flip_acceptance key p =
+      -- it's okay to have a test-uuid with no corresponding test.
+      -- When we write to it, the data will appear.
+      { p | tests =
+        AutoDict.update key
+          (Maybe.map
+            (\test ->
+              { test
+                | expectation =
+                    case test.expectation of
+                      ExpectAccepted -> ExpectRejected
+                      ExpectRejected -> ExpectAccepted
+              }
+            )
+          )
+          p.tests
+      }
+    delete_test test_uuid p =
+      -- it's okay to have a test-uuid with no corresponding test.
+      -- When we write to it, the data will appear.
+      { p | tests = AutoDict.remove test_uuid p.tests }
+    select_test test_uuid p =
+      { p | currentTestKey = test_uuid }
+    create_test test_uuid p =
+      { p | currentTestKey = test_uuid }
+    update_others updater p model_ =
+      { model_
+        | packages = AutoDict.insert pkg_uuid p model_.packages
+        , graph_views =
+            viewsWithPackage pkg_uuid model_
+            |> List.foldl
+              (\gv ->
+                AutoDict.insert gv.id
+                  { gv | package = updater gv.package }
+              )
+              model_.graph_views
       }
   in
   case msg of
@@ -2834,30 +2898,22 @@ update_package pkg_uuid msg model =
         (\pkg ->
           let
             (test_uuid, newSeed) = Random.step Uuid.generator model.randomSeed
-            update_pkg p =
-              { p
-                | currentTestKey = test_uuid
-                , tests =
-                    AutoDict.insert test_uuid new_test p.tests
-              }
+            p = create_test test_uuid pkg
             updated_model =
-              { model
-                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
-                , randomSeed = newSeed
-                , graph_views =
-                    viewsWithPackage pkg_uuid model
-                    |> List.foldl
-                      (\gv ->
-                        AutoDict.insert gv.id
-                          { gv | package = update_pkg gv.package
-                          }
-                      )
-                      model.graph_views
-              }
+              update_others (create_test test_uuid) p model
+              |> (\m -> { m | randomSeed = newSeed })
           in
-            ( updated_model
-            , Cmd.none -- persistPackage pkg_uuid
-            )
+            case popInteraction Nothing updated_model of
+              Just ( Executing _ _ , model_ ) ->
+                -- stop executing, if I was executing.
+                -- I've got a different(?) test selected now!
+                ( model_
+                , persistPackage p
+                )
+              _ ->
+                ( updated_model
+                , persistPackage p
+                )
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
@@ -2866,23 +2922,21 @@ update_package pkg_uuid msg model =
       |> Maybe.map
         (\pkg ->
           let
-            update_pkg p =
-              { p | currentTestKey = test_uuid }
+            p = select_test test_uuid pkg
             updated_model =
-              { model
-                | packages =
-                    AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
-                , graph_views =
-                    viewsWithPackage pkg_uuid model
-                    |> List.foldl
-                      (\gv ->
-                        AutoDict.insert gv.id
-                          { gv | package = update_pkg gv.package }
-                      )
-                      model.graph_views
-              }
+              update_others (select_test test_uuid) p model
           in
-            ( updated_model, Cmd.none )
+            case popInteraction Nothing updated_model of
+              Just ( Executing _ _ , model_ ) ->
+                -- stop executing, if I was executing.
+                -- I've got a different(?) test selected now!
+                ( model_
+                , persistPackage p
+                )
+              _ ->
+                ( updated_model
+                , persistPackage p
+                )
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
@@ -2891,25 +2945,12 @@ update_package pkg_uuid msg model =
       |> Maybe.map
         (\pkg ->
           let
-            update_pkg p =
-              -- it's okay to have a test-uuid with no corresponding test.
-              -- When we write to it, the data will appear.
-              { p | tests = AutoDict.remove test_uuid p.tests }
+            p = delete_test test_uuid pkg
             updated_model =
-              { model
-                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
-                , graph_views =
-                    viewsWithPackage pkg_uuid model
-                    |> List.foldl
-                      (\gv ->
-                        AutoDict.insert gv.id
-                          { gv | package = update_pkg gv.package }
-                      )
-                      model.graph_views
-              }
+              update_others (delete_test test_uuid) p model
           in
             ( updated_model
-            , Cmd.none -- persistPackage pkg_uuid
+            , persistPackage p
             )
         )
       |> Maybe.withDefault ( model, Cmd.none )
@@ -2976,29 +3017,12 @@ update_package pkg_uuid msg model =
       |> Maybe.map
         (\pkg ->
           let
-            update_pkg p =
-              -- it's okay to have a test-uuid with no corresponding test.
-              -- When we write to it, the data will appear.
-              { p | tests =
-                AutoDict.update pkg.currentTestKey
-                  (Maybe.map (\test -> { test | input = s }))
-                  p.tests
-              }
+            p = change_input s pkg.currentTestKey pkg
             updated_model =
-              { model
-                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
-                , graph_views =
-                    viewsWithPackage pkg_uuid model
-                    |> List.foldl
-                      (\gv ->
-                        AutoDict.insert gv.id
-                          { gv | package = update_pkg gv.package }
-                      )
-                      model.graph_views
-              }
+              update_others (change_input s pkg.currentTestKey) p model
           in
             ( updated_model
-            , Cmd.none -- persistPackage pkg_uuid
+            , persistPackage p
             )
         )
       |> Maybe.withDefault ( model, Cmd.none )
@@ -3008,38 +3032,12 @@ update_package pkg_uuid msg model =
       |> Maybe.map
         (\pkg ->
           let
-            update_pkg p =
-              -- it's okay to have a test-uuid with no corresponding test.
-              -- When we write to it, the data will appear.
-              { p | tests =
-                AutoDict.update pkg.currentTestKey
-                  (Maybe.map
-                    (\test ->
-                      { test
-                        | expectation =
-                            case test.expectation of
-                              ExpectAccepted -> ExpectRejected
-                              ExpectRejected -> ExpectAccepted
-                      }
-                    )
-                  )
-                  p.tests
-              }
+            p = flip_acceptance pkg.currentTestKey pkg
             updated_model =
-              { model
-                | packages = AutoDict.insert pkg_uuid (update_pkg pkg) model.packages
-                , graph_views =
-                    viewsWithPackage pkg_uuid model
-                    |> List.foldl
-                      (\gv ->
-                        AutoDict.insert gv.id
-                          { gv | package = update_pkg gv.package }
-                      )
-                      model.graph_views
-              }
+              update_others (flip_acceptance pkg.currentTestKey) p model
           in
             ( updated_model
-            , Cmd.none -- persistPackage pkg_uuid
+            , persistPackage p
             )
         )
       |> Maybe.withDefault ( model, Cmd.none )
@@ -4454,7 +4452,16 @@ viewToolsArea model =
                 [ text "Hello world A" ]
             TestingToolIcon ->
               AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
+              |> Maybe.map (\gv ->
+                ( gv
+                , AutoDict.get gv.package.currentTestKey gv.package.tests
+                  |> Maybe.withDefault
+                    { input = ""
+                    , expectation = ExpectAccepted
+                    , result = Rejected
+                    }
+                )
+              )
               |> Maybe.map (\(gv, test) ->
                 viewTestingTool gv test model
               )
