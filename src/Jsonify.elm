@@ -30,7 +30,7 @@ decodeTest resolutionDict g =
           DFA.load input resolutionDict g
           |> DFA.run
           -- |> debugLog_ ("Results for '" ++ input ++ "'") (List.map .finalResult)
-          |> List.last
+          |> List.head
           |> Maybe.andThen .finalResult
           |> Maybe.withDefault (InternalError "Failed to run test")
       })

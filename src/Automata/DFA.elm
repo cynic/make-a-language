@@ -549,21 +549,23 @@ step executionData =
 
 run : ExecutionData -> List ExecutionData
 run start =
-  start ::
-    List.unfoldr
-      (\current ->
-        case current.finalResult of
-          Just _ ->
-            Nothing
-          Nothing ->
-            let next = step current in
-            Just (next, next)
-      )
-      start
+  List.reverse <|
+    start ::
+    ( List.unfoldr
+        (\current ->
+          case current.finalResult of
+            Just _ ->
+              Nothing
+            Nothing ->
+              let next = step current in
+              Just (next, next)
+        )
+        start
+    )
 
 load : String -> ResolutionDict -> AutomatonGraph -> ExecutionData
 load s resolutionDict g =
-  step
+  -- step
     { transitions = []
     , remainingData = String.toList s
     , currentNode = g.root

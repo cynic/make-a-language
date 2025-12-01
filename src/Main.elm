@@ -580,7 +580,7 @@ confirmChanges g resolutionDict graphView =
                   | result =
                       DFA.load entry.input resolutionDict finalGraph
                       |> DFA.run
-                      |> List.last
+                      |> List.head
                       |> Maybe.andThen .finalResult
                       |> Maybe.withDefault (InternalError "no result received from test execution")
                 }
@@ -2946,7 +2946,7 @@ update_package pkg_uuid msg model =
         (\(pkg, test) ->
           ( case peekInteraction Nothing model.interactionsDict of
               Just ( Executing (h::rest) props ) ->
-                replaceInteraction Nothing (Executing (DFA.run h ++ (h::rest)) props) model
+                replaceInteraction Nothing (Executing (DFA.run h ++ rest) props) model
                 |> setProperties
               _ ->
                 pushInteractionForStack Nothing
@@ -4188,159 +4188,211 @@ viewSplitter zIdx movement model areaOpen =
 viewTestingTool : GraphView -> Test -> Model -> Html Msg
 viewTestingTool graph_view test model =
   let
-    viewInputProcessing : AcceptVia -> List String -> Html msg
-    viewInputProcessing via classes =
-      span
-        [ HA.classList <| List.map (\v -> (v, True)) classes ]
-        [ text <| acceptConditionToString via ]
-    testExpectationElement =
-      div
-        [ HA.css
-            [ Css.whiteSpace Css.preWrap
-            , Css.padding4 (Css.px 0) (Css.px 0) (Css.px 15) (Css.px 15)
-            , Css.userSelect Css.none
-            ]
-        ]
-        [ span
-            []
-            [ text "When this input is received, the computation should " ]
-        , span
-            [ HA.classList
-                [ ("test_panel__accept-text", test.expectation == ExpectAccepted)
-                , ("test_panel__reject-text", test.expectation == ExpectRejected)
-                ]
-            , HA.css
-                [ Css.fontWeight Css.bold
-                , Css.textDecorationLine Css.underline
-                , Css.textDecorationStyle Css.dashed
-                , Css.cursor Css.pointer
-                , Css.color <|
-                    if test.expectation == ExpectAccepted then
-                      Css.rgb 0x50 0xfa 0x7b -- --dracula-green
+    html_remaining_data =
+      List.map (\ch ->
+        div
+          [ HA.class "character" ]
+          [ text <| String.fromChar ch ]
+      )
+    html_transitions_taken =
+      List.map (\{matching} ->
+        div
+          [ HA.class "transition" ]
+          [ text <| acceptConditionToString matching.via ]
+      )
+    contextChars = 3
+    html_execution_step n h =
+      li
+        [ HA.class "execution-step" ]
+        [ div
+            [ HA.class "execution-step-inner" ]
+            [ div
+                [ HA.class "transitions-taken" ]
+                ((if List.length h.transitions > contextChars then
+                    div
+                      [ HA.class "ellipsis" ]
+                      [ text "…" ]
+                  else
+                    text ""
+                ) ::
+                ( html_transitions_taken <| List.drop (List.length h.transitions - contextChars) h.transitions )
+                )
+            , div
+                [ HA.class "remaining-data" ]
+                ((html_remaining_data <| List.take contextChars h.remainingData) ++
+                  ( if List.length h.remainingData > contextChars then
+                      [ div
+                          [ HA.class "ellipsis" ]
+                          [ text "…" ]
+                      ]
                     else
-                      Css.rgb 0xff 0x79 0xc6 -- --dracula-pink
-                ]
-            -- , onClick <| UpdateTestPanelContent testInput <|
-            --     if testExpected == ExpectAccepted then ExpectRejected else ExpectAccepted
-            ]
-            [ text
-                ( case test.expectation of
-                    ExpectAccepted -> "accept"
-                    ExpectRejected -> "reject"
+                      []
+                  )
                 )
             ]
-        , span
-            [ HA.css
-                [ Css.whiteSpace Css.preWrap
+        ]
+    html_execution_steps results =
+      ul
+        [ HA.class "execution-steps" ]
+        ( List.indexedMap html_execution_step results )
+  in
+  div
+    [ HA.class "tool-content testing" ]
+    [ case peekInteraction Nothing model.interactionsDict of
+        Just (Executing ((h::t) as results) props) ->
+          div
+            [ HA.class "step-through" ]
+            ( case h.finalResult of
+                Just result ->
+                  -- final; show it.
+                  [ div
+                      [ HA.class "tools-strip" ]
+                      [ button
+                          [ HA.class "tool-icon reset"
+                          , HA.title "Reset"
+                          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier ResetComputation)
+                          ]
+                          [ text "🔁" ]
+                      ]
+                  , case result of
+                      Accepted ->
+                        div
+                          [ HA.class "progress-area" ]
+                          [ div
+                              [ HA.class "final-result accepted" ]
+                              [ div
+                                  [ HA.class "summary-sentence" ]
+                                  [ span
+                                      [ HA.class "emphasis" ]
+                                      [ text "Accepted" ]
+                                  ]
+                              ]
+                          , html_execution_steps results
+                          ]
+                      Rejected ->
+                        div
+                          [ HA.class "progress-area" ]
+                          [ div
+                              [ HA.class "final-result rejected" ]
+                              [ div
+                                  [ HA.class "summary-sentence" ]
+                                  [ span
+                                      [ HA.class "emphasis" ]
+                                      [ text "Rejected" ]
+                                  ]
+                              ]
+                          ]
+                      NoMatchingTransitions ->
+                        div
+                          [ HA.class "progress-area" ]
+                          [ div
+                              [ HA.class "final-result rejected" ]
+                              [ div
+                                  [ HA.class "summary-sentence" ]
+                                  [ span
+                                      [ HA.class "emphasis" ]
+                                      [ text "Rejected" ]
+                                  , text ".  The computation did not account for "
+                                  , span [ HA.class "emphasis" ] [ text "all" ]
+                                  , text " of the input."
+                                  ]
+                              , div
+                                  [ HA.class "summary-detail" ]
+                                  [ text "Remaining input: "
+                                  , div
+                                      [ HA.class "remaining-data" ]
+                                      ( html_remaining_data h.remainingData )
+                                  ]
+                              ]
+                          ]
+                      InternalError s ->
+                        div
+                          [ HA.class "progress-area" ]
+                          [ div
+                              [ HA.class "final-result error" ]
+                              [ div
+                                  [ HA.class "summary-sentence" ]
+                                  [ text <| "💀 Internal Error!  " ++ s ]
+                              ]
+                          ]
+                  ]
+                Nothing ->
+                  -- non-final; we're continuing.
+                  [ div
+                      [ HA.class "tools-strip" ]
+                      [ button
+                          [ HA.class "tool-icon continue-stepping"
+                          , HA.title "Continue"
+                          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Step)
+                          ]
+                          [ text "⏯️" ]
+                      , button
+                          [ HA.class "tool-icon stop-stepping"
+                          , HA.title "Run to end"
+                          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Run)
+                          ]
+                          [ text "▶️" ]
+                      , button
+                          [ HA.class "tool-icon stop-stepping"
+                          , HA.title "Stop / Reset"
+                          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier ResetComputation)
+                          ]
+                          [ text "⏹️" ]
+                      ]
+                  , div
+                      [ HA.class "progress-area" ]
+                      [ html_execution_steps results ]
+                  ]
+            )
+        _ ->
+          -- edit panel.  We are not executing.
+          div
+            [ HA.class "edit-input" ]
+            [ div
+                [ HA.class "tools-strip" ]
+                [ button
+                    [ HA.class "tool-icon start-stepping"
+                    , HA.title "Step through"
+                    , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Step)
+                    ]
+                    [ text "⏯️" ]
+                , button
+                    [ HA.class "tool-icon run"
+                    , HA.title "Run"
+                    , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Run)
+                    ]
+                    [ text "▶️" ]
+                ]
+            , div
+                [ HA.class "edit-panel" ]
+                [ div
+                    [ HA.class "acceptance-condition" ]
+                    [ text "When this input is received, the computation should "
+                    , span
+                        [ HA.classList
+                            [ ("expect-accept", test.expectation == ExpectAccepted)
+                            , ("expect-reject", test.expectation == ExpectRejected)
+                            ]
+                        , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier FlipAcceptanceCondition)
+                        ]
+                        [ text
+                            ( case test.expectation of
+                                ExpectAccepted -> "accept"
+                                ExpectRejected -> "reject"
+                            )
+                        ]
+                    , text " it."
+                    ]
+                , textarea
+                    [ HA.class "input-textarea"
+                    , HA.value test.input
+                    , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.userGraph.graphIdentifier)
+                    , HA.placeholder "Enter your test input here"
+                    ]
+                    []
                 ]
             ]
-            [ text " it." ]
-        ]
-  in
-    div
-      [ HA.class "tool-content testing" ]
-      [ case peekInteraction Nothing model.interactionsDict of
-          Just (Executing ((h::t) as results) props) ->
-            div
-              [ HA.class "step-through" ]
-              ( case h.finalResult of
-                  Just result ->
-                    -- final; show it.
-                    [ div
-                        [ HA.class "tools-strip" ]
-                        [ button
-                            [ HA.class "tool-icon reset"
-                            , HA.title "Reset"
-                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier ResetComputation)
-                            ]
-                            [ text "🔁" ]
-                        ]
-                    , div
-                        [ HA.class "progress-area" ]
-                        [ div
-                            []
-                            [ text "//not implemented//" ]
-                        ]
-                    ]
-                  Nothing ->
-                    -- non-final; we're continuing.
-                    [ div
-                        [ HA.class "tools-strip" ]
-                        [ button
-                            [ HA.class "tool-icon continue-stepping"
-                            , HA.title "Continue"
-                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Step)
-                            ]
-                            [ text "⏯️" ]
-                        , button
-                            [ HA.class "tool-icon stop-stepping"
-                            , HA.title "Run to end"
-                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Run)
-                            ]
-                            [ text "▶️" ]
-                        , button
-                            [ HA.class "tool-icon stop-stepping"
-                            , HA.title "Stop / Reset"
-                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier ResetComputation)
-                            ]
-                            [ text "⏹️" ]
-                        ]
-                    , div
-                        [ HA.class "progress-area" ]
-                        [ div
-                            []
-                            [ text "°not implemented°" ]
-                        ]
-                    ]
-              )
-          _ ->
-            div
-              [ HA.class "edit-input" ]
-              [ div
-                  [ HA.class "tools-strip" ]
-                  [ button
-                      [ HA.class "tool-icon start-stepping"
-                      , HA.title "Step through"
-                      , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Step)
-                      ]
-                      [ text "⏯️" ]
-                  , button
-                      [ HA.class "tool-icon run"
-                      , HA.title "Run"
-                      , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier Run)
-                      ]
-                      [ text "▶️" ]
-                  ]
-              , div
-                  [ HA.class "edit-panel" ]
-                  [ div
-                      [ HA.class "acceptance-condition" ]
-                      [ text "When this input is received, the computation should "
-                      , span
-                          [ HA.classList
-                              [ ("expect-accept", test.expectation == ExpectAccepted)
-                              , ("expect-reject", test.expectation == ExpectRejected)
-                              ]
-                          , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier FlipAcceptanceCondition)
-                          ]
-                          [ text
-                              ( case test.expectation of
-                                  ExpectAccepted -> "accept"
-                                  ExpectRejected -> "reject"
-                              )
-                          ]
-                      , text " it."
-                      ]
-                  , textarea
-                      [ HA.class "input-textarea"
-                      , HA.value test.input
-                      , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.userGraph.graphIdentifier)
-                      , HA.placeholder "Enter your test input here"
-                      ]
-                      []
-                  ]
-              ]
-      ]
+    ]
 
 viewToolsArea : Model -> Html Msg
 viewToolsArea model =

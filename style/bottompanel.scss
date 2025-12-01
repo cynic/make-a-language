@@ -32,7 +32,7 @@
   // This would be hidden/collapsed when sidebar is closed
 }
 
-// Left-bar icons that open "Navigators"
+// Left-bar icons that open each "Tool"
 .tool-icon {
   width: 32px;
   height: 32px ;
@@ -81,7 +81,79 @@
   // padding: 10px;
   position: relative;
   
+  .step-through {
+    position: relative;
+    height: 100%;
+    display: flex;
+  }
+
   &.testing {
+
+    .progress-area {
+      display: flex;
+      flex-direction: column;
+      flex-grow: 1;
+      padding: 8px;
+      gap: 8px;
+      font-size: 1.2rem;
+      flex-wrap: wrap-reverse;
+
+      .final-result {
+        font-weight: bold;
+        width: 100%;
+        border-bottom: solid 1px var(--comment);
+        padding-bottom: 8px;
+
+        &.accepted .emphasis {
+          color: var(--green);
+        }
+
+        &.rejected .emphasis {
+          color: var(--red);
+        }
+
+        .summary-detail {
+          display: flex;
+          gap: 0.8ex;
+        }
+      }
+
+      .execution-steps {
+        margin-left: 2.5ex;
+        list-style-type: decimal;
+        height: 200px;
+        flex-shrink: 0;
+
+        .execution-step-inner {
+          display: flex;
+        }
+
+        .execution-step:not(:last-of-type):not(:first-of-type)::marker {
+          content: "⬆ "
+        }
+
+        .execution-step:first-of-type::marker {
+          content: "🟡 ";
+        }
+
+        .execution-step:last-of-type::marker {
+          content: "⚪ ";
+        }
+      }
+
+      .transitions-taken {
+        display: flex;
+        color: var(--foreground);
+      }
+
+      .remaining-data {
+        display: flex;
+        color: var(--purple);
+      }
+
+    }
+
+    // === Editing the test input & acceptance condition ===
     .edit-input {
       position: relative;
       height: 100%;      
@@ -132,20 +204,6 @@
       }
     }
 
-    .step-through {
-      position: relative;
-      height: 100%;
-      display: flex;
-
-      .progress-area {
-        flex-grow: 1;
-        display: flex;
-        flex-direction: column;
-        padding: 8px;
-        font-size: 1.2rem;
-      }
-    }
-
     .tools-strip {
       background-color: var(--background-light);
       width: 40px;
@@ -160,8 +218,8 @@
         font-size: 1.5rem;
       }
     }
-
   }
+  
   
   &.search-view {
     // Search interface styles  
