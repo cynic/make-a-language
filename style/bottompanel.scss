@@ -23,12 +23,13 @@
 }
 
 .tools-area {
-  // width: 300px; // Adjustable width, set in code.
   background-color: var(--background-darker);
   display: flex;
   flex-direction: column;
   transition: width 0s;
   width: 100%;
+  position: relative;
+  align-self: stretch;
   // This would be hidden/collapsed when sidebar is closed
 }
 
@@ -78,25 +79,30 @@
 // Sidebar content areas
 .tool-content {
   flex: 1;
-  // padding: 10px;
   position: relative;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
   
   .step-through {
+    flex-grow: 1;
     position: relative;
-    height: 100%;
     display: flex;
   }
 
   &.testing {
+    display: flex;
+    justify-items: stretch;
 
     .progress-area {
       display: flex;
       flex-direction: column;
+      align-self: stretch;
       flex-grow: 1;
       padding: 8px;
       gap: 8px;
+      overflow-y: scroll;
       font-size: 1.2rem;
-      flex-wrap: wrap-reverse;
 
       .final-result {
         font-weight: bold;
@@ -120,16 +126,16 @@
 
       .execution-steps {
         margin-left: 2.5ex;
-        list-style-type: decimal;
-        height: 200px;
         flex-shrink: 0;
 
         .execution-step-inner {
           display: flex;
+          padding: 2px;
+          // background-color: blue;
         }
 
         .execution-step:not(:last-of-type):not(:first-of-type)::marker {
-          content: "⬆ "
+          content: "⬆ ";
         }
 
         .execution-step:first-of-type::marker {
@@ -156,8 +162,8 @@
     // === Editing the test input & acceptance condition ===
     .edit-input {
       position: relative;
-      height: 100%;      
       display: flex;
+      flex-grow: 1;
 
       .edit-panel {
         flex-grow: 1;
@@ -212,7 +218,6 @@
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
-      height: 100%;
       
       .tool-icon {
         font-size: 1.5rem;
