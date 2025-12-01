@@ -4206,29 +4206,41 @@ viewTestingTool graph_view test model =
         [ HA.class "execution-step" ]
         [ div
             [ HA.class "execution-step-inner" ]
-            [ div
-                [ HA.class "transitions-taken" ]
-                ((if List.length h.transitions > contextChars then
-                    div
-                      [ HA.class "ellipsis" ]
-                      [ text "…" ]
-                  else
-                    text ""
-                ) ::
-                ( html_transitions_taken <| List.drop (List.length h.transitions - contextChars) h.transitions )
-                )
-            , div
-                [ HA.class "remaining-data" ]
-                ((html_remaining_data <| List.take contextChars h.remainingData) ++
-                  ( if List.length h.remainingData > contextChars then
-                      [ div
-                          [ HA.class "ellipsis" ]
-                          [ text "…" ]
-                      ]
+            [ if List.isEmpty h.transitions then
+                -- If there are no transitions, then the div will collapse weirdly
+                -- and that will throw off the calculations for the vertical position
+                -- of the list-item bullet, and of course it will, because that is
+                -- the obvious thing to happen, isn't it?
+                -- Wow. CSS, eh? CSS.
+                -- So, this exists to counteract that 100% obvious flex-behaviour.
+                text ""
+              else
+                div
+                  [ HA.class "transitions-taken" ]
+                  ((if List.length h.transitions > contextChars then
+                      div
+                        [ HA.class "ellipsis" ]
+                        [ text "…" ]
                     else
-                      []
+                      text ""
+                  ) ::
+                  ( html_transitions_taken <| List.drop (List.length h.transitions - contextChars) h.transitions )
                   )
-                )
+            , if List.isEmpty h.remainingData then
+                text ""
+              else
+                div
+                  [ HA.class "remaining-data" ]
+                  ((html_remaining_data <| List.take contextChars h.remainingData) ++
+                    ( if List.length h.remainingData > contextChars then
+                        [ div
+                            [ HA.class "ellipsis" ]
+                            [ text "…" ]
+                        ]
+                      else
+                        []
+                    )
+                  )
             ]
         ]
     html_execution_steps results =
@@ -4281,6 +4293,7 @@ viewTestingTool graph_view test model =
                                       [ text "Rejected" ]
                                   ]
                               ]
+                          , html_execution_steps results
                           ]
                       NoMatchingTransitions ->
                         div
@@ -4304,6 +4317,7 @@ viewTestingTool graph_view test model =
                                       ( html_remaining_data h.remainingData )
                                   ]
                               ]
+                          , html_execution_steps results
                           ]
                       InternalError s ->
                         div
@@ -4314,6 +4328,7 @@ viewTestingTool graph_view test model =
                                   [ HA.class "summary-sentence" ]
                                   [ text <| "💀 Internal Error!  " ++ s ]
                               ]
+                          , html_execution_steps results
                           ]
                   ]
                 Nothing ->
