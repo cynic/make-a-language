@@ -854,24 +854,6 @@ viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
     num_undo = List.length package.undoBuffer
     idxToY idx =
       h - (toFloat (15 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
-
-    worst = Color.rgb255 0xfe 0x00 0x02 -- fire
-    scale =
-      [ Color.rgb255 0x00 0xf0 0xa8 -- spring
-      , Color.rgb255 0x50 0xc8 0x78 -- emerald
-      , Color.rgb255 0x00 0xa8 0x6b -- jade
-      , Color.rgb255 0x00 0x9e 0x60 -- shamrock
-      , Color.rgb255 0x80 0xf9 0xad -- sea foam
-      , Color.rgb255 0x98 0xfb 0x98 -- mint
-      , Color.rgb255 0xdf 0xff 0x00 -- chartreuse
-      , Color.rgb255 0xff 0xff 0x00 -- yellow
-      , Color.rgb255 0xff 0xd7 0x00 -- gold
-      , Color.rgb255 0xff 0xa6 0x00 -- cheese
-      , Color.rgb255 0xff 0x80 0x00 -- orange
-      , Color.rgb255 0xfc 0x4c 0x02 -- tangelo
-      , Color.rgb255 0xff 0x24 0x00 -- scarlet
-      , worst
-      ]
   in
     g
       []
@@ -881,7 +863,7 @@ viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
               rect
                 [ TypedSvg.Attributes.InPx.width rect_width
                 , TypedSvg.Attributes.InPx.height rect_height
-                , fill <| Paint (List.getAt idx scale |> Maybe.withDefault worst)
+                , fill <| Paint (List.getAt idx colorScale.svg.best_to_worst |> Maybe.withDefault colorScale.svg.worst)
                 , ry 2
                 , x (x_ + 5)
                 , y <| idxToY idx

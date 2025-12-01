@@ -2860,6 +2860,11 @@ update_package pkg_uuid msg model =
       { p | currentTestKey = test_uuid }
     create_test test_uuid p =
       { p | currentTestKey = test_uuid }
+    change_description d p =
+      if String.isEmpty d then
+        { p | description = Nothing }
+      else
+        { p | description = Just d }
     update_others updater p model_ =
       { model_
         | packages = AutoDict.insert pkg_uuid p model_.packages
@@ -3020,6 +3025,21 @@ update_package pkg_uuid msg model =
             p = change_input s pkg.currentTestKey pkg
             updated_model =
               update_others (change_input s pkg.currentTestKey) p model
+          in
+            ( updated_model
+            , persistPackage p
+            )
+        )
+      |> Maybe.withDefault ( model, Cmd.none )
+
+    UpdatePackageDescription s ->
+      AutoDict.get pkg_uuid model.packages
+      |> Maybe.map
+        (\pkg ->
+          let
+            p = change_description s pkg
+            updated_model =
+              update_others (change_description s) p model
           in
             ( updated_model
             , persistPackage p
@@ -4407,6 +4427,31 @@ viewTestingTool graph_view test model =
             ]
     ]
 
+viewMetadataTool : GraphPackage -> Html Msg
+viewMetadataTool package =
+  let
+    len = package.description |> Maybe.withDefault "" |> String.length |> toFloat
+    idx = round <| -0.02779853 + 0.06685532 * len + 0.004036796 * len * len
+    color = List.getAt idx colorScale.css.best_to_worst |> Maybe.withDefault colorScale.css.worst
+  in
+  div
+    [ HA.class "tool-content metadata" ]
+    [ div
+        [ HA.class "edit-description" ]
+        [ div
+            [ HA.class "edit-panel" ]
+            [ textarea
+                [ HA.class "input-textarea"
+                , HA.css [ Css.color color ]
+                , HA.value (Maybe.withDefault "" package.description)
+                , HE.onInput (UpdatePackageDescription >> PackageMsg package.userGraph.graphIdentifier)
+                , HA.placeholder "What kind of thing does this package recognize?"
+                ]
+                []
+            ]
+        ]
+    ]
+
 viewToolsArea : Model -> Html Msg
 viewToolsArea model =
   div
@@ -4447,9 +4492,15 @@ viewToolsArea model =
         [ debugDimensions model.uiState.dimensions.bottomPanel
         , case model.uiState.selected.bottomPanel of
             MetadataToolIcon ->
-              div
-                [ HA.class "tool-content" ]
-                [ text "Hello world A" ]
+              AutoDict.get model.mainGraphView model.graph_views
+              |> Maybe.map (\gv ->
+                viewMetadataTool gv.package
+              )
+              |> Maybe.withDefault
+                ( div
+                    [ HA.class "metadata-content no-package" ]
+                    [ text "Internal error: no graph-view.  This is a bug!" ]
+                )
             TestingToolIcon ->
               AutoDict.get model.mainGraphView model.graph_views
               |> Maybe.map (\gv ->
@@ -4716,8 +4767,8 @@ viewConnectionEditor model connection editorData =
         ]
     ]
 
-viewNodeSplitInterface : Model -> Uuid -> NodeSplitData -> SplitNodeInterfaceProperties -> Html Msg
-viewNodeSplitInterface model uuid {left, right} interfaceData =
+viewNodeSplitInterface : Model -> NodeSplitData -> SplitNodeInterfaceProperties -> Html Msg
+viewNodeSplitInterface model {left, right} interfaceData =
   div
     [ HA.class "modal" ]
     [ div
@@ -4878,8 +4929,8 @@ view model =
     [ case mostRecentInteraction model of
         Just (Just _, EditingConnection {connection} props) ->
           viewConnectionEditor model connection props
-        Just (Just uuid, SplittingNode data props) ->
-          viewNodeSplitInterface model uuid data props
+        Just (Just _, SplittingNode data props) ->
+          viewNodeSplitInterface model data props
         Just (Nothing, DeletingPackage _ props) ->
           viewPackageDeletionWarning props model
         _ ->

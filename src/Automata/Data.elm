@@ -22,6 +22,7 @@ import Html.Styled
 import TypedSvg.Core
 import TypedSvg.Events
 import VirtualDom
+import Css
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -95,6 +96,7 @@ type PackageMsg
   | Run
   | ResetComputation
   | FlipAcceptanceCondition
+  | UpdatePackageDescription String
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg
@@ -1050,3 +1052,34 @@ charToUuid ch =
 mapCorrespondingPair : (a -> b -> c) -> (a, a) -> (b, b) -> (c, c)
 mapCorrespondingPair f (a1, a2) (b1, b2) =
   (f a1 b1, f a2 b2)
+
+colorScale =
+  let
+    spring f = f 0x00 0xf0 0xa8 -- spring
+    emerald f = f 0x50 0xc8 0x78 -- emerald
+    jade f = f 0x00 0xa8 0x6b -- jade
+    shamrock f = f 0x00 0x9e 0x60 -- shamrock
+    sea_foam f = f 0x80 0xf9 0xad -- sea foam
+    mint f = f 0x98 0xfb 0x98 -- mint
+    chartreuse f = f 0xdf 0xff 0x00 -- chartreuse
+    yellow f = f 0xff 0xff 0x00 -- yellow
+    gold f = f 0xff 0xd7 0x00 -- gold
+    cheese f = f 0xff 0xa6 0x00 -- cheese
+    orange f = f 0xff 0x80 0x00 -- orange
+    tangelo f = f 0xfc 0x4c 0x02 -- tangelo
+    scarlet f = f 0xff 0x24 0x00 -- scarlet
+    fire f = f 0xfe 0x00 0x02 -- fire
+    best_to_worst f =
+      [ spring, emerald, jade, shamrock, sea_foam, mint, chartreuse
+      , yellow, gold, cheese, orange, tangelo, scarlet, fire
+      ] |> List.map (\v -> v f)
+  in
+  { svg =
+    { worst = fire Color.rgb255
+    , best_to_worst = best_to_worst  Color.rgb255
+    }
+  , css =
+    { worst = fire Css.rgb
+    , best_to_worst = best_to_worst Css.rgb
+    }
+  }
