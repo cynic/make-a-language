@@ -260,10 +260,7 @@
         }
 
         .button {
-          position: absolute;
-          right: 5px;
-          top: 2px;
-          padding: 1px;
+          padding: 2px;
           background-color: transparent;
         }
       }
@@ -301,9 +298,14 @@
         }
       }
 
+      .failing, .passing, .error {
+        display: flex;
+        align-content: center;
+      }
+
       .test-input-container {
-        width: 100%;
         overflow: hidden;
+        text-wrap: nowrap;
         text-overflow: ellipsis;
         white-space: pre;
         font-family: theme.$font-family-monospace;

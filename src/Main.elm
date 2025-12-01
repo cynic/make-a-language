@@ -4302,7 +4302,7 @@ viewTestingTool graph_view test model =
                                   [ HA.class "summary-sentence" ]
                                   [ span
                                       [ HA.class "emphasis" ]
-                                      [ text "Rejected" ]
+                                      [ text "Failed" ]
                                   , text ".  The computation did not account for "
                                   , span [ HA.class "emphasis" ] [ text "all" ]
                                   , text " of the input."
