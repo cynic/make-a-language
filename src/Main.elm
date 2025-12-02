@@ -332,10 +332,10 @@ naiveViewFromPackage (w, h) location createFrozen pkg model =
 {-| Creates a new GraphView from a provided GraphPackage, solves the forces for the relevant
     AutomatonGraph, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-solvedViewFromPackage : (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
-solvedViewFromPackage (w, h) location createFrozen pkg model =
+solvedViewFromPackage : (AutomatonGraph -> List (Force.Force NodeId)) -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
+solvedViewFromPackage computer (w, h) location createFrozen pkg model =
   viewFromPackage
-    (GraphEditor.computeGraphFully (w, h) pkg.userGraph)
+    (GraphEditor.computeGraphFully computer pkg.userGraph)
     (w, h) location createFrozen pkg model
 
 centerAndHighlight : List (NodeId, NodeId) -> GraphView -> GraphView
@@ -343,8 +343,9 @@ centerAndHighlight links graph_view =
   let
     bounds =
       bounds_for
-        (List.foldl (\(a, b) acc -> a :: b :: acc) [] links)
+        (List.foldl (\(a, b) acc -> a :: b :: acc) [] (Debug.log "links" links))
         graph_view.package.userGraph.graph
+      |> Debug.log "bounds"
     inner_padding = 60
     adjusted =
       expand_bounds inner_padding bounds
@@ -503,6 +504,7 @@ init flags =
       let
         ( v, model_with_viewDict) =
           solvedViewFromPackage
+            GraphEditor.coordinateForces
             state.dimensions.mainEditor
             MainEditor
             False
@@ -1122,7 +1124,7 @@ packagesToGraphViews (w, h) model =
     (\uuid (acc, model_) ->
       let
         ( v, model__) =
-          solvedViewFromPackage (w, h) Sidebar True uuid model_
+          solvedViewFromPackage GraphEditor.coordinateForces (w, h) Sidebar True uuid model_
       in
         (v :: acc, model__)
     )
@@ -2730,6 +2732,7 @@ beginDeletionInteraction package_uuid affected package model =
       |> Debug.log "indirect"
     (mainGraph, model_) =
       solvedViewFromPackage
+        GraphEditor.coordinateForces
         (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiState.dimensions.viewport)
         Independent True package model
     (directViews, model__) =
@@ -2741,6 +2744,7 @@ beginDeletionInteraction package_uuid affected package model =
           let
             (v, m_) =
               solvedViewFromPackage
+                GraphEditor.coordinateForces
                 (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
                 Independent True pkg m
           in
@@ -2756,6 +2760,7 @@ beginDeletionInteraction package_uuid affected package model =
           let
             (v, m_) =
               solvedViewFromPackage
+                GraphEditor.coordinateForces
                 (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
                 Independent True pkg m
           in
@@ -2799,6 +2804,25 @@ deletePackage package model =
         , Cmd.none
         )
 
+-- from the execution result, obtain the edges which were taken.
+-- Note that multiple edges may be "taken" between two nodes,
+-- in the cases of (1) loops and (2) graph-ref intersections.
+executing_edges : ExecutionData -> Dict (NodeId, NodeId) (Int, AcceptVia)
+executing_edges data =
+  let
+    trace : TransitionTakenData -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia)) -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia))
+    trace {dest, matching} (lastNode, recency, acc) =
+      ( dest
+      , recency - 1
+      , Dict.insert (lastNode, dest) (recency, matching.via) acc
+      )
+  in
+    List.foldl
+      trace
+      (data.computation.root, List.length data.transitions, Dict.empty)
+      data.transitions
+    |> (\(_, _, dict) -> dict)
+
 expandStep : Int -> GraphPackage -> List ExecutionData -> ExecutionProperties -> Model -> Model
 expandStep n orig_package results props model =
   let
@@ -2810,11 +2834,25 @@ expandStep n orig_package results props model =
       List.head relevantSteps
     zeepaw =
       Maybe.map (\step ->
-        solvedViewFromPackage
-          (Tuple.mapBoth (\v -> v / 2) (\v -> v / 2) model.uiState.dimensions.bottomPanel)
-          Independent True
-          (createNewPackage uuid orig_package.created step.computation)
-          model_
+        let
+          edges = executing_edges step |> Dict.keys
+          (gv, model__) =
+            solvedViewFromPackage
+              GraphEditor.spreadOutForces
+              model.uiState.dimensions.bottomPanel
+              Independent True
+              (createNewPackage uuid orig_package.created step.computation)
+              model_
+            |>(\(gv_, m) ->
+                let
+                  gv__ = centerAndHighlight edges gv_
+                in
+                  ( gv__
+                  , { m | graph_views = AutoDict.insert gv__.id gv__ m.graph_views }
+                  )
+              )
+        in
+          ( gv , model__ )
       )
       selectedStep
   in
@@ -2916,7 +2954,8 @@ update_package pkg_uuid msg model =
         |> Maybe.map
           (\pkg ->
             removeViews [ model.mainGraphView ] model
-            |> solvedViewFromPackage model.uiState.dimensions.mainEditor MainEditor False pkg
+            |> solvedViewFromPackage GraphEditor.coordinateForces
+                model.uiState.dimensions.mainEditor MainEditor False pkg
             |> Tuple.second
             |> setProperties
           )
@@ -3278,6 +3317,7 @@ update msg model =
           }
         ( _, with_graph_view ) =
           solvedViewFromPackage
+            GraphEditor.coordinateForces
             model.uiState.dimensions.mainEditor
             MainEditor
             False

@@ -42,6 +42,7 @@ import Automata.Debugging as Debugging
 import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
 import VirtualDom
+import Random.Pcg.Extended as Random
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -89,9 +90,75 @@ makeLinkForces graph =
     graph
   |> Force.customLinks 3
 
-coordinateForces : NodeId -> Graph Entity Connection -> List (Force.Force NodeId)
-coordinateForces root graph =
+spreadOutForces : AutomatonGraph -> List (Force.Force NodeId)
+spreadOutForces g =
   let
+    root = g.root
+    graph = g.graph
+    seed0 = Random.initialSeed 0xdead [0xbeef, 0xbabe, 0xcafe, 0x10ad, 0xface, 0xfeed, 0x50fa, 0xab1e]
+    num_nodes = Graph.size graph
+    x_target : Float
+    x_target = toFloat <| num_nodes * (200 + 18)
+  in
+    -- links are the "springs"
+    -- manyBody is the "repulsion"
+    Graph.fold
+      (\ctx {toX, toY, link, manyBody} ->
+        let
+        -- for all outgoing links that AREN'T recursive, create a link-Force.
+          (seed1, linkForce) =
+            IntDict.toList ctx.outgoing
+            |> List.filter (Tuple.first >> (/=) ctx.node.id)
+            |> List.foldl
+                (\(k, conn) (seed, forces_) ->
+                  let
+                    (n, seed_) = Random.step (Random.int 1 500) seed
+                  in
+                  ( seed_
+                  , { source = ctx.node.id
+                    , target = k
+                    , distance = 50 + toFloat n + linkLabelWidth conn -- 35-40 seems like a good distance
+                    , strength = Just 1.0 -- * (toFloat <| Set.size v)
+                    } :: forces_
+                  )
+                )
+                (seed0, link)
+        in
+          if ctx.node.id == root then
+            { toX =
+                { node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
+            , toY =
+                { node = ctx.node.id , strength = 10.0 , target = 0 } :: toY
+            , link = linkForce
+            , manyBody = ctx.node.id :: manyBody
+            }
+          else
+            { toX =
+                { node = ctx.node.id , strength = 0.02 , target = x_target } :: toX
+            , toY =
+                { node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
+            , link = linkForce
+            , manyBody = ctx.node.id :: manyBody
+            }
+      )
+      { toX = [], toY = [], link = [], manyBody = [] }
+      graph
+    |>  (\{toX, toY, link, manyBody} ->
+          if num_nodes > 1 then
+            [ Force.towardsX toX
+            , Force.towardsY toY
+            , Force.customLinks 3 link
+            , Force.manyBodyStrength -5000.0 manyBody
+            ]
+          else
+            []
+        )
+
+coordinateForces : AutomatonGraph -> List (Force.Force NodeId)
+coordinateForces g =
+  let
+    root = g.root
+    graph = g.graph
     num_nodes = Graph.size graph
     x_target : Float
     x_target = toFloat <| num_nodes * (200 + 18)
@@ -145,10 +212,6 @@ coordinateForces root graph =
             []
         )
 
-forces : AutomatonGraph -> (Int, Int) -> List (Force.Force NodeId)
-forces g (width, height) =
-  coordinateForces g.root g.graph
-
 toForceGraph : AutomatonGraph -> AutomatonGraph
 toForceGraph g =
   let
@@ -174,13 +237,13 @@ type alias ComputeGraphResult =
   , forces : List (Force.Force NodeId)
   }
 
-computeGraphFully : (Float, Float) -> AutomatonGraph -> ComputeGraphResult
-computeGraphFully (w, h) g =
+computeGraphFully : (AutomatonGraph -> List (Force.Force NodeId)) -> AutomatonGraph -> ComputeGraphResult
+computeGraphFully computer g =
   let
     forceGraph =
       toForceGraph (g {- |> Automata.Debugging.debugAutomatonGraph "Graph as received" -})
       -- |> Automata.Debugging.debugAutomatonGraph "After toForceGraph"
-    forces_ = forces forceGraph (round w, round h)
+    forces_ = computer forceGraph
     nodes = Graph.nodes forceGraph.graph
     simulation =
       Force.simulation forces_
@@ -462,35 +525,6 @@ path_between sourceXY_orig destXY_orig cardinality =
     , source_connection_point = shorten_source
     , target_connection_point = shorten_target
     }
-
--- executionResultAutomatonGraph : ExecutionResult -> Maybe AutomatonGraph
--- executionResultAutomatonGraph executionResult =
---   executionData executionResult
---   |> Maybe.map .computation
-
--- -- from the execution result, obtain the edges which were taken.
--- -- Note that multiple edges may be "taken" between two nodes,
--- -- in the cases of (1) loops and (2) graph-ref intersections.
--- executing_edges : ExecutionResult -> Dict (NodeId, NodeId) (Int, AcceptVia)
--- executing_edges result =
---   let
---     trace : TransitionTakenData -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia)) -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia))
---     trace {dest, matching} (lastNode, recency, acc) =
---       ( dest
---       , recency - 1
---       , Dict.insert (lastNode, dest) (recency, matching.via) acc
---       )
---   in
---     executionData result
---     |> Maybe.map
---       (\data ->
---           List.foldl
---             trace
---             (data.computation.root, List.length data.transitions, Dict.empty)
---             data.transitions
---           |> (\(_, _, dict) -> dict)
---       )
---     |> Maybe.withDefault Dict.empty
 
 {-| (2+7n)×(2+4n)-pixel UUID-representing badges.
     
