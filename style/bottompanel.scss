@@ -89,8 +89,6 @@
   .step-through {
     flex-grow: 1;
     position: relative;
-    // align-self: stretch;
-    // height: 100%;
     display: flex;
   }
 
@@ -107,8 +105,6 @@
       gap: 8px;
       overflow-y: scroll;
       font-size: 1.2rem;
-      // height: fit-content;
-      // flex-wrap: wrap-reverse;
 
       .final-result {
         font-weight: bold;
@@ -137,8 +133,28 @@
 
         .execution-step-inner {
           display: flex;
-          padding: 2px;
-          align-items: center;
+          flex-direction: column;
+
+          .summary {
+            display: flex;
+            padding: 2px;
+            align-items: center;
+          }
+        }
+
+        .execution-step {
+          border: solid 1px transparent;
+          &:hover {
+            cursor: pointer;
+            font-weight: bold;
+            text-shadow: 0 0 2px var(--foreground);
+            border: dotted 1px var(--foreground);
+          }
+
+          .step-graph {
+            border-radius: 10px;
+            background-color: var(--background-dark);
+          }
         }
 
         .execution-step:not(:last-of-type):not(:first-of-type)::marker {

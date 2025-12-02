@@ -669,7 +669,10 @@ viewLink {id, properties} (from, to) drawing_data =
                     (onClick (EditConnection (x_, y_) id from to drawing_data.connection))
               ]
               [ transitionLabel
-              , title [] [ text "Click to modify" ]
+              , if properties.canSelectConnections then
+                  title [] [ text "Click to modify" ]
+                else
+                  g [] []
               ]
           -- , rect
           --     [ x <| positioning.transition_coordinates.x

@@ -117,7 +117,7 @@ type Msg
   | Step
   | Run
   | ResetComputation
-  -- | ExpandDebugStep Int
+  | ToggleDebugStep Int
   
   -- more general messages
   -- | Tick
@@ -538,7 +538,7 @@ type alias TransitionTakenData =
   }
 
 type alias ExecutionProperties =
-  { expandedStep : Maybe Int
+  { expandedSteps : IntDict GraphView
   }
 
   -- there can be multiple possible outcomes.
@@ -562,6 +562,7 @@ type alias ExecutionData =
   , resolutionDict : ResolutionDict
   -- until we reach some form of resolution, this is `Nothing`.
   , finalResult : Maybe ExecutionResult
+  , step : Int
   }
 
 type TestExpectation

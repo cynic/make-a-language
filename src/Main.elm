@@ -2799,6 +2799,38 @@ deletePackage package model =
         , Cmd.none
         )
 
+expandStep : Int -> GraphPackage -> List ExecutionData -> ExecutionProperties -> Model -> Model
+expandStep n orig_package results props model =
+  let
+    (uuid, model_) =
+      getUuid model
+    relevantSteps = -- ordered from most recent to least recent
+      List.dropWhile (.step >> (/=) n) results
+    selectedStep =
+      List.head relevantSteps
+    zeepaw =
+      Maybe.map (\step ->
+        solvedViewFromPackage
+          (Tuple.mapBoth (\v -> v / 2) (\v -> v / 2) model.uiState.dimensions.bottomPanel)
+          Independent True
+          (createNewPackage uuid orig_package.created step.computation)
+          model_
+      )
+      selectedStep
+  in
+    Maybe.map
+      (\(gv, model__) ->
+        replaceInteraction Nothing
+            (Executing results
+              { props
+                | expandedSteps = IntDict.insert n gv props.expandedSteps
+              }
+            )
+            model__
+      )
+      zeepaw
+    |> Maybe.withDefault model
+
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
   let
@@ -3259,8 +3291,8 @@ update msg model =
         )
 
     Step ->
-      AutoDict.get model.mainGraphView model.packages
-      |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
+      AutoDict.get model.mainGraphView model.graph_views
+      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv.package, AutoDict.get gv.package.currentTestKey gv.package.tests))
       |> Maybe.map
         (\(pkg, test) ->
           ( case peekInteraction Nothing model.interactionsDict of
@@ -3274,7 +3306,7 @@ update msg model =
                         (toResolutionDict model.packages) pkg.userGraph
                       |> DFA.step
                     ]
-                    { expandedStep = Nothing }
+                    { expandedSteps = IntDict.empty }
                   )
                   model
                 |> setProperties
@@ -3284,8 +3316,8 @@ update msg model =
       |> Maybe.withDefault ( model, Cmd.none )
 
     Run ->
-      AutoDict.get model.mainGraphView model.packages
-      |> Maybe.andThen (\p -> Maybe.combineSecond (p, AutoDict.get p.currentTestKey p.tests))
+      AutoDict.get model.mainGraphView model.graph_views
+      |> Maybe.andThen (\{package} -> Maybe.combineSecond (package, AutoDict.get package.currentTestKey package.tests))
       |> Maybe.map
         (\(pkg, test) ->
           ( case peekInteraction Nothing model.interactionsDict of
@@ -3299,7 +3331,7 @@ update msg model =
                         (toResolutionDict model.packages) pkg.userGraph
                       |> DFA.run
                     )
-                    { expandedStep = Nothing }
+                    { expandedSteps = IntDict.empty }
                   )
                   model
                 |> setProperties
@@ -3314,6 +3346,34 @@ update msg model =
           ( setProperties model_, Cmd.none )
         _ ->
           ( model, Cmd.none )
+
+    ToggleDebugStep n ->
+      ( case peekInteraction Nothing model.interactionsDict of
+          Just ( Executing results props ) ->
+            case IntDict.get n props.expandedSteps of
+              Just {id} ->
+                -- get rid of this view.
+                { model
+                  | graph_views = AutoDict.remove id model.graph_views
+                }
+                -- and now get rid of the expanded step
+                |> replaceInteraction Nothing
+                    (Executing results
+                      { expandedSteps =
+                          IntDict.remove n props.expandedSteps
+                      }
+                    )
+                |> setProperties
+              Nothing ->
+                AutoDict.get model.mainGraphView model.graph_views
+                |> Maybe.map (\{package} ->
+                  expandStep n package results props model
+                )
+                |> Maybe.withDefault model
+          _ ->
+            model
+      , Cmd.none
+      )
 
     CrashWithMessage err ->
       Debug.todo err
@@ -3403,7 +3463,7 @@ isPassingTest test =
     InternalError _ -> Nothing
     Accepted -> Just <| test.expectation == ExpectAccepted
     Rejected -> Just <| test.expectation == ExpectRejected
-    NoMatchingTransitions -> Just False
+    NoMatchingTransitions -> Just <| test.expectation == ExpectRejected
 
 isFailingTest : Test -> Maybe Bool
 isFailingTest = isPassingTest >> Maybe.map not
@@ -3879,19 +3939,14 @@ viewNavigatorsArea model =
                       (pass, fail, error) =
                         AutoDict.toList graph_view.package.tests
                         |> List.foldl
-                          (\(_, {expectation} as test) (p, f, e) ->
+                          (\(_, test) (p, f, e) ->
                             case isPassingTest test of
                               Just True ->
-                                if expectation == ExpectAccepted then
-                                  (p + 1, f, e)
-                                else
-                                  (p, f + 1, e)
+                                (p + 1, f, e)
                               Just False ->
-                                if expectation == ExpectRejected then
-                                  (p + 1, f, e)
-                                else
-                                  (p, f + 1, e)
-                              Nothing -> (p, f, e + 1)
+                                (p, f + 1, e)
+                              Nothing ->
+                                (p, f, e + 1)
                           )
                           (0, 0, 0)
                       (testClass, number, testTitle) =
@@ -4219,11 +4274,11 @@ viewTestingTool graph_view test model =
           [ text <| acceptConditionToString matching.via ]
       )
     contextChars = 3
-    html_execution_step n h =
-      li
-        [ HA.class "execution-step" ]
+    html_summary_step h =
+      div
+        [ HA.class "execution-step-inner" ]
         [ div
-            [ HA.class "execution-step-inner" ]
+            [ HA.class "summary" ]
             [ if List.isEmpty h.transitions then
                 -- If there are no transitions, then the div will collapse weirdly
                 -- and that will throw off the calculations for the vertical position
@@ -4261,10 +4316,45 @@ viewTestingTool graph_view test model =
                   )
             ]
         ]
-    html_execution_steps results =
+    html_expanded_step gv h =
+      div
+        [ HA.class "execution-step-inner" ]
+        [ div
+            [ HA.class "summary" ]
+            [ case h.transitions of
+                [] ->
+                  text ""
+                _ ->
+                  div
+                    [ HA.class "transitions-taken" ]
+                    ( html_transitions_taken h.transitions )              
+            , case h.remainingData of
+                [] ->
+                  text ""
+                _ ->
+                  div
+                    [ HA.class "remaining-data" ]
+                    (html_remaining_data h.remainingData)
+            ]
+        , div
+            [ HA.class "step-graph" ]
+            [ GraphEditor.viewGraph gv ]
+        ]
+    html_execution_step props h =
+      li
+        [ HA.class "execution-step"
+        , HE.onClick (ToggleDebugStep h.step)
+        ]
+        [ case IntDict.get h.step props.expandedSteps of
+            Just gv ->
+              html_expanded_step gv h
+            Nothing ->
+              html_summary_step h
+        ]
+    html_execution_steps props results =
       ul
         [ HA.class "execution-steps" ]
-        ( List.indexedMap html_execution_step results )
+        ( List.map (html_execution_step props) results )
   in
   div
     [ HA.class "tool-content testing" ]
@@ -4297,7 +4387,7 @@ viewTestingTool graph_view test model =
                                       [ text "Accepted" ]
                                   ]
                               ]
-                          , html_execution_steps results
+                          , html_execution_steps props results
                           ]
                       Rejected ->
                         div
@@ -4311,7 +4401,7 @@ viewTestingTool graph_view test model =
                                       [ text "Rejected" ]
                                   ]
                               ]
-                          , html_execution_steps results
+                          , html_execution_steps props results
                           ]
                       NoMatchingTransitions ->
                         div
@@ -4335,7 +4425,7 @@ viewTestingTool graph_view test model =
                                       ( html_remaining_data h.remainingData )
                                   ]
                               ]
-                          , html_execution_steps results
+                          , html_execution_steps props results
                           ]
                       InternalError s ->
                         div
@@ -4346,7 +4436,7 @@ viewTestingTool graph_view test model =
                                   [ HA.class "summary-sentence" ]
                                   [ text <| "💀 Internal Error!  " ++ s ]
                               ]
-                          , html_execution_steps results
+                          , html_execution_steps props results
                           ]
                   ]
                 Nothing ->
@@ -4374,7 +4464,7 @@ viewTestingTool graph_view test model =
                       ]
                   , div
                       [ HA.class "progress-area" ]
-                      [ html_execution_steps results ]
+                      [ html_execution_steps props results ]
                   ]
             )
         _ ->
@@ -4920,7 +5010,6 @@ viewPackageDeletionWarning props model =
             ]
         ]
     ]
-    
 
 view : Model -> Html Msg
 view model =

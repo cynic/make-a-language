@@ -443,6 +443,7 @@ oneTransition data =
           { data
             | finalResult =
                 Just (InternalError "I'm done; I shouldn't be being called at all. Good day to you, and good-bye!")
+            , step = data.step + 1
           }
         h::remainingData ->
           let
@@ -506,6 +507,7 @@ oneTransition data =
                       | finalResult =
                           Just <|
                             InternalError "I failed somewhere on the path.  This should be impossible; it seems to indicate that a path which previously existed has now gone missing. This extremely likely to be a bug or, even worse, some unexpected effect that I have simply never considered before.  Please investigate what's going on thoroughly!"
+                      , step = data.step + 1
                     }
                     -- I return the one just BEFORE ^ the crazy happened, for debugging purposes.
                   Just x ->
@@ -517,6 +519,7 @@ oneTransition data =
                       , computation = expanded
                       , finalResult =
                           Just NoMatchingTransitions
+                      , step = data.step + 1
                     }
               Just (t, newNode) ->
                 -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
@@ -536,6 +539,7 @@ oneTransition data =
                             -- we can plausibly continue on, so there is no
                             -- final determination at this point in the time.
                             Nothing
+                    , step = data.step + 1
                 }
 
 step : ExecutionData -> ExecutionData
@@ -572,6 +576,7 @@ load s resolutionDict g =
     , computation = g
     , resolutionDict = resolutionDict
     , finalResult = Nothing
+    , step = 0
     }
 
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph
