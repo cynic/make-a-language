@@ -92,9 +92,6 @@ type PackageMsg
   | SelectTest Uuid
   | DeleteTestInput Uuid
   | UpdateTestInput String
-  | Step
-  | Run
-  | ResetComputation
   | FlipAcceptanceCondition
   | UpdatePackageDescription String
 
@@ -117,6 +114,10 @@ type Msg
   | Confirm -- the universal "Yeah! Let's Go!" key & command
   | CreateNewPackage
   | TimeValueForPackage Time.Posix
+  | Step
+  | Run
+  | ResetComputation
+  -- | ExpandDebugStep Int
   
   -- more general messages
   -- | Tick
