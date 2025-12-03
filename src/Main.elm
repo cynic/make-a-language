@@ -340,6 +340,8 @@ centerAndHighlight links graph_view =
     inner_padding = 60
     adjusted =
       expand_bounds inner_padding bounds
+    aspect_ratio =
+      Tuple.first graph_view.host_dimensions / Tuple.second graph_view.host_dimensions
   in
     { graph_view
       | drawingData =
@@ -359,7 +361,7 @@ centerAndHighlight links graph_view =
       , guest_coordinates =
           ( adjusted.min.x, adjusted.min.y )
       , guest_dimensions =
-          ( adjusted.max.x - adjusted.min.x, adjusted.max.y - adjusted.min.y )
+          ( adjusted.max.x - adjusted.min.x, (adjusted.max.x - adjusted.min.x) / aspect_ratio )
     }
 
 -- MAIN
@@ -1089,13 +1091,16 @@ panGraphView x y graph_view =
     ( guest_width, guest_height) = graph_view.guest_dimensions
     ( pan_x, pan_y ) = graph_view.pan
     -- this is a rectangle that is inset from the maximum bounds.
+    movement_amount =
+      -- if the space to traverse is large, then move by a larger amount.
+      max 1 (ceiling (guest_width / 250)) |> toFloat
     calc_for_dim v host_coord host_dim =
       -- left and top are the "negative" directions.
       if v <= host_coord + graph_view.panBuffer then
-        -1
+        -movement_amount
       -- right and bottom are the "positive" directions
       else if v >= host_coord + host_dim - graph_view.panBuffer then
-        1
+        movement_amount
       else
         0
     ( new_pan_x, new_pan_y ) =
