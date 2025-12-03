@@ -43,6 +43,8 @@ import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
 import Automata.Debugging exposing (println)
 import VirtualDom
 import Random.Pcg.Extended as Random
+import TypedSvg.Attributes exposing (stroke)
+import Automata.Debugging exposing (debugLog_)
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -112,13 +114,14 @@ spreadOutForces g =
             |> List.foldl
                 (\(k, conn) (seed, forces_) ->
                   let
-                    (n, seed_) = Random.step (Random.int 1 500) seed
+                    (n, seed_) =
+                      Random.step (Random.int 1 500) seed
                   in
                   ( seed_
                   , { source = ctx.node.id
                     , target = k
                     , distance = 50 + toFloat n + linkLabelWidth conn -- 35-40 seems like a good distance
-                    , strength = Just 1.0 -- * (toFloat <| Set.size v)
+                    , strength = Just 1.3 -- * (toFloat <| Set.size v)
                     } :: forces_
                   )
                 )
@@ -969,16 +972,16 @@ viewMainSvgContent graph_view =
     [ defs [] arrowheadDefs
       -- this part is for debugging panning. If I uncomment it, I should also
       -- uncomment the corresponding code in viewGraph
-    -- , rect
-    --     [ stroke <| Paint Color.lightRed
-    --     , fill <| PaintNone
-    --     , Px.strokeWidth 2
-    --     , Px.x guest_x
-    --     , Px.y guest_y
-    --     , Px.width guest_width
-    --     , Px.height guest_height
-    --     ]
-    --     []
+    , rect
+        [ stroke <| Paint Color.lightRed
+        , fill <| PaintNone
+        , Px.strokeWidth 2
+        , Px.x <| Tuple.first graph_view.guest_coordinates
+        , Px.y <| Tuple.second graph_view.guest_coordinates
+        , Px.width <| Tuple.first graph_view.guest_dimensions
+        , Px.height <| Tuple.second graph_view.guest_dimensions
+        ]
+        []
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
       |> List.sortBy (\(_, data) -> if Maybe.isJust data.highlighting then 1 else 0)
@@ -1144,16 +1147,16 @@ viewGraph graphView =
             viewUndoRedoVisualisation graphView
             -- this part is for debugging panning. If I uncomment it, I should also
             -- uncomment the corresponding code in viewMainSvgContent.
-          -- , rect
-          --     [ fill <| Paint Color.lightYellow
-          --     , Px.x guest_inner_x
-          --     , Px.y guest_inner_y
-          --     , Px.width guest_inner_width
-          --     , Px.height guest_inner_height
-          --     ]
-          --     []
+          , rect
+              [ fill <| Paint Color.lightYellow
+              , Px.x guest_inner_x
+              , Px.y guest_inner_y
+              , Px.width guest_inner_width
+              , Px.height guest_inner_height
+              ]
+              []
           , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-          , if graphView.isFrozen then
+          , if not graphView.properties.canPan then
               g [] []
             else
               g

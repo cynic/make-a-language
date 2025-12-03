@@ -88,8 +88,8 @@ getUuid model =
   in
     ( v, updatedModel )
 
-nodeDrawingForPackage : GraphPackage -> Bool -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package isFrozen graphView_uuid interactions =
+nodeDrawingForPackage : GraphPackage -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage package graphView_uuid interactions =
   let
     disconnectedNodes =
       GraphEditor.identifyDisconnectedNodes package.userGraph
@@ -136,11 +136,8 @@ nodeDrawingForPackage package isFrozen graphView_uuid interactions =
             , coordinates = ( node.label.x, node.label.y )
             , isRoot = node.id == package.userGraph.root
             , canSplit =
-                if isFrozen then
-                  False
-                else
-                  Maybe.map isSplittable nodeContext
-                  |> Maybe.withDefault False
+                Maybe.map isSplittable nodeContext
+                |> Maybe.withDefault False
             , view_uuid = graphView_uuid
             , isSelected = False
             }
@@ -242,7 +239,7 @@ fitGraphViewToGraph graphView =
     guest_viewport =
       calculateGuestDimensionsForHost
         graphView.host_dimensions
-        graphView.isFrozen
+        True -- we are fitting closely around.
         graphView.package.userGraph.graph
   in
     { graphView
@@ -252,8 +249,8 @@ fitGraphViewToGraph graphView =
     , guest_inner_dimensions = guest_viewport.inner_dimensions
     }
 
-mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> PackageDict -> InteractionsDict -> GraphView
-mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
+mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> Bool -> InterfaceLocation -> GraphPackage -> PackageDict -> InteractionsDict -> GraphView
+mkGraphView id ag (w, h) removePadding location pkg packages interactions =
   let
     -- now that we have the positions, calculate the dimensions of
     -- the viewport.
@@ -268,11 +265,10 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
     guest_viewport =
       calculateGuestDimensionsForHost
         (w, h)
-        createFrozen
+        removePadding
         solved_pkg.userGraph.graph
   in
     { id = id
-    , isFrozen = createFrozen
     , package = solved_pkg
     , interfaceLocation = location
     , host_dimensions = (w, h)
@@ -287,7 +283,7 @@ mkGraphView id ag (w, h) location createFrozen pkg packages interactions =
     , properties = nilViewProperties
     , drawingData =
         { link_drawing = linkDrawingForPackage solved_pkg packages
-        , node_drawing = nodeDrawingForPackage solved_pkg createFrozen id interactions
+        , node_drawing = nodeDrawingForPackage solved_pkg id interactions
         }
     }
 
@@ -307,11 +303,11 @@ upsertGraphView uuid graph_view model =
     `naiveViewFromPackage` instead.
 -}
 viewFromPackage : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
-viewFromPackage computed (w, h) location createFrozen pkg model =
+viewFromPackage computed (w, h) location removePadding pkg model =
   let
     (id, model_) = getUuid model
     graph_view =
-      mkGraphView id computed.solvedGraph (w, h) location createFrozen pkg model_.packages model_.interactionsDict
+      mkGraphView id computed.solvedGraph (w, h) removePadding location pkg model_.packages model_.interactionsDict
   in
     ( graph_view
     , upsertGraphView id graph_view model_
@@ -345,10 +341,14 @@ centerAndHighlight links graph_view =
       bounds_for
         (List.foldl (\(a, b) acc -> a :: b :: acc) [] (Debug.log "links" links))
         graph_view.package.userGraph.graph
-      |> Debug.log "bounds"
     inner_padding = 60
     adjusted =
       expand_bounds inner_padding bounds
+    -- for_inner =
+    --   calculateGuestDimensionsForHost
+    --     graph_view.host_dimensions
+    --     True
+    --     graph_view.package.userGraph.graph
   in
     { graph_view
       | drawingData =
@@ -370,8 +370,10 @@ centerAndHighlight links graph_view =
       , guest_dimensions =
           ( adjusted.max.x - adjusted.min.x, adjusted.max.y - adjusted.min.y )
       , guest_inner_coordinates =
+          -- for_inner.inner_coordinates
           ( bounds.min.x, bounds.min.y )
       , guest_inner_dimensions =
+          -- for_inner.inner_dimensions
           ( bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y )
     }
 
@@ -533,7 +535,7 @@ updatePackageInView package_updater graph_view model =
         | package = pkg
         , drawingData =
             { link_drawing = linkDrawingForPackage pkg model.packages
-            , node_drawing = nodeDrawingForPackage pkg graph_view.isFrozen graph_view.id model.interactionsDict
+            , node_drawing = nodeDrawingForPackage pkg graph_view.id model.interactionsDict
             }
         , disconnectedNodes = GraphEditor.identifyDisconnectedNodes pkg.userGraph
       }
@@ -767,7 +769,7 @@ expand_bounds n bounds =
     appropriate guest coordinates & guest dimensions (i.e. viewport).
 -}
 calculateGuestDimensionsForHost : (Float, Float) -> Bool -> Graph.Graph Entity Connection -> GuestDimensions
-calculateGuestDimensionsForHost (w, h) isFrozen graph =
+calculateGuestDimensionsForHost (w, h) removePadding graph =
   let
     aspectRatio : Float
     aspectRatio =
@@ -777,13 +779,13 @@ calculateGuestDimensionsForHost (w, h) isFrozen graph =
       bounds_for (Graph.nodeIds graph) graph
     inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
     inner_pad =
-      if isFrozen then
+      if removePadding then
         -- we don't need any buffer.
         -- So, just put in a "buffer" for the node radius.
         if raw.max.x - raw.min.x < 60 then
           60 -- this is the minimum amount. It is enough to show a single node.
         else
-          10
+          15
       else
         -- when we edit (e.g. make new nodes etc), we want some free space around to put
         -- those nodes.  That is what this is for.
@@ -864,7 +866,7 @@ updateMainEditorDimensions ({uiState} as model) =
         guest_viewport =
           calculateGuestDimensionsForHost
             uiState.dimensions.mainEditor
-            graph_view.isFrozen
+            False
             graph_view.package.userGraph.graph
       in
         { graph_view
@@ -2836,35 +2838,38 @@ expandStep n orig_package results props model =
       Maybe.map (\step ->
         let
           edges = executing_edges step |> Dict.keys
-          (gv, model__) =
+          (gv_uuid, model__) =
             solvedViewFromPackage
               GraphEditor.spreadOutForces
-              model.uiState.dimensions.bottomPanel
+              (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiState.dimensions.bottomPanel)
               Independent True
               (createNewPackage uuid orig_package.created step.computation)
               model_
-            |>(\(gv_, m) ->
-                let
-                  gv__ = centerAndHighlight edges gv_
-                in
-                  ( gv__
-                  , { m | graph_views = AutoDict.insert gv__.id gv__ m.graph_views }
-                  )
+            |>(\({id}, m) ->
+                ( id
+                , { m
+                    | graph_views =
+                        AutoDict.update id
+                          (Maybe.map <| centerAndHighlight edges)
+                          m.graph_views
+                  }
+                )
               )
         in
-          ( gv , model__ )
+          ( gv_uuid , model__ )
       )
       selectedStep
   in
     Maybe.map
-      (\(gv, model__) ->
+      (\(gv_uuid, model__) ->
         replaceInteraction Nothing
             (Executing results
               { props
-                | expandedSteps = IntDict.insert n gv props.expandedSteps
+                | expandedSteps = IntDict.insert n gv_uuid props.expandedSteps
               }
             )
             model__
+        |> setProperties
       )
       zeepaw
     |> Maybe.withDefault model
@@ -3245,7 +3250,7 @@ update msg model =
                         in
                           mkGraphView
                             graph_view.id h graph_view.host_dimensions
-                            graph_view.interfaceLocation graph_view.isFrozen
+                            False graph_view.interfaceLocation
                             updated_pkg model.packages model.interactionsDict
                 ))
                 model.graph_views
@@ -3276,7 +3281,7 @@ update msg model =
                         in
                           mkGraphView
                             graph_view.id h graph_view.host_dimensions
-                            graph_view.interfaceLocation graph_view.isFrozen
+                            False graph_view.interfaceLocation
                             updated_pkg model.packages model.interactionsDict
                 ))
                 model.graph_views
@@ -3391,7 +3396,7 @@ update msg model =
       ( case peekInteraction Nothing model.interactionsDict of
           Just ( Executing results props ) ->
             case IntDict.get n props.expandedSteps of
-              Just {id} ->
+              Just id ->
                 -- get rid of this view.
                 { model
                   | graph_views = AutoDict.remove id model.graph_views
@@ -4378,7 +4383,7 @@ viewTestingTool graph_view test model =
             ]
         , div
             [ HA.class "step-graph" ]
-            [ GraphEditor.viewGraph gv ]
+            [ viewGraph (debugLog_ "props" .properties gv) ]
         ]
     html_execution_step props h =
       li
@@ -4386,8 +4391,10 @@ viewTestingTool graph_view test model =
         , HE.onClick (ToggleDebugStep h.step)
         ]
         [ case IntDict.get h.step props.expandedSteps of
-            Just gv ->
-              html_expanded_step gv h
+            Just gv_uuid ->
+              AutoDict.get gv_uuid model.graph_views
+              |> Maybe.map (flip html_expanded_step h)
+              |> Maybe.withDefaultLazy (\() -> html_summary_step h)
             Nothing ->
               html_summary_step h
         ]

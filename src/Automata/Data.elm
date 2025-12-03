@@ -448,7 +448,6 @@ type alias GraphView =
   -- , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
   , disconnectedNodes : Set NodeId
-  , isFrozen : Bool
   , properties : GraphViewProperties
   , drawingData : DrawingData
   }
@@ -538,7 +537,7 @@ type alias TransitionTakenData =
   }
 
 type alias ExecutionProperties =
-  { expandedSteps : IntDict GraphView
+  { expandedSteps : IntDict Uuid -- of GraphView
   }
 
   -- there can be multiple possible outcomes.
