@@ -387,6 +387,7 @@ type alias PathBetweenReturn =
 type LinkHighlighting
   = Phantom
   | Highlight
+  | Lowlight
 
 type alias LinkDrawingData =
   { cardinality : Cardinality

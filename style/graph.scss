@@ -358,9 +358,8 @@
       
     }
 
-    // Phantom edge group
+    // highlight edge group
     &.highlight {
-      // Phantom edge background (the "stroke" effect)
       &.background {
         stroke: var(--background);
         stroke-width: 6px;
@@ -370,7 +369,6 @@
         pointer-events: none;
       }
       
-      // Main phantom edge path
       &.foreground {
         stroke: var(--pink);
         stroke-width: 4px;
@@ -380,6 +378,10 @@
         marker-end: url(#highlight-arrowhead);
       }
       
+    }
+
+    &.lowlight {
+      opacity: 0.3;
     }
 
   }

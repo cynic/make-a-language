@@ -682,19 +682,15 @@ viewLink {id, properties} (from, to) drawing_data =
             Nothing ->
               viewLinkLabel drawing_data
         linkClass =
-          case ( drawing_data.executionData, drawing_data.highlighting ) of
-            ( Nothing, Just Phantom ) ->
+          case drawing_data.highlighting of
+            Just Phantom ->
               [ "link", "phantom" ]
-            ( Nothing, Just Highlight ) ->
+            Just Highlight ->
               [ "link", "highlight" ]
-            ( Nothing, Nothing ) ->
+            Just Lowlight ->
+              [ "link", "lowlight" ]
+            Nothing ->
               [ "link" ]
-            ( Just {smallest_recency}, Just Phantom ) ->
-              [ "link", "executed", "phantom", "recent-" ++ String.fromInt smallest_recency ]
-            ( Just {smallest_recency}, Just Highlight ) ->
-              [ "link", "executed", "highlight", "recent-" ++ String.fromInt smallest_recency ]
-            ( Just {smallest_recency}, Nothing ) ->
-              [ "link", "executed", "recent-" ++ String.fromInt smallest_recency ]
       in
         g
           [ class [ "link-group" ] ]
@@ -981,18 +977,18 @@ viewMainSvgContent graph_view =
     [ transform [ matrixFromZoom graph_view.pan 1.0 ]
     ]
     [ defs [] arrowheadDefs
-      -- this part is for debugging panning. If I uncomment it, I should also
-      -- uncomment the corresponding code in viewGraph
-    , rect
-        [ stroke <| Paint Color.lightRed
-        , fill <| PaintNone
-        , Px.strokeWidth 2
-        , Px.x <| Tuple.first graph_view.guest_coordinates
-        , Px.y <| Tuple.second graph_view.guest_coordinates
-        , Px.width <| Tuple.first graph_view.guest_dimensions
-        , Px.height <| Tuple.second graph_view.guest_dimensions
-        ]
-        []
+      -- this part is for debugging panning. It shows the "original" viewport,
+      -- sans panning.
+    -- , rect
+    --     [ stroke <| Paint Color.lightRed
+    --     , fill <| PaintNone
+    --     , Px.strokeWidth 2
+    --     , Px.x <| Tuple.first graph_view.guest_coordinates
+    --     , Px.y <| Tuple.second graph_view.guest_coordinates
+    --     , Px.width <| Tuple.first graph_view.guest_dimensions
+    --     , Px.height <| Tuple.second graph_view.guest_dimensions
+    --     ]
+    --     []
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
       |> List.sortBy (\(_, data) -> if Maybe.isJust data.highlighting then 1 else 0)

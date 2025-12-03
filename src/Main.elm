@@ -342,21 +342,27 @@ centerAndHighlight links graph_view =
       expand_bounds inner_padding bounds
     aspect_ratio =
       Tuple.first graph_view.host_dimensions / Tuple.second graph_view.host_dimensions
+    last_node =
+      List.last links
+      |> Maybe.map Tuple.second
+      |> Maybe.withDefault (graph_view.package.userGraph.root)
+    linkSet = Set.fromList links
   in
     { graph_view
       | drawingData =
           let drawingData = graph_view.drawingData in
             { drawingData
               | link_drawing =
-                  List.foldl
-                    (\(src, dest) ->
-                      Dict.update (src, dest)
-                        (Maybe.map (\link ->
-                          { link | highlighting = Just Highlight }
-                        ))
-                    )
-                    drawingData.link_drawing
-                    links
+                  Dict.map (\(src, dest) link ->
+                    if Set.member (src, dest) linkSet then
+                      -- this is a link to highlight.
+                      { link | highlighting = Just Highlight }
+                    else if src == last_node then
+                      { link | highlighting = Nothing }
+                    else
+                      { link | highlighting = Just Lowlight }
+                  )
+                  drawingData.link_drawing
             }
       , guest_coordinates =
           ( adjusted.min.x, adjusted.min.y )
@@ -2815,10 +2821,10 @@ deletePackage package model =
 -- from the execution result, obtain the edges which were taken.
 -- Note that multiple edges may be "taken" between two nodes,
 -- in the cases of (1) loops and (2) graph-ref intersections.
-executing_edges : ExecutionData -> Dict (NodeId, NodeId) (Int, AcceptVia)
+executing_edges : ExecutionData -> List (NodeId, NodeId)
 executing_edges data =
   let
-    trace : TransitionTakenData -> (Graph.NodeContext Entity Connection, Int, Dict (NodeId, NodeId) (Int, AcceptVia)) -> (Graph.NodeContext Entity Connection, Int, Dict (NodeId, NodeId) (Int, AcceptVia))
+    trace : TransitionTakenData -> (Graph.NodeContext Entity Connection, Int, List (NodeId, NodeId)) -> (Graph.NodeContext Entity Connection, Int, List (NodeId, NodeId))
     trace {matching} (ctx, recency, acc) =
       IntDict.toList ctx.outgoing
       |> List.find (\(_, conn) -> AutoSet.member matching conn)
@@ -2827,7 +2833,7 @@ executing_edges data =
         (\newCtx ->
           ( newCtx
           , recency - 1
-          , Dict.insert (ctx.node.id, newCtx.node.id) (recency, matching.via) acc
+          , (ctx.node.id, newCtx.node.id) :: acc
           )
         )
       |> Maybe.withDefault
@@ -2837,13 +2843,14 @@ executing_edges data =
     |> Maybe.map (\ctx ->
       List.foldl
         trace
-        (ctx, List.length data.transitions, Dict.empty)
+        (ctx, List.length data.transitions, [])
         ( data.transitions
           |> Debug.log "Traced transitions"
         )
-      |> (\(_, _, dict) -> dict)
+      |> (\(_, _, acc) -> List.reverse acc)
+      |> Debug.log "Executed edges"
     )
-    |> Maybe.withDefault Dict.empty
+    |> Maybe.withDefault []
 
 expandStep : Int -> GraphPackage -> List ExecutionData -> ExecutionProperties -> Model -> Model
 expandStep n orig_package results props model =
@@ -2857,7 +2864,7 @@ expandStep n orig_package results props model =
     zeepaw =
       Maybe.map (\step ->
         let
-          edges = executing_edges step |> Dict.keys
+          edges = executing_edges step
           (gv_uuid, model__) =
             solvedViewFromPackage
               GraphEditor.spreadOutForces
