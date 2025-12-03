@@ -105,7 +105,7 @@ spreadOutForces g =
     -- links are the "springs"
     -- manyBody is the "repulsion"
     Graph.fold
-      (\ctx {toX, toY, link, manyBody} ->
+      (\ctx (seedy, {toX, toY, link, manyBody}) ->
         let
         -- for all outgoing links that AREN'T recursive, create a link-Force.
           (seed1, linkForce) =
@@ -115,43 +115,53 @@ spreadOutForces g =
                 (\(k, conn) (seed, forces_) ->
                   let
                     (n, seed_) =
-                      Random.step (Random.int 1 500) seed
+                      Random.step (Random.int 1 350) seed
+                    (s, seed__) =
+                      Random.step (Random.float 0.0 0.5) seed_
                   in
-                  ( seed_
+                  ( seed__
                   , { source = ctx.node.id
                     , target = k
                     , distance = 50 + toFloat n + linkLabelWidth conn -- 35-40 seems like a good distance
-                    , strength = Just 1.3 -- * (toFloat <| Set.size v)
+                    , strength = Just (1.0 + s) -- * (toFloat <| Set.size v)
                     } :: forces_
                   )
                 )
-                (seed0, link)
+                (seedy, link)
+          (go_right, seed2) =
+            Random.step Random.bool seed1
         in
           if ctx.node.id == root then
-            { toX =
-                { node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
-            , toY =
-                { node = ctx.node.id , strength = 10.0 , target = 0 } :: toY
-            , link = linkForce
-            , manyBody = ctx.node.id :: manyBody
-            }
+            ( seed2
+            , { toX =
+                  { node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
+              , toY =
+                  { node = ctx.node.id , strength = 10.0 , target = 0 } :: toY
+              , link = linkForce
+              , manyBody = ctx.node.id :: manyBody
+              }
+            )
           else
-            { toX =
-                { node = ctx.node.id , strength = 0.02 , target = x_target } :: toX
-            , toY =
-                { node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
-            , link = linkForce
-            , manyBody = ctx.node.id :: manyBody
-            }
+            ( seed2
+            , { toX =
+                  { node = ctx.node.id , strength = 0.04
+                  , target = if go_right then x_target else -x_target
+                  } :: toX
+              , toY =
+                  { node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
+              , link = linkForce
+              , manyBody = ctx.node.id :: manyBody
+              }
+            )
       )
-      { toX = [], toY = [], link = [], manyBody = [] }
+      (seed0, { toX = [], toY = [], link = [], manyBody = [] })
       graph
-    |>  (\{toX, toY, link, manyBody} ->
+    |>  (\(_, {toX, toY, link, manyBody}) ->
           if num_nodes > 1 then
             [ Force.towardsX toX
             , Force.towardsY toY
-            , Force.customLinks 3 link
-            , Force.manyBodyStrength -5000.0 manyBody
+            , Force.customLinks 2 link
+            , Force.manyBodyStrength -1550.0 manyBody
             ]
           else
             []
@@ -870,6 +880,7 @@ arrowheadDefs =
   in
     [ mkArrowhead "arrowhead"
     , mkArrowhead "phantom-arrowhead"
+    , mkArrowhead "highlight-arrowhead"
       --strokeWidth 1.5
       -- , strokeDasharray "1.5 2"
       -- , strokeLinecap StrokeLinecapRound
@@ -1072,25 +1083,13 @@ viewGraph graphView =
     ( host_width, host_height ) = graphView.host_dimensions
     ( guest_width, guest_height) = graphView.guest_dimensions
     ( guest_x, guest_y ) = graphView.guest_coordinates
-    ( pan_dx, pan_dy ) = graphView.pan
-    ( guest_inner_x, guest_inner_y ) = graphView.guest_inner_coordinates
-    ( guest_inner_width, guest_inner_height ) = graphView.guest_inner_dimensions
-    draw_right_buffer =
-      guest_x - pan_dx + guest_width > guest_inner_x + guest_inner_width
-    draw_left_buffer =
-      guest_x - pan_dx < guest_inner_x
-    draw_bottom_buffer =
-      guest_y - pan_dy + guest_height > guest_inner_y + guest_inner_height
-    draw_top_buffer =
-      guest_y - pan_dy < guest_inner_y
     rectangles =
       if graphView.properties.canPan then
-        conditionalList
-          [ ( Rectangle host_x host_y host_width graphView.panBuffer, draw_top_buffer ) -- top
-          , ( Rectangle host_x host_y graphView.panBuffer host_height, draw_left_buffer ) -- left
-          , ( Rectangle host_x (host_y + host_height - graphView.panBuffer) host_width graphView.panBuffer, draw_bottom_buffer ) -- bottom
-          , ( Rectangle (host_x + host_width - graphView.panBuffer) host_y graphView.panBuffer host_height, draw_right_buffer ) -- right
-          ]
+        [ ( Rectangle host_x host_y host_width graphView.panBuffer ) -- top
+        , ( Rectangle host_x host_y graphView.panBuffer host_height ) -- left
+        , ( Rectangle host_x (host_y + host_height - graphView.panBuffer) host_width graphView.panBuffer ) -- bottom
+        , ( Rectangle (host_x + host_width - graphView.panBuffer) host_y graphView.panBuffer host_height ) -- right
+        ]
       else
         []
     panRadius = sqrt (2.0 * graphView.panBuffer * graphView.panBuffer)
@@ -1147,14 +1146,6 @@ viewGraph graphView =
             viewUndoRedoVisualisation graphView
             -- this part is for debugging panning. If I uncomment it, I should also
             -- uncomment the corresponding code in viewMainSvgContent.
-          , rect
-              [ fill <| Paint Color.lightYellow
-              , Px.x guest_inner_x
-              , Px.y guest_inner_y
-              , Px.width guest_inner_width
-              , Px.height guest_inner_height
-              ]
-              []
           , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
           , if not graphView.properties.canPan then
               g [] []
@@ -1216,16 +1207,15 @@ viewGraph graphView =
       , div
           []
           ( if graphView.properties.canPan then
-              conditionalList
-                [ ( mkArrow "top" host_width graphView.panBuffer     "M10 2 L2 18 L18 18 Z", draw_top_buffer )
-                , ( mkArrow "bottom" host_width graphView.panBuffer  "M10 18 L18 2 L2 2 Z", draw_bottom_buffer )
-                , ( mkArrow "left" graphView.panBuffer host_height   "M2 10 L18 2 L18 18 Z", draw_left_buffer )
-                , ( mkArrow "top-right" panRadius panRadius          "M16 4 L4 4 L16 16 Z", draw_top_buffer && draw_right_buffer )
-                , ( mkArrow "bottom-right" panRadius panRadius       "M4 16 L16 16 L16 4 Z", draw_bottom_buffer && draw_right_buffer )
-                , ( mkArrow "top-left" panRadius panRadius           "M4 4 L16 4 L4 16 Z", draw_top_buffer && draw_left_buffer )
-                , ( mkArrow "right" graphView.panBuffer host_height  "M18 10 L2 2 L2 18 Z", draw_right_buffer )
-                , ( mkArrow "bottom-left" panRadius panRadius        "M16 16 L4 16 L4 4 Z", draw_bottom_buffer && draw_left_buffer )
-                ]
+              [ ( mkArrow "top" host_width graphView.panBuffer     "M10 2 L2 18 L18 18 Z" )
+              , ( mkArrow "bottom" host_width graphView.panBuffer  "M10 18 L18 2 L2 2 Z" )
+              , ( mkArrow "left" graphView.panBuffer host_height   "M2 10 L18 2 L18 18 Z" )
+              , ( mkArrow "top-right" panRadius panRadius          "M16 4 L4 4 L16 16 Z" )
+              , ( mkArrow "bottom-right" panRadius panRadius       "M4 16 L16 16 L16 4 Z" )
+              , ( mkArrow "top-left" panRadius panRadius           "M4 4 L16 4 L4 16 Z" )
+              , ( mkArrow "right" graphView.panBuffer host_height  "M18 10 L2 2 L2 18 Z" )
+              , ( mkArrow "bottom-left" panRadius panRadius        "M16 16 L4 16 L4 4 Z" )
+              ]
             else
               []
           )

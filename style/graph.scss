@@ -377,7 +377,7 @@
         stroke-linecap: round;
         stroke-linejoin: round;
         pointer-events: none;
-        marker-end: url(#arrowhead);
+        marker-end: url(#highlight-arrowhead);
       }
       
     }
@@ -458,4 +458,8 @@
 #phantom-arrowhead {
   animation: phantom-edge-pulse 2s ease-in-out infinite;
   fill: transparent;
+}
+
+#highlight-arrowhead {
+  fill: var(--pink);
 }

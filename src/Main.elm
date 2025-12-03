@@ -245,8 +245,6 @@ fitGraphViewToGraph graphView =
     { graphView
     | guest_dimensions = guest_viewport.dimensions
     , guest_coordinates = guest_viewport.coordinates
-    , guest_inner_coordinates = guest_viewport.inner_coordinates
-    , guest_inner_dimensions = guest_viewport.inner_dimensions
     }
 
 mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> Bool -> InterfaceLocation -> GraphPackage -> PackageDict -> InteractionsDict -> GraphView
@@ -276,8 +274,6 @@ mkGraphView id ag (w, h) removePadding location pkg packages interactions =
     , panBuffer = GraphEditor.panBufferAmount (w, h)
     , guest_dimensions = guest_viewport.dimensions
     , guest_coordinates = guest_viewport.coordinates
-    , guest_inner_coordinates = guest_viewport.inner_coordinates
-    , guest_inner_dimensions = guest_viewport.inner_dimensions
     , pan = ( 0, 0 )
     , disconnectedNodes = Set.empty
     , properties = nilViewProperties
@@ -344,11 +340,6 @@ centerAndHighlight links graph_view =
     inner_padding = 60
     adjusted =
       expand_bounds inner_padding bounds
-    -- for_inner =
-    --   calculateGuestDimensionsForHost
-    --     graph_view.host_dimensions
-    --     True
-    --     graph_view.package.userGraph.graph
   in
     { graph_view
       | drawingData =
@@ -369,12 +360,6 @@ centerAndHighlight links graph_view =
           ( adjusted.min.x, adjusted.min.y )
       , guest_dimensions =
           ( adjusted.max.x - adjusted.min.x, adjusted.max.y - adjusted.min.y )
-      , guest_inner_coordinates =
-          -- for_inner.inner_coordinates
-          ( bounds.min.x, bounds.min.y )
-      , guest_inner_dimensions =
-          -- for_inner.inner_dimensions
-          ( bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y )
     }
 
 -- MAIN
@@ -1090,6 +1075,11 @@ mostRecentInteraction model =
         h::_ -> Just (uuid, h)
     )
 
+type PanMovement
+  = Less
+  | More
+  | Same
+
 panGraphView : Float -> Float -> GraphView -> GraphView
 panGraphView x y graph_view =
   let
@@ -1097,26 +1087,37 @@ panGraphView x y graph_view =
     ( host_width, host_height ) = graph_view.host_dimensions
     ( guest_x, guest_y ) = graph_view.guest_coordinates
     ( guest_width, guest_height) = graph_view.guest_dimensions
-    ( guest_inner_x, guest_inner_y ) = graph_view.guest_inner_coordinates
-    ( guest_inner_width, guest_inner_height ) = graph_view.guest_inner_dimensions
     ( pan_x, pan_y ) = graph_view.pan
-    calc_for_dim v current_pan host_coord host_dim guest_coord guest_dim guest_inner_coord guest_inner_dim =
+    -- this is a rectangle that is inset from the maximum bounds.
+    calc_for_dim v host_coord host_dim =
       -- left and top are the "negative" directions.
-      if v <= host_coord + graph_view.panBuffer && guest_coord - current_pan - 1 < guest_inner_coord then
-        current_pan - 1
+      if v <= host_coord + graph_view.panBuffer then
+        -1
       -- right and bottom are the "positive" directions
-      else if v >= host_coord + host_dim - graph_view.panBuffer && guest_coord - current_pan + 1 + guest_dim > guest_inner_coord + guest_inner_dim then
-        current_pan + 1
+      else if v >= host_coord + host_dim - graph_view.panBuffer then
+        1
       else
-        current_pan
+        0
+    ( new_pan_x, new_pan_y ) =
+      ( pan_x + calc_for_dim x host_x host_width
+      , pan_y + calc_for_dim y host_y host_height
+      )
+    ((sx, sy), (ex, ey)) = -- this is after the proposed pan.
+      ( ((guest_x + new_pan_x), (guest_y + new_pan_y))
+      , ((guest_x + new_pan_x + guest_width), (guest_y + new_pan_y + guest_height))
+      )
+    is_okay =
+      Graph.nodes graph_view.package.userGraph.graph
+      |> List.any
+        (\node ->
+          node.label.x > sx &&
+          node.label.y > sy &&
+          node.label.x < ex &&
+          node.label.y < ey
+        )
   in
-    if graph_view.properties.canPan then
-      { graph_view
-        | pan =
-            ( calc_for_dim x pan_x host_x host_width  guest_x guest_width  guest_inner_x guest_inner_width
-            , calc_for_dim y pan_y host_y host_height guest_y guest_height guest_inner_y guest_inner_height
-            )
-      }
+    if graph_view.properties.canPan && is_okay then
+      { graph_view | pan = ( new_pan_x , new_pan_y ) }
     else
       graph_view
 
@@ -2812,18 +2813,32 @@ deletePackage package model =
 executing_edges : ExecutionData -> Dict (NodeId, NodeId) (Int, AcceptVia)
 executing_edges data =
   let
-    trace : TransitionTakenData -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia)) -> (NodeId, Int, Dict (NodeId, NodeId) (Int, AcceptVia))
-    trace {dest, matching} (lastNode, recency, acc) =
-      ( dest
-      , recency - 1
-      , Dict.insert (lastNode, dest) (recency, matching.via) acc
-      )
+    trace : TransitionTakenData -> (Graph.NodeContext Entity Connection, Int, Dict (NodeId, NodeId) (Int, AcceptVia)) -> (Graph.NodeContext Entity Connection, Int, Dict (NodeId, NodeId) (Int, AcceptVia))
+    trace {matching} (ctx, recency, acc) =
+      IntDict.toList ctx.outgoing
+      |> List.find (\(_, conn) -> AutoSet.member matching conn)
+      |> Maybe.andThen (Tuple.first >> flip Graph.get data.computation.graph)
+      |> Maybe.map
+        (\newCtx ->
+          ( newCtx
+          , recency - 1
+          , Dict.insert (ctx.node.id, newCtx.node.id) (recency, matching.via) acc
+          )
+        )
+      |> Maybe.withDefault
+        ( ctx, recency, acc )
   in
-    List.foldl
-      trace
-      (data.computation.root, List.length data.transitions, Dict.empty)
-      data.transitions
-    |> (\(_, _, dict) -> dict)
+    Graph.get data.computation.root data.computation.graph
+    |> Maybe.map (\ctx ->
+      List.foldl
+        trace
+        (ctx, List.length data.transitions, Dict.empty)
+        ( data.transitions
+          |> Debug.log "Traced transitions"
+        )
+      |> (\(_, _, dict) -> dict)
+    )
+    |> Maybe.withDefault Dict.empty
 
 expandStep : Int -> GraphPackage -> List ExecutionData -> ExecutionProperties -> Model -> Model
 expandStep n orig_package results props model =
@@ -3423,85 +3438,6 @@ update msg model =
     CrashWithMessage err ->
       Debug.todo err
 
-    -- UpdateTestPanelContent newInput expectation ->
-    --   let
-    --     pkg = model.fdg_model.package
-    --     resolutionDict =
-    --       AutoDict.map (\_ -> .userGraph) model.fdg_model.packages
-    --     updatedTests =
-    --       case newInput of
-    --         "" ->
-    --           AutoDict.remove pkg.currentTestKey pkg.tests
-    --         _ ->
-    --           AutoDict.insert
-    --             pkg.currentTestKey
-    --               ( Test
-    --                   newInput
-    --                   expectation
-    --                   ( DFA.load newInput resolutionDict pkg.userGraph
-    --                     |> DFA.run
-    --                   )
-    --               )
-    --             pkg.tests
-    --     updatedPackage =
-    --       { pkg | tests = updatedTests }
-    --   in
-    --     ( { model
-    --         | fdg_model =
-    --             FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
-    --       }
-    --     , persistPackage updatedPackage
-    --     )
-
-    -- UpdateDescriptionPanelContent content ->
-    --   let
-    --     currentPackage = model.fdg_model.package
-    --     updatedPackage =
-    --       { currentPackage
-    --         | description =
-    --             if content == "" then
-    --               Nothing
-    --             else
-    --               Just content
-    --       }
-    --   in
-    --     ( { model
-    --         | fdg_model = FDG.update (FDG.UpdateCurrentPackage updatedPackage) model.fdg_model
-    --       }
-    --     , persistPackage updatedPackage
-    --     )
-
-    -- StepThroughExecution ->
-    --   let
-    --     inputString =
-    --       AutoDict.get model.fdg_model.package.currentTestKey model.fdg_model.package.tests
-    --       |> Maybe.map .input
-    --       |> Maybe.withDefault ""
-    --     newFdModel =
-    --       if model.executionStage /= StepThrough then
-    --         -- this is the first click of stepping, so do a load first.
-    --         DFA.load
-    --           inputString
-    --           (AutoDict.map (\_ -> .userGraph) model.fdg_model.packages) -- resolution-dict
-    --           model.fdg_model.package.userGraph
-    --       else
-    --         FDG.update FDG.Step model.fdg_model
-    --   in
-    --   ( { model 
-    --     | executionStage =
-    --         case newFdModel.interactionsDict of
-    --           Just (Executing _ (CanContinue _)) ->
-    --             StepThrough
-    --           Just (Executing _ _) ->
-    --             ExecutionComplete
-    --           _ ->
-    --             model.executionStage
-    --     , fdg_model =
-    --         newFdModel
-    --     }
-    --   , Cmd.none
-    --   )
-
 isPassingTest : Test -> Maybe Bool
 isPassingTest test =
   case test.result of
@@ -3520,187 +3456,6 @@ isFailingTest = isPassingTest >> Maybe.map not
 
 
 
-
--- viewTestPanelButtons : Model -> List (Html Msg)
--- viewTestPanelButtons model =
---   [ div
---     [ HA.class (getActionButtonClass model.executionStage RunExecution)
---     , onClick RunExecution
---     , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.fdg_model))
---     , HA.title "Run"
---     ]
---     [ text "▶️" ]
---   , div
---     [ HA.class (getActionButtonClass model.executionStage ResetExecution)
---     , onClick ResetExecution
---     , HA.disabled (model.executionStage == Ready || model.executionStage == NotReady)
---     , HA.title "Reset"
---     ]
---     [ text "⏹️" ]
---   , div
---     [ HA.class (getActionButtonClass model.executionStage StepThroughExecution)
---     , onClick StepThroughExecution
---     , HA.disabled (model.executionStage == ExecutionComplete || not (FDG.canExecute model.fdg_model))
---     , HA.title "Step-through"
---     ]
---     [ text "⏭️" ]
---   , div
---     [ HA.class (getActionButtonClass model.executionStage (DeleteTest model.fdg_model.package.currentTestKey))
---     , HA.css
---         [ Css.marginTop (Css.px 15)
---         ]
---     , onClick <| DeleteTest model.fdg_model.package.currentTestKey
---     , HA.disabled (model.executionStage == StepThrough)
---     , HA.title "Delete test"
---     ]
---     [ text "🚮" ]
---   ]
-
--- viewBottomPanelHeader : Model -> Html Msg
--- viewBottomPanelHeader model =
---   let
---     buttons =
---       ( case model.selectedBottomPanel of
---           AddTestPanel ->
---             viewTestPanelButtons model
---           EditDescriptionPanel ->
---             viewDescriptionPanelButtons model
---       )
---   in
---   div 
---     [ HA.classList
---         [ ("bottom-panel__header", True)
---         , ("open", not <| List.isEmpty buttons)
---         ]
---     ]
---     [ div 
---       [ HA.class "bottom-panel__actions" ]
---       buttons
---     ]
-
--- executionText : Model -> Html Msg
--- executionText { fdg_model } =
---   div
---     []
---     [ case fdg_model.interactionsDict of
---         Just (Executing _ result) ->
---           let
---             maybeDatum =
---               FDG.executionData result
---             showProgress : ExecutionData -> Html Msg
---             showProgress datum =
---               p
---                 [ HA.class "computation-progress" ]
---                 [ span
---                     [ HA.class "computation-progress-processed" ]
---                     ( datum.transitions
---                       -- |> Debug.log "Execution-data transitions"
---                       |> List.map
---                         (\{matching} ->
---                           viewInputProcessing matching.via
---                             ( if matching.isFinal then
---                                 ["final"]
---                               else
---                                 ["non-final"]
---                             )
---                         )
---                     )
---                 , span
---                     [ HA.class "computation-progress-to-do" ]
---                     ( datum.remainingData
---                     -- |> Debug.log "Execution-data remaining"
---                     |> List.map ViaCharacter
---                     |> List.map (\via -> viewInputProcessing via [])
---                     )
---                 ]
---           in
---             p
---               [ HA.class "output-line" ]
---               [ text <|
---                   case result of
---                     EndOfInput (Accepted _) ->
---                         "✅ Success! 🎉"
---                     EndOfInput (Rejected _) ->
---                         "❌ Rejected 😔.  The computation did not end with an accepting transition."
---                     EndOfComputation _ ->
---                         "❌ Rejected 😔.  The input was longer than the computation."
---                     CanContinue _ ->
---                         "🟢 Continuing execution."
---                     x ->
---                         "🦗 Bug!  " ++ Debug.toString x ++ ".  You should never see this message.  I need to figure out what just happened here…"
---               , Maybe.map
---                   showProgress
---                   maybeDatum
---                 |> Maybe.withDefault (text "")
---               ]
---         _ ->
---           p [] [ text "🦗 Bug! K%UGFCR" ] -- eheh?! I should never be here!
---     ]
-
--- viewInputProcessing : AcceptVia -> List String -> Html msg
--- viewInputProcessing via classes =
---   span
---     [ HA.classList <| List.map (\v -> (v, True)) classes ]
---     [ text <| acceptConditionToString via ]
-
--- viewEditDescriptionPanelContent : Model -> Html Msg
--- viewEditDescriptionPanelContent model =
---   textarea 
---     [ HA.class "right-bottom-panel__textarea"
---     , HA.value (model.fdg_model.package.description |> Maybe.withDefault "")
---     , onInput UpdateDescriptionPanelContent
---     , HA.placeholder "What does this computation do?"
---     , HA.disabled <| Maybe.Extra.isJust model.fdg_model.interactionsDict
---     ]
---     []
-
--- viewBottomPanelContent : Model -> Html Msg
--- viewBottomPanelContent model =
---   div 
---     [ HA.class "bottom-panel__content" ]
---     [  div 
---       [ HA.class "bottom-panel__titlebar" ]
---       [ div
---         [ HA.class "bottom-panel__title" ]
---         [ text (getBottomPanelTitle model.selectedBottomPanel model.executionStage) ]
---       , div
---         [ HA.class "bottom-panel__tab-buttons" ]
---         [ div
---           [ HA.classList
---               [ ("button", True)
---               , ("tab-button", True)
---               , ("tab-button--selected", model.selectedBottomPanel == AddTestPanel)
---               ]
---           , onClick <| SelectBottomPanel AddTestPanel
---           , HA.title "Add test"
---           ]
---           [ text "🧪" ]
---         , div
---           [ HA.classList
---               [ ("button", True)
---               , ("tab-button", True)
---               , ("tab-button--selected", model.selectedBottomPanel == EditDescriptionPanel)
---               ]
---           , onClick <| SelectBottomPanel EditDescriptionPanel
---           , HA.title "Describe computation"
---           ]
---           [ text "🗃️" ]
---         ]
---       ]
---     , case model.selectedBottomPanel of
---         AddTestPanel ->
---           viewAddTestPanelContent model
---         EditDescriptionPanel ->
---           viewEditDescriptionPanelContent model
---     ]
-
--- getStatusMessage : ExecutionStage -> String
--- getStatusMessage state =
---   case state of
---     Ready -> "Ready"
---     ExecutionComplete -> "Running..."
---     StepThrough -> "Debug Mode"
---     NotReady -> "Uncommitted"
 
 {-
   **************************************

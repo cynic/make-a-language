@@ -428,6 +428,14 @@ type InterfaceLocation -- for GraphView
   | MainEditor
   | Independent
 
+type alias NodesVsViewport =
+  { inside : Set (Coordinate {})
+  , above : Set (Coordinate {})
+  , below : Set (Coordinate {})
+  , to_left : Set (Coordinate {})
+  , to_right : Set (Coordinate {})
+  }
+
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
@@ -439,8 +447,6 @@ type alias GraphView =
   , guest_coordinates : (Float, Float) -- (x,y) of svg viewport
   -- when I pan, I always want to keep at least some part of the graph in view.
   -- This box defines the coordinates of a box beyond whose edges I cannot pan.
-  , guest_inner_coordinates : (Float, Float) -- (box_x, box_x) of svg viewport, for panning
-  , guest_inner_dimensions : (Float, Float) -- (box_w, box_h) of svg viewport, for panning
     -- `forces` includes:
     -- - graph forces of attraction and repulsion
     -- - node forces to pull the root towards the center
