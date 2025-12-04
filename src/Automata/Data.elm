@@ -115,6 +115,7 @@ type Msg
   | CreateNewPackage
   | TimeValueForPackage Time.Posix
   | Step
+  | StepBack
   | Run
   | ResetComputation
   | ToggleDebugStep Int

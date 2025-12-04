@@ -423,7 +423,7 @@ expand e resolutionDict src =
       |> Maybe.withDefault -1 -- huh?
   in
     -- debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (truncate_uuid k, printAutomatonGraph v))) resolutionDict |> \_ ->
-    -- debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
+    debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
     resolveTransitionFully
       unusedId
       resolutionDict

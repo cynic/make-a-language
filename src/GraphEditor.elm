@@ -143,12 +143,12 @@ spreadOutForces g =
             )
           else
             ( seed2
-            , { toX =
-                  { node = ctx.node.id , strength = 0.04
-                  , target = if go_right then x_target else -x_target
-                  } :: toX
-              , toY = toY
-                  --{ node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
+            , { toX = toX
+                  -- { node = ctx.node.id , strength = 0.04
+                  -- , target = if go_right then x_target else -x_target
+                  -- } :: toX
+              , toY =
+                  { node = ctx.node.id , strength = 0.1 , target = 0 } :: toY
               , link = linkForce
               , manyBody = ctx.node.id :: manyBody
               }

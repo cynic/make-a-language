@@ -720,7 +720,7 @@ bounds_for nodeIds graph =
     contexts =
       (Set.fromList >> Set.toList) nodeIds
       |> List.filterMap (\id -> Graph.get id graph)
-      |> debugLog_ "[bounds_for] contexts to check" (List.map (.node >> .label))
+      -- |> debugLog_ "[bounds_for] contexts to check" (List.map (.node >> .label))
   in
   -- Now find out: where is the bounding box for the nodes?
     case contexts of
@@ -744,7 +744,7 @@ bounds_for nodeIds graph =
           , max = { x = h.node.label.x, y = h.node.label.y }
           }
           t
-          |> Debug.log "[bounds_for] Raw Bounds"
+          -- |> Debug.log "[bounds_for] Raw Bounds"
 
 expand_bounds : Float -> Bounds -> Bounds
 expand_bounds n bounds =
@@ -2934,19 +2934,20 @@ expandStep n orig_package results props model =
       zeepaw
     |> Maybe.withDefault model
 
-step_execution : GraphView -> GraphPackage -> (ExecutionData -> List ExecutionData) -> Test -> Model -> Model
+step_execution : GraphView -> GraphPackage -> (List ExecutionData -> List ExecutionData) -> Test -> Model -> Model
 step_execution orig_graphview pkg execution_function test model =
   let
     (previously_executed, previous_props, interactionFunction) =
       case peekInteraction Nothing model.interactionsDict of
-        Just ( Executing (h::rest) props ) ->
-          ( h
+        Just ( Executing results props ) ->
+          ( results
           , Just props
           , \new_hx new_props ->
-              replaceInteraction Nothing (Executing (new_hx ++ (h::rest)) new_props)
+              replaceInteraction Nothing (Executing new_hx new_props)
           )
         _ ->
           ( DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
+            |> List.singleton
           , Nothing
           , \new_hx new_props ->
               pushInteractionForStack Nothing (Executing new_hx new_props)
@@ -3457,14 +3458,20 @@ update msg model =
       |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
       |> Maybe.map
         (\(gv, test) ->
-          ( step_execution gv gv.package (DFA.step >> List.singleton) test model
+          ( step_execution gv gv.package
+              (\prevList ->
+                case prevList of
+                  h::t -> DFA.step h :: h :: t
+                  [] -> []
+              )
+              test model
           , Cmd.none
           )
         )
       |> Maybe.withDefaultLazy
         (\() ->
-          Debug.log "Could not find the view?" model.mainGraphView |> \_ ->
-          println "Or could not find the package from that view?"
+          Debug.log "[update→Step] Could not find the view?" model.mainGraphView |> \_ ->
+          println "[update→Step] Or could not find the package from that view?"
           ( model, Cmd.none )
         )
 
@@ -3473,11 +3480,45 @@ update msg model =
       |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
       |> Maybe.map
         (\(gv, test) ->
-          ( step_execution gv gv.package (DFA.run) test model
+          ( step_execution gv gv.package
+              (\input ->
+                case input of
+                  h::t -> DFA.run h ++ (h::t)
+                  [] -> []
+              )
+              test model
           , Cmd.none
           )
         )
-      |> Maybe.withDefault ( model, Cmd.none )
+      |> Maybe.withDefaultLazy
+        (\() ->
+          Debug.log "[update→Run] Could not find the view?" model.mainGraphView |> \_ ->
+          println "[update→Run] Or could not find the package from that view?"
+          ( model, Cmd.none )
+        )
+
+    StepBack ->
+      AutoDict.get model.mainGraphView model.graph_views
+      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
+      |> Maybe.map
+        (\(gv, test) ->
+          ( step_execution gv gv.package
+              (\input ->
+                case input of
+                  [h] -> [h] -- can't step back from the initial state.
+                  _::t -> t
+                  [] -> []
+              )
+              test model
+          , Cmd.none
+          )
+        )
+      |> Maybe.withDefaultLazy
+        (\() ->
+          Debug.log "[update→StepBack] Could not find the view?" model.mainGraphView |> \_ ->
+          println "[update→StepBack] Or could not find the package from that view?"
+          ( model, Cmd.none )
+        )
 
     ResetComputation ->
       case popInteraction Nothing model of
@@ -4255,6 +4296,12 @@ viewTestingTool graph_view test model =
                           , HE.onClick ResetComputation
                           ]
                           [ text "🔁" ]
+                      , button
+                          [ HA.class "tool-icon step-back"
+                          , HA.title "Step back"
+                          , HE.onClick StepBack
+                          ]
+                          [ text "🔙" ]
                       ]
                   , case result of
                       Accepted ->
@@ -4343,6 +4390,12 @@ viewTestingTool graph_view test model =
                           , HE.onClick ResetComputation
                           ]
                           [ text "⏹️" ]
+                      , button
+                          [ HA.class "tool-icon step-back"
+                          , HA.title "Step back"
+                          , HE.onClick StepBack
+                          ]
+                          [ text "🔙" ]
                       ]
                   , div
                       [ HA.class "progress-area" ]
