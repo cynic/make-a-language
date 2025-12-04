@@ -44,7 +44,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
-      -- |> (\(a,b) -> debugAutomatonGraph (dbg_prefix ++ "renumbered") b |> \_ -> (a, b))
+      |> (\(a,b) -> debugAutomatonGraph (dbg_prefix ++ "renumbered") b |> \_ -> (a, b))
     (outbounds, (source_graph_source, source_graph_dests)) =
       IntDict.get source_id source_graph_nodemap
       |> Maybe.andThen
@@ -79,9 +79,11 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
           in
             ( outs
             , ( ctx.node.id
-                -- |> Debug.log (dbg_prefix ++ "source-graph source-node id")
-              , IntDict.keys ctx.outgoing
-                -- |> Debug.log (dbg_prefix ++ "source-graph destination-node ids")
+                |> Debug.log (dbg_prefix ++ "source-graph source-node id")
+              , IntDict.keys
+                  ( ctx.outgoing
+                    |> debugLog_ (dbg_prefix ++ "source-graph fan-out, with renumbered ids") printFan
+                  )
               )
             )
         )
@@ -129,7 +131,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       Graph.nodeIdRange renumbered.graph
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault 1 --- uhh, what now?
-    -- I have all the relevat data. So now we want to remove the old connections from `src`.
+    -- I have all the relevant data. So now we want to remove the old connections from `src`.
     -- If there is any node that, after this, does not have any incoming edges,
     -- then I can remove that node entirely.
     -- So, let me do this as a two-step thing.
@@ -147,7 +149,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               let
                 new_incoming =
                   IntDict.filter (\k _ -> k /= source_graph_source) dest_ctx.incoming
-                  -- |> debugLog_ (dbg_prefix ++ "Removed #" ++ String.fromInt source_graph_source ++ " incoming from dest #" ++ String.fromInt dest_ctx.node.id ++ ". Remaining incoming connections") printFan
+                  |> debugLog_ (dbg_prefix ++ "Removed #" ++ String.fromInt source_graph_source ++ " incoming from dest #" ++ String.fromInt dest_ctx.node.id ++ ". Remaining incoming connections") printFan
                 new_graph =
                   { g
                     | graph =
@@ -317,7 +319,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             ViaGraphReference ref ->
               if AutoSet.member ref recursion_stack then
                 -- don't consider it; that would lead us to recursion.
-                -- println (dbg_prefix ++ "The " ++ truncate_uuid ref ++ " ref would lead to recursion; ignoring.")
+                println (dbg_prefix ++ "The " ++ truncate_uuid ref ++ " ref would lead to recursion; ignoring.")
                 ( unusedId
                 , this_graph
                 )
@@ -365,6 +367,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
         (renumbered_unusedId, after_dest_connections_removed)
         outbounds
       |> Tuple.second
+      |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transitions individually") (printAutomatonGraph)
     without_old_dests =
       -- For `src`, I link to the original; and that is sufficient.
       -- For `dest`, I can remove some of the originals because I have rebound all the outgoings
@@ -389,7 +392,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               -- Avoid removing the source node.
               ( dest_nodes_to_check
                 |> List.filter ((/=) source_graph_source)
-                -- |> Debug.log (dbg_prefix ++ "`dest` nodes from source-node #" ++ String.fromInt source_graph_source ++ " to check for removal are")
+                |> Debug.log (dbg_prefix ++ "`dest` nodes from source-node #" ++ String.fromInt source_graph_source ++ " to check for removal are")
               )
       }
       -- |> debugAutomatonGraph (dbg_prefix ++ "After removing the necessary `dest` values")
@@ -410,7 +413,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       in
         renumberAutomatonGraphFrom start_id ag
         |> Tuple.second
-        -- |> debugAutomatonGraphXY (dbg_prefix ++ "Minimised, renumbered 'final'")
+        |> debugAutomatonGraphXY (dbg_prefix ++ "Minimised, renumbered 'final'")
   in
     minimised_dfa
 

@@ -718,9 +718,27 @@ transitionToString {via, isFinal} =
       ViaGraphReference uuid ->
         prevChar ++ Uuid.toString uuid
 
+transitionToOutputString : Transition -> String
+transitionToOutputString {via, isFinal} =
+  let
+    prevChar =
+      if isFinal then "!" else ""
+  in
+    case via of
+      ViaCharacter ch ->
+        prevChar ++ String.fromChar ch
+      ViaGraphReference uuid ->
+        prevChar ++ truncate_uuid uuid
+
 connectionToString : Connection -> String
 connectionToString =
   AutoSet.map identity transitionToString
+  >> AutoSet.toList
+  >> String.join "\u{2008}" -- punctuation space. Stops terminality-marker from disappearing on subsequent characters.
+
+connectionToOutputString : Connection -> String
+connectionToOutputString =
+  AutoSet.map identity transitionToOutputString
   >> AutoSet.toList
   >> String.join "\u{2008}" -- punctuation space. Stops terminality-marker from disappearing on subsequent characters.
 
@@ -728,7 +746,7 @@ graphToString : (a -> Maybe String) -> Graph a Connection -> String
 graphToString printer graph =
   Graph.toString
     printer
-    (Just << connectionToString)
+    (Just << connectionToOutputString)
     graph
 
 -- Parser for converting string representation to AutomatonGraph
