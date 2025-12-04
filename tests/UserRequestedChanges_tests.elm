@@ -2,14 +2,13 @@ module UserRequestedChanges_tests exposing (..)
 import Expect
 import Test exposing (..)
 import Utility exposing (ag_equals, dummy_uuid, mkConn)
-import ForceDirectedGraph exposing (applyChangesToGraph)
+import GraphEditor exposing (applyChangesToGraph)
 import Graph exposing (NodeId)
 import Automata.Data exposing (AutomatonGraph, Entity, mkAG_input)
 import Set
-import ForceDirectedGraph exposing (Msg(..))
 import Automata.Data exposing (Connection, NodeEffect(..))
 import Automata.Debugging exposing (debugAutomatonGraph)
-import ForceDirectedGraph exposing (updateLink_graphchange)
+import GraphEditor exposing (updateLink_graphchange)
 import GraphEditor exposing (removeLink_graphchange)
 import Automata.DFA exposing (renumberAutomatonGraph)
 import Dict

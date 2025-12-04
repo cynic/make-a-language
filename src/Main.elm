@@ -552,16 +552,7 @@ confirmChanges : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
 confirmChanges g resolutionDict graphView =
   let
     finalGraph =
-      debugAutomatonGraph "Initial from user" g |> \_ ->
-      { g
-        | graph =
-            -- first, actually remove all disconnected nodes.
-            GraphEditor.identifyDisconnectedNodes g
-            |> Debug.log "Disconnected nodes identified"
-            |> Set.foldl Graph.remove g.graph
-      }
-      |> debugAutomatonGraph "After removing disconnected"
-      |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
+      GraphEditor.applyChangesToGraph g
     finalPackage =
       let pkg = graphView.package in
       { pkg

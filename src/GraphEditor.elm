@@ -294,6 +294,20 @@ updateGraphWithList =
   in
     List.foldr (\node graph -> Graph.update node.id (graphUpdater node) graph)
 
+-- need to expose this; it is used from testing.
+applyChangesToGraph : AutomatonGraph -> AutomatonGraph
+applyChangesToGraph g =
+  -- debugAutomatonGraph "Initial from user" g |> \_ ->
+  { g
+    | graph =
+        -- first, actually remove all disconnected nodes.
+        identifyDisconnectedNodes g
+        -- |> Debug.log "Disconnected nodes identified"
+        |> Set.foldl Graph.remove g.graph
+  }
+  -- |> debugAutomatonGraph "After removing disconnected"
+  |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
+
 identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
 identifyDisconnectedNodes g =
   Graph.mapContexts
