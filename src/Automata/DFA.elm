@@ -463,7 +463,7 @@ oneTransition data =
                       Maybe.combineFirst
                         ( Graph.get id expanded.graph
                         , List.map Tuple.first not_taken
-                          |> Debug.log ("[oneTransition] Nodes NOT taken, with transition " ++ transitionToString t)
+                          -- |> Debug.log ("[oneTransition] Nodes NOT taken, with transition " ++ transitionToString t)
                         )
                     _ ->
                       Nothing
@@ -477,7 +477,7 @@ oneTransition data =
                   -- debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
                   ( TransitionTakenData last_taken.node.id t :: acc
                   , List.map (\dest -> (last_taken.node.id, dest)) not_taken ++ to_disconnect
-                    |> Debug.log ("[oneTransition→followPath] Collective edges NOT taken")
+                    -- |> Debug.log ("[oneTransition→followPath] Collective edges NOT taken")
                   , takeTransition t last_taken.outgoing
                   )
             (transitions_taken, edges_not_taken_previously, currentNode) =
@@ -552,7 +552,8 @@ oneTransition data =
                     , remainingData = remainingData
                     , currentNode = newNode.node.id
                     , computation =
-                        Debug.log "Proposed cull" (edges_not_taken_previously ++ not_taken_last)
+                        (edges_not_taken_previously ++ not_taken_last)
+                        -- |> Debug.log "Culling these edges"
                         |> List.foldl
                           (\(src, dest) g ->
                             { g

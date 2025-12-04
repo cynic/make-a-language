@@ -138,7 +138,10 @@ type alias InteractionsDict =
 
 type alias Model =
   { graph_views : GraphViewDict
+  -- this is the graph that's selected.
   , mainGraphView : Uuid
+  -- this can be different!  For example, during execution-stepping…
+  , displayedGraphView : Uuid
   -- , executionStage : ExecutionStage -- this SHOULD be in a Tool.
   , packages : PackageDict
   , uiState : UIState

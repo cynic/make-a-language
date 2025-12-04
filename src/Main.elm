@@ -284,14 +284,18 @@ mkGraphView id ag (w, h) removePadding location pkg packages interactions =
 
 upsertGraphView : Uuid -> GraphView -> Model -> Model
 upsertGraphView uuid graph_view model =
+  let
+    new_main =
+      if graph_view.interfaceLocation == MainEditor then
+        uuid
+      else
+        model.mainGraphView
+  in
   { model
     | graph_views =
         AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
-    , mainGraphView =
-        if graph_view.interfaceLocation == MainEditor then
-          uuid
-        else
-          model.mainGraphView
+    , mainGraphView = new_main
+    , displayedGraphView = new_main
   }
 
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
@@ -483,6 +487,7 @@ init flags =
       { graph_views =
           AutoDict.empty Uuid.toString
       , mainGraphView = mainPackage.userGraph.graphIdentifier -- this is—temporarily—the wrong value!
+      , displayedGraphView = mainPackage.userGraph.graphIdentifier
       , packages = packages
       , uiState = state
       , uiConstants = constants
@@ -506,9 +511,8 @@ init flags =
             model_excl_views
       in
         { model_with_viewDict
-          | mainGraphView =
-              v.id
-              -- |> debugLog_ "mainGraphView UUID" truncate_uuid
+          | mainGraphView = v.id
+          , displayedGraphView = v.id
         }
   in
     ( selectNavIcon ComputationsIcon model
@@ -2857,7 +2861,7 @@ expandStep n orig_package results props model =
           edges = executing_edges step
           (gv_uuid, model__) =
             solvedViewFromPackage
-              GraphEditor.coordinateForces
+              GraphEditor.spreadOutForces
               (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiState.dimensions.bottomPanel)
               Independent True
               (createNewPackage uuid orig_package.created step.computation)
@@ -2890,6 +2894,63 @@ expandStep n orig_package results props model =
       )
       zeepaw
     |> Maybe.withDefault model
+
+step_execution : GraphView -> GraphPackage -> (ExecutionData -> List ExecutionData) -> Test -> Model -> Model
+step_execution orig_graphview pkg execution_function test model =
+  let
+    (previously_executed, previous_props, interactionFunction) =
+      case peekInteraction Nothing model.interactionsDict of
+        Just ( Executing (h::rest) props ) ->
+          ( h
+          , Just props
+          , \new_hx new_props ->
+              replaceInteraction Nothing (Executing (new_hx ++ (h::rest)) new_props)
+          )
+        _ ->
+          ( DFA.load test.input (toResolutionDict model.packages) pkg.userGraph
+          , Nothing
+          , \new_hx new_props ->
+              pushInteractionForStack Nothing (Executing new_hx new_props)
+          )
+    applied_step : List ExecutionData
+    applied_step =
+      execution_function previously_executed
+    head_step =
+      List.head applied_step
+    ( uuid, model_ ) = getUuid model
+    (new_graphview_uuid, model__) =
+      Maybe.map
+        (\step ->
+          let
+            edges = executing_edges step
+          in
+          solvedViewFromPackage
+            GraphEditor.spreadOutForces
+            model.uiState.dimensions.mainEditor
+            Independent True
+            ( createNewPackage uuid pkg.created step.computation )
+            model_
+          |>(\({id}, m) ->
+              ( id
+              , { m
+                  | graph_views =
+                      AutoDict.update id
+                        (Maybe.map <| centerAndHighlight edges)
+                        m.graph_views
+                }
+              )
+            )
+        ) head_step
+      |> Maybe.withDefault (orig_graphview.id, model)
+    updated_props =
+      Maybe.withDefault
+        { expandedSteps = IntDict.empty
+        }
+        previous_props
+  in
+    interactionFunction applied_step updated_props model__
+    |> (\model___ -> { model___ | displayedGraphView = new_graphview_uuid })
+    |> setProperties
 
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
@@ -3354,49 +3415,26 @@ update msg model =
 
     Step ->
       AutoDict.get model.mainGraphView model.graph_views
-      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv.package, AutoDict.get gv.package.currentTestKey gv.package.tests))
+      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
       |> Maybe.map
-        (\(pkg, test) ->
-          ( case peekInteraction Nothing model.interactionsDict of
-              Just ( Executing (h::rest) props ) ->
-                replaceInteraction Nothing (Executing (DFA.step h :: (h::rest)) props) model
-                |> setProperties
-              _ ->
-                pushInteractionForStack Nothing
-                  (Executing
-                    [ DFA.load test.input
-                        (toResolutionDict model.packages) pkg.userGraph
-                      |> DFA.step
-                    ]
-                    { expandedSteps = IntDict.empty }
-                  )
-                  model
-                |> setProperties
+        (\(gv, test) ->
+          ( step_execution gv gv.package (DFA.step >> List.singleton) test model
           , Cmd.none
           )
         )
-      |> Maybe.withDefault ( model, Cmd.none )
+      |> Maybe.withDefaultLazy
+        (\() ->
+          Debug.log "Could not find the view?" model.mainGraphView |> \_ ->
+          println "Or could not find the package from that view?"
+          ( model, Cmd.none )
+        )
 
     Run ->
       AutoDict.get model.mainGraphView model.graph_views
-      |> Maybe.andThen (\{package} -> Maybe.combineSecond (package, AutoDict.get package.currentTestKey package.tests))
+      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
       |> Maybe.map
-        (\(pkg, test) ->
-          ( case peekInteraction Nothing model.interactionsDict of
-              Just ( Executing (h::rest) props ) ->
-                replaceInteraction Nothing (Executing (DFA.run h ++ rest) props) model
-                |> setProperties
-              _ ->
-                pushInteractionForStack Nothing
-                  (Executing
-                    ( DFA.load test.input
-                        (toResolutionDict model.packages) pkg.userGraph
-                      |> DFA.run
-                    )
-                    { expandedSteps = IntDict.empty }
-                  )
-                  model
-                |> setProperties
+        (\(gv, test) ->
+          ( step_execution gv gv.package (DFA.run) test model
           , Cmd.none
           )
         )
@@ -3421,8 +3459,9 @@ update msg model =
                 -- and now get rid of the expanded step
                 |> replaceInteraction Nothing
                     (Executing results
-                      { expandedSteps =
-                          IntDict.remove n props.expandedSteps
+                      { props
+                        | expandedSteps =
+                            IntDict.remove n props.expandedSteps
                       }
                     )
                 |> setProperties
@@ -4440,7 +4479,7 @@ viewMainInterface model =
                 ]
             ]
             [ debugDimensions model.uiState.dimensions.mainEditor
-            , AutoDict.get model.mainGraphView model.graph_views
+            , AutoDict.get model.displayedGraphView model.graph_views
               |> Maybe.map (GraphEditor.viewGraph)
               |> Maybe.withDefault
                 (div [ HA.class "error graph-not-loaded" ] [ text "⚠ Graph to load was not found!" ]) -- erk! say what now?!

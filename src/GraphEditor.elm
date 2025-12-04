@@ -115,24 +115,22 @@ spreadOutForces g =
                 (\(k, conn) (seed, forces_) ->
                   let
                     (n, seed_) =
-                      Random.step (Random.int 1 150) seed
+                      Random.step (Random.int 1 100) seed
                     (s, seed__) =
-                      Random.step (Random.float 0.0 0.5) seed_
+                      Random.step (Random.float 0.5 1.6) seed_
                   in
                   ( seed__
                   , { source = ctx.node.id
                     , target = k
                     , distance = 50 + toFloat n + linkLabelWidth conn -- 35-40 seems like a good distance
-                    , strength = Just (1.0 + s) -- * (toFloat <| Set.size v)
+                    , strength = Just s -- * (toFloat <| Set.size v)
                     } :: forces_
                   )
                 )
                 (seedy, link)
-          (go_right, seed2) =
-            Random.step Random.bool seed1
         in
           if ctx.node.id == root then
-            ( seed2
+            ( seed1
             , { toX =
                   { node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
               , toY =
@@ -142,10 +140,10 @@ spreadOutForces g =
               }
             )
           else
-            ( seed2
+            ( seed1
             , { toX =
-                  { node = ctx.node.id , strength = 0.04
-                  , target = if go_right then x_target else -x_target
+                  { node = ctx.node.id , strength = 0.02
+                  , target = x_target
                   } :: toX
               , toY =
                   { node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
