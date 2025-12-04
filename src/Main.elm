@@ -339,7 +339,7 @@ centerAndHighlight links graph_view =
   let
     bounds =
       bounds_for
-        (List.foldl (\(a, b) acc -> a :: b :: acc) [] (Debug.log "links" links))
+        (List.foldl (\(a, b) acc -> a :: b :: acc) [] links)
         graph_view.package.userGraph.graph
     inner_padding = 60
     adjusted =
@@ -351,6 +351,21 @@ centerAndHighlight links graph_view =
       |> Maybe.map Tuple.second
       |> Maybe.withDefault (graph_view.package.userGraph.root)
     linkSet = Set.fromList links
+    determine_dimensions (x, y) (w, h) =
+      if w / Tuple.first graph_view.host_dimensions < 0.25 then
+        -- expand to at least this amount.
+        let
+          new_w = 0.25 * Tuple.first graph_view.host_dimensions
+          -- so, how much do I need to expand on either side?
+          diff = (new_w - w) / 2
+        in
+          ((x - diff, y), (new_w, new_w / aspect_ratio))
+      else
+        ((x, y), (w, h))
+    ( guest_coords, guest_dims ) =
+      determine_dimensions
+        (adjusted.min.x, adjusted.min.y)
+        (adjusted.max.x - adjusted.min.x, (adjusted.max.x - adjusted.min.x) / aspect_ratio)
   in
     { graph_view
       | drawingData =
@@ -368,10 +383,10 @@ centerAndHighlight links graph_view =
                   )
                   drawingData.link_drawing
             }
-      , guest_coordinates =
-          ( adjusted.min.x, adjusted.min.y )
-      , guest_dimensions =
-          ( adjusted.max.x - adjusted.min.x, (adjusted.max.x - adjusted.min.x) / aspect_ratio )
+      , guest_coordinates = guest_coords
+          -- ( adjusted.min.x, adjusted.min.y )
+      , guest_dimensions = guest_dims
+          -- ( adjusted.max.x - adjusted.min.x, (adjusted.max.x - adjusted.min.x) / aspect_ratio )
     }
 
 -- MAIN
@@ -2878,10 +2893,10 @@ executing_edges data =
         trace
         (ctx, List.length data.transitions, [])
         ( data.transitions
-          |> Debug.log "Traced transitions"
+          -- |> Debug.log "Traced transitions"
         )
       |> (\(_, _, acc) -> List.reverse acc)
-      |> Debug.log "Executed edges"
+      -- |> Debug.log "Executed edges"
     )
     |> Maybe.withDefault []
 
@@ -2894,7 +2909,7 @@ expandStep n orig_package results props model =
       List.dropWhile (.step >> (/=) n) results
     selectedStep =
       List.head relevantSteps
-    zeepaw =
+    with_graphview =
       Maybe.map (\step ->
         let
           edges = executing_edges step
@@ -2931,7 +2946,7 @@ expandStep n orig_package results props model =
             model__
         |> setProperties
       )
-      zeepaw
+      with_graphview
     |> Maybe.withDefault model
 
 step_execution : GraphView -> GraphPackage -> (List ExecutionData -> List ExecutionData) -> Test -> Model -> Model
@@ -4301,7 +4316,7 @@ viewTestingTool graph_view test model =
                           , HA.title "Step back"
                           , HE.onClick StepBack
                           ]
-                          [ text "🔙" ]
+                          [ text "↩️" ]
                       ]
                   , case result of
                       Accepted ->
@@ -4395,7 +4410,7 @@ viewTestingTool graph_view test model =
                           , HA.title "Step back"
                           , HE.onClick StepBack
                           ]
-                          [ text "🔙" ]
+                          [ text "↩️" ]
                       ]
                   , div
                       [ HA.class "progress-area" ]
