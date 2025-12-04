@@ -22,6 +22,7 @@ import Uuid exposing (Uuid)
 import Binary
 import SHA
 import Random.Pcg.Extended exposing (initialSeed)
+import Css exposing (expanded)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
@@ -417,23 +418,99 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
   in
     minimised_dfa
 
-expand : AutomatonGraph -> ResolutionDict -> NodeId -> AutomatonGraph
-expand e resolutionDict src =
+{-| Given a transition and a fan-out, takes the specified transition, returning the
+    `NodeContext` at the end of that transition and the `NodeId`s of the transitions
+    that were NOT taken.
+-}
+takeTransition : Transition -> IntDict Connection -> AutomatonGraph -> Maybe (NodeContext Entity Connection, List NodeId)
+takeTransition t fan g =
+  IntDict.toList fan
+  |> List.partition (\(_, conn) -> AutoSet.member t conn)
+  |>
+    (\(taken, not_taken) ->
+      case taken of
+        [(id, _)] -> -- no NFAs allowed.
+          Maybe.combineFirst
+            ( Graph.get id g.graph
+            , List.map Tuple.first not_taken
+              -- |> Debug.log ("[expand] Nodes NOT taken, with transition " ++ transitionToString t)
+            )
+        _ ->
+          Nothing
+    )
+
+cull : List (NodeId, NodeId) -> AutomatonGraph -> AutomatonGraph
+cull edges ag =
+  edges
+  -- |> Debug.log "[cull] Culling the following edges"
+  |> List.foldl
+    (\(src, dest) g ->
+      { g
+        | graph =
+            Graph.update dest
+              (Maybe.map
+                (\node ->
+                  { node
+                    | incoming = IntDict.remove src node.incoming
+                    , outgoing =
+                        if src == dest then
+                          IntDict.remove dest node.outgoing
+                        else
+                          node.outgoing
+                  })
+              )
+              g.graph
+      }
+    )
+    ag
+  |> removeDisconnectedNodes
+
+{-| Expand the selected `AutomatonGraph`, _and_ cull previously-taken transitions.
+
+    Returns:
+    - the updated `AutomatonGraph`;
+    - the transitions taken in the updated graph; and
+    - if it exists, the `NodeContext` for the node at the end of the supplied transitions.
+-}
+expand : AutomatonGraph -> ResolutionDict -> NodeId -> List TransitionTakenData -> ( AutomatonGraph, List TransitionTakenData, Maybe (NodeContext Entity Connection) )
+expand e resolutionDict current taken_record =
   let
     unusedId =
       Graph.nodeIdRange e.graph
       |> Maybe.map (\(_, end) -> end + 1)
       |> Maybe.withDefault -1 -- huh?
+    expanded =
+      resolveTransitionFully
+        unusedId
+        resolutionDict
+        [e.graphIdentifier]
+        (AutoSet.singleton Uuid.toString e.graphIdentifier)
+        current
+        e
+      |> debugAutomatonGraph ("[expand] Expanded options from #" ++ String.fromInt current)
+    followPath : Transition -> (List TransitionTakenData, List (NodeId, NodeId), Maybe (NodeContext Entity Connection, List NodeId)) -> (List TransitionTakenData, List (NodeId, NodeId), Maybe (NodeContext Entity Connection, List NodeId))
+    followPath t (acc, to_disconnect, lastContext) =
+      case lastContext of
+        Nothing ->
+          (acc, to_disconnect, Nothing)
+        Just (last_taken, not_taken) ->
+          -- debugLog_ ("[expand→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
+          ( TransitionTakenData last_taken.node.id t :: acc
+          , List.map (\dest -> (last_taken.node.id, dest)) not_taken ++ to_disconnect
+            -- |> Debug.log ("[expand→followPath] Collective edges NOT taken")
+          , takeTransition t last_taken.outgoing expanded
+          )
+    (transitions_taken, edges_not_taken_previously, currentNode) =
+      List.map (.matching) taken_record
+      |> List.foldl
+          followPath
+          ([], [], Maybe.combineFirst (Graph.get expanded.root expanded.graph, []))
+      |> (\(a, b, c) -> (List.reverse a, b, Maybe.map Tuple.first c))
+    culled =
+      cull edges_not_taken_previously expanded
   in
     -- debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (truncate_uuid k, printAutomatonGraph v))) resolutionDict |> \_ ->
-    debugAutomatonGraph ("[expand] Expanding #" ++ String.fromInt src ++ " for") e |> \_ ->
-    resolveTransitionFully
-      unusedId
-      resolutionDict
-      [e.graphIdentifier]
-      (AutoSet.singleton Uuid.toString e.graphIdentifier)
-      src
-      e
+    ( culled, transitions_taken, currentNode )
 
 -- if I can't make another transition, return `Nothing`
 oneTransition : ExecutionData -> ExecutionData
@@ -452,43 +529,9 @@ oneTransition data =
           }
         h::remainingData ->
           let
-            expanded =
-              expand data.computation data.resolutionDict data.currentNode
+            ( expanded_and_culled, transitions_taken, currentNode ) =
+              expand data.computation data.resolutionDict data.currentNode data.transitions
             -- the node-ids may well have changed.  So, find out where we are.
-            takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection, List NodeId)
-            takeTransition t fan =
-              IntDict.toList fan
-              |> List.partition (\(_, conn) -> AutoSet.member t conn)
-              |>
-                (\(taken, not_taken) ->
-                  case taken of
-                    [(id, _)] -> -- no NFAs allowed.
-                      Maybe.combineFirst
-                        ( Graph.get id expanded.graph
-                        , List.map Tuple.first not_taken
-                          -- |> Debug.log ("[oneTransition] Nodes NOT taken, with transition " ++ transitionToString t)
-                        )
-                    _ ->
-                      Nothing
-                )
-            followPath : Transition -> (List TransitionTakenData, List (NodeId, NodeId), Maybe (NodeContext Entity Connection, List NodeId)) -> (List TransitionTakenData, List (NodeId, NodeId), Maybe (NodeContext Entity Connection, List NodeId))
-            followPath t (acc, to_disconnect, lastContext) =
-              case lastContext of
-                Nothing ->
-                  (acc, to_disconnect, Nothing)
-                Just (last_taken, not_taken) ->
-                  -- debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
-                  ( TransitionTakenData last_taken.node.id t :: acc
-                  , List.map (\dest -> (last_taken.node.id, dest)) not_taken ++ to_disconnect
-                    -- |> Debug.log ("[oneTransition→followPath] Collective edges NOT taken")
-                  , takeTransition t last_taken.outgoing
-                  )
-            (transitions_taken, edges_not_taken_previously, currentNode) =
-              List.map (.matching) data.transitions
-              |> List.foldl
-                  followPath
-                  ([], [], Maybe.combineFirst (Graph.get expanded.root expanded.graph, []))
-              |> (\(a, b, c) -> (List.reverse a, b, Maybe.map Tuple.first c))
             thisMove : Maybe (Transition, List (NodeId, NodeId), NodeContext Entity Connection)
             thisMove =
               Maybe.andThen
@@ -498,6 +541,7 @@ oneTransition data =
                       ( ctx.outgoing
                         -- |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan
                       )
+                      expanded_and_culled
                     |> Maybe.map (\(next_ctx, not_taken) ->
                       ( Transition True (ViaCharacter h)
                       , List.map (\dest -> (ctx.node.id, dest)) not_taken
@@ -506,7 +550,7 @@ oneTransition data =
                     )
                     |> Maybe.orElseLazy
                         (\() ->
-                          takeTransition (Transition False (ViaCharacter h)) ctx.outgoing
+                          takeTransition (Transition False (ViaCharacter h)) ctx.outgoing expanded_and_culled
                           |> Maybe.map (\(next_ctx, not_taken) ->
                             ( Transition False (ViaCharacter h)
                             , List.map (\dest -> (ctx.node.id, dest)) not_taken
@@ -541,43 +585,27 @@ oneTransition data =
                     { data
                       | transitions = transitions_taken
                       , currentNode = x.node.id -- couldn't get past this one.
-                      , computation = expanded
+                      , computation = expanded_and_culled
                       , finalResult =
                           Just NoMatchingTransitions
                       , step = data.step + 1
                     }
               Just (t, not_taken_last, newNode) ->
                 -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
+                let
+                  current_transitions =
+                    transitions_taken ++ [TransitionTakenData newNode.node.id t]
+                  ( advance_computation, actual_taken, _ ) =
+                    cull not_taken_last expanded_and_culled
+                    |> \g -> expand g data.resolutionDict newNode.node.id current_transitions
+                in
                 { data
-                  | transitions =
-                      transitions_taken ++ [TransitionTakenData newNode.node.id t]
+                  | transitions = actual_taken
                       -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
                     , remainingData = remainingData
                     , currentNode = newNode.node.id
-                    , computation =
-                        (edges_not_taken_previously ++ not_taken_last)
-                        -- |> Debug.log "Culling these edges"
-                        |> List.foldl
-                          (\(src, dest) g ->
-                            { g
-                              | graph =
-                                  Graph.update dest
-                                    (Maybe.map
-                                      (\node ->
-                                        { node
-                                          | incoming = IntDict.remove src node.incoming
-                                          , outgoing =
-                                              if src == dest then
-                                                IntDict.remove dest node.outgoing
-                                              else
-                                                node.outgoing
-                                        })
-                                    )
-                                    g.graph
-                            }
-                          )
-                          expanded
-                        |> removeDisconnectedNodes
+                    , computation = -- expand one level in advance.
+                        advance_computation
                     , finalResult =
                         case remainingData of
                           [] ->

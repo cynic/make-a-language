@@ -45,6 +45,7 @@ import VirtualDom
 import Random.Pcg.Extended as Random
 import TypedSvg.Attributes exposing (stroke)
 import Automata.Debugging exposing (debugLog_)
+import Graph exposing (alongOutgoingEdges)
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -115,7 +116,7 @@ spreadOutForces g =
                 (\(k, conn) (seed, forces_) ->
                   let
                     (n, seed_) =
-                      Random.step (Random.int 1 100) seed
+                      Random.step (Random.int 1 150) seed
                     (s, seed__) =
                       Random.step (Random.float 1 3) seed_
                   in
@@ -148,7 +149,7 @@ spreadOutForces g =
                   -- , target = if go_right then x_target else -x_target
                   -- } :: toX
               , toY =
-                  { node = ctx.node.id , strength = 0.1 , target = 0 } :: toY
+                  { node = ctx.node.id , strength = 0.6 , target = 0 } :: toY
               , link = linkForce
               , manyBody = ctx.node.id :: manyBody
               }
@@ -161,7 +162,8 @@ spreadOutForces g =
             [ Force.towardsX toX
             , Force.towardsY toY
             , Force.customLinks 2 link
-            , Force.manyBodyStrength -650.0 manyBody
+            , Force.manyBodyStrength -850.0 manyBody
+            , Force.center 0 0
             ]
           else
             []

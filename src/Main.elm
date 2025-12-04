@@ -2220,7 +2220,10 @@ setProperties model =
           }
         whenExecuting : GraphViewPropertySetter
         whenExecuting =
-          { nilViewProperties | canPan = True }
+          { nilViewProperties
+            | canPan = True
+            , canDragNodes = True
+          }
         whenSimulatingForces : GraphViewPropertySetter
         whenSimulatingForces =
           { nilViewProperties
@@ -2234,7 +2237,7 @@ setProperties model =
           { nilViewProperties
             | canSelectNodes = model.mainGraphView == id
             , canSplitNodes = model.mainGraphView == id
-            , canDragNodes = model.mainGraphView == id
+            , canDragNodes = model.displayedGraphView == id
             , canSelectConnections = model.mainGraphView == id
             , canInspectRefs = True
             , canPan = True
