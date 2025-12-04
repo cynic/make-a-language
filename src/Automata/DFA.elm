@@ -598,6 +598,7 @@ step executionData =
 
 run : ExecutionData -> List ExecutionData
 run start =
+  debugLog_ ("[run] Uuid " ++ truncate_uuid start.computation.graphIdentifier ++ " with") (.remainingData >> String.fromList) start |> \_ ->
   List.reverse <|
     start ::
     ( List.unfoldr

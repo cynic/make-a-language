@@ -117,7 +117,7 @@ spreadOutForces g =
                     (n, seed_) =
                       Random.step (Random.int 1 100) seed
                     (s, seed__) =
-                      Random.step (Random.float 0.5 1.6) seed_
+                      Random.step (Random.float 1 3) seed_
                   in
                   ( seed__
                   , { source = ctx.node.id
@@ -128,25 +128,27 @@ spreadOutForces g =
                   )
                 )
                 (seedy, link)
+          (go_right, seed2) =
+            Random.step (Random.bool) seed1
         in
           if ctx.node.id == root then
-            ( seed1
-            , { toX =
-                  { node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
-              , toY =
-                  { node = ctx.node.id , strength = 10.0 , target = 0 } :: toY
+            ( seed2
+            , { toX = toX
+                  --{ node = ctx.node.id , strength = 10.0 , target = 0 } :: toX
+              , toY = toY
+                  --{ node = ctx.node.id , strength = 10.0 , target = 0 } :: toY
               , link = linkForce
               , manyBody = ctx.node.id :: manyBody
               }
             )
           else
-            ( seed1
+            ( seed2
             , { toX =
-                  { node = ctx.node.id , strength = 0.02
-                  , target = x_target
+                  { node = ctx.node.id , strength = 0.04
+                  , target = if go_right then x_target else -x_target
                   } :: toX
-              , toY =
-                  { node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
+              , toY = toY
+                  --{ node = ctx.node.id , strength = 0.01 , target = 0 } :: toY
               , link = linkForce
               , manyBody = ctx.node.id :: manyBody
               }
@@ -159,7 +161,7 @@ spreadOutForces g =
             [ Force.towardsX toX
             , Force.towardsY toY
             , Force.customLinks 2 link
-            , Force.manyBodyStrength -550.0 manyBody
+            , Force.manyBodyStrength -650.0 manyBody
             ]
           else
             []

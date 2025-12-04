@@ -57,6 +57,7 @@ import Task
 import Process
 import TypedSvg.Attributes
 import Html.Styled exposing (ol)
+import Math.Vector2 exposing (distance)
 
 {-
 Quality / technology requirements:
@@ -716,34 +717,34 @@ type alias Bounds =
 bounds_for : List NodeId -> Graph.Graph Entity Connection -> Bounds
 bounds_for nodeIds graph =
   let
-    theoretical_max = 250.0 * toFloat (Graph.size graph)
     contexts =
       (Set.fromList >> Set.toList) nodeIds
       |> List.filterMap (\id -> Graph.get id graph)
+      |> debugLog_ "[bounds_for] contexts to check" (List.map (.node >> .label))
   in
   -- Now find out: where is the bounding box for the nodes?
     case contexts of
       [] ->
         { min = { x = 0, y = 0 }, max = { x = 0, y = 0 } }
         -- |> Debug.log "Default Bounds"
-      _ ->
+      h::t ->
         List.foldl
-          (\ctx bounds ->
+          (\ctx best ->
             { min =
-                { x = min ctx.node.label.x bounds.min.x
-                , y = min ctx.node.label.y bounds.min.y
+                { x = min ctx.node.label.x best.min.x
+                , y = min ctx.node.label.y best.min.y
                 }
             , max =
-                { x = max ctx.node.label.x bounds.max.x
-                , y = max ctx.node.label.y bounds.max.y
+                { x = max ctx.node.label.x best.max.x
+                , y = max ctx.node.label.y best.max.y
                 }
             }
           )
-          { max = { x = -1000, y = -1000 }
-          , min = { x = theoretical_max, y = theoretical_max }
+          { min = { x = h.node.label.x, y = h.node.label.y }
+          , max = { x = h.node.label.x, y = h.node.label.y }
           }
-          contexts
-          -- |> Debug.log "Raw Bounds"
+          t
+          |> Debug.log "[bounds_for] Raw Bounds"
 
 expand_bounds : Float -> Bounds -> Bounds
 expand_bounds n bounds =
@@ -1111,17 +1112,55 @@ panGraphView x y graph_view =
       ( ((guest_x + new_pan_x), (guest_y + new_pan_y))
       , ((guest_x + new_pan_x + guest_width), (guest_y + new_pan_y + guest_height))
       )
-    is_okay =
+    graph_nodes =
       Graph.nodes graph_view.package.userGraph.graph
-      |> List.any
+      -- |> debugLog_ "[panGraphView] nodes to check" (List.map .id)
+    is_okay =
+      List.any
         (\node ->
+          -- we want to check whether any node is within the screen bounds.
+          -- debugLog_ "[panGraphView] Checking against " (\v -> (v.id, v.label.x ,v.label.y)) node |> \_ ->
           node.label.x > sx &&
           node.label.y > sy &&
           node.label.x < ex &&
           node.label.y < ey
         )
+        graph_nodes
+      -- |> Debug.log "[panGraphView] is okay?"
+    is_really_okay =
+      is_okay ||
+        -- here's where it gets … tricky.
+        -- see, there can be a node on the screen.  But due to the aspect ratio,
+        -- it may be that there is only a few nodes on the screen—and the remaining
+        -- nodes are off the screen, but separated by a distance that is larger than the
+        -- screen width/height.  In such a case, we won't be able to pan to them with the
+        -- `is_okay` check, because we will be prevented from panning that drives all of
+        -- the existing nodes off the screen.  So we are, effectively, trapped in a local
+        -- minimum!
+        --
+        -- So, how do we address this?
+        --
+        -- Well, first of all, this is an edge-case.  So if the cheap check passes, then
+        -- we don't actually want to do any other checks.  But if the cheap check doesn't
+        -- pass, we've got more work to do.  And this is that work right here…
+        -- We must check whether we are HEADING TO another node, and if so, THEN we can
+        -- permit the pan.
+        ( let
+            orig_center = Math.Vector2.vec2 (guest_x + pan_x + guest_width / 2) (guest_y + pan_y + guest_height / 2)
+            new_center = Math.Vector2.vec2 ((sx + ex) / 2) ((sy + ey) / 2)
+          in
+            -- am I heading towards any graph node?
+            List.any
+              (\node ->
+                let
+                  node_center = Math.Vector2.vec2 node.label.x node.label.y
+                in
+                  distance node_center new_center < distance node_center orig_center
+              )
+              graph_nodes
+        )
   in
-    if graph_view.properties.canPan && is_okay then
+    if graph_view.properties.canPan && is_really_okay then
       { graph_view | pan = ( new_pan_x , new_pan_y ) }
     else
       graph_view
