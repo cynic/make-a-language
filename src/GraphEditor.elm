@@ -115,7 +115,7 @@ spreadOutForces g =
                 (\(k, conn) (seed, forces_) ->
                   let
                     (n, seed_) =
-                      Random.step (Random.int 1 350) seed
+                      Random.step (Random.int 1 150) seed
                     (s, seed__) =
                       Random.step (Random.float 0.0 0.5) seed_
                   in
@@ -161,7 +161,7 @@ spreadOutForces g =
             [ Force.towardsX toX
             , Force.towardsY toY
             , Force.customLinks 2 link
-            , Force.manyBodyStrength -1550.0 manyBody
+            , Force.manyBodyStrength -550.0 manyBody
             ]
           else
             []
@@ -298,35 +298,9 @@ updateGraphWithList =
 applyChangesToGraph : AutomatonGraph -> AutomatonGraph
 applyChangesToGraph g =
   -- debugAutomatonGraph "Initial from user" g |> \_ ->
-  { g
-    | graph =
-        -- first, actually remove all disconnected nodes.
-        identifyDisconnectedNodes g
-        -- |> Debug.log "Disconnected nodes identified"
-        |> Set.foldl Graph.remove g.graph
-  }
+  DFA.removeDisconnectedNodes g
   -- |> debugAutomatonGraph "After removing disconnected"
   |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
-
-identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
-identifyDisconnectedNodes g =
-  Graph.mapContexts
-    (\ctx ->
-      { ctx
-        | incoming = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.incoming
-        , outgoing = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.outgoing
-      }
-    )
-    g.graph
-  |> Graph.guidedDfs
-    Graph.alongOutgoingEdges
-    (\_ acc -> (acc, identity))
-    [g.root]
-    ()
-  |> Tuple.second
-  |> Graph.nodeIds
-  |> Set.fromList
-
 
 newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_graphchange src x y conn g =

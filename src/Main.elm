@@ -56,7 +56,6 @@ import Browser.Dom
 import Task
 import Process
 import TypedSvg.Attributes
-import GraphEditor exposing (identifyDisconnectedNodes)
 import Html.Styled exposing (ol)
 
 {-
@@ -92,7 +91,7 @@ nodeDrawingForPackage : GraphPackage -> Uuid -> InteractionsDict -> Dict NodeId 
 nodeDrawingForPackage package graphView_uuid interactions =
   let
     disconnectedNodes =
-      GraphEditor.identifyDisconnectedNodes package.userGraph
+      DFA.identifyDisconnectedNodes package.userGraph
     isSplittable : Graph.NodeContext Entity Connection -> Bool
     isSplittable graphNode =
       let
@@ -530,7 +529,7 @@ updatePackageInView package_updater graph_view model =
             { link_drawing = linkDrawingForPackage pkg model.packages
             , node_drawing = nodeDrawingForPackage pkg graph_view.id model.interactionsDict
             }
-        , disconnectedNodes = GraphEditor.identifyDisconnectedNodes pkg.userGraph
+        , disconnectedNodes = DFA.identifyDisconnectedNodes pkg.userGraph
       }
       |> fitGraphViewToGraph
     )
@@ -2858,7 +2857,7 @@ expandStep n orig_package results props model =
           edges = executing_edges step
           (gv_uuid, model__) =
             solvedViewFromPackage
-              GraphEditor.spreadOutForces
+              GraphEditor.coordinateForces
               (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiState.dimensions.bottomPanel)
               Independent True
               (createNewPackage uuid orig_package.created step.computation)
@@ -4141,7 +4140,7 @@ viewTestingTool graph_view test model =
             ]
         , div
             [ HA.class "step-graph" ]
-            [ viewGraph (debugLog_ "props" .properties gv) ]
+            [ viewGraph gv ]
         ]
     html_execution_step props h =
       li

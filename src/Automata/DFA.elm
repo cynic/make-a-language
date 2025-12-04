@@ -7,8 +7,10 @@ import Dict exposing (Dict)
 import AutoDict
 import Automata.Data exposing (..)
 import Graph exposing (NodeContext, NodeId, Edge)
-import Dict.Extra
-import Maybe.Extra
+import Dict.Extra as Dict
+import Tuple.Extra as Tuple
+import Maybe.Extra as Maybe
+import Basics.Extra exposing (..)
 import Json.Encode as E
 import Json.Decode as D
 import Uuid
@@ -109,7 +111,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               ]
         uuid =
           charToUuid ch
-          |> Maybe.Extra.withDefaultLazy
+          |> Maybe.withDefaultLazy
             (\() ->
               Debug.log (dbg_prefix ++ "🚨 INTERNAL ERROR: Failed to generate a UUID") () |> \_ ->
               Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
@@ -450,31 +452,41 @@ oneTransition data =
             expanded =
               expand data.computation data.resolutionDict data.currentNode
             -- the node-ids may well have changed.  So, find out where we are.
-            canTakeTransition t autoset =
-              AutoSet.member t autoset
-            takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection)
+            takeTransition : Transition -> IntDict Connection -> Maybe (NodeContext Entity Connection, List NodeId)
             takeTransition t fan =
               IntDict.toList fan
-              |> List.filter (\(_, conn) -> canTakeTransition t conn)
-              |> List.head -- no NFAs allowed
-              |> Maybe.andThen (\(id, _) -> Graph.get id expanded.graph)
-            followPath : Transition -> (List TransitionTakenData, Maybe (NodeContext Entity Connection)) -> (List TransitionTakenData, Maybe (NodeContext Entity Connection))
-            followPath t (acc, lastContext) =
+              |> List.partition (\(_, conn) -> AutoSet.member t conn)
+              |>
+                (\(taken, not_taken) ->
+                  case taken of
+                    [(id, _)] -> -- no NFAs allowed.
+                      Maybe.combineFirst
+                        ( Graph.get id expanded.graph
+                        , List.map Tuple.first not_taken
+                          |> Debug.log ("[oneTransition] Nodes NOT taken, with transition " ++ transitionToString t)
+                        )
+                    _ ->
+                      Nothing
+                )
+            followPath : Transition -> (List TransitionTakenData, List (NodeId, NodeId), Maybe (NodeContext Entity Connection, List NodeId)) -> (List TransitionTakenData, List (NodeId, NodeId), Maybe (NodeContext Entity Connection, List NodeId))
+            followPath t (acc, to_disconnect, lastContext) =
               case lastContext of
                 Nothing ->
-                  (acc, Nothing)
-                Just ctx ->
+                  (acc, to_disconnect, Nothing)
+                Just (last_taken, not_taken) ->
                   -- debugLog_ ("[oneTransition→followPath] Trying to take transition '" ++ transitionToString t ++ "' from #" ++ String.fromInt ctx.node.id ++ "; transitions are") printFan ctx.outgoing |> \_ ->
-                  ( TransitionTakenData ctx.node.id t :: acc
-                  , takeTransition t ctx.outgoing
+                  ( TransitionTakenData last_taken.node.id t :: acc
+                  , List.map (\dest -> (last_taken.node.id, dest)) not_taken ++ to_disconnect
+                    |> Debug.log ("[oneTransition→followPath] Collective edges NOT taken")
+                  , takeTransition t last_taken.outgoing
                   )
-            (transitions_taken, currentNode) =
+            (transitions_taken, edges_not_taken_previously, currentNode) =
               List.map (.matching) data.transitions
               |> List.foldl
                   followPath
-                  ([], Graph.get expanded.root expanded.graph)
-              |> Tuple.mapFirst List.reverse
-            thisMove : Maybe (Transition, NodeContext Entity Connection)
+                  ([], [], Maybe.combineFirst (Graph.get expanded.root expanded.graph, []))
+              |> (\(a, b, c) -> (List.reverse a, b, Maybe.map Tuple.first c))
+            thisMove : Maybe (Transition, List (NodeId, NodeId), NodeContext Entity Connection)
             thisMove =
               Maybe.andThen
                 (\ctx ->
@@ -483,11 +495,21 @@ oneTransition data =
                       ( ctx.outgoing
                         -- |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan
                       )
-                    |> Maybe.map (\next_ctx -> ( Transition True (ViaCharacter h), next_ctx))
-                    |> Maybe.Extra.orElseLazy
+                    |> Maybe.map (\(next_ctx, not_taken) ->
+                      ( Transition True (ViaCharacter h)
+                      , List.map (\dest -> (ctx.node.id, dest)) not_taken
+                      , next_ctx
+                      )
+                    )
+                    |> Maybe.orElseLazy
                         (\() ->
                           takeTransition (Transition False (ViaCharacter h)) ctx.outgoing
-                          |> Maybe.map (\next_ctx -> ( Transition False (ViaCharacter h), next_ctx))
+                          |> Maybe.map (\(next_ctx, not_taken) ->
+                            ( Transition False (ViaCharacter h)
+                            , List.map (\dest -> (ctx.node.id, dest)) not_taken
+                            , next_ctx
+                            )
+                          )
                         )
                     -- |> debugLog_ ("[oneTransition] this-move result") (Maybe.map <| \(t, _) -> transitionToString t)
                 )
@@ -521,7 +543,7 @@ oneTransition data =
                           Just NoMatchingTransitions
                       , step = data.step + 1
                     }
-              Just (t, newNode) ->
+              Just (t, not_taken_last, newNode) ->
                 -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
                 { data
                   | transitions =
@@ -529,7 +551,29 @@ oneTransition data =
                       -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
                     , remainingData = remainingData
                     , currentNode = newNode.node.id
-                    , computation = expanded
+                    , computation =
+                        Debug.log "Proposed cull" (edges_not_taken_previously ++ not_taken_last)
+                        |> List.foldl
+                          (\(src, dest) g ->
+                            { g
+                              | graph =
+                                  Graph.update dest
+                                    (Maybe.map
+                                      (\node ->
+                                        { node
+                                          | incoming = IntDict.remove src node.incoming
+                                          , outgoing =
+                                              if src == dest then
+                                                IntDict.remove dest node.outgoing
+                                              else
+                                                node.outgoing
+                                        })
+                                    )
+                                    g.graph
+                            }
+                          )
+                          expanded
+                        |> removeDisconnectedNodes
                     , finalResult =
                         case remainingData of
                           [] ->
@@ -579,6 +623,35 @@ load s resolutionDict g =
     , step = 0
     }
 
+removeDisconnectedNodes : AutomatonGraph -> AutomatonGraph
+removeDisconnectedNodes g =
+  { g
+    | graph =
+        -- first, actually remove all disconnected nodes.
+        identifyDisconnectedNodes g
+        -- |> Debug.log "Disconnected nodes identified"
+        |> Set.foldl Graph.remove g.graph
+  }
+
+identifyDisconnectedNodes : AutomatonGraph -> Set NodeId
+identifyDisconnectedNodes g =
+  Graph.mapContexts
+    (\ctx ->
+      { ctx
+        | incoming = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.incoming
+        , outgoing = IntDict.filter (\_ -> not << AutoSet.isEmpty) ctx.outgoing
+      }
+    )
+    g.graph
+  |> Graph.guidedDfs
+    Graph.alongOutgoingEdges
+    (\_ acc -> (acc, identity))
+    [g.root]
+    ()
+  |> Tuple.second
+  |> Graph.nodeIds
+  |> Set.fromList
+
 automatonGraph_union : AutomatonGraph -> AutomatonGraph -> AutomatonGraph
 automatonGraph_union g1 g2 =
   let
@@ -595,7 +668,7 @@ automatonGraph_union g1 g2 =
       -- deterministic pseudorandom bits
       |> SHA.sha256
       |> uuidFromHash
-      |> Maybe.Extra.withDefaultLazy
+      |> Maybe.withDefaultLazy
         (\() ->
           Debug.log "🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
           id_1 -- DEFINITELY going to cause problems…
@@ -846,7 +919,7 @@ build_out node_stack handled mapping extDFA =
   let
     head_id_for head =
       AutoDict.get head mapping
-      |> Maybe.Extra.withDefaultLazy
+      |> Maybe.withDefaultLazy
         (\() ->
           Debug.log "🚨 ERROR!! How can I fail to get a head-mapping?? A previous build_out MUST have added one!" -1
         )
@@ -858,7 +931,7 @@ build_out node_stack handled mapping extDFA =
         -- (at least partly because it means union is not commutative)
         IntDict.get q__w extDFA.w_dfa_orig.states
         |> Maybe.map (\state -> { state | id = id })
-        |> Maybe.Extra.withDefaultLazy
+        |> Maybe.withDefaultLazy
           (\() ->
             Entity 0 0 0 0 id NoEffect
             |> Debug.log "🚨 ERROR!! How can I fail to get a known state from `w_orig_dfa`??"
@@ -964,14 +1037,14 @@ build_out node_stack handled mapping extDFA =
                     (\via ->
                       ( via
                       , AutoDict.get via resulting_combination_states
-                        |> Maybe.Extra.withDefaultLazy
+                        |> Maybe.withDefaultLazy
                           (\() ->
                             Debug.log "🚨 ERROR!! How can I fail to get a known-good via-mapping??"
                               { q_w = Nothing, q_m = Nothing }
                           )
                         |>  (\rawKey ->
                                 AutoDict.get rawKey new_mapping
-                                |> Maybe.Extra.withDefaultLazy
+                                |> Maybe.withDefaultLazy
                                   (\() ->
                                     Debug.log "🚨 ERROR!! How can I fail to get a known-good q_m+q_w-mapping??" -1
                                   )
@@ -1082,14 +1155,14 @@ build_out node_stack handled mapping extDFA =
                     (\via ->
                       ( via
                       , AutoDict.get via resulting_combination_states
-                        |> Maybe.Extra.withDefaultLazy
+                        |> Maybe.withDefaultLazy
                           (\() ->
                             Debug.log "🚨 ERROR!! How can I fail to get a known-good via-mapping??"
                               { q_w = Nothing, q_m = Nothing }
                           )
                         |>  (\rawKey ->
                                 AutoDict.get rawKey new_mapping
-                                |> Maybe.Extra.withDefaultLazy
+                                |> Maybe.withDefaultLazy
                                   (\() ->
                                     Debug.log "🚨 ERROR!! How can I fail to get a known-good q_m+q_w-mapping??" -1
                                   )
@@ -1432,7 +1505,7 @@ replace_or_register extDFA_ =
         to_examine : List NodeId
         to_examine =
           Dict.get db_key db
-          |> Maybe.Extra.withDefaultLazy
+          |> Maybe.withDefaultLazy
             (\() ->
               Debug.log "🚨 returning DEFAULT EMPTY list for db_key; this should not happen!" db_key |> \_ ->
               []
@@ -2314,7 +2387,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                     (\{node} ->
                       AutoDict.insert t.via ((if (.isFinal t) then 1 else 0, [destId]), node.label) d
                     )
-                  |> Maybe.Extra.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
+                  |> Maybe.withDefaultLazy (\() -> Debug.todo ("BGFOEK " ++ String.fromInt destId))
                 Just ((f2, list), v) ->
                   -- Debug.log ("[nfaToDFA] Inserting another " ++ acceptConditionToString t.via ++ "-transition (" ++ (if not (.isFinal t) then "non-" else "") ++ "Final), to #" ++ String.fromInt destId) () |> \_ ->
                   -- if any of the transitions is final, then the created state will be final
@@ -2491,7 +2564,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         rootIdentifier =
           Graph.get g.root g.graph
           |> Maybe.map (\node -> (terminalityOf node, [node.node.id]))
-          |> Maybe.Extra.withDefaultLazy (\() -> (0, [g.root]) |> Debug.log "Y>YWYAT")
+          |> Maybe.withDefaultLazy (\() -> (0, [g.root]) |> Debug.log "Y>YWYAT")
         
         findReachable : List StateIdentifier -> Set StateIdentifier -> Set StateIdentifier
         findReachable worklist visited =
@@ -2560,7 +2633,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   |> List.map -- this is to maintain exact parity, at the cost of performance, during the swich to AutoDict + actual typing
                     (AutoDict.toList >> List.map (Tuple.mapFirst acceptConditionToString) >> Dict.fromList)
                   |> List.findMap
-                    ( Dict.Extra.find (\_ ((_, v), _) -> v == idList)
+                    ( Dict.find (\_ ((_, v), _) -> v == idList)
                       >> Maybe.map (\(_, (_, label)) -> (id, label))
                     )
         )
