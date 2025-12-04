@@ -635,8 +635,11 @@ viewLinkLabel drawing_data =
                 [ viewGraphReference uuid 2 cur_x (cur_y - 5)
                 , title
                     []
-                    [ AutoDict.get uuid drawing_data.graphReferenceDescriptions
-                      |> Maybe.withDefault "(no description)"
+                    [ ( ( AutoDict.get uuid drawing_data.graphReferenceDescriptions
+                          |> Maybe.withDefault "(no description)"
+                        )
+                        ++ "\n\n" ++ truncate_uuid uuid
+                      )
                       |> text
                     ]
                 ]

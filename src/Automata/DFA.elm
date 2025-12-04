@@ -515,6 +515,12 @@ expand e resolutionDict current taken_record =
 -- if I can't make another transition, return `Nothing`
 oneTransition : ExecutionData -> ExecutionData
 oneTransition data =
+  -- UPDATED PROCESS:
+  -- I expand one level IN ADVANCE!  BEFORE I go through a transition!
+  -- And this means that, when called, I should ALWAYS be able to take
+  -- a single transition—if any transition exists.
+  -- And at the end of that transition, I will arrive at some node, and
+  -- I must then expand again.
   case data.finalResult of
     Just _ ->
       data -- we have a final resolution. So stick to it.
@@ -529,9 +535,9 @@ oneTransition data =
           }
         h::remainingData ->
           let
-            ( expanded_and_culled, transitions_taken, currentNode ) =
-              expand data.computation data.resolutionDict data.currentNode data.transitions
             -- the node-ids may well have changed.  So, find out where we are.
+            currentNode =
+              Graph.get data.currentNode data.computation.graph
             thisMove : Maybe (Transition, List (NodeId, NodeId), NodeContext Entity Connection)
             thisMove =
               Maybe.andThen
@@ -541,7 +547,7 @@ oneTransition data =
                       ( ctx.outgoing
                         -- |> debugLog_ ("[oneTransition] possible transitions from #" ++ String.fromInt ctx.node.id) printFan
                       )
-                      expanded_and_culled
+                      data.computation
                     |> Maybe.map (\(next_ctx, not_taken) ->
                       ( Transition True (ViaCharacter h)
                       , List.map (\dest -> (ctx.node.id, dest)) not_taken
@@ -550,7 +556,7 @@ oneTransition data =
                     )
                     |> Maybe.orElseLazy
                         (\() ->
-                          takeTransition (Transition False (ViaCharacter h)) ctx.outgoing expanded_and_culled
+                          takeTransition (Transition False (ViaCharacter h)) ctx.outgoing data.computation
                           |> Maybe.map (\(next_ctx, not_taken) ->
                             ( Transition False (ViaCharacter h)
                             , List.map (\dest -> (ctx.node.id, dest)) not_taken
@@ -583,10 +589,7 @@ oneTransition data =
                     -- println ("[oneTransition] Searched for '" ++ String.fromChar h ++ "' but no possible transition from #" ++ String.fromInt x.node.id)
                     -- so I got up to this point, and NOW there's a problem.
                     { data
-                      | transitions = transitions_taken
-                      , currentNode = x.node.id -- couldn't get past this one.
-                      , computation = expanded_and_culled
-                      , finalResult =
+                      | finalResult =
                           Just NoMatchingTransitions
                       , step = data.step + 1
                     }
@@ -594,29 +597,37 @@ oneTransition data =
                 -- debugLog_ ("[oneTransition] Found transition from #" ++ String.fromInt newNode.node.id) transitionToString |> \_ ->
                 let
                   current_transitions =
-                    transitions_taken ++ [TransitionTakenData newNode.node.id t]
-                  ( advance_computation, actual_taken, _ ) =
-                    cull not_taken_last expanded_and_culled
+                    data.transitions ++ [TransitionTakenData newNode.node.id t]
+                  ( advance_computation, actual_taken, renamed_node ) =
+                    cull not_taken_last data.computation
                     |> \g -> expand g data.resolutionDict newNode.node.id current_transitions
                 in
-                { data
-                  | transitions = actual_taken
-                      -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
-                    , remainingData = remainingData
-                    , currentNode = newNode.node.id
-                    , computation = -- expand one level in advance.
-                        advance_computation
-                    , finalResult =
-                        case remainingData of
-                          [] ->
-                            if t.isFinal then Just Accepted
-                            else Just Rejected
-                          _ ->
-                            -- we can plausibly continue on, so there is no
-                            -- final determination at this point in the time.
-                            Nothing
-                    , step = data.step + 1
-                }
+                  case renamed_node of
+                    Nothing ->
+                      { data
+                        | finalResult =
+                            Just <|
+                              InternalError "Somehow, just expanding the computation without taking new paths has failed!!  What's going on here??"
+                      }
+                    Just nodeCtx ->
+                      { data
+                        | transitions = actual_taken
+                            -- |> debugLog_ "[oneTransition] transitions-taken final" (List.map (\{dest,matching} -> transitionToString matching ++ "➡" ++ String.fromInt dest))
+                          , remainingData = remainingData
+                          , currentNode = nodeCtx.node.id
+                          , computation = -- expand one level in advance.
+                              advance_computation
+                          , finalResult =
+                              case remainingData of
+                                [] ->
+                                  if t.isFinal then Just Accepted
+                                  else Just Rejected
+                                _ ->
+                                  -- we can plausibly continue on, so there is no
+                                  -- final determination at this point in the time.
+                                  Nothing
+                          , step = data.step + 1
+                      }
 
 step : ExecutionData -> ExecutionData
 step executionData =
@@ -646,11 +657,16 @@ run start =
 
 load : String -> ResolutionDict -> AutomatonGraph -> ExecutionData
 load s resolutionDict g =
+  let
+    initial =
+      expand g resolutionDict g.root []
+      |> (\(a, _, _) -> a)
+  in
   -- step
     { transitions = []
     , remainingData = String.toList s
-    , currentNode = g.root
-    , computation = g
+    , currentNode = initial.root
+    , computation = initial
     , resolutionDict = resolutionDict
     , finalResult = Nothing
     , step = 0
