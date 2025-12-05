@@ -444,6 +444,7 @@ type alias NodesVsViewport =
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
+  , fitClosely : Bool
   , interfaceLocation : InterfaceLocation
   , host_dimensions : (Float, Float) -- (w,h) of svg element
   , host_coordinates : (Float, Float) -- (x,y) of svg element

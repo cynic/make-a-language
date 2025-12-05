@@ -239,7 +239,7 @@ fitGraphViewToGraph graphView =
     guest_viewport =
       calculateGuestDimensionsForHost
         graphView.host_dimensions
-        True -- we are fitting closely around.
+        graphView.fitClosely -- we are fitting closely around.
         graphView.package.userGraph.graph
   in
     { graphView
@@ -269,6 +269,7 @@ mkGraphView id ag (w, h) removePadding location pkg packages interactions =
     { id = id
     , package = solved_pkg
     , interfaceLocation = location
+    , fitClosely = removePadding
     , host_dimensions = (w, h)
     , host_coordinates = (-1, -1)
     , panBuffer = GraphEditor.panBufferAmount (w, h)
@@ -1866,6 +1867,8 @@ updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model =
 
 movePhantomNodeInView : Uuid -> GraphView -> (Float, Float) -> Model -> Model
 movePhantomNodeInView view_uuid graph_view (x_, y_) model =
+  -- in the event, the `x_` and `y_` have already been translated
+  -- into guest-viewport coordinates, accounting for pan information.
   let
     -- what is the destination of this link?
     -- Sounds like a simple question: it's the phantom node, of course.  But when the
@@ -1874,8 +1877,6 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
     nearby_node_lockOnDistance : Float
     nearby_node_lockOnDistance = 36 -- min distance before arrow inverts…
 
-    ( xPan, yPan ) =
-      graph_view.pan
     nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> (Float, Float) -> GraphView -> b
     nearby_node_func f distance mouseCoords { package } =
       -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
@@ -1883,15 +1884,13 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
         userGraph = package.userGraph |> debugAutomatonGraph "userGraph in movePhantomNode"
         ( mouse_x, mouse_y ) =
           mouseCoords -- |> Debug.log "Mousecoords"
-        adjustment_x = xPan + mouse_x
-        adjustment_y = yPan + mouse_y
         square_dist = distance * distance
       in
         f
           (\node ->
             let
-              dx = node.label.x - adjustment_x
-              dy = node.label.y - adjustment_y
+              dx = node.label.x - mouse_x
+              dy = node.label.y - mouse_y
             in
               -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
               dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
@@ -2591,7 +2590,8 @@ commitOrConfirm model =
               , userGraph = ag
             }
         )
-        graph_view model_
+        (fitGraphViewToGraph graph_view)
+        model_
       |> refreshComputationsList
     
     updateExistingNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
@@ -3602,6 +3602,7 @@ isFailingTest = isPassingTest >> Maybe.map not
   **************************************
 -}
 
+{-| Given host coordinates, translate them to guest-viewport coordinates -}
 translateHostCoordinates : (Float, Float) -> GraphView -> (Float, Float)
 translateHostCoordinates (x, y) graph_view =
   let

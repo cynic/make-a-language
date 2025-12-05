@@ -201,7 +201,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             graph_to_graft =
               -- I call `graft` from various places, so I do a precautionary stretch at the start.
               stretch unstretched_graph_to_graft
-              -- |> debugAutomatonGraph (dbg_prefix ++ "graph to graft (stretched if necessary) is")
+              |> debugAutomatonGraph (dbg_prefix ++ "graph to graft (stretched if necessary) is")
             terminals = -- the terminals of the split_graph
               -- debugAutomatonGraph (dbg_prefix ++ "graph to graft onto is") graft_onto |> \_ ->
               Graph.fold
@@ -362,6 +362,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
             -- |> debugLog_ (dbg_prefix ++ "automaton graph after grafting transition " ++ transitionToString transition) (Tuple.second >> printAutomatonGraph)
           )
           (unusedId_, this_graph)
+        |> debugLog_ (dbg_prefix ++ "post-graft of connection " ++ connectionToOutputString conn) (Tuple.second >> printAutomatonGraph)
     after_graft =
       List.foldl
         convert_and_graft
