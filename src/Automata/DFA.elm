@@ -37,11 +37,11 @@ import Css exposing (expanded)
   - `source_id`: the node-id of the node from which the transition leaves.
   - `source_graph`: the graph containing the `source_id`.
 -}
-resolveTransitionFully : NodeId -> ResolutionDict -> List Uuid -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
-resolveTransitionFully start_id resolutionDict scope recursion_stack source_id source_graph =
+resolveTransitionFully : NodeId -> ResolutionDict -> AutoSet.Set String Uuid -> NodeId -> AutomatonGraph -> AutomatonGraph
+resolveTransitionFully start_id resolutionDict recursion_stack source_id source_graph =
   let
-    mkDbg_prefix uuid = "[resolveTransitionFully " ++ (truncate_uuid uuid) ++ "] "
-    dbg_prefix = mkDbg_prefix source_graph.graphIdentifier
+    mkDbg_prefix s = "[resolveTransitionFully " ++ s ++ "] "
+    dbg_prefix = mkDbg_prefix (Maybe.withDefault "(no desc.)" source_graph.description)
     -- we begin by renumbering ourselves.
     (source_graph_nodemap, renumbered) =
       renumberAutomatonGraphFrom start_id source_graph
@@ -112,19 +112,12 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
               ]
               [ Edge unusedId (unusedId + 1) t
               ]
-        uuid =
-          charToUuid ch
-          |> Maybe.withDefaultLazy
-            (\() ->
-              Debug.log (dbg_prefix ++ "🚨 INTERNAL ERROR: Failed to generate a UUID") () |> \_ ->
-              Random.Pcg.Extended.step Uuid.generator (initialSeed 1 [2, 3, 4, 5])
-              |> Tuple.first
-            )
       in
         ( next_unusedId
         , { graph = graph
           , root = unusedId
-          , graphIdentifier = uuid
+          , description =
+              Maybe.map (\s -> s ++ "💋-") source_graph.description
           }
           -- |> debugAutomatonGraph (mkDbg_prefix uuid ++ "character transition to AutomatonGraph")
         )
@@ -333,8 +326,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
                         resolveTransitionFully
                           unusedId
                           resolutionDict
-                          (renumbered.graphIdentifier :: scope)
-                          (AutoSet.insert renumbered.graphIdentifier recursion_stack)
+                          (AutoSet.insert ref recursion_stack)
                           referenced_graph.root
                           ( referenced_graph
                             -- |> debugAutomatonGraph (dbg_prefix ++ "I found a referenced graph (" ++ truncate_uuid referenced_graph.graphIdentifier ++ ") to resolve, and will resolve it now.")
@@ -411,7 +403,7 @@ resolveTransitionFully start_id resolutionDict scope recursion_stack source_id s
       let
         dfa = fromAutomatonGraph without_old_dests
         unioned = union dfa dfa
-        ag = toAutomatonGraph without_old_dests.graphIdentifier unioned
+        ag = toAutomatonGraph unioned
       in
         renumberAutomatonGraphFrom start_id ag
         |> Tuple.second
@@ -484,8 +476,7 @@ expand e resolutionDict current taken_record =
       resolveTransitionFully
         unusedId
         resolutionDict
-        [e.graphIdentifier]
-        (AutoSet.singleton Uuid.toString e.graphIdentifier)
+        (AutoSet.empty Uuid.toString)
         current
         e
       |> debugAutomatonGraph ("[expand] Expanded options from #" ++ String.fromInt current)
@@ -641,7 +632,7 @@ step executionData =
 
 run : ExecutionData -> List ExecutionData
 run start =
-  debugLog_ ("[run] Uuid " ++ truncate_uuid start.computation.graphIdentifier ++ " with") (.remainingData >> String.fromList) start |> \_ ->
+  debugLog_ ("[run] '" ++ Maybe.withDefault "(no desc.)" start.computation.description ++ "' with") (.remainingData >> String.fromList) start |> \_ ->
   List.reverse <|
     start ::
     ( List.unfoldr
@@ -707,24 +698,8 @@ automatonGraph_union g1 g2 =
   let
     dfa_1 = fromAutomatonGraph g1
     dfa_2 = fromAutomatonGraph g2
-    (id_1, id_2) =
-      if Uuid.toString g1.graphIdentifier < Uuid.toString g2.graphIdentifier then
-        (g1.graphIdentifier, g2.graphIdentifier)
-      else
-        (g2.graphIdentifier, g1.graphIdentifier)
-    newId =
-      (Uuid.toString id_1 ++ Uuid.toString id_2)
-      |> Binary.fromHex
-      -- deterministic pseudorandom bits
-      |> SHA.sha256
-      |> uuidFromHash
-      |> Maybe.withDefaultLazy
-        (\() ->
-          Debug.log "🚨 INTERNAL ERROR: Failed to generate a UUID" () |> \_ ->
-          id_1 -- DEFINITELY going to cause problems…
-        )
   in
-    toAutomatonGraph newId (union dfa_1 dfa_2)
+    toAutomatonGraph (union dfa_1 dfa_2)
 
 extend : DFARecord a -> DFARecord a -> ExtDFA
 extend w_dfa_orig dfa = -- parameters: the w_dfa and the dfa
@@ -1947,8 +1922,8 @@ minimiseNodesByCombiningTransitions g_ =
       )
     -- |> debugAutomatonGraph "[minimiseNodes] Final graph"
 
-toUnminimisedAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
-toUnminimisedAutomatonGraph uuid dfa =
+toUnminimisedAutomatonGraph : DFARecord a -> AutomatonGraph
+toUnminimisedAutomatonGraph dfa =
   let
     stateList = IntDict.toList dfa.states |> List.reverse -- |> Debug.log "[toUnminimisedAutomatonGraph] State-list"
     graph =
@@ -1982,19 +1957,19 @@ toUnminimisedAutomatonGraph uuid dfa =
     case stateList of
       [] ->
         { graph = Graph.empty
-        , graphIdentifier = uuid
+        , description = Nothing
         , root = 0
         }
         -- |> debugAutomatonGraph "[toUnminimisedAutomatonGraph] Graph, since DFA was empty"
       _ ->
         { graph = graph
-        , graphIdentifier = uuid
+        , description = Nothing
         , root = dfa.start -- |> Debug.log "[toUnminimisedAutomatonGraph] root"
         }
 
-toAutomatonGraph : Uuid.Uuid -> DFARecord a -> AutomatonGraph
-toAutomatonGraph uuid dfa =
-  toUnminimisedAutomatonGraph uuid dfa
+toAutomatonGraph : DFARecord a -> AutomatonGraph
+toAutomatonGraph dfa =
+  toUnminimisedAutomatonGraph dfa
   -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, as converted from DFA"
   |> minimiseNodesByCombiningTransitions
   -- |> debugAutomatonGraph "[toAutomatonGraph] Graph, minimised, final output"
@@ -2052,7 +2027,7 @@ renumberAutomatonGraphFrom start g =
               }
             )
             g.graph
-      , graphIdentifier = g.graphIdentifier
+      , description = g.description
       , root = get g.root
       }
       -- |> debugAutomatonGraph "[renumberAutomatonGraphFrom] result"
@@ -2729,10 +2704,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     newGraph =
       Graph.fromNodesAndEdges newGraphNodes newGraphEdges
   in
-    { graph = newGraph
-    , graphIdentifier = g.graphIdentifier
-    , root = g.root
-    }
+    { g | graph = newGraph }
     -- |> debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
 fromAutomatonGraphHelper : AutomatonGraph -> DFARecord {}
@@ -2857,7 +2829,8 @@ encodeAutomatonGraph g =
   E.object
     [ ("edges", E.list encodeEdge <| Graph.edges g.graph)
     , ("nodes", E.list encodeNode <| Graph.nodes g.graph)
-    , ("uuid", Uuid.encode g.graphIdentifier)
+    , ("description", Maybe.map E.string g.description |> Maybe.withDefault E.null)
+    --, ("uuid", Uuid.encode g.graphIdentifier)
     , ("root", E.int g.root)
     ]
 
@@ -2922,7 +2895,7 @@ decodeAutomatonGraph =
   D.map4 (\n e -> AutomatonGraph (Graph.fromNodesAndEdges n e))
     (D.field "nodes" <| D.list decodeNode)
     (D.field "edges" <| D.list decodeEdge)
-    (D.field "uuid" <| Uuid.decoder)
+    (D.field "description" <| D.oneOf [ D.map Just D.string, D.null Nothing ])
     (D.field "root" <| D.int)
 
 -----------------

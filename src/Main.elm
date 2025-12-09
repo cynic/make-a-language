@@ -88,6 +88,14 @@ getUuid model =
   in
     ( v, updatedModel )
 
+getUuid2 : Model -> (Uuid, Uuid, Model)
+getUuid2 model =
+  let
+    (a, m) = getUuid model
+    (b, m_) = getUuid m
+  in
+    ( a, b, m_ )
+
 nodeDrawingForPackage : GraphPackage -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
 nodeDrawingForPackage package graphView_uuid interactions =
   let
@@ -177,7 +185,7 @@ descriptionsForConnection connection packages =
             Nothing
           ViaGraphReference uuid ->
             AutoDict.get uuid packages
-            |> Maybe.andThen .description
+            |> Maybe.andThen (.userGraph >> .description)
             |> Maybe.map (\s -> ( uuid, s ))
     )
   |> AutoDict.fromList Uuid.toString
@@ -401,11 +409,10 @@ main =
     , subscriptions = subscriptions
     }
 
-createNewPackage : Uuid.Uuid -> Time.Posix -> AutomatonGraph -> GraphPackage
-createNewPackage testUuid currentTime g = -- `dimensions` is the width & height of the panel
+createNewPackage : Uuid -> Uuid -> Time.Posix -> AutomatonGraph -> GraphPackage
+createNewPackage testUuid packageUuid currentTime g = -- `dimensions` is the width & height of the panel
   { userGraph = g
-  -- , dimensions = dimensions
-  , description = Nothing
+  , packageIdentifier = packageUuid
   , created = currentTime
   , currentTestKey = testUuid
   , tests = AutoDict.empty Uuid.toString
@@ -427,7 +434,7 @@ init flags =
         allPackagesList =
           decoded.packages
           -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.userGraph |> \_ -> v)
-          |> List.map (\v -> ( v.userGraph.graphIdentifier, v ))
+          |> List.map (\v -> ( v.packageIdentifier, v ))
         allPackagesDict =
           AutoDict.fromList Uuid.toString allPackagesList
           -- for the initial graph, choose the most recent graph.
@@ -442,13 +449,14 @@ init flags =
               pkg =
                 createNewPackage
                   testUuid
+                  mainUuid
                   decoded.startTime
                   ( { graph =
                         Graph.fromNodesAndEdges
                           [ Graph.Node 0 (entity 0 NoEffect |> (\e -> { e | x = 0, y = 0 }))
                           ]
                           []
-                    , graphIdentifier = mainUuid
+                    , description = Nothing
                     , root = 0
                     }
                     |> debugAutomatonGraphXY "[init] new initial graph"
@@ -503,8 +511,8 @@ init flags =
     model_excl_views =
       { graph_views =
           AutoDict.empty Uuid.toString
-      , mainGraphView = mainPackage.userGraph.graphIdentifier -- this is—temporarily—the wrong value!
-      , displayedGraphView = mainPackage.userGraph.graphIdentifier
+      , mainGraphView = mainPackage.packageIdentifier -- this is—temporarily—the wrong value!
+      , displayedGraphView = mainPackage.packageIdentifier
       , packages = packages
       , uiState = state
       , uiConstants = constants
@@ -1541,7 +1549,7 @@ filterConnectionEditorGraphs s referenceList model =
   List.filterMap (\uuid -> AutoDict.get uuid model.graph_views) referenceList
   |> List.filter
     (\gv ->
-      case gv.package.description of
+      case gv.package.userGraph.description of
         Nothing ->
           True -- include; there's nothing to filter on.
         Just desc ->
@@ -2505,7 +2513,7 @@ hasSamePackage : Uuid -> Uuid -> Model -> Bool
 hasSamePackage uuid1 uuid2 model =
   Maybe.map2
     (\gv1 gv2 ->
-      gv1.package.userGraph.graphIdentifier == gv2.package.userGraph.graphIdentifier
+      gv1.package.packageIdentifier == gv2.package.packageIdentifier
     )
     (AutoDict.get uuid1 model.graph_views)
     (AutoDict.get uuid2 model.graph_views)
@@ -2514,7 +2522,7 @@ hasSamePackage uuid1 uuid2 model =
 viewsWithPackage : Uuid -> Model -> List GraphView
 viewsWithPackage uuid model =
   AutoDict.values model.graph_views
-  |> List.filter (\{package} -> package.userGraph.graphIdentifier == uuid)
+  |> List.filter (\{package} -> package.packageIdentifier == uuid)
 
 deletePackageFromModel : Uuid -> Model -> Model
 deletePackageFromModel uuid model =
@@ -2681,7 +2689,7 @@ commitOrConfirm model =
                 updated_model =
                   { model
                     | packages =
-                        AutoDict.insert new_gv.package.userGraph.graphIdentifier new_gv.package model.packages
+                        AutoDict.insert new_gv.package.packageIdentifier new_gv.package model.packages
                   }
                   |> updatePackageInView
                     (\_ -> new_gv.package) gv
@@ -2699,7 +2707,7 @@ viewsContainingPackage package_uuid m =
   AutoDict.values m.graph_views
   |> List.filter
     (\gv ->
-      gv.package.userGraph.graphIdentifier == package_uuid
+      gv.package.packageIdentifier == package_uuid
     )
 
 packagesAndRefs : Model -> List (Uuid, AutoSet.Set String Uuid)
@@ -2707,7 +2715,7 @@ packagesAndRefs {packages} =
   AutoDict.values packages
   |> List.foldl
     (\pkg acc ->
-      ( pkg.userGraph.graphIdentifier
+      ( pkg.packageIdentifier
       , Graph.edges pkg.userGraph.graph
         |> List.foldl
             (\{label} set ->
@@ -2826,7 +2834,7 @@ deletePackage : GraphPackage -> Model -> ( Model, Cmd Msg )
 deletePackage package model =
   -- find out which packages are affected by this one.
   let
-    package_uuid = package.userGraph.graphIdentifier
+    package_uuid = package.packageIdentifier
     affected : List Uuid
     affected =
       packagesAffectedBy package_uuid model
@@ -2886,8 +2894,8 @@ executing_edges data =
 expandStep : Int -> GraphPackage -> List ExecutionData -> ExecutionProperties -> Model -> Model
 expandStep n orig_package results props model =
   let
-    (uuid, model_) =
-      getUuid model
+    (uuid0, uuid1, model_) =
+      getUuid2 model
     relevantSteps = -- ordered from most recent to least recent
       List.dropWhile (.step >> (/=) n) results
     selectedStep =
@@ -2901,7 +2909,7 @@ expandStep n orig_package results props model =
               GraphEditor.spreadOutForces
               (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiState.dimensions.bottomPanel)
               Independent True
-              (createNewPackage uuid orig_package.created step.computation)
+              (createNewPackage uuid0 uuid1 orig_package.created step.computation)
               model_
             |>(\({id}, m) ->
                 ( id
@@ -2955,7 +2963,7 @@ step_execution orig_graphview pkg execution_function test model =
       execution_function previously_executed
     head_step =
       List.head applied_step
-    ( uuid, model_ ) = getUuid model
+    ( uuid0, uuid1, model_ ) = getUuid2 model
     (new_graphview_uuid, model__) =
       Maybe.map
         (\step ->
@@ -2966,7 +2974,7 @@ step_execution orig_graphview pkg execution_function test model =
             GraphEditor.spreadOutForces
             model.uiState.dimensions.mainEditor
             Independent True
-            ( createNewPackage uuid pkg.created step.computation )
+            ( createNewPackage uuid0 uuid1 pkg.created step.computation )
             model_
           |>(\({id}, m) ->
               ( id
@@ -3053,9 +3061,9 @@ update_package pkg_uuid msg model =
       { p | currentTestKey = test_uuid }
     change_description d p =
       if String.isEmpty d then
-        { p | description = Nothing }
+        { p | userGraph = let userGraph = p.userGraph in { userGraph | description = Nothing } }
       else
-        { p | description = Just d }
+        { p | userGraph = let userGraph = p.userGraph in { userGraph | description = Just d } }
     update_others updater p model_ =
       { model_
         | packages = AutoDict.insert pkg_uuid p model_.packages
@@ -3416,26 +3424,23 @@ update msg model =
 
     TimeValueForPackage posix ->
       let
-        (testUuid, seed1) = Random.step Uuid.generator model.randomSeed
-        (mainUuid, seed2) = Random.step Uuid.generator seed1
+        (testUuid, mainUuid, model_) = getUuid2 model
         pkg =
           createNewPackage
             testUuid
+            mainUuid
             posix
             ( { graph =
                   Graph.fromNodesAndEdges
                     [ Graph.Node 0 (entity 0 NoEffect |> (\e -> { e | x = 0, y = 0 }))
                     ]
                     []
-              , graphIdentifier = mainUuid
+              , description = Nothing
               , root = 0
               }
             )
         updated_model =
-          { model
-            | packages = AutoDict.insert mainUuid pkg model.packages
-            , randomSeed = seed2
-          }
+          { model_ | packages = AutoDict.insert mainUuid pkg model.packages }
         ( _, with_graph_view ) =
           solvedViewFromPackage
             GraphEditor.coordinateForces
@@ -3973,7 +3978,7 @@ viewTestsSidebar graph_view {properties} =
               , ("error", testStatus == Nothing)
               ]
           , properties.canLoadTestInput
-            |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| SelectTest key))
+            |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.packageIdentifier <| SelectTest key))
           ]
           [ span
               [ HA.classList
@@ -3992,7 +3997,7 @@ viewTestsSidebar graph_view {properties} =
                     , ("disabled", not properties.canDeleteTestInput)
                     ]
                 , HA.title "Delete test"
-                , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier <| DeleteTestInput key)
+                , HE.onClick (PackageMsg graph_view.package.packageIdentifier <| DeleteTestInput key)
                 ]
                 [ text "🚮" ]
             else
@@ -4008,7 +4013,7 @@ viewTestsSidebar graph_view {properties} =
               button
                 [ HA.class "add-button"
                 , HA.title "Add new test"
-                , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier CreateNewTestInput)
+                , HE.onClick (PackageMsg graph_view.package.packageIdentifier CreateNewTestInput)
                 ]
                 [ text "➕" ]
             else
@@ -4016,7 +4021,7 @@ viewTestsSidebar graph_view {properties} =
           ]
       , div
           [ HA.class "package-description" ]
-          [ graph_view.package.description
+          [ graph_view.package.userGraph.description
             |> Maybe.map text
             |> Maybe.withDefault (text "")
           ]
@@ -4078,12 +4083,12 @@ viewComputationsSidebar model =
                     div
                       [ HA.class "package"
                       , graph_view.properties.canSelectPackage
-                        |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier SelectPackage))
+                        |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.packageIdentifier SelectPackage))
                       ]
                       [ viewGraph graph_view
                       , div
                           [ HA.class "description" ]
-                          [ graph_view.package.description
+                          [ graph_view.package.userGraph.description
                             |> Maybe.withDefault "(no description)"
                             |> text
                           ]
@@ -4093,7 +4098,7 @@ viewComputationsSidebar model =
                           div
                             [ HA.class "delete-button"
                             , HA.title "Delete"
-                            , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier DeletePackage)
+                            , HE.onClick (PackageMsg graph_view.package.packageIdentifier DeletePackage)
                             ]
                             [ text "🚮" ]
                       ]
@@ -4425,7 +4430,7 @@ viewTestingTool graph_view test model =
                             [ ("expect-accept", test.expectation == ExpectAccepted)
                             , ("expect-reject", test.expectation == ExpectRejected)
                             ]
-                        , HE.onClick (PackageMsg graph_view.package.userGraph.graphIdentifier FlipAcceptanceCondition)
+                        , HE.onClick (PackageMsg graph_view.package.packageIdentifier FlipAcceptanceCondition)
                         ]
                         [ text
                             ( case test.expectation of
@@ -4438,7 +4443,7 @@ viewTestingTool graph_view test model =
                 , textarea
                     [ HA.class "input-textarea"
                     , HA.value test.input
-                    , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.userGraph.graphIdentifier)
+                    , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.packageIdentifier)
                     , HA.placeholder "Enter your test input here"
                     ]
                     []
@@ -4449,7 +4454,7 @@ viewTestingTool graph_view test model =
 viewMetadataTool : GraphPackage -> Html Msg
 viewMetadataTool package =
   let
-    len = package.description |> Maybe.withDefault "" |> String.length |> toFloat
+    len = package.userGraph.description |> Maybe.withDefault "" |> String.length |> toFloat
     idx = round <| -0.02779853 + 0.06685532 * len + 0.004036796 * len * len
     color = List.getAt idx colorScale.css.best_to_worst |> Maybe.withDefault colorScale.css.worst
   in
@@ -4462,8 +4467,8 @@ viewMetadataTool package =
             [ textarea
                 [ HA.class "input-textarea"
                 , HA.css [ Css.color color ]
-                , HA.value (Maybe.withDefault "" package.description)
-                , HE.onInput (UpdatePackageDescription >> PackageMsg package.userGraph.graphIdentifier)
+                , HA.value (Maybe.withDefault "" package.userGraph.description)
+                , HE.onInput (UpdatePackageDescription >> PackageMsg package.packageIdentifier)
                 , HA.placeholder "What kind of thing does this package recognize?"
                 ]
                 []
@@ -4619,7 +4624,7 @@ htmlForTransition {packages} {via, isFinal} =
                     [ GraphEditor.viewGraphReference pkg_uuid 4 0 0 ]
                   |> Html.Styled.fromUnstyled
                 ]
-            , case pkg.description of
+            , case pkg.userGraph.description of
                 Just s ->
                   div
                     [ HA.class "description" ]
@@ -4740,7 +4745,7 @@ viewConnectionEditor model connection editorData =
                         |> Maybe.map
                           (\graph_view ->
                             let
-                              via = ViaGraphReference graph_view.package.userGraph.graphIdentifier
+                              via = ViaGraphReference graph_view.package.packageIdentifier
                               inTerminals = AutoSet.member (Transition True via) terminal
                               inNonTerminals = AutoSet.member (Transition False via) nonTerminal
                             in
@@ -4758,7 +4763,7 @@ viewConnectionEditor model connection editorData =
                                 [ viewGraph graph_view
                                 , div
                                     [ HA.class "description" ]
-                                    [ graph_view.package.description
+                                    [ graph_view.package.userGraph.description
                                       |> Maybe.withDefault "(no description)"
                                       |> text
                                     ]
@@ -4769,7 +4774,7 @@ viewConnectionEditor model connection editorData =
                                       ]
                                       [ TypedSvg.svg
                                           [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
-                                          [ GraphEditor.viewGraphReference graph_view.package.userGraph.graphIdentifier 4 0 0 ]
+                                          [ GraphEditor.viewGraphReference graph_view.package.packageIdentifier 4 0 0 ]
                                         |> Html.Styled.fromUnstyled
                                       ]
                                   else
@@ -4881,7 +4886,7 @@ viewPackageDeletionWarning props model =
             [ viewGraph graph_view
             , div
                 [ HA.class "description" ]
-                [ graph_view.package.description
+                [ graph_view.package.userGraph.description
                   |> Maybe.withDefault "(no description)"
                   |> text
                 ]

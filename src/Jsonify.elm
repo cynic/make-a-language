@@ -47,7 +47,7 @@ encodeGraphPackage pkg =
     --       , ("h", E.float <| Tuple.second pkg.dimensions)
     --       ]
     --   )
-    , ("description", Maybe.map E.string pkg.description |> Maybe.withDefault E.null)
+    , ("uuid", Uuid.encode pkg.packageIdentifier)
     , ("created", E.int (Time.posixToMillis pkg.created))
     , ("tests", DFA.encodeAutoDict Uuid.toString encodeTest pkg.tests)
     , ("currentTestKey", Uuid.encode pkg.currentTestKey)
@@ -67,7 +67,7 @@ decodeGraphPackage resolutionDict =
         --     (D.at ["dimensions", "w"] D.float)
         --     (D.at ["dimensions", "h"] D.float)
         -- )
-        (D.field "description" <| D.oneOf [ D.null Nothing, D.map Just D.string ])
+        (D.field "uuid" <| Uuid.decoder)
         (D.field "created" <| D.map Time.millisToPosix D.int)
         (D.field "currentTestKey" Uuid.decoder)
         (D.field "tests" <| DFA.decodeAutoDict Uuid.toString Uuid.fromString (decodeTest resolutionDict graph))
@@ -75,11 +75,16 @@ decodeGraphPackage resolutionDict =
 
 decodeFlags : D.Decoder Flags
 decodeFlags =
-  D.map (\ag_list ->
-    List.map (\ag -> (ag.graphIdentifier, ag)) ag_list
-    |> AutoDict.fromList Uuid.toString
+  (D.field "packages" <|
+    D.map
+      (AutoDict.fromList Uuid.toString)
+      ( D.list (
+          D.map2 (\identifier graph -> ( identifier, graph ))
+          ( D.field "packageIdentifier" Uuid.decoder )
+          ( D.field "graph" DFA.decodeAutomatonGraph )
+        )
+      )
   )
-  (D.field "packages" <| D.list (D.field "graph" DFA.decodeAutomatonGraph))
   |> D.andThen
     (\resolutionDict ->
       D.map2 (\w h -> (w, h))

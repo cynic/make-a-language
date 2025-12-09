@@ -245,7 +245,7 @@ toForceGraph g =
       }
   in
     { graph = Graph.mapContexts initializeNode g.graph
-    , graphIdentifier = g.graphIdentifier
+    , description = Nothing
     , root = g.root
     }
 
@@ -305,7 +305,8 @@ applyChangesToGraph g =
   -- debugAutomatonGraph "Initial from user" g |> \_ ->
   DFA.removeDisconnectedNodes g
   -- |> debugAutomatonGraph "After removing disconnected"
-  |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph g.graphIdentifier)
+  |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph)
+  |> (\g_ -> { g_ | description = g.description }) -- restore description.
 
 newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_graphchange src x y conn g =

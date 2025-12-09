@@ -164,7 +164,7 @@ type InteractionState
 type alias GraphPackage =
   { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
   -- , dimensions : ( Float, Float )
-  , description : Maybe String
+  , packageIdentifier : Uuid
   , created : Time.Posix -- for ordering
   , currentTestKey : Uuid
   , tests : AutoDict.Dict String Uuid Test
@@ -514,7 +514,7 @@ type alias Node = NodeContext Entity Connection -- a Node itself does not carry 
 type alias AutomatonGraph =
   { graph : Graph Entity Connection -- finally, the complete graph.
     {- The maximum ID-value in this Automaton graph -}
-  , graphIdentifier : Uuid
+  , description : Maybe String
   , root : NodeId
   }
 
@@ -593,10 +593,10 @@ type alias Test =
   , result : ExecutionResult
   }
 
-empty : Uuid -> AutomatonGraph
-empty uuid =
+empty : AutomatonGraph
+empty =
   { graph = Graph.empty
-  , graphIdentifier = uuid
+  , description = Nothing
   , root = 0
   }
 
