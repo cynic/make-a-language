@@ -22,6 +22,15 @@
   user-select: none;
   alignment-baseline: central;
   paint-order: stroke fill markers;
+
+  & .pan-reset {
+    pointer-events: all;
+
+    &:hover {
+      cursor: pointer;
+      transform: scale(1.2);
+    }
+  }
 }
 
 // Base node styling

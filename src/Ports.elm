@@ -4,11 +4,9 @@ import Json.Encode as E
 port saveToStorage : E.Value -> Cmd msg
 port deleteFromStorage : String -> Cmd msg
 
-port considerPan : E.Value -> Cmd msg
-port requestCoordinates : String -> Cmd msg
-port stopPan : String -> Cmd msg
 port pan : (E.Value -> msg) -> Sub msg
-port receiveCoordinates : (E.Value -> msg) -> Sub msg
+
+port stopPan : (E.Value -> msg) -> Sub msg
 
 {-
 At the start of the program, load all records from the IndexedDB

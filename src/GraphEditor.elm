@@ -9,6 +9,7 @@ import Html.Styled exposing
 -- import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
 import Html.Styled.Attributes as HA
 import Json.Decode as D
+import Json.Encode as E
 import TypedSvg exposing
   (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
 import TypedSvg.Attributes exposing
@@ -54,21 +55,21 @@ import Graph exposing (alongOutgoingEdges)
 
 
 {-| The buffer from the edges within which panning occurs -}
-panBufferAmount : (Float, Float) -> Float
-panBufferAmount (w, h) =
-  let
-    minBuffer = 25 -- minimum comfortable target: 20-40px (WCAG). Mouse precision @ 15-25px.
-    -- Fitts' Law says edges are infinite, but there's no guarantee that the edge of the
-    -- window will be a *real* edge.
-    maxBuffer = 60
-    bufferRatio = 0.025 -- 2.5%.  Perhaps ≈3% would be even better; let's see.
-    -- but also, a more consistent buffer-size might be simpler and better for users to
-    -- build muscle-memory.  So let's see.
-  in
-    clamp
-      minBuffer
-      maxBuffer
-      (bufferRatio * min w h)
+-- panBufferAmount : (Float, Float) -> Float
+-- panBufferAmount (w, h) =
+--   let
+--     minBuffer = 25 -- minimum comfortable target: 20-40px (WCAG). Mouse precision @ 15-25px.
+--     -- Fitts' Law says edges are infinite, but there's no guarantee that the edge of the
+--     -- window will be a *real* edge.
+--     maxBuffer = 60
+--     bufferRatio = 0.025 -- 2.5%.  Perhaps ≈3% would be even better; let's see.
+--     -- but also, a more consistent buffer-size might be simpler and better for users to
+--     -- build muscle-memory.  So let's see.
+--   in
+--     clamp
+--       minBuffer
+--       maxBuffer
+--       (bufferRatio * min w h)
 
 makeLinkForces : Graph Entity Connection -> Force.Force NodeId
 makeLinkForces graph =
@@ -1070,67 +1071,48 @@ viewMainSvgContent graph_view =
 viewGraph : GraphView -> Html Msg
 viewGraph graphView =
   let
-    ( host_x, host_y ) = graphView.host_coordinates
-    ( host_width, host_height ) = graphView.host_dimensions
-    ( guest_width, guest_height) = graphView.guest_dimensions
+    properties = graphView.properties
+    ( host_w, host_h ) = graphView.host_dimensions
+    ( guest_w, guest_h) = graphView.guest_dimensions
     ( guest_x, guest_y ) = graphView.guest_coordinates
-    rectangles =
-      if graphView.properties.canPan then
-        [ ( Rectangle host_x host_y host_width graphView.panBuffer ) -- top
-        , ( Rectangle host_x host_y graphView.panBuffer host_height ) -- left
-        , ( Rectangle host_x (host_y + host_height - graphView.panBuffer) host_width graphView.panBuffer ) -- bottom
-        , ( Rectangle (host_x + host_width - graphView.panBuffer) host_y graphView.panBuffer host_height ) -- right
+    mkArrow : String -> String -> Html Msg
+    mkArrow direction pathString =
+      -- this will be laid out in CSS via grid
+      div
+        [ HA.class <| "pan-region " ++ direction
         ]
-      else
-        []
-    panRadius = sqrt (2.0 * graphView.panBuffer * graphView.panBuffer)
-    mkArrow : String -> Float -> Float -> String -> Html Msg
-    mkArrow direction width height pathString =
-      if graphView.properties.canPan then
-        div
-          [ HA.class <| "pan-region " ++ direction
-          , HA.css
-            [ Css.width (Css.px width)
-            , Css.height (Css.px height)
+        [ svg
+            [ class [ "pan-arrow" ]
+            , viewBox 0 0 20 20
             ]
-          , graphView.properties.canPan
-            |> thenPermitInteraction (HE.onMouseOver (GraphViewMsg graphView.id (ConsiderPan rectangles)))
-          , graphView.properties.canPan
-            |> thenPermitInteraction (HE.onMouseOut (GraphViewMsg graphView.id StopPan))
-          ]
-          [ svg
-              [ class [ "pan-arrow" ] 
-              , viewBox 0 0 20 20
-              ]
-              [ path [ d pathString ] [] ]
-            |> Html.Styled.fromUnstyled
-          ]
-      else
-        Html.Styled.text ""
+            [ path [ d pathString ] [] ]
+          |> Html.Styled.fromUnstyled
+        ]
   in
     div
       [ HA.class "graph-container"
-      , HA.id <| Uuid.toString graphView.id
+      , HA.property "uiType" (E.string "graph-view")
       , HA.css
-          [ Css.width (Css.px host_width)
-          , Css.height (Css.px host_height)
+          [ Css.width (Css.px host_w)
+          , Css.height (Css.px host_h)
           ]
-      , HE.onMouseOver (GraphViewMsg graphView.id RequestCoordinates)
+      , HA.attribute "graph-id" (Uuid.toString graphView.id)
+      -- , HE.onMouseOver (GraphViewMsg gv RequestCoordinates)
       ]
       [ svg
-          ([ viewBox guest_x guest_y guest_width guest_height
-          , TypedSvg.Attributes.InPx.width host_width
-          , TypedSvg.Attributes.InPx.height host_height
+          ([ viewBox guest_x guest_y guest_w guest_h
+          , TypedSvg.Attributes.InPx.width host_w
+          , TypedSvg.Attributes.InPx.height host_h
           , class
               ( conditionalList
                   [ ("graph", True)
-                  , ("can-select-nodes", graphView.properties.canSelectNodes)
-                  , ("can-select-connections", graphView.properties.canSelectConnections)
-                  , ("can-split-nodes", graphView.properties.canSplitNodes)
-                  , ("can-select-space", graphView.properties.canSelectEmptySpace)
+                  , ("can-select-nodes", properties.canSelectNodes)
+                  , ("can-select-connections", properties.canSelectConnections)
+                  , ("can-split-nodes", properties.canSplitNodes)
+                  , ("can-select-space", properties.canSelectEmptySpace)
                   ]
               )
-          , graphView.properties.canSelectEmptySpace
+          , properties.canSelectEmptySpace
             |> thenPermitSvgInteraction (onClick (GraphViewMsg graphView.id SelectSpace))
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
@@ -1138,7 +1120,7 @@ viewGraph graphView =
             -- this part is for debugging panning. If I uncomment it, I should also
             -- uncomment the corresponding code in viewMainSvgContent.
           , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-          , if not graphView.properties.canPan then
+          , if not properties.canPan then
               g [] []
             else
               g
@@ -1150,8 +1132,8 @@ viewGraph graphView =
                     -- ]
                     -- [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
                   text_
-                    [ x <| (guest_x + guest_width) - 5
-                    , y <| (guest_y + guest_height) - 10
+                    [ x <| (guest_x + guest_w) - 5
+                    , y <| (guest_y + guest_h) - 10
                     , class [ "status-line", "pan" ]
                     ]
                     [ tspan
@@ -1159,11 +1141,13 @@ viewGraph graphView =
                             []
                           else
                             [ class [ "pan-reset" ]
-                            , graphView.properties.canPan
+                            , properties.canPan
                               |> thenPermitSvgInteraction (onClick (GraphViewMsg graphView.id ResetPan))
                             ]
                         )
-                        [ text "🧭" ]
+                        [ text "🧭"
+                        , title [] [ text "Re-center" ]
+                        ]
                     , tspan
                         []
                         [ text <| " " ++ panToString graphView.pan
@@ -1195,19 +1179,26 @@ viewGraph graphView =
                 ]
           ]
           |> Html.Styled.fromUnstyled
-      , div
-          []
-          ( if graphView.properties.canPan then
-              [ ( mkArrow "top" host_width graphView.panBuffer     "M10 2 L2 18 L18 18 Z" )
-              , ( mkArrow "bottom" host_width graphView.panBuffer  "M10 18 L18 2 L2 2 Z" )
-              , ( mkArrow "left" graphView.panBuffer host_height   "M2 10 L18 2 L18 18 Z" )
-              , ( mkArrow "top-right" panRadius panRadius          "M16 4 L4 4 L16 16 Z" )
-              , ( mkArrow "bottom-right" panRadius panRadius       "M4 16 L16 16 L16 4 Z" )
-              , ( mkArrow "top-left" panRadius panRadius           "M4 4 L16 4 L4 16 Z" )
-              , ( mkArrow "right" graphView.panBuffer host_height  "M18 10 L2 2 L2 18 Z" )
-              , ( mkArrow "bottom-left" panRadius panRadius        "M16 16 L4 16 L4 4 Z" )
-              ]
-            else
-              []
-          )
-      ]
+      , if properties.canPan then
+          case graphView.activePanDirection of
+            Just ToTop ->
+              mkArrow "top"           "M10 2 L2 18 L18 18 Z"
+            Just ToBottom ->
+              mkArrow "bottom"        "M10 18 L18 2 L2 2 Z"
+            Just ToLeft ->
+              mkArrow "left"          "M2 10 L18 2 L18 18 Z"
+            Just ToTopRight ->
+              mkArrow "top-right"     "M16 4 L4 4 L16 16 Z"
+            Just ToBottomRight ->
+              mkArrow "bottom-right"  "M4 16 L16 16 L16 4 Z"
+            Just ToTopLeft ->
+              mkArrow "top-left"      "M4 4 L16 4 L4 16 Z"
+            Just ToRight ->
+              mkArrow "right"         "M18 10 L2 2 L2 18 Z"
+            Just ToBottomLeft ->
+              mkArrow "bottom-left"   "M16 16 L4 16 L4 4 Z"
+            Nothing ->
+              Html.Styled.text ""
+        else
+          Html.Styled.text ""
+      ] 

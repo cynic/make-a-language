@@ -30,33 +30,25 @@
     import { Elm } from './src/Main.elm'
 
     function startElm(db, packages) {
-      /* various helper functions */
-      function pointInRect(x, y, rect) {
-        return x >= rect.x && x <= rect.x + rect.w &&
-              y >= rect.y && y <= rect.y + rect.h;
-      }
 
-      function isInsideAnyRect(x, y, rects) {
-        return rects.some(r => pointInRect(x, y, r));
-      }
+      /******************************************
+       * 
+       * Panning.
+       * 
+       ******************************************/
+      // not to be confused with the animation studio
+      // const clamp = (min, max, v) => Math.min(Math.max(v, min), max);
 
       let panIntervalId = null;
       let mx = -1;
       let my = -1;
-      let uuids = new Map();
       let windowHasFocus = true;
-      let sentCoordinates = new Map();
+      let mouse_left = '';
 
       // event to track the mouse coordinates constantly and put them into (mx, my)
       addEventListener("pointermove", (e) => {
         mx = e.clientX;
         my = e.clientY;
-        for (const [uuid, data] of uuids) {
-          // don't kick off a new pan while we're already panning
-          if (!data.active) {
-            check(uuid, data.rects);
-          }
-        }
       });
 
       // Window focus
@@ -68,34 +60,153 @@
         windowHasFocus = true;
       });
 
-      function panWhile(uuid, rects) {
-        if (uuids.has(uuid) && isInsideAnyRect(mx, my, rects)) {
-          if (!document.hidden && windowHasFocus) {
-            app.ports.pan.send({ uuid : uuid, x : mx, y : my });
-          }
-          setTimeout(() => panWhile(uuid, rects), 40);
-        } else {
-          uuids.delete(uuid);
+      function panWhile(uuid, element) {
+        if (!element.isConnected) {
+          return; // no longer exists; we're done!
         }
-      }
-
-      function check(uuid, rects) {
-        if (!isInsideAnyRect(mx, my, rects)) {
+        if (mouse_left == uuid) {
+          app.ports.stopPan.send(uuid);
           return;
         }
-        // establish stability
-        let mx_ = mx;
-        let my_ = my;
-        setTimeout(() => {
-          if (mx == mx_ && my == my_) {
-            // I have stability.
-            uuids.set(uuid, { rects : rects, active : true });
-            panWhile(uuid, rects);
+        const rect = element.getBoundingClientRect();
+        if (isNearEdge(mx, my, rect)) {
+          console.log("Near edge.");
+          if (!document.hidden && windowHasFocus) {
+            const coordinates = detectEdgeRegion(mx, my, rect);
+            if (coordinates) {
+              app.ports.pan.send({ uuid : uuid, pan : coordinates });
+            }
           }
-        }, 150);
+          setTimeout(() => panWhile(uuid, element), 40);
+        } else if (isInBounds(mx, my, rect)) {
+          console.log("In bounds.");
+          // no longer on an edge.
+          app.ports.stopPan.send(uuid);
+          setTimeout(() => considerPan(uuid, element), 40);
+        } else {
+          console.log("Out of bounds.");
+          // out of the element area entirely; no recursion.
+          app.ports.stopPan.send(uuid);
+        }
       }
 
-      /* END various helper functions */
+      function considerPan(uuid, element) {
+        // this is called on mouseenter.
+        // mouseenter means we're already in the element, so just check edge proximity
+        const rect = element.getBoundingClientRect();
+        // console.log("Mouse entered.");
+        if (rect.width < 80 || rect.height < 80) return;
+        if (isNearEdge(mx, my, rect)) {
+          // console.log("Near edge.");
+          // establish stability
+          let mx_ = mx;
+          let my_ = my;
+          setTimeout(() => {
+            if (mx == mx_ && my == my_) {
+              // I have stability.
+              // console.log("Stability established.");
+              panWhile(uuid, element);
+            } else if (isInBounds(mx, my, rect)) {
+              // console.log("In bounds.");
+              setTimeout(() => considerPan(uuid, element), 40);
+            }
+          }, 150);
+        } else if (isInBounds(mx, my, rect)) {
+          // console.log("In bounds.");
+          setTimeout(() => considerPan(uuid, element), 40);
+        } // otherwise, I'm out of the element area entirely; silently return & die.
+      }
+
+      function isInBounds(mx, my, rect) {
+        return mx > rect.left && mx < rect.right && my > rect.top && my < rect.bottom;
+      }
+
+      // Create a MutationObserver to watch for DOM changes.
+      // MutationObserver setup.
+      // This code was created with the assistance of Thaura.
+      const panObserver = new MutationObserver((mutations) => {
+        let added = new Set();
+        const add_listeners = (container) => {
+          const attr = container.getAttribute('graph-id');
+          if (added.has(container)) {
+            console.log("Already added uuid " + attr + "; ignoring.");
+            return;
+          }
+          container.addEventListener('mouseenter', handleGraphMouseEnter);
+          container.addEventListener('mouseleave', () => { mouse_left = attr; });
+          added.add(container);
+          console.log("Added " + attr);
+        };
+        
+        mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE && 
+                node.classList.contains('graph-container') && 
+                node.hasAttribute('graph-id')) {
+              add_listeners(node);
+            }
+            
+            // Check child nodes
+            if (node.querySelectorAll) {
+              const containers = node.querySelectorAll('div.graph-container[graph-id]');
+              containers.forEach(add_listeners);
+            }
+          });
+        });
+      });
+
+      // Start observing the document
+      panObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+
+      // Simplified handler using mouseenter
+      function handleGraphMouseEnter(event) {
+        const element = event.currentTarget;
+        const attr = element.getAttribute('graph-id');
+        if (mouse_left == attr) {
+          mouse_left = '';
+        }
+        considerPan(attr, element);
+      }
+
+      // Check if mouse is within 40px of any edge
+      function isNearEdge(mx, my, rect) {
+        const edgeDistance = 40;
+        const left = mx - rect.left;
+        const right = rect.right - mx;
+        const top = my - rect.top;
+        const bottom = rect.bottom - my;
+
+        if (left < 0 || right < 0 || top < 0 || bottom < 0) return false;
+        
+        return Math.min(left, right, top, bottom) <= edgeDistance;
+      }
+
+      function detectEdgeRegion(mx, my, rect) {
+        const edgeDistance = 40;
+        const left = mx - rect.left;
+        const right = rect.right - mx;
+        const top = my - rect.top;
+        const bottom = rect.bottom - my;
+        
+        // Check corners first
+        if (left <= edgeDistance && top <= edgeDistance) return { pan_x: -1, pan_y: -1 };
+        if (right <= edgeDistance && top <= edgeDistance) return { pan_x: 1, pan_y: -1 };
+        if (left <= edgeDistance && bottom <= edgeDistance) return { pan_x: -1, pan_y: 1 };
+        if (right <= edgeDistance && bottom <= edgeDistance) return { pan_x: 1, pan_y: 1 };
+        
+        // Check edges
+        if (top <= edgeDistance) return { pan_x: 0, pan_y: -1 };
+        if (bottom <= edgeDistance) return { pan_x: 0, pan_y: 1 };
+        if (left <= edgeDistance) return { pan_x: -1, pan_y: 0 };
+        if (right <= edgeDistance) return { pan_x: 1, pan_y: 0 };
+        
+        return null;
+      }
+
+      /* END panning */
 
       const random_seeds = new Uint32Array(5);
       crypto.getRandomValues(random_seeds);
@@ -111,33 +222,6 @@
 
       let app = Elm.Main.init({ flags: flags, node: document.getElementById('elm') });
 
-      app.ports.requestCoordinates.subscribe((uuid) => {
-        const elem = document.getElementById(uuid);
-        if (elem === null) return;
-        const box = elem.getBoundingClientRect();
-        const result = { uuid: uuid, x : box.left, y : box.top };
-        // to avoid sending unnecessary messages, check: have I sent this _exact_
-        // message before?  I only need to send such a message once.
-        // console.log(result);
-        const alreadySent = sentCoordinates.get(uuid);
-        // we can't compare for structural equality without bringing in an external
-        // library because it's 2025 and who needs that anyway, right? Right?
-        if (alreadySent !== undefined && alreadySent.x === result.x && alreadySent.y === result.y) return;
-        sentCoordinates.set(uuid, result); // add it.
-        setTimeout(() => app.ports.receiveCoordinates.send(result), 1);
-      });
-
-      app.ports.considerPan.subscribe((item) => {
-        // console.log(item);
-        uuids.set(item.uuid, { rects : item.rectangles, active : false });
-      });
-
-      app.ports.stopPan.subscribe((uuid) => {
-        // console.log("Stop-pan");
-        // console.log(uuid);
-        uuids.delete(uuid);
-      });
-
       app.ports.saveToStorage.subscribe((item) => {
         console.log(item);
         const put_request =
@@ -146,7 +230,7 @@
           .put(item);
         put_request.onsuccess = (e) => {
           // it exists; update it.
-          console.log("Updated/Inserted " + item.graph.uuid);
+          console.log("Updated/Inserted " + item.uuid);
           // console.log(e.target.result);
         };
       });
@@ -186,7 +270,7 @@
     db_open.onupgradeneeded = (e) => { // also called during initial creation
       // right now, there's only one version, so I'm going to be v.lazy.
       const mydb = e.target.result;
-      const computations = mydb.createObjectStore("computations", { "keyPath" : "graph.uuid" });
+      const computations = mydb.createObjectStore("computations", { "keyPath" : "uuid" });
     };
     db_open.onsuccess = (e) => {
       e.target.result.onerror = (err) => {
@@ -204,8 +288,8 @@
     // ======= and everything is fine 🔥🔥🔥
 
     // Create a MutationObserver to watch for DOM changes
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
+    const quickInputObserver = new MutationObserver((mutations) => {
+      // mutations.forEach((mutation) => {
         // Check if the quick-input element exists
         const quickInput = document.getElementById('quick-input');
         
@@ -220,7 +304,7 @@
           // This ensures our focus takes precedence
           quickInput.addEventListener('focus', preventDefaultFocus, { once: true });
         }
-      });
+      // });
     });
 
     // Helper function to prevent default focus behavior
@@ -231,13 +315,13 @@
     // Configure the observer to watch for:
     // - Added nodes (childList: true)
     // - Subtree changes to watch nested elements (subtree: true)
-    const observerConfig = {
+    const quickInputObserverConfig = {
       childList: true,
       subtree: true
     };
 
     // Start observing the document body
-    observer.observe(document.body, observerConfig);
+    quickInputObserver.observe(document.body, quickInputObserverConfig);
 
     // Also check immediately in case the element already exists
     const existingQuickInput = document.getElementById('quick-input');

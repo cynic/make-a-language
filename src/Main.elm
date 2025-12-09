@@ -272,10 +272,10 @@ mkGraphView id ag (w, h) removePadding location pkg packages interactions =
     , fitClosely = removePadding
     , host_dimensions = (w, h)
     , host_coordinates = (-1, -1)
-    , panBuffer = GraphEditor.panBufferAmount (w, h)
     , guest_dimensions = guest_viewport.dimensions
     , guest_coordinates = guest_viewport.coordinates
     , pan = ( 0, 0 )
+    , activePanDirection = Nothing
     , disconnectedNodes = Set.empty
     , properties = nilViewProperties
     , drawingData =
@@ -419,7 +419,7 @@ init flags =
     decoded =
       D.decodeValue decodeFlags flags
       |> Result.mapError (\err -> Debug.log "OH NO! FLAGS WAS NOT PARSED CORRECTLY!!" err)
-      |> Result.withDefault (Flags 80 60 0 [] (Time.millisToPosix 0) [])
+      |> Result.withDefault (Flags 800 600 0 [] (Time.millisToPosix 0) [])
     
     (packages, mainPackage, initialSeed) =
       let
@@ -875,7 +875,6 @@ updateMainEditorDimensions ({uiState} as model) =
       in
         { graph_view
           | host_dimensions = uiState.dimensions.mainEditor
-          , panBuffer = GraphEditor.panBufferAmount uiState.dimensions.mainEditor
           , guest_dimensions = guest_viewport.dimensions
           , guest_coordinates = guest_viewport.coordinates
           , host_coordinates =
@@ -897,7 +896,6 @@ updateMainEditorDimensions ({uiState} as model) =
       in
         { graph_view
           | host_dimensions = sidebarDimensions
-          , panBuffer = 0
           , guest_dimensions = guest_viewport.dimensions
           , guest_coordinates = guest_viewport.coordinates
           , host_coordinates =
@@ -1099,37 +1097,29 @@ type PanMovement
   | More
   | Same
 
-panGraphView : Float -> Float -> GraphView -> GraphView
-panGraphView x y graph_view =
+panGraphView : Int -> Int -> GraphView -> GraphView
+panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, package, properties} as graph_view) =
   let
-    ( host_x, host_y ) = graph_view.host_coordinates
-    ( host_width, host_height ) = graph_view.host_dimensions
-    ( guest_x, guest_y ) = graph_view.guest_coordinates
-    ( guest_width, guest_height) = graph_view.guest_dimensions
-    ( pan_x, pan_y ) = graph_view.pan
+    ( guest_x, guest_y ) = guest_coordinates
+    ( guest_w, guest_h ) = guest_dimensions
+    ( pan_x, pan_y ) = pan
     -- this is a rectangle that is inset from the maximum bounds.
-    movement_amount =
+    movement_amount_x =
       -- if the space to traverse is large, then move by a larger amount.
-      max 1 (ceiling (guest_width / 250)) |> toFloat
-    calc_for_dim v host_coord host_dim =
-      -- left and top are the "negative" directions.
-      if v <= host_coord + graph_view.panBuffer then
-        -movement_amount
-      -- right and bottom are the "positive" directions
-      else if v >= host_coord + host_dim - graph_view.panBuffer then
-        movement_amount
-      else
-        0
+      max 1 (ceiling (guest_w / 250)) |> toFloat
+    movement_amount_y =
+      -- if the space to traverse is large, then move by a larger amount.
+      max 1 (ceiling (guest_h / 250)) |> toFloat
     ( new_pan_x, new_pan_y ) =
-      ( pan_x + calc_for_dim x host_x host_width
-      , pan_y + calc_for_dim y host_y host_height
+      ( pan_x + toFloat xMovement * movement_amount_x
+      , pan_y + toFloat yMovement * movement_amount_y
       )
     ((sx, sy), (ex, ey)) = -- this is after the proposed pan.
       ( ((guest_x + new_pan_x), (guest_y + new_pan_y))
-      , ((guest_x + new_pan_x + guest_width), (guest_y + new_pan_y + guest_height))
+      , ((guest_x + new_pan_x + guest_w), (guest_y + new_pan_y + guest_h))
       )
     graph_nodes =
-      Graph.nodes graph_view.package.userGraph.graph
+      Graph.nodes package.userGraph.graph
       -- |> debugLog_ "[panGraphView] nodes to check" (List.map .id)
     is_okay =
       List.any
@@ -1162,7 +1152,7 @@ panGraphView x y graph_view =
         -- We must check whether we are HEADING TO another node, and if so, THEN we can
         -- permit the pan.
         ( let
-            orig_center = Math.Vector2.vec2 (guest_x + pan_x + guest_width / 2) (guest_y + pan_y + guest_height / 2)
+            orig_center = Math.Vector2.vec2 (guest_x + pan_x + guest_w / 2) (guest_y + pan_y + guest_h / 2)
             new_center = Math.Vector2.vec2 ((sx + ex) / 2) ((sy + ey) / 2)
           in
             -- am I heading towards any graph node?
@@ -1175,11 +1165,35 @@ panGraphView x y graph_view =
               )
               graph_nodes
         )
+    activePanDirection =
+      -- working around a compiler bug, which is why I have this +1 nonsense.
+      case xMovement+1 of
+        0 ->
+          case yMovement+1 of
+            0 -> Just ToTopLeft
+            2 -> Just ToBottomLeft
+            1 -> Just ToLeft
+            _ -> Nothing
+        1 ->
+          case yMovement+1 of
+            0 -> Just ToTop
+            2 -> Just ToBottom
+            _ -> Nothing
+        2 ->
+          case yMovement+1 of
+            0 -> Just ToTopRight
+            2 -> Just ToBottomRight
+            1 -> Just ToRight
+            _ -> Nothing
+        _ -> Nothing
   in
-    if graph_view.properties.canPan && is_really_okay then
-      { graph_view | pan = ( new_pan_x , new_pan_y ) }
+    if properties.canPan && is_really_okay then
+      { graph_view
+        | pan = ( new_pan_x , new_pan_y )
+        , activePanDirection = activePanDirection
+      }
     else
-      graph_view
+      { graph_view | activePanDirection = Nothing }
 
 packagesToGraphViews : (Float, Float) -> Model -> (List GraphView, Model)
 packagesToGraphViews (w, h) model =
@@ -1240,43 +1254,26 @@ update_graphview uuid ui_msg model =
       , Cmd.none
       )
 
-    ConsiderPan rectangles ->
-      ( model
-      , E.object
-          [ ("uuid", Uuid.encode uuid)
-          , ("rectangles"
-            , E.list
-                (\{w,h,x,y} ->
-                  E.object
-                    [ ("w", E.float w)
-                    , ("h", E.float h)
-                    , ("x", E.float x)
-                    , ("y", E.float y)
-                    ]
-                )
-                rectangles
-            )
-          ]
-        |> considerPan
-      )
-
-    Pan x y ->
+    Pan pan_x pan_y ->
       ( { model
           | graph_views =
               AutoDict.update uuid
-                (Maybe.map (panGraphView x y))
+                (Maybe.map (panGraphView pan_x pan_y))
                 model.graph_views
         }
-      , -- this fulfils a more responsive sort of "protocol": if JS says "Pan!", and there is
-        -- either nothing to pan or nothing pannable, then tell it to stop panning.
-        AutoDict.get uuid model.graph_views
-        |> Maybe.map (\{properties} -> if properties.canPan then Cmd.none else stopPan (Uuid.toString uuid))
-        |> Maybe.withDefaultLazy (\() -> stopPan (Uuid.toString uuid))
+      , Cmd.none
       )
 
     StopPan ->
-      ( model
-      , stopPan (Uuid.toString uuid)
+      ( { model
+          | graph_views =
+              AutoDict.update uuid
+                (Maybe.map (\graph_view ->
+                  { graph_view | activePanDirection = Nothing }
+                ))
+                model.graph_views
+        }
+      , Cmd.none
       )
 
     ResetPan ->
@@ -1284,24 +1281,7 @@ update_graphview uuid ui_msg model =
           | graph_views =
               AutoDict.update uuid
                 (Maybe.map (\graph_view ->
-                  { graph_view | pan = (0, 0) }
-                ))
-                model.graph_views
-        }
-      , stopPan (Uuid.toString uuid)
-      )
-
-    RequestCoordinates ->
-      ( model
-      , requestCoordinates (Uuid.toString uuid)
-      )
-
-    ReceiveCoordinates (x, y) ->
-      ( { model
-          | graph_views =
-              AutoDict.update uuid
-                (Maybe.map (\graph_view ->
-                  { graph_view | host_coordinates = (x, y) }
+                  { graph_view | pan = (0, 0), activePanDirection = Nothing }
                 ))
                 model.graph_views
         }
@@ -3637,12 +3617,18 @@ subscriptions model =
     panSubscription =
       pan
         ( D.decodeValue
-            ( D.map3 (\uuid x y -> Pan x y |> GraphViewMsg uuid)
+            ( D.map3 (\uuid pan_x pan_y -> Pan pan_x pan_y |> GraphViewMsg uuid)
                 (D.field "uuid" Uuid.decoder)
-                (D.field "x" D.float)
-                (D.field "y" D.float)
+                (D.at ["pan", "pan_x"] D.int)
+                (D.at ["pan", "pan_y"] D.int)
             )
           >> Result.withDefault (CrashWithMessage "Invalid pan message from JavaScript")
+        )
+    stopPanSubscription =
+      stopPan
+        ( D.decodeValue
+            ( D.map (\uuid -> GraphViewMsg uuid StopPan) Uuid.decoder )
+          >> Result.withDefault (CrashWithMessage "Invalid stop-pan message from JavaScript")
         )
     keyboardSubscription =
       BE.onKeyDown
@@ -3697,17 +3683,6 @@ subscriptions model =
                 _ ->
                   D.fail "Untrapped"
             )
-        )
-    coordinateSubscription =
-      receiveCoordinates
-        ( D.decodeValue
-            (D.map3 (\uuid x y -> ReceiveCoordinates (x, y) |> GraphViewMsg uuid)
-              (D.field "uuid" Uuid.decoder)
-              (D.field "x" D.float)
-              (D.field "y" D.float)
-            )
-          >> Result.withDefault (CrashWithMessage "Invalid coordinates message from JavaScript")
-          -- >> Debug.log "Received coordinates"
         )
     resizeSubscription =
       BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
@@ -3764,7 +3739,7 @@ subscriptions model =
     Sub.batch
       ( resizeSubscription ::
         panSubscription ::
-        coordinateSubscription ::
+        stopPanSubscription ::
         keyboardSubscription ::
         nodeMoveSubscriptions ++
         splitterSubscriptions

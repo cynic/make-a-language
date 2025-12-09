@@ -72,11 +72,8 @@ type alias Rectangle =
 
 type GraphViewMsg
   = StartDraggingNode NodeId
-  | ConsiderPan (List Rectangle)
-  | Pan Float Float
+  | Pan Int Int
   | StopPan
-  | RequestCoordinates
-  | ReceiveCoordinates (Float, Float)
   | ResetPan
   | SelectNode NodeId
   | SelectSpace
@@ -441,6 +438,16 @@ type alias NodesVsViewport =
   , to_right : Set (Coordinate {})
   }
 
+type ActivePanDirection
+  = ToTopLeft
+  | ToTop
+  | ToTopRight
+  | ToLeft
+  | ToRight
+  | ToBottomLeft
+  | ToBottom
+  | ToBottomRight
+
 type alias GraphView =
   { id : Uuid
   , package : GraphPackage
@@ -448,7 +455,6 @@ type alias GraphView =
   , interfaceLocation : InterfaceLocation
   , host_dimensions : (Float, Float) -- (w,h) of svg element
   , host_coordinates : (Float, Float) -- (x,y) of svg element
-  , panBuffer : Float -- pan-buffer amount, in host-dimensions, around the edge of the view
   , guest_dimensions : (Float, Float) -- (w,h) of svg viewport
   , guest_coordinates : (Float, Float) -- (x,y) of svg viewport
   -- when I pan, I always want to keep at least some part of the graph in view.
@@ -459,6 +465,7 @@ type alias GraphView =
     -- - viewport forces to center the graph
   -- , zoom : Float -- zoom-factor
   , pan : (Float, Float) -- panning offset, x and y
+  , activePanDirection : Maybe ActivePanDirection
   , disconnectedNodes : Set NodeId
   , properties : GraphViewProperties
   , drawingData : DrawingData
