@@ -162,7 +162,7 @@ type InteractionState
   | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =
-  { userGraph : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
+  { computation : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
   -- , dimensions : ( Float, Float )
   , packageIdentifier : Uuid
   , created : Time.Posix -- for ordering

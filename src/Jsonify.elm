@@ -40,7 +40,7 @@ decodeTest resolutionDict g =
 encodeGraphPackage : GraphPackage -> E.Value
 encodeGraphPackage pkg =
   E.object
-    [ ("graph", DFA.encodeAutomatonGraph pkg.userGraph)
+    [ ("computation", DFA.encodeAutomatonGraph pkg.computation)
     -- , ("dimensions",
     --     E.object
     --       [ ("w", E.float <| Tuple.first pkg.dimensions)
@@ -55,7 +55,7 @@ encodeGraphPackage pkg =
 
 decodeGraphPackage : ResolutionDict -> D.Decoder GraphPackage
 decodeGraphPackage resolutionDict =
-  D.field "graph" DFA.decodeAutomatonGraph
+  D.field "computation" DFA.decodeAutomatonGraph
   |> D.andThen
     (\graph ->
       D.map4
@@ -81,7 +81,7 @@ decodeFlags =
       ( D.list (
           D.map2 (\identifier graph -> ( identifier, graph ))
           ( D.field "packageIdentifier" Uuid.decoder )
-          ( D.field "graph" DFA.decodeAutomatonGraph )
+          ( D.field "computation" DFA.decodeAutomatonGraph )
         )
       )
   )
