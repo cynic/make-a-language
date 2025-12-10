@@ -1,62 +1,41 @@
 module Main exposing (..)
+import AutoDict
+import Automata.Data exposing (..)
+import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY, debugGraph, debugLog_, println)
+import Automata.DFA as DFA
+import AutoSet
+import Basics.Extra exposing (..)
 import Browser
 import Browser.Events as BE
-import Html.Styled exposing
-  (Html, div, h1, p, ul, li, input, textarea, span, toUnstyled, text, button)
-import Html.Styled.Events as HE
-import Json.Encode as E
-import Json.Decode as D
--- import GraphEditor exposing (..)
-import Automata.Data exposing (..)
-import Platform.Cmd as Cmd
-import Html.Styled.Attributes as HA
-import Html
-import Maybe.Extra as Maybe
-import Css
-import Platform.Cmd as Cmd
-import Uuid
-import Random.Pcg.Extended as Random
-import Time
-import Ports exposing (..)
-import Platform.Cmd as Cmd
-import Automata.DFA as DFA
-import TypedSvg exposing (g)
-import TypedSvg.Attributes.InPx exposing (x, y, height, width)
-import TypedSvg.Types exposing
-  (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
-  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
-import Html.Styled exposing (h2, h4)
-import AutoSet
-import AutoDict
-import Uuid exposing (Uuid)
-import Basics.Extra exposing (..)
-import Automata.Debugging
-import IntDict
-import Set
-import Graph exposing (NodeId)
+import Css exposing (px)
+import Dict exposing (Dict)
 import Force
-import Automata.Debugging exposing (debugAutomatonGraph)
+import Graph exposing (NodeId)
+import GraphEditor
+import Html.Styled exposing (button, div, h1, Html, input, li, p, span, text, textarea, toUnstyled, ul)
+import Html.Styled.Attributes as HA
+import Html.Styled.Events as HE
+import IntDict
+import Json.Decode as D
+import Json.Encode as E
+import Jsonify exposing (..)
+import List.Extra as List
+import Math.Vector2 exposing (distance)
+import Maybe.Extra as Maybe
+import Platform.Cmd as Cmd
+import Ports exposing (..)
+import Random.Pcg.Extended as Random
+import Set
 import Svg.Styled exposing (svg)
 import Svg.Styled.Attributes
-import Automata.Debugging exposing (println)
-import GraphEditor
-import Dict exposing (Dict)
-import Jsonify exposing (..)
-import Graph exposing (Graph)
-import Css exposing (px)
-import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
-import WebGL exposing (entityWith)
-import List.Extra as List
-import GraphEditor exposing (viewGraph)
-import Automata.Debugging exposing (debugLog_)
-import Automata.Debugging exposing (debugAutomatonGraphXY)
-import Automata.Debugging exposing (debugGraph)
-import Browser.Dom
 import Task
-import Process
+import Time
+import TypedSvg exposing (g)
 import TypedSvg.Attributes
-import Html.Styled exposing (ol)
-import Math.Vector2 exposing (distance)
+import TypedSvg.Attributes.InPx exposing (x, y)
+import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..) , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
+import Uuid exposing (Uuid)
+
 
 {-
 Quality / technology requirements:
@@ -4183,7 +4162,7 @@ viewComputationsSidebar model =
                       , graph_view.properties.canSelectPackage
                         |> thenPermitInteraction (HE.onClick (PackageMsg pkg_uuid SelectPackage))
                       ]
-                      [ viewGraph graph_view
+                      [ GraphEditor.viewGraph graph_view
                       , div
                           [ HA.class "description" ]
                           [ graph_view.computation.description
@@ -4356,7 +4335,7 @@ viewTestingTool pkg test model =
             ]
         , div
             [ HA.class "step-graph" ]
-            [ viewGraph gv ]
+            [ GraphEditor.viewGraph gv ]
         ]
     html_execution_step props h =
       li
@@ -4826,7 +4805,7 @@ viewConnectionEditor model connection editorData =
             , div
                 [ HA.class "top-right" ]
                 [ AutoDict.get editorData.mainGraph model.graph_views
-                  |> Maybe.map viewGraph
+                  |> Maybe.map GraphEditor.viewGraph
                   |> Maybe.withDefault (text "")
                 ]
             ]
@@ -4865,7 +4844,7 @@ viewConnectionEditor model connection editorData =
                                     ]
                                 , HE.onClick (ToggleConnectionTransition via)
                                 ]
-                                [ viewGraph graph_view
+                                [ GraphEditor.viewGraph graph_view
                                 , div
                                     [ HA.class "description" ]
                                     [ graph_view.computation.description
@@ -4972,7 +4951,7 @@ viewNodeSplitInterface model {left, right} interfaceData =
             , div
                 [ HA.class "top-right" ]
                 [ AutoDict.get interfaceData.mainGraph model.graph_views
-                  |> Maybe.map viewGraph
+                  |> Maybe.map GraphEditor.viewGraph
                   |> Maybe.withDefault (text "")
                 ]
             ]
@@ -4988,7 +4967,7 @@ viewPackageDeletionWarning props model =
         (\graph_view ->
           div
             [ HA.class "graph-item" ]
-            [ viewGraph graph_view
+            [ GraphEditor.viewGraph graph_view
             , div
                 [ HA.class "description" ]
                 [ graph_view.computation.description

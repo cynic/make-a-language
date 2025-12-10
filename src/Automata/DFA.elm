@@ -1,28 +1,21 @@
 module Automata.DFA exposing (..)
-import IntDict exposing (IntDict)
-import Set exposing (Set)
-import AutoSet
-import List.Extra as List exposing (Step(..))
-import Dict exposing (Dict)
 import AutoDict
 import Automata.Data exposing (..)
-import Graph exposing (NodeContext, NodeId, Edge)
-import Dict.Extra as Dict
-import Tuple.Extra as Tuple
-import Maybe.Extra as Maybe
+import Automata.Debugging exposing ( printAutomatonGraph, debugAutomatonGraph, printNodeContext, println, printFan, debugLog_, debugAutomatonGraphXY)
+import AutoSet
 import Basics.Extra exposing (..)
-import Json.Encode as E
-import Json.Decode as D
-import Uuid
-import Automata.Debugging exposing
-  ( printAutomatonGraph, debugAutomatonGraph, printNodeContext, println
-  , printFan, debugLog_, debugAutomatonGraphXY
-  )
-import Uuid exposing (Uuid)
-import Binary
-import SHA
-import Random.Pcg.Extended exposing (initialSeed)
 import Css exposing (expanded)
+import Dict exposing (Dict)
+import Dict.Extra as Dict
+import Graph exposing (NodeContext, NodeId, Edge)
+import IntDict exposing (IntDict)
+import Json.Decode as D
+import Json.Encode as E
+import List.Extra as List exposing (Step(..))
+import Maybe.Extra as Maybe
+import Set exposing (Set)
+import Tuple.Extra as Tuple
+import Uuid exposing (Uuid)
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
