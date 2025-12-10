@@ -72,7 +72,7 @@ Quality / technology requirements:
 canExecute : Model -> Uuid -> Bool
 canExecute { graph_views } uuid =
   AutoDict.get uuid graph_views
-  |> Maybe.map (.package >> .undoBuffer >> List.isEmpty)
+  |> Maybe.map (.undoBuffer >> List.isEmpty)
   |> Maybe.withDefault False
 
 getUuid : Model -> (Uuid, Model)
@@ -96,11 +96,11 @@ getUuid2 model =
   in
     ( a, b, m_ )
 
-nodeDrawingForPackage : GraphPackage -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage package graphView_uuid interactions =
+nodeDrawingForPackage : AutomatonGraph -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage ag graphView_uuid interactions =
   let
     disconnectedNodes =
-      DFA.identifyDisconnectedNodes package.computation
+      DFA.identifyDisconnectedNodes ag
     isSplittable : Graph.NodeContext Entity Connection -> Bool
     isSplittable graphNode =
       let
@@ -113,12 +113,12 @@ nodeDrawingForPackage package graphView_uuid interactions =
           |> Maybe.withDefault False
         )
   in
-    Graph.nodes package.computation.graph
+    Graph.nodes ag.graph
     |> List.map
       (\node ->
         let
           nodeContext =
-            Graph.get node.id package.computation.graph
+            Graph.get node.id ag.graph
         in
           ( node.id
           , { exclusiveAttributes =
@@ -142,7 +142,7 @@ nodeDrawingForPackage package graphView_uuid interactions =
                 Maybe.map isTerminalNode nodeContext
                 |> Maybe.withDefault False
             , coordinates = ( node.label.x, node.label.y )
-            , isRoot = node.id == package.computation.root
+            , isRoot = node.id == ag.root
             , canSplit =
                 Maybe.map isSplittable nodeContext
                 |> Maybe.withDefault False
@@ -169,8 +169,8 @@ identifyCardinalityViaContext from to =
     Unidirectional
 
 identifyCardinality : NodeId -> NodeId -> GraphView -> Cardinality
-identifyCardinality from to {package} =
-  Graph.get to package.computation.graph
+identifyCardinality from to {computation} =
+  Graph.get to computation.graph
   |> Maybe.map
     (\toContext -> identifyCardinalityViaContext from toContext)
   |> Maybe.withDefault Unidirectional
@@ -212,11 +212,11 @@ linkDrawingForEdge sourceNode destNode connection packages =
       }
     )
 
-linkDrawingForPackage : GraphPackage -> PackageDict -> Dict (NodeId, NodeId) LinkDrawingData
-linkDrawingForPackage package packages =
+linkDrawingForPackage : AutomatonGraph -> PackageDict -> Dict (NodeId, NodeId) LinkDrawingData
+linkDrawingForPackage ag packages =
   let
     edgeContexts =
-      Graph.edges package.computation.graph
+      Graph.edges ag.graph
       |> List.filterMap
           (\edge ->
             Maybe.andThen2
@@ -230,8 +230,8 @@ linkDrawingForPackage package packages =
                   Nothing
                 else
                   Just { sourceNode = f, destNode = t, label = edge.label })
-              (Graph.get edge.from package.computation.graph)
-              (Graph.get edge.to package.computation.graph)
+              (Graph.get edge.from ag.graph)
+              (Graph.get edge.to ag.graph)
           )
   in
     edgeContexts
@@ -248,34 +248,29 @@ fitGraphViewToGraph graphView =
       calculateGuestDimensionsForHost
         graphView.host_dimensions
         graphView.fitClosely -- we are fitting closely around.
-        graphView.package.computation.graph
+        graphView.computation.graph
   in
     { graphView
     | guest_dimensions = guest_viewport.dimensions
     , guest_coordinates = guest_viewport.coordinates
     }
 
-mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> Bool -> InterfaceLocation -> GraphPackage -> PackageDict -> InteractionsDict -> GraphView
-mkGraphView id ag (w, h) removePadding location pkg packages interactions =
+mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> Bool -> InterfaceLocation -> PackageDict -> InteractionsDict -> GraphView
+mkGraphView id ag (w, h) removePadding location packages interactions =
   let
     -- now that we have the positions, calculate the dimensions of
     -- the viewport.
     -- first, let's get the aspect ratio.  That will let us figure out
     -- the height of the viewport "automatically" once we have the right width.
-    solved_pkg =
-      { pkg
-        | computation =
-          ag
-          -- |> debugAutomatonGraphXY ("[viewFromPkg " ++ truncate_uuid id ++ "] solved_pkg")
-      }
     guest_viewport =
       calculateGuestDimensionsForHost
         (w, h)
         removePadding
-        solved_pkg.computation.graph
+        ag.graph
   in
     { id = id
-    , package = solved_pkg
+    , computation = ag
+    , graphPackage = Nothing
     , interfaceLocation = location
     , fitClosely = removePadding
     , host_dimensions = (w, h)
@@ -287,9 +282,11 @@ mkGraphView id ag (w, h) removePadding location pkg packages interactions =
     , disconnectedNodes = Set.empty
     , properties = nilViewProperties
     , drawingData =
-        { link_drawing = linkDrawingForPackage solved_pkg packages
-        , node_drawing = nodeDrawingForPackage solved_pkg id interactions
+        { link_drawing = linkDrawingForPackage ag packages
+        , node_drawing = nodeDrawingForPackage ag id interactions
         }
+    , undoBuffer = []
+    , redoBuffer = []
     }
 
 upsertGraphView : Uuid -> GraphView -> Model -> Model
@@ -305,18 +302,17 @@ upsertGraphView uuid graph_view model =
     | graph_views =
         AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
     , mainGraphView = new_main
-    , displayedGraphView = new_main
   }
 
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
     `naiveViewFromPackage` instead.
 -}
-viewFromPackage : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
-viewFromPackage computed (w, h) location removePadding pkg model =
+viewFromComputation : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> Model -> (GraphView, Model)
+viewFromComputation computed (w, h) location removePadding model =
   let
     (id, model_) = getUuid model
     graph_view =
-      mkGraphView id computed.solvedGraph (w, h) removePadding location pkg model_.packages model_.interactionsDict
+      mkGraphView id computed.solvedGraph (w, h) removePadding location model_.packages model_.interactionsDict
   in
     ( graph_view
     , upsertGraphView id graph_view model_
@@ -325,23 +321,34 @@ viewFromPackage computed (w, h) location removePadding pkg model =
 {-| Creates a new GraphView from a provided GraphPackage, accepting the provided layout
     uncritically, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-naiveViewFromPackage : (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
-naiveViewFromPackage (w, h) location createFrozen pkg model =
-  viewFromPackage
-    { solvedGraph = pkg.computation
+naiveViewFromComputation : (Float, Float) -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
+naiveViewFromComputation (w, h) location createFrozen ag model =
+  viewFromComputation
+    { solvedGraph = ag
     , simulation = Force.simulation []
     , forces = []
     }
-    (w, h) location createFrozen pkg model
+    (w, h) location createFrozen model
 
 {-| Creates a new GraphView from a provided GraphPackage, solves the forces for the relevant
     AutomatonGraph, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-solvedViewFromPackage : (AutomatonGraph -> List (Force.Force NodeId)) -> (Float, Float) -> InterfaceLocation -> Bool -> GraphPackage -> Model -> (GraphView, Model)
-solvedViewFromPackage computer (w, h) location createFrozen pkg model =
-  viewFromPackage
-    (GraphEditor.computeGraphFully computer pkg.computation)
-    (w, h) location createFrozen pkg model
+solvedViewFromComputation : (AutomatonGraph -> List (Force.Force NodeId)) -> (Float, Float) -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
+solvedViewFromComputation computer (w, h) location createFrozen ag model =
+  viewFromComputation
+    (GraphEditor.computeGraphFully computer ag)
+    (w, h) location createFrozen model
+
+linkToPackage : Uuid -> (GraphView, Model) -> (GraphView, Model)
+linkToPackage package_uuid (graph_view, model) =
+    if AutoDict.member package_uuid model.packages then
+      let
+        gv =
+          { graph_view | graphPackage = Just package_uuid }
+      in
+        (  gv , upsertGraphView gv.id gv model )
+    else
+      ( graph_view, model )
 
 centerAndHighlight : List (NodeId, NodeId) -> GraphView -> GraphView
 centerAndHighlight links graph_view =
@@ -349,7 +356,7 @@ centerAndHighlight links graph_view =
     bounds =
       bounds_for
         (List.foldl (\(a, b) acc -> a :: b :: acc) [] links)
-        graph_view.package.computation.graph
+        graph_view.computation.graph
     inner_padding = 60
     adjusted =
       expand_bounds inner_padding bounds
@@ -358,7 +365,7 @@ centerAndHighlight links graph_view =
     last_node =
       List.last links
       |> Maybe.map Tuple.second
-      |> Maybe.withDefault (graph_view.package.computation.root)
+      |> Maybe.withDefault (graph_view.computation.root)
     linkSet = Set.fromList links
     determine_dimensions (x, y) (w, h) =
       if w / Tuple.first graph_view.host_dimensions < 0.25 then
@@ -416,8 +423,6 @@ createNewPackage testUuid packageUuid currentTime g = -- `dimensions` is the wid
   , created = currentTime
   , currentTestKey = testUuid
   , tests = AutoDict.empty Uuid.toString
-  , undoBuffer = []
-  , redoBuffer = []
   }
 
 init : E.Value -> (Model, Cmd Msg)
@@ -512,12 +517,11 @@ init flags =
       { graph_views =
           AutoDict.empty Uuid.toString
       , mainGraphView = mainPackage.packageIdentifier -- this is—temporarily—the wrong value!
-      , displayedGraphView = mainPackage.packageIdentifier
+      , selectedPackage = mainPackage.packageIdentifier
       , packages = packages
       , uiState = state
       , uiConstants = constants
       , randomSeed = initialSeed
-      -- , mouseCoords = (0, 0)
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
       , properties = nilMainProperties
       , computationsExplorer = []
@@ -527,18 +531,16 @@ init flags =
       -- exact one
       let
         ( v, model_with_viewDict) =
-          solvedViewFromPackage
+          solvedViewFromComputation
             GraphEditor.coordinateForces
             state.dimensions.mainEditor
             MainEditor
             False
-            mainPackage
+            mainPackage.computation
             model_excl_views
+          |> linkToPackage mainPackage.packageIdentifier
       in
-        { model_with_viewDict
-          | mainGraphView = v.id
-          , displayedGraphView = v.id
-        }
+        { model_with_viewDict | mainGraphView = v.id }
   in
     ( selectNavIcon ComputationsIcon model
       |> refreshComputationsList
@@ -546,19 +548,19 @@ init flags =
     , Cmd.none
     )
 
-updatePackageInView : (GraphPackage -> GraphPackage) -> GraphView -> Model -> Model
-updatePackageInView package_updater graph_view model =
+updateGraphInView : (AutomatonGraph -> AutomatonGraph) -> GraphView -> Model -> Model
+updateGraphInView updater graph_view model =
   let
-    pkg = package_updater graph_view.package
+    ag = updater graph_view.computation
   in
   upsertGraphView graph_view.id
     ( { graph_view
-        | package = pkg
+        | computation = ag
         , drawingData =
-            { link_drawing = linkDrawingForPackage pkg model.packages
-            , node_drawing = nodeDrawingForPackage pkg graph_view.id model.interactionsDict
+            { link_drawing = linkDrawingForPackage ag model.packages
+            , node_drawing = nodeDrawingForPackage ag graph_view.id model.interactionsDict
             }
-        , disconnectedNodes = DFA.identifyDisconnectedNodes pkg.computation
+        , disconnectedNodes = DFA.identifyDisconnectedNodes ag
       }
       |> fitGraphViewToGraph
     )
@@ -575,38 +577,6 @@ updatePackageInView package_updater graph_view model =
 persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
-
-confirmChanges : AutomatonGraph -> ResolutionDict -> GraphView -> GraphView
-confirmChanges g resolutionDict graphView =
-  let
-    finalGraph =
-      GraphEditor.applyChangesToGraph g
-    finalPackage =
-      let pkg = graphView.package in
-      { pkg
-        | computation = finalGraph
-        -- clear the undo/redo buffers
-        , undoBuffer = []
-        , redoBuffer = []
-        -- run the tests
-        , tests =
-            AutoDict.map
-              (\_ entry ->
-                { entry
-                  | result =
-                      DFA.load entry.input resolutionDict finalGraph
-                      |> DFA.run
-                      |> List.head
-                      |> Maybe.andThen .finalResult
-                      |> Maybe.withDefault (InternalError "no result received from test execution")
-                }
-              )
-              pkg.tests
-      }
-  in
-    { graphView
-      | package = finalPackage
-    }
 
 updateGraphView : Uuid -> (GraphView -> Maybe GraphView) -> AutoDict.Dict String Uuid GraphView -> AutoDict.Dict String Uuid GraphView
 updateGraphView uuid f dict =
@@ -879,7 +849,7 @@ updateMainEditorDimensions ({uiState} as model) =
           calculateGuestDimensionsForHost
             uiState.dimensions.mainEditor
             False
-            graph_view.package.computation.graph
+            graph_view.computation.graph
       in
         { graph_view
           | host_dimensions = uiState.dimensions.mainEditor
@@ -900,7 +870,7 @@ updateMainEditorDimensions ({uiState} as model) =
           calculateGuestDimensionsForHost
             sidebarDimensions
             True
-            graph_view.package.computation.graph
+            graph_view.computation.graph
       in
         { graph_view
           | host_dimensions = sidebarDimensions
@@ -1106,7 +1076,7 @@ type PanMovement
   | Same
 
 panGraphView : Int -> Int -> GraphView -> GraphView
-panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, package, properties} as graph_view) =
+panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, computation, properties} as graph_view) =
   let
     ( guest_x, guest_y ) = guest_coordinates
     ( guest_w, guest_h ) = guest_dimensions
@@ -1127,7 +1097,7 @@ panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, pac
       , ((guest_x + new_pan_x + guest_w), (guest_y + new_pan_y + guest_h))
       )
     graph_nodes =
-      Graph.nodes package.computation.graph
+      Graph.nodes computation.graph
       -- |> debugLog_ "[panGraphView] nodes to check" (List.map .id)
     is_okay =
       List.any
@@ -1206,15 +1176,17 @@ panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, pac
 packagesToGraphViews : (Float, Float) -> Model -> (List GraphView, Model)
 packagesToGraphViews (w, h) model =
   List.foldl
-    (\uuid (acc, model_) ->
+    (\g (acc, model_) ->
       let
         ( v, model__) =
-          solvedViewFromPackage GraphEditor.coordinateForces (w, h) Sidebar True uuid model_
+          solvedViewFromComputation GraphEditor.coordinateForces (w, h) Sidebar True g.computation model_
       in
         (v :: acc, model__)
     )
     ( [], model )
-    (AutoDict.values model.packages)
+    ( AutoDict.values model.packages
+      |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
+    )
 
 {-| Expensive. Refresh all computations. -}
 refreshComputationsList : Model -> Model
@@ -1230,8 +1202,7 @@ refreshComputationsList model =
           List.foldl AutoDict.remove model.graph_views model.computationsExplorer
           |> AutoDict.union as_dict
       , computationsExplorer =
-          List.sortBy (.package >> .created >> Time.posixToMillis >> (*) -1) computation_views
-          |> List.map .id
+          List.map .id computation_views
     }
 
 selectNavIcon : NavigatorIcon -> Model -> Model
@@ -1341,7 +1312,7 @@ update_graphview uuid ui_msg model =
         |> Maybe.andThen
             (\gv ->
                 ( gv
-                , gv.package.computation.graph |> Graph.get nodeId
+                , gv.computation.graph |> Graph.get nodeId
                 ) |> Maybe.combineSecond
             )
         |> Maybe.map
@@ -1394,7 +1365,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
           )
           (IntDict.empty, IntDict.empty)
     ag =
-      graph_view.package.computation
+      graph_view.computation
       |> debugAutomatonGraph "Before node-split"
     id = maxId ag + 1
     newUserGraph =
@@ -1549,7 +1520,7 @@ filterConnectionEditorGraphs s referenceList model =
   List.filterMap (\uuid -> AutoDict.get uuid model.graph_views) referenceList
   |> List.filter
     (\gv ->
-      case gv.package.computation.description of
+      case gv.computation.description of
         Nothing ->
           True -- include; there's nothing to filter on.
         Just desc ->
@@ -1564,20 +1535,16 @@ editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model
         AutoDict.get model.mainGraphView model.graph_views
         |> Maybe.map (\gv ->
           let
-            pkg =
-              let package = gv.package in
-              { package
-                | computation =
-                    case Graph.get dest package.computation.graph of
-                      Nothing ->
-                        GraphEditor.newnode_graphchange source x y connection package.computation
-                      Just _ ->
-                        GraphEditor.updateLink_graphchange source dest connection package.computation
-              }
+            ag =
+              case Graph.get dest gv.computation.graph of
+                Nothing ->
+                  GraphEditor.newnode_graphchange source x y connection gv.computation
+                Just _ ->
+                  GraphEditor.updateLink_graphchange source dest connection gv.computation
             ( main_view, updated_model ) =
-              naiveViewFromPackage
+              naiveViewFromComputation
                 ( 250 , 250 ) Independent True
-                pkg model_
+                ag model_
             solidified_model =
               solidifyPhantoms main_view.id source dest updated_model
           in
@@ -1621,7 +1588,7 @@ selectSourceNode model view_uuid node_id =
   -- therefore, we are initially always looking at a recursive
   -- connection to the same node!
   AutoDict.get view_uuid model.graph_views
-  |> Maybe.andThen (.package >> .computation >> .graph >> Graph.get node_id)
+  |> Maybe.andThen (.computation >> .graph >> Graph.get node_id)
   |> Maybe.map
     (\nodeContext ->
       let
@@ -1701,7 +1668,7 @@ switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> (Float, Flo
 switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (x_, y_) sourceNodeContext model =
   let
     phantom_nodeid =
-      unusedNodeId graph_view.package.computation
+      unusedNodeId graph_view.computation
     nodeData =
       { exclusiveAttributes = Just DrawPhantom
       , isTerminal = True
@@ -1866,10 +1833,9 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
     nearby_node_lockOnDistance = 36 -- min distance before arrow inverts…
 
     nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> (Float, Float) -> GraphView -> b
-    nearby_node_func f distance mouseCoords { package } =
+    nearby_node_func f distance mouseCoords { computation } =
       -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
       let
-        computation = package.computation |> debugAutomatonGraph "computation in movePhantomNode"
         ( mouse_x, mouse_y ) =
           mouseCoords -- |> Debug.log "Mousecoords"
         square_dist = distance * distance
@@ -1913,8 +1879,8 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
               (\sourceNodeContext nearbyNodeContext ->
                   switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext nearbyNodeContext model
               )
-              (Graph.get source graph_view.package.computation.graph)
-              (Graph.get nearbyNode.id graph_view.package.computation.graph)
+              (Graph.get source graph_view.computation.graph)
+              (Graph.get nearbyNode.id graph_view.computation.graph)
             |> Maybe.withDefault model
           Nothing ->
             -- great, there is no nearby node; just update the (x, y).
@@ -1922,7 +1888,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
               (\sourceNodeContext ->
                 updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model
               )
-              (Graph.get source graph_view.package.computation.graph)
+              (Graph.get source graph_view.computation.graph)
             |> Maybe.withDefault model
       Just (ChoosingDestinationFor source (ExistingNode existing_node conn)) ->
         -- here the situation is "reversed":
@@ -1942,14 +1908,14 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
                 (\sourceNodeContext nearbyNodeContext ->
                     switchFromExistingToExisting view_uuid (AutoSet.isEmpty conn) existing_node sourceNodeContext nearbyNodeContext model
                 )
-                (Graph.get source graph_view.package.computation.graph)
-                (Graph.get nearbyNode.id graph_view.package.computation.graph)
+                (Graph.get source graph_view.computation.graph)
+                (Graph.get nearbyNode.id graph_view.computation.graph)
               |> Maybe.withDefault model -- no changes made.
           Nothing ->
             -- there is no nearby node; move from the existing node to a phantom node. 
             Maybe.map
               (\sourceNodeContext -> switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view (x_, y_) sourceNodeContext model)
-              (Graph.get source graph_view.package.computation.graph)
+              (Graph.get source graph_view.computation.graph)
             |> Maybe.withDefault model
       _ ->
         model
@@ -1967,7 +1933,7 @@ dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
       IntDict.toList nodeContext.incoming
       |> List.filterMap
         (\(k, conn) ->
-          Graph.get k graph_view.package.computation.graph
+          Graph.get k graph_view.computation.graph
           |> Maybe.map
             (\sourceCtx ->
               linkDrawingForEdge sourceCtx nodeContext conn model.packages
@@ -1977,7 +1943,7 @@ dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
       IntDict.toList nodeContext.outgoing
       |> List.filterMap
         (\(k, conn) ->
-          Graph.get k graph_view.package.computation.graph
+          Graph.get k graph_view.computation.graph
           |> Maybe.map
             (\targetCtx ->
               linkDrawingForEdge nodeContext targetCtx conn model.packages
@@ -2010,7 +1976,7 @@ dragNode view_uuid (x_, y_) nodeId model =
     (\gv ->
       Maybe.combineSecond
         ( gv
-        , Graph.get nodeId gv.package.computation.graph
+        , Graph.get nodeId gv.computation.graph
         )
     )
   |> Maybe.map
@@ -2036,15 +2002,9 @@ dragNode view_uuid (x_, y_) nodeId model =
           -- { gv | package.computation.graph = … } is how this SHOULD go.
           -- but I guess this is just where we are today!
           { gv
-            | package =
-              let pkg = gv.package in
-              { pkg
-                | computation =
-                  let ag = pkg.computation in
-                  { ag
-                    | graph = Graph.insert updatedCtx ag.graph
-                  }
-              }
+            | computation =
+              let ag = gv.computation in
+              { ag | graph = Graph.insert updatedCtx ag.graph }
           }
         model_ =
           { model
@@ -2114,26 +2074,22 @@ createNewGraphNode view_uuid node_id (x, y) model =
     viewWithNode : GraphView -> GraphView
     viewWithNode graph_view = -- ensure that the destination node exists in the graph.
       { graph_view
-        | package =
-            let package = graph_view.package in
-            { package
-              | computation =
-                let computation = package.computation in
-                { computation
-                  | graph =
-                      Graph.insert
-                        { node =
-                            { id = node_id
-                            , label =
-                                entity node_id NoEffect
-                                |> (\e -> { e | x = x, y = y })
-                            }
-                        , incoming = IntDict.empty
-                        , outgoing = IntDict.empty
-                        }
-                        computation.graph
-                }
-            }
+        | computation =
+          let computation = graph_view.computation in
+          { computation
+            | graph =
+                Graph.insert
+                  { node =
+                      { id = node_id
+                      , label =
+                          entity node_id NoEffect
+                          |> (\e -> { e | x = x, y = y })
+                      }
+                  , incoming = IntDict.empty
+                  , outgoing = IntDict.empty
+                  }
+                  computation.graph
+          }
       }
   in
     { model
@@ -2224,7 +2180,7 @@ setProperties model =
           { nilViewProperties
             | canSelectNodes = model.mainGraphView == id
             , canSplitNodes = model.mainGraphView == id
-            , canDragNodes = model.displayedGraphView == id
+            , canDragNodes = model.mainGraphView == id
             , canSelectConnections = model.mainGraphView == id
             , canInspectRefs = True
             , canPan = True
@@ -2366,7 +2322,7 @@ selectDestination view_uuid src possible_dest model =
       let
         (x, y) =
           AutoDict.get view_uuid model.graph_views
-          |> Maybe.andThen (\gv -> Graph.get dest_id gv.package.computation.graph)
+          |> Maybe.andThen (\gv -> Graph.get dest_id gv.computation.graph)
           |> Maybe.map (\ctx -> (ctx.node.label.x, ctx.node.label.y))
           |> Maybe.withDefault (0, 0)
       in
@@ -2387,24 +2343,20 @@ deleteLinkFromView view_uuid source dest conn model =
     emptyConnection : GraphView -> Model
     emptyConnection graph_view =
       let
-        alterPackage pkg =
-          { pkg
-            | computation =
-              let ag = pkg.computation in
-              { ag
-                | graph =
-                    Graph.update dest
-                      (Maybe.map (\destContext ->
-                        { destContext
-                          | incoming =
-                              IntDict.remove source destContext.incoming
-                        }
-                      ))
-                      ag.graph
-              }
+        alterPackage ag =
+          { ag
+            | graph =
+                Graph.update dest
+                  (Maybe.map (\destContext ->
+                    { destContext
+                      | incoming =
+                          IntDict.remove source destContext.incoming
+                    }
+                  ))
+                  ag.graph
           }
       in
-        updatePackageInView alterPackage graph_view model
+        updateGraphInView alterPackage graph_view model
   in
   if AutoSet.isEmpty conn then
     AutoDict.get view_uuid model.graph_views
@@ -2449,15 +2401,9 @@ deleteNodeFromView view_uuid source dest model =
             AutoDict.update view_uuid
               (Maybe.map (\graph_view ->
                 { graph_view
-                  | package =
-                      let pkg = graph_view.package in
-                      { pkg
-                        | computation =
-                          let ag = pkg.computation in
-                          { ag
-                            | graph = Graph.remove dest ag.graph
-                          }
-                      }
+                  | computation =
+                    let ag = graph_view.computation in
+                    { ag | graph = Graph.remove dest ag.graph }
                 }
               ))
               model_.graph_views
@@ -2467,9 +2413,9 @@ startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -
 startSplit uuid graph_view nodeContext model =
   let
     ( main_view, updated_model ) =
-      naiveViewFromPackage
+      naiveViewFromComputation
         ( 250 , 250 ) Independent True
-        graph_view.package model
+        graph_view.computation model
     edges_in =
       IntDict.keys nodeContext.incoming
       |> List.map (\to -> (to, nodeContext.node.id))
@@ -2508,21 +2454,6 @@ startSplit uuid graph_view nodeContext model =
 toResolutionDict : PackageDict -> ResolutionDict
 toResolutionDict packages =
   AutoDict.map (\_ -> .computation) packages
-
-hasSamePackage : Uuid -> Uuid -> Model -> Bool
-hasSamePackage uuid1 uuid2 model =
-  Maybe.map2
-    (\gv1 gv2 ->
-      gv1.package.packageIdentifier == gv2.package.packageIdentifier
-    )
-    (AutoDict.get uuid1 model.graph_views)
-    (AutoDict.get uuid2 model.graph_views)
-  |> Maybe.withDefault False
-
-viewsWithPackage : Uuid -> Model -> List GraphView
-viewsWithPackage uuid model =
-  AutoDict.values model.graph_views
-  |> List.filter (\{package} -> package.packageIdentifier == uuid)
 
 deletePackageFromModel : Uuid -> Model -> Model
 deletePackageFromModel uuid model =
@@ -2563,6 +2494,44 @@ deletePackageFromModel uuid model =
 -}
   }
 
+updatePackageFromView : Uuid -> Model -> Model
+updatePackageFromView gv_uuid model =
+  let
+    resolutionDict =
+      toResolutionDict model.packages
+  in
+  AutoDict.get gv_uuid model.graph_views
+  |> Maybe.andThen (\graph_view ->
+    graph_view.graphPackage
+    |> Maybe.map (\pkg_uuid ->
+      { model
+        | packages =
+            AutoDict.update pkg_uuid
+              (Maybe.map (\pkg ->
+                { pkg
+                  | computation = graph_view.computation
+                  -- run the tests
+                  , tests =
+                      AutoDict.map
+                        (\_ entry ->
+                          { entry
+                            | result =
+                                DFA.load entry.input resolutionDict graph_view.computation
+                                |> DFA.run
+                                |> List.head
+                                |> Maybe.andThen .finalResult
+                                |> Maybe.withDefault (InternalError "no result received from test execution")
+                          }
+                        )
+                        pkg.tests
+                }
+              ))
+              model.packages
+      }
+    )
+  )
+  |> Maybe.withDefault model -- do nothing; there is no GV, or no link, or no package.
+
 commitOrConfirm : Model -> (Model, Cmd Msg)
 commitOrConfirm model =
   -- What am I confirming?
@@ -2570,44 +2539,38 @@ commitOrConfirm model =
     {- Take an AutomatonGraph and push it into tho Model. -}
     commit_change : GraphView -> AutomatonGraph -> Model -> Model
     commit_change graph_view ag model_ =
-      updatePackageInView
-        (\pkg ->
-            { pkg
-              | undoBuffer = pkg.computation :: pkg.undoBuffer
-              , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
-              , computation = ag
-            }
-        )
-        (fitGraphViewToGraph graph_view)
-        model_
-      |> refreshComputationsList
+      let
+        updated_view =
+          { graph_view
+            | computation = ag
+            , undoBuffer = graph_view.computation :: graph_view.undoBuffer
+            , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
+          }
+        updated_model =
+          upsertGraphView updated_view.id (fitGraphViewToGraph updated_view) model_
+      in
+        refreshComputationsList updated_model
     
     updateExistingNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
     updateExistingNode src dest conn gv model_ =
-      GraphEditor.updateLink_graphchange src dest conn gv.package.computation
+      GraphEditor.updateLink_graphchange src dest conn gv.computation
       |> \newGraph -> commit_change gv newGraph model_
 
     confirmPhantomNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
     confirmPhantomNode src dest conn gv model_ =
-      GraphEditor.updateLink_graphchange src dest conn gv.package.computation
+      GraphEditor.updateLink_graphchange src dest conn gv.computation
       |> \newGraph ->
           commit_change
             { gv
-              | package =
-                  let pkg = gv.package in
-                  { pkg
-                    | computation =
-                      let ag = pkg.computation in
-                      { ag
-                        | graph = Graph.remove dest ag.graph
-                      }
-                  }
+              | computation =
+                  let ag = gv.computation in
+                  { ag | graph = Graph.remove dest ag.graph }
             }
             newGraph model_
 
     removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
     removeLink src dest gv model_ =
-      GraphEditor.removeLink_graphchange src dest gv.package.computation
+      GraphEditor.removeLink_graphchange src dest gv.computation
       |> \newGraph -> commit_change gv newGraph model_
 
   in
@@ -2621,7 +2584,7 @@ commitOrConfirm model =
               (\gv ->
                 Maybe.combineSecond
                   ( gv
-                  , Graph.get to_split gv.package.computation.graph
+                  , Graph.get to_split gv.computation.graph
                   )
               )
             |> Maybe.map (\(gv, nodeContext) ->
@@ -2676,28 +2639,30 @@ commitOrConfirm model =
         AutoDict.get model.mainGraphView model.graph_views
         |> Maybe.map
           (\gv ->
-            if List.isEmpty gv.package.undoBuffer then
+            if List.isEmpty gv.undoBuffer then
               ( model -- …there is nothing for me to do!
               , Cmd.none
               )
             else
               let
                 new_gv =
-                  confirmChanges gv.package.computation
-                    (toResolutionDict model.packages)
-                    gv
-                updated_model =
-                  { model
-                    | packages =
-                        AutoDict.insert new_gv.package.packageIdentifier new_gv.package model.packages
+                  { gv
+                    | computation =
+                        GraphEditor.applyChangesToGraph gv.computation
+                    -- clear the undo/redo buffers
+                    , undoBuffer = []
+                    , redoBuffer = []
                   }
-                  |> updatePackageInView
-                    (\_ -> new_gv.package) gv
+                updated_model =
+                  updatePackageFromView new_gv.id model
                   |> refreshComputationsList
                   |> setProperties
               in
                 ( updated_model
-                , persistPackage new_gv.package
+                , new_gv.graphPackage
+                  |> Maybe.andThen (\pkg_uuid -> AutoDict.get pkg_uuid model.packages)
+                  |> Maybe.map persistPackage
+                  |> Maybe.withDefault Cmd.none
                 )
           )
         |> Maybe.withDefault ( model, Cmd.none )
@@ -2705,10 +2670,7 @@ commitOrConfirm model =
 viewsContainingPackage : Uuid -> Model -> List GraphView
 viewsContainingPackage package_uuid m =
   AutoDict.values m.graph_views
-  |> List.filter
-    (\gv ->
-      gv.package.packageIdentifier == package_uuid
-    )
+  |> List.filter (\gv -> gv.graphPackage == Just package_uuid)
 
 packagesAndRefs : Model -> List (Uuid, AutoSet.Set String Uuid)
 packagesAndRefs {packages} =
@@ -2784,10 +2746,10 @@ beginDeletionInteraction package_uuid affected package model =
       AutoSet.toList indirectSet
       |> Debug.log "indirect"
     (mainGraph, model_) =
-      solvedViewFromPackage
+      solvedViewFromComputation
         GraphEditor.coordinateForces
         (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiState.dimensions.viewport)
-        Independent True package model
+        Independent True package.computation model
     (directViews, model__) =
       affected
       |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
@@ -2796,10 +2758,10 @@ beginDeletionInteraction package_uuid affected package model =
         (\pkg (acc, m) ->
           let
             (v, m_) =
-              solvedViewFromPackage
+              solvedViewFromComputation
                 GraphEditor.coordinateForces
                 (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
-                Independent True pkg m
+                Independent True pkg.computation m
           in
             (v :: acc, m_)
         )
@@ -2812,10 +2774,10 @@ beginDeletionInteraction package_uuid affected package model =
         (\pkg (acc, m) ->
           let
             (v, m_) =
-              solvedViewFromPackage
+              solvedViewFromComputation
                 GraphEditor.coordinateForces
                 (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
-                Independent True pkg m
+                Independent True pkg.computation m
           in
             (v :: acc, m_)
         )
@@ -2891,11 +2853,9 @@ executing_edges data =
     )
     |> Maybe.withDefault []
 
-expandStep : Int -> GraphPackage -> List ExecutionData -> ExecutionProperties -> Model -> Model
-expandStep n orig_package results props model =
+expandStep : Int -> List ExecutionData -> ExecutionProperties -> Model -> Model
+expandStep n results props model =
   let
-    (uuid0, uuid1, model_) =
-      getUuid2 model
     relevantSteps = -- ordered from most recent to least recent
       List.dropWhile (.step >> (/=) n) results
     selectedStep =
@@ -2905,12 +2865,12 @@ expandStep n orig_package results props model =
         let
           edges = executing_edges step
           (gv_uuid, model__) =
-            solvedViewFromPackage
+            solvedViewFromComputation
               GraphEditor.spreadOutForces
               (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiState.dimensions.bottomPanel)
               Independent True
-              (createNewPackage uuid0 uuid1 orig_package.created step.computation)
-              model_
+              step.computation
+              model
             |>(\({id}, m) ->
                 ( id
                 , { m
@@ -2940,8 +2900,8 @@ expandStep n orig_package results props model =
       with_graphview
     |> Maybe.withDefault model
 
-step_execution : GraphView -> GraphPackage -> (List ExecutionData -> List ExecutionData) -> Test -> Model -> Model
-step_execution orig_graphview pkg execution_function test model =
+step_execution : GraphView -> (List ExecutionData -> List ExecutionData) -> Test -> Model -> Model
+step_execution orig_graphview execution_function test model =
   let
     (previously_executed, previous_props, interactionFunction) =
       case peekInteraction Nothing model.interactionsDict of
@@ -2952,7 +2912,7 @@ step_execution orig_graphview pkg execution_function test model =
               replaceInteraction Nothing (Executing new_hx new_props)
           )
         _ ->
-          ( DFA.load test.input (toResolutionDict model.packages) pkg.computation
+          ( DFA.load test.input (toResolutionDict model.packages) orig_graphview.computation
             |> List.singleton
           , Nothing
           , \new_hx new_props ->
@@ -2963,19 +2923,18 @@ step_execution orig_graphview pkg execution_function test model =
       execution_function previously_executed
     head_step =
       List.head applied_step
-    ( uuid0, uuid1, model_ ) = getUuid2 model
-    (new_graphview_uuid, model__) =
+    (new_graphview_uuid, model_) =
       Maybe.map
         (\step ->
           let
             edges = executing_edges step
           in
-          solvedViewFromPackage
+          solvedViewFromComputation
             GraphEditor.spreadOutForces
             model.uiState.dimensions.mainEditor
             Independent True
-            ( createNewPackage uuid0 uuid1 pkg.created step.computation )
-            model_
+            step.computation
+            model
           |>(\({id}, m) ->
               ( id
               , { m
@@ -2994,8 +2953,8 @@ step_execution orig_graphview pkg execution_function test model =
         }
         previous_props
   in
-    interactionFunction applied_step updated_props model__
-    |> (\model___ -> { model___ | displayedGraphView = new_graphview_uuid })
+    interactionFunction applied_step updated_props model_
+    |> (\model__ -> { model__ | mainGraphView = new_graphview_uuid })
     |> setProperties
 
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
@@ -3059,22 +3018,15 @@ update_package pkg_uuid msg model =
       { p | currentTestKey = test_uuid }
     create_test test_uuid p =
       { p | currentTestKey = test_uuid }
+    change_description : String -> { a | computation : { b | description : Maybe String } } -> { a | computation : { b | description : Maybe String } }
     change_description d p =
       if String.isEmpty d then
         { p | computation = let computation = p.computation in { computation | description = Nothing } }
       else
         { p | computation = let computation = p.computation in { computation | description = Just d } }
-    update_others updater p model_ =
+    update_model p model_ =
       { model_
         | packages = AutoDict.insert pkg_uuid p model_.packages
-        , graph_views =
-            viewsWithPackage pkg_uuid model_
-            |> List.foldl
-              (\gv ->
-                AutoDict.insert gv.id
-                  { gv | package = updater gv.package }
-              )
-              model_.graph_views
       }
   in
   case msg of
@@ -3083,8 +3035,9 @@ update_package pkg_uuid msg model =
         |> Maybe.map
           (\pkg ->
             removeViews [ model.mainGraphView ] model
-            |> solvedViewFromPackage GraphEditor.coordinateForces
-                model.uiState.dimensions.mainEditor MainEditor False pkg
+            |> solvedViewFromComputation GraphEditor.coordinateForces
+                model.uiState.dimensions.mainEditor MainEditor False pkg.computation
+            |> linkToPackage pkg.packageIdentifier
             |> Tuple.second
             |> setProperties
           )
@@ -3105,7 +3058,7 @@ update_package pkg_uuid msg model =
             (test_uuid, newSeed) = Random.step Uuid.generator model.randomSeed
             p = create_test test_uuid pkg
             updated_model =
-              update_others (create_test test_uuid) p model
+              update_model p model
               |> (\m -> { m | randomSeed = newSeed })
           in
             case popInteraction Nothing updated_model of
@@ -3129,7 +3082,7 @@ update_package pkg_uuid msg model =
           let
             p = select_test test_uuid pkg
             updated_model =
-              update_others (select_test test_uuid) p model
+              update_model p model
           in
             case popInteraction Nothing updated_model of
               Just ( Executing _ _ , model_ ) ->
@@ -3152,7 +3105,7 @@ update_package pkg_uuid msg model =
           let
             p = delete_test test_uuid pkg
             updated_model =
-              update_others (delete_test test_uuid) p model
+              update_model p model
           in
             ( updated_model
             , persistPackage p
@@ -3167,7 +3120,7 @@ update_package pkg_uuid msg model =
           let
             p = change_input s pkg.currentTestKey pkg
             updated_model =
-              update_others (change_input s pkg.currentTestKey) p model
+              update_model p model
           in
             ( updated_model
             , persistPackage p
@@ -3175,14 +3128,25 @@ update_package pkg_uuid msg model =
         )
       |> Maybe.withDefault ( model, Cmd.none )
 
-    UpdatePackageDescription s ->
+    UpdateComputationDescription s ->
       AutoDict.get pkg_uuid model.packages
       |> Maybe.map
         (\pkg ->
           let
             p = change_description s pkg
             updated_model =
-              update_others (change_description s) p model
+              update_model p model
+              |>(\m ->
+                  { m
+                    | graph_views =
+                        viewsContainingPackage pkg_uuid m
+                        |> List.foldl
+                          (\gv -> AutoDict.insert gv.id (change_description s gv))
+                          m.graph_views
+                    , packages =
+                        AutoDict.insert pkg_uuid p m.packages
+                  }
+                )
           in
             ( updated_model
             , persistPackage p
@@ -3197,7 +3161,7 @@ update_package pkg_uuid msg model =
           let
             p = flip_acceptance pkg.currentTestKey pkg
             updated_model =
-              update_others (flip_acceptance pkg.currentTestKey) p model
+              update_model p model
           in
             ( updated_model
             , persistPackage p
@@ -3357,25 +3321,17 @@ update msg model =
           | graph_views =
               AutoDict.update model.mainGraphView
                 (Maybe.map (\graph_view ->
-                    case (mostRecentInteraction model, graph_view.package.undoBuffer) of
+                    case (mostRecentInteraction model, graph_view.undoBuffer) of
                       (_, []) ->
                         graph_view
                       (Just _, _) ->
                         graph_view -- do not permit undo/redo while I'm performing any operation.
                       (Nothing, h::t) ->
-                        let
-                          pkg = graph_view.package
-                          updated_pkg =
-                            { pkg
-                              | undoBuffer = t
-                              , redoBuffer = pkg.computation :: pkg.redoBuffer
-                              , computation = h
-                            }
-                        in
-                          mkGraphView
-                            graph_view.id h graph_view.host_dimensions
-                            False graph_view.interfaceLocation
-                            updated_pkg model.packages model.interactionsDict
+                        { graph_view
+                          | undoBuffer = t
+                          , redoBuffer = graph_view.computation :: graph_view.redoBuffer
+                          , computation = h
+                        }
                 ))
                 model.graph_views
         }
@@ -3388,25 +3344,17 @@ update msg model =
           | graph_views =
               AutoDict.update model.mainGraphView
                 (Maybe.map (\graph_view ->
-                    case (mostRecentInteraction model, graph_view.package.redoBuffer) of
+                    case (mostRecentInteraction model, graph_view.redoBuffer) of
                       (_, []) ->
                         graph_view
                       (Just _, _) ->
                         graph_view -- do not permit undo/redo while I'm performing any operation.
                       (Nothing, h::t) ->
-                        let
-                          pkg = graph_view.package
-                          updated_pkg =
-                            { pkg
-                              | redoBuffer = t
-                              , undoBuffer = pkg.computation :: pkg.undoBuffer
-                              , computation = h
-                            }
-                        in
-                          mkGraphView
-                            graph_view.id h graph_view.host_dimensions
-                            False graph_view.interfaceLocation
-                            updated_pkg model.packages model.interactionsDict
+                        { graph_view
+                          | redoBuffer = t
+                          , undoBuffer = graph_view.computation :: graph_view.redoBuffer
+                          , computation = h
+                        }
                 ))
                 model.graph_views
         }
@@ -3442,12 +3390,12 @@ update msg model =
         updated_model =
           { model_ | packages = AutoDict.insert mainUuid pkg model.packages }
         ( _, with_graph_view ) =
-          solvedViewFromPackage
+          solvedViewFromComputation
             GraphEditor.coordinateForces
             model.uiState.dimensions.mainEditor
             MainEditor
             False
-            pkg
+            pkg.computation
             updated_model
       in
         ( with_graph_view
@@ -3458,10 +3406,17 @@ update msg model =
 
     Step ->
       AutoDict.get model.mainGraphView model.graph_views
-      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
+      |> Maybe.andThen
+        (\gv ->
+          Maybe.combineSecond
+            ( gv
+            , AutoDict.get model.selectedPackage model.packages
+              |> Maybe.andThen (\pkg -> AutoDict.get pkg.currentTestKey pkg.tests)
+            )
+        )
       |> Maybe.map
         (\(gv, test) ->
-          ( step_execution gv gv.package
+          ( step_execution gv
               (\prevList ->
                 case prevList of
                   h::t -> DFA.step h :: h :: t
@@ -3480,10 +3435,17 @@ update msg model =
 
     Run ->
       AutoDict.get model.mainGraphView model.graph_views
-      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
+      |> Maybe.andThen
+        (\gv ->
+          Maybe.combineSecond
+            ( gv
+            , AutoDict.get model.selectedPackage model.packages
+              |> Maybe.andThen (\pkg -> AutoDict.get pkg.currentTestKey pkg.tests)
+            )
+        )
       |> Maybe.map
         (\(gv, test) ->
-          ( step_execution gv gv.package
+          ( step_execution gv
               (\input ->
                 case input of
                   h::t -> DFA.run h ++ (h::t)
@@ -3502,10 +3464,17 @@ update msg model =
 
     StepBack ->
       AutoDict.get model.mainGraphView model.graph_views
-      |> Maybe.andThen (\gv -> Maybe.combineSecond (gv, AutoDict.get gv.package.currentTestKey gv.package.tests))
+      |> Maybe.andThen
+        (\gv ->
+          Maybe.combineSecond
+            ( gv
+            , AutoDict.get model.selectedPackage model.packages
+              |> Maybe.andThen (\pkg -> AutoDict.get pkg.currentTestKey pkg.tests)
+            )
+        )
       |> Maybe.map
         (\(gv, test) ->
-          ( step_execution gv gv.package
+          ( step_execution gv
               (\input ->
                 case input of
                   [h] -> [h] -- can't step back from the initial state.
@@ -3549,11 +3518,7 @@ update msg model =
                     )
                 |> setProperties
               Nothing ->
-                AutoDict.get model.mainGraphView model.graph_views
-                |> Maybe.map (\{package} ->
-                  expandStep n package results props model
-                )
-                |> Maybe.withDefault model
+                model
           _ ->
             model
       , Cmd.none
@@ -3852,12 +3817,12 @@ viewNavigatorsArea model =
                 |> thenPermitInteraction (HE.onClick (SelectNavigation TestsIcon))
               ]
               [ text "🧪"
-              , AutoDict.get model.mainGraphView model.graph_views
+              , AutoDict.get model.selectedPackage model.packages
                 |> Maybe.map
-                  (\graph_view ->
+                  (\pkg ->
                     let
                       (pass, fail, error) =
-                        AutoDict.toList graph_view.package.tests
+                        AutoDict.toList pkg.tests
                         |> List.foldl
                           (\(_, test) (p, f, e) ->
                             case isPassingTest test of
@@ -3927,19 +3892,18 @@ viewNavigatorsArea model =
               ComputationsIcon ->
                 viewComputationsSidebar model
               TestsIcon ->
-                AutoDict.get model.mainGraphView model.graph_views
+                AutoDict.get model.selectedPackage model.packages
                 |> Maybe.map (flip viewTestsSidebar model)
                 |> Maybe.withDefault
                   (div [ HA.class "error graph-not-loaded" ] [ text "⚠ No graph is loaded in the editor" ])
           ]
     ]
 
-viewTestsSidebar : GraphView -> Model -> Html Msg
-viewTestsSidebar graph_view {properties} =
+viewTestsSidebar : GraphPackage -> Model -> Html Msg
+viewTestsSidebar pkg {properties} =
   let
     (expectAccept, expectReject) =
-      graph_view.package.tests
-      |> AutoDict.toList
+      AutoDict.toList pkg.tests
       |> List.partition (Tuple.second >> .expectation >> (==) ExpectAccepted)
     displayTests headingHtml tx =
       case tx of
@@ -3957,7 +3921,7 @@ viewTestsSidebar graph_view {properties} =
                       li
                         [ HA.classList
                             [ ("test-input", True)
-                            , ("selected", key == graph_view.package.currentTestKey)
+                            , ("selected", key == pkg.currentTestKey)
                             , ("disabled", not properties.canLoadTestInput)
                             ]
                         , HA.title "Edit"
@@ -3978,7 +3942,7 @@ viewTestsSidebar graph_view {properties} =
               , ("error", testStatus == Nothing)
               ]
           , properties.canLoadTestInput
-            |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.packageIdentifier <| SelectTest key))
+            |> thenPermitInteraction (HE.onClick (PackageMsg pkg.packageIdentifier <| SelectTest key))
           ]
           [ span
               [ HA.classList
@@ -3990,14 +3954,14 @@ viewTestsSidebar graph_view {properties} =
                   _ -> HA.hidden False -- … pretty irrelevant. Which is what I want.
               ]
               [ text test.input ]
-          , if properties.canDeleteTestInput && not (key == graph_view.package.currentTestKey) then
+          , if properties.canDeleteTestInput && not (key == pkg.currentTestKey) then
               div
                 [ HA.classList
                     [ ("button", True)
                     , ("disabled", not properties.canDeleteTestInput)
                     ]
                 , HA.title "Delete test"
-                , HE.onClick (PackageMsg graph_view.package.packageIdentifier <| DeleteTestInput key)
+                , HE.onClick (PackageMsg pkg.packageIdentifier <| DeleteTestInput key)
                 ]
                 [ text "🚮" ]
             else
@@ -4013,7 +3977,7 @@ viewTestsSidebar graph_view {properties} =
               button
                 [ HA.class "add-button"
                 , HA.title "Add new test"
-                , HE.onClick (PackageMsg graph_view.package.packageIdentifier CreateNewTestInput)
+                , HE.onClick (PackageMsg pkg.packageIdentifier CreateNewTestInput)
                 ]
                 [ text "➕" ]
             else
@@ -4021,7 +3985,7 @@ viewTestsSidebar graph_view {properties} =
           ]
       , div
           [ HA.class "package-description" ]
-          [ graph_view.package.computation.description
+          [ pkg.computation.description
             |> Maybe.map text
             |> Maybe.withDefault (text "")
           ]
@@ -4070,39 +4034,41 @@ viewComputationsSidebar model =
           else
             text ""
         ]
-    , div
+    , let
+        mainPkgUuid =
+          AutoDict.get model.mainGraphView model.graph_views
+          |> Maybe.andThen .graphPackage
+      in
+      div
         [ HA.class "computations-explorer" ]
         ( List.filterMap
-            (\uuid ->
-              let
-                isMain = hasSamePackage uuid model.mainGraphView model
-              in
-                AutoDict.get uuid model.graph_views
+            (\pkg_uuid ->
+                AutoDict.get model.mainGraphView model.graph_views
                 |> Maybe.map
                   (\graph_view ->
                     div
                       [ HA.class "package"
                       , graph_view.properties.canSelectPackage
-                        |> thenPermitInteraction (HE.onClick (PackageMsg graph_view.package.packageIdentifier SelectPackage))
+                        |> thenPermitInteraction (HE.onClick (PackageMsg pkg_uuid SelectPackage))
                       ]
                       [ viewGraph graph_view
                       , div
                           [ HA.class "description" ]
-                          [ graph_view.package.computation.description
+                          [ graph_view.computation.description
                             |> Maybe.withDefault "(no description)"
                             |> text
                           ]
-                      , if isMain || not graph_view.properties.canDeletePackage then
+                      , if graph_view.graphPackage == mainPkgUuid || not graph_view.properties.canDeletePackage then
                           text ""
                         else
                           div
                             [ HA.class "delete-button"
                             , HA.title "Delete"
-                            , HE.onClick (PackageMsg graph_view.package.packageIdentifier DeletePackage)
+                            , HE.onClick (PackageMsg pkg_uuid DeletePackage)
                             ]
                             [ text "🚮" ]
                       ]
-                )
+                  )
             )
             model.computationsExplorer
         )
@@ -4178,8 +4144,8 @@ viewSplitter zIdx movement model areaOpen =
           ]
       ]
 
-viewTestingTool : GraphView -> Test -> Model -> Html Msg
-viewTestingTool graph_view test model =
+viewTestingTool : GraphPackage -> Test -> Model -> Html Msg
+viewTestingTool pkg test model =
   let
     html_remaining_data =
       List.map (\ch ->
@@ -4430,7 +4396,7 @@ viewTestingTool graph_view test model =
                             [ ("expect-accept", test.expectation == ExpectAccepted)
                             , ("expect-reject", test.expectation == ExpectRejected)
                             ]
-                        , HE.onClick (PackageMsg graph_view.package.packageIdentifier FlipAcceptanceCondition)
+                        , HE.onClick (PackageMsg pkg.packageIdentifier FlipAcceptanceCondition)
                         ]
                         [ text
                             ( case test.expectation of
@@ -4443,7 +4409,7 @@ viewTestingTool graph_view test model =
                 , textarea
                     [ HA.class "input-textarea"
                     , HA.value test.input
-                    , HE.onInput (UpdateTestInput >> PackageMsg graph_view.package.packageIdentifier)
+                    , HE.onInput (UpdateTestInput >> PackageMsg pkg.packageIdentifier)
                     , HA.placeholder "Enter your test input here"
                     ]
                     []
@@ -4468,7 +4434,7 @@ viewMetadataTool package =
                 [ HA.class "input-textarea"
                 , HA.css [ Css.color color ]
                 , HA.value (Maybe.withDefault "" package.computation.description)
-                , HE.onInput (UpdatePackageDescription >> PackageMsg package.packageIdentifier)
+                , HE.onInput (UpdateComputationDescription >> PackageMsg package.packageIdentifier)
                 , HA.placeholder "What kind of thing does this package recognize?"
                 ]
                 []
@@ -4516,20 +4482,18 @@ viewToolsArea model =
         [ debugDimensions model.uiState.dimensions.bottomPanel
         , case model.uiState.selected.bottomPanel of
             MetadataToolIcon ->
-              AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.map (\gv ->
-                viewMetadataTool gv.package
-              )
+              AutoDict.get model.selectedPackage model.packages
+              |> Maybe.map (viewMetadataTool)
               |> Maybe.withDefault
                 ( div
                     [ HA.class "metadata-content no-package" ]
                     [ text "Internal error: no graph-view.  This is a bug!" ]
                 )
             TestingToolIcon ->
-              AutoDict.get model.mainGraphView model.graph_views
-              |> Maybe.map (\gv ->
-                ( gv
-                , AutoDict.get gv.package.currentTestKey gv.package.tests
+              AutoDict.get model.selectedPackage model.packages
+              |> Maybe.map (\pkg ->
+                ( pkg
+                , AutoDict.get pkg.currentTestKey pkg.tests
                   |> Maybe.withDefault
                     { input = ""
                     , expectation = ExpectAccepted
@@ -4537,8 +4501,8 @@ viewToolsArea model =
                     }
                 )
               )
-              |> Maybe.map (\(gv, test) ->
-                viewTestingTool gv test model
+              |> Maybe.map (\(pkg, test) ->
+                viewTestingTool pkg test model
               )
               |> Maybe.withDefault
                 ( div
@@ -4570,7 +4534,7 @@ viewMainInterface model =
                 ]
             ]
             [ debugDimensions model.uiState.dimensions.mainEditor
-            , AutoDict.get model.displayedGraphView model.graph_views
+            , AutoDict.get model.mainGraphView model.graph_views
               |> Maybe.map (GraphEditor.viewGraph)
               |> Maybe.withDefault
                 (div [ HA.class "error graph-not-loaded" ] [ text "⚠ Graph to load was not found!" ]) -- erk! say what now?!
@@ -4742,10 +4706,19 @@ viewConnectionEditor model connection editorData =
                 ( List.filterMap
                     (\view_uuid ->
                         AutoDict.get view_uuid model.graph_views
+                        |> Maybe.andThen
+                          (\gv ->
+                            Maybe.combineSecond
+                              ( gv
+                              , Maybe.andThen
+                                  (\pkg_uuid -> AutoDict.get pkg_uuid model.packages)
+                                  gv.graphPackage
+                              )
+                          )
                         |> Maybe.map
-                          (\graph_view ->
+                          (\(graph_view, pkg) ->
                             let
-                              via = ViaGraphReference graph_view.package.packageIdentifier
+                              via = ViaGraphReference pkg.packageIdentifier
                               inTerminals = AutoSet.member (Transition True via) terminal
                               inNonTerminals = AutoSet.member (Transition False via) nonTerminal
                             in
@@ -4763,7 +4736,7 @@ viewConnectionEditor model connection editorData =
                                 [ viewGraph graph_view
                                 , div
                                     [ HA.class "description" ]
-                                    [ graph_view.package.computation.description
+                                    [ graph_view.computation.description
                                       |> Maybe.withDefault "(no description)"
                                       |> text
                                     ]
@@ -4774,7 +4747,7 @@ viewConnectionEditor model connection editorData =
                                       ]
                                       [ TypedSvg.svg
                                           [ TypedSvg.Attributes.viewBox 0 0 30 18 ]
-                                          [ GraphEditor.viewGraphReference graph_view.package.packageIdentifier 4 0 0 ]
+                                          [ GraphEditor.viewGraphReference pkg.packageIdentifier 4 0 0 ]
                                         |> Html.Styled.fromUnstyled
                                       ]
                                   else
@@ -4886,7 +4859,7 @@ viewPackageDeletionWarning props model =
             [ viewGraph graph_view
             , div
                 [ HA.class "description" ]
-                [ graph_view.package.computation.description
+                [ graph_view.computation.description
                   |> Maybe.withDefault "(no description)"
                   |> text
                 ]

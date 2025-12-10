@@ -90,7 +90,7 @@ type PackageMsg
   | DeleteTestInput Uuid
   | UpdateTestInput String
   | FlipAcceptanceCondition
-  | UpdatePackageDescription String
+  | UpdateComputationDescription String
 
 type Msg
   = GraphViewMsg Uuid GraphViewMsg
@@ -136,12 +136,11 @@ type alias InteractionsDict =
 
 type alias Model =
   { graph_views : GraphViewDict
-  -- this is the graph that's selected.
-  , mainGraphView : Uuid
-  -- this can be different!  For example, during execution-stepping…
-  , displayedGraphView : Uuid
-  -- , executionStage : ExecutionStage -- this SHOULD be in a Tool.
   , packages : PackageDict
+  -- this is the main editor GraphView
+  , mainGraphView : Uuid
+  -- this is the GraphPackage that is selected
+  , selectedPackage : Uuid
   , uiState : UIState
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
@@ -168,8 +167,6 @@ type alias GraphPackage =
   , created : Time.Posix -- for ordering
   , currentTestKey : Uuid
   , tests : AutoDict.Dict String Uuid Test
-  , undoBuffer : List (AutomatonGraph)
-  , redoBuffer : List (AutomatonGraph)
   }
 
 {-------------------------------------------------------
@@ -450,7 +447,8 @@ type ActivePanDirection
 
 type alias GraphView =
   { id : Uuid
-  , package : GraphPackage
+  , computation : AutomatonGraph
+  , graphPackage : Maybe Uuid
   , fitClosely : Bool
   , interfaceLocation : InterfaceLocation
   , host_dimensions : (Float, Float) -- (w,h) of svg element
@@ -469,6 +467,8 @@ type alias GraphView =
   , disconnectedNodes : Set NodeId
   , properties : GraphViewProperties
   , drawingData : DrawingData
+  , undoBuffer : List (AutomatonGraph)
+  , redoBuffer : List (AutomatonGraph)
   }
 
 {-------------------------------------------------------

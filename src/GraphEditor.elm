@@ -888,14 +888,14 @@ arrowheadDefs =
 
 
 viewUndoRedoVisualisation : GraphView -> Svg a
-viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
+viewUndoRedoVisualisation { undoBuffer, redoBuffer, guest_coordinates, guest_dimensions } =
   let
     x_ = Tuple.first guest_coordinates
     h = Tuple.second guest_coordinates + Tuple.second guest_dimensions
     rect_width = 30
     rect_height = 10
     rect_spacing = 3
-    num_undo = List.length package.undoBuffer
+    num_undo = List.length undoBuffer
     idxToY idx =
       h - (toFloat (15 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
   in
@@ -915,7 +915,7 @@ viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
                 ]
                 []
             )
-            package.undoBuffer
+            undoBuffer
         )
         ++
         ( List.indexedMap
@@ -930,7 +930,7 @@ viewUndoRedoVisualisation { package, guest_coordinates, guest_dimensions } =
                 ]
                 []
             )
-            package.redoBuffer
+            redoBuffer
         )
       )
 

@@ -60,7 +60,7 @@ decodeGraphPackage resolutionDict =
     (\graph ->
       D.map4
         (\description created testKey tests ->
-            GraphPackage graph description created testKey tests [] []
+            GraphPackage graph description created testKey tests
         )
         -- ( D.map2
         --     (\w h -> (w, h))

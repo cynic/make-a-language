@@ -231,6 +231,10 @@
             border: none;
             outline: none;
           }
+
+          textarea::selection {
+            background-color: var(--cyan);
+          }
         }
       }
     }
