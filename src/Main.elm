@@ -45,7 +45,6 @@ import Jsonify exposing (..)
 import Graph exposing (Graph)
 import Css exposing (px)
 import Basics.Extra exposing (maxSafeInteger, minSafeInteger)
-import GraphEditor exposing (path_between)
 import WebGL exposing (entityWith)
 import List.Extra as List
 import GraphEditor exposing (viewGraph)
@@ -190,6 +189,139 @@ descriptionsForConnection connection packages =
     )
   |> AutoDict.fromList Uuid.toString
 
+path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> PathBetweenReturn
+path_between sourceXY_orig destXY_orig cardinality =
+  {- we're doing a curved line, using a quadratic path.
+      So, let's make a triangle. The two points at the "base" are the
+      start and end of the connection ("source" and "target").  Now,
+      take two lines at an angle Θ from both sides, and where they
+      meet is our control point.  We can then adjust the angle "up" and
+      "down" until we are satisfied with the look.
+      
+      Of course, because the angles are equal, the length of the lines is
+      also equal.  So another equivalent way of going about it is by getting
+      the midpoint and then pushing a line "up", orthogonal to that midpoint,
+      and saying that this is the control point.  As the length of the line
+      increases, the angle increases too.
+  --}
+  let
+    nodeRadius = 7
+    radius_from = 7
+    radius_to = 5
+    sourceXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x - nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = sourceXY_orig.x, y = sourceXY_orig.y }
+    destXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x + nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = destXY_orig.x, y = destXY_orig.y }
+    d_y = sourceXY.y - destXY.y
+    d_x = sourceXY.x - destXY.x
+    orig_line_len = sqrt (d_x * d_x + d_y * d_y)
+    curvature =
+      case cardinality of
+        Bidirectional ->
+          1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
+        Unidirectional ->
+          0
+        Recursive ->
+          e
+    orthogonal_len =
+      curvature * orig_line_len
+    orthogonal_vector =
+      -- normalised
+      { x = (destXY.y - sourceXY.y) / orig_line_len
+      , y = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    parametric_direction_vector =
+      -- normalised
+      { y = (destXY.y - sourceXY.y) / orig_line_len
+      , x = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    half_len = orig_line_len / 2
+    midPoint =
+      -- I can do this early because the midpoint should remain the midpoint,
+      -- no matter how I place the actual targets
+      { x = destXY.x - half_len * parametric_direction_vector.x
+      , y = destXY.y - half_len * parametric_direction_vector.y
+      }
+    -- with the midpoint, I can work out the control points.
+    control_point =
+      { x = midPoint.x + orthogonal_len * orthogonal_vector.x
+      , y = midPoint.y - orthogonal_len * orthogonal_vector.y
+      }
+    hypotenuse_len =
+      sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
+    -- now, with the control point, I can make the source & target hypotenuse vectors
+    source_hypotenuse_vector =
+      -- normalised
+      { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
+      , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
+      }
+    dest_hypotenuse_vector =
+      { x = -( control_point.x - destXY.x ) / hypotenuse_len
+      , y = -( control_point.y - destXY.y ) / hypotenuse_len
+      }
+    shorten_source =
+      { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
+      , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
+      }
+    shorten_target =
+      -- the extra addition is for the stroke-width (which is 3px)
+      { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
+      , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
+      }
+    line_len =
+      let
+        dx = shorten_target.x - shorten_source.x
+        dy = shorten_target.y - shorten_source.y
+      in
+        sqrt (dx * dx + dy * dy)
+    -- control_point =
+    --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
+    --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
+    --   }
+    linePath =
+      case cardinality of
+        Recursive ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " c -14,-14 28,-14 " ++ String.fromFloat (nodeRadius * 2) ++ ",0"
+          --      ^    ^  ^   ^
+          --      a    b  c   d
+          -- to "raise" it, increase the numerical values of b and d (e.g. to -25 and -25).
+          -- to "widen" it, increase the numerical values of a and c (e.g. to -21 and 35).
+          -- increase/decrease numbers by the same amount to maintain symmetry.
+          -- the last two numbers give the offset for the destination.
+        _ ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " Q " ++ String.fromFloat control_point.x
+          ++ " " ++ String.fromFloat control_point.y
+          ++ " " ++ String.fromFloat (shorten_target.x)
+          ++ " " ++ String.fromFloat (shorten_target.y)
+    transition_coordinates =
+      { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
+      , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
+      }
+  in
+    { pathString = linePath
+    , transition_coordinates = transition_coordinates
+    , length = line_len
+    , control_point = control_point
+    , source_connection_point = shorten_source
+    , target_connection_point = shorten_target
+    }
+
 linkDrawingForEdge : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Connection -> PackageDict -> ( (NodeId, NodeId), LinkDrawingData )
 linkDrawingForEdge sourceNode destNode connection packages =
   let
@@ -204,7 +336,7 @@ linkDrawingForEdge sourceNode destNode connection packages =
           descriptionsForConnection connection packages
       , connection = connection
       , pathBetween =
-          GraphEditor.path_between
+          path_between
             sourceNode.node.label
             destNode.node.label
             cardinality
@@ -489,7 +621,7 @@ init flags =
           , initial = clamp 80 (decoded.height / 2 - 40) 200
           }
       }
-    state : UIState
+    state : UILayout
     state =
       { dimensions =
           { sideBar = ( constants.sideBarWidth.initial, decoded.height )
@@ -519,7 +651,7 @@ init flags =
       , mainGraphView = mainPackage.packageIdentifier -- this is—temporarily—the wrong value!
       , selectedPackage = mainPackage.packageIdentifier
       , packages = packages
-      , uiState = state
+      , uiLayout = state
       , uiConstants = constants
       , randomSeed = initialSeed
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
@@ -670,7 +802,7 @@ updateGraphView uuid msg model =
 {-| When either the sidebar or the bottom-panel have changed dimensions, this should be
     called to figure out what changes need to be made to any of the other dimensions.
 -}
-recalculate_uistate : UIState -> UIState
+recalculate_uistate : UILayout -> UILayout
 recalculate_uistate ({dimensions} as ui) =
   let
     sidebar_width =
@@ -821,10 +953,10 @@ calculateGuestDimensionsForHost (w, h) removePadding graph =
     , inner_dimensions = ( width_inner, height_inner )
     }
 
-sidebarGraphDimensions : UIState -> ( Float, Float )
-sidebarGraphDimensions uiState =
+sidebarGraphDimensions : UILayout -> ( Float, Float )
+sidebarGraphDimensions uiLayout =
   let
-    ( w, _ ) = uiState.dimensions.sideBar
+    ( w, _ ) = uiLayout.dimensions.sideBar
   in
   ( w - 20 , 9/16 * ( w - 20 ) )
 
@@ -840,24 +972,24 @@ handleConnectionRemoval uuid {source, dest, connection, deleteTargetIfCancelled}
 
 
 updateMainEditorDimensions : Model -> Model
-updateMainEditorDimensions ({uiState} as model) =
+updateMainEditorDimensions ({uiLayout} as model) =
   let
     updateMain : GraphView -> GraphView
     updateMain graph_view =
       let
         guest_viewport =
           calculateGuestDimensionsForHost
-            uiState.dimensions.mainEditor
+            uiLayout.dimensions.mainEditor
             False
             graph_view.computation.graph
       in
         { graph_view
-          | host_dimensions = uiState.dimensions.mainEditor
+          | host_dimensions = uiLayout.dimensions.mainEditor
           , guest_dimensions = guest_viewport.dimensions
           , guest_coordinates = guest_viewport.coordinates
           , host_coordinates =
-              if uiState.open.sideBar then
-                (Tuple.first uiState.dimensions.sideBar + 8 + 48, 0)
+              if uiLayout.open.sideBar then
+                (Tuple.first uiLayout.dimensions.sideBar + 8 + 48, 0)
               else
                 (0, 0)
         }
@@ -865,7 +997,7 @@ updateMainEditorDimensions ({uiState} as model) =
     updateSidebar graph_view =
       let
         sidebarDimensions =
-          sidebarGraphDimensions uiState
+          sidebarGraphDimensions uiLayout
         guest_viewport =
           calculateGuestDimensionsForHost
             sidebarDimensions
@@ -890,7 +1022,7 @@ updateMainEditorDimensions ({uiState} as model) =
                   MainEditor ->
                     updateMain graph_view
                   Sidebar ->
-                    if uiState.open.sideBar then
+                    if uiLayout.open.sideBar then
                       updateSidebar graph_view
                     else
                       graph_view -- don't bother.
@@ -903,7 +1035,7 @@ updateMainEditorDimensions ({uiState} as model) =
 
 {-| Drag a specified splitter to a specified coordinate. Returns an updated `UIState`.
 -}
-dragSplitter : Float -> SplitterMovement -> UIConstants -> UIState -> UIState
+dragSplitter : Float -> SplitterMovement -> UIConstants -> UILayout -> UILayout
 dragSplitter coord movement constants ({dimensions} as ui) =
   let
     sidebar_width =
@@ -931,7 +1063,7 @@ dragSplitter coord movement constants ({dimensions} as ui) =
 {-| Collapse or expand an area (i.e. either sidebar or bottom-panel).
     Returns the updated `UIState` with correct dimensions.
 -}
-toggleAreaVisibility : AreaUITarget -> UIState -> UIState
+toggleAreaVisibility : AreaUITarget -> UILayout -> UILayout
 toggleAreaVisibility where_ ({open} as ui) =
   { ui
     | open =
@@ -945,9 +1077,9 @@ toggleAreaVisibility where_ ({open} as ui) =
   |> recalculate_uistate
 
 resizeViewport : (Float, Float) -> Model -> Model
-resizeViewport (w, h) ({uiState, uiConstants} as model) =
+resizeViewport (w, h) ({uiLayout, uiConstants} as model) =
   let
-    dim = uiState.dimensions
+    dim = uiLayout.dimensions
     constants : UIConstants
     constants =
       { uiConstants
@@ -965,9 +1097,9 @@ resizeViewport (w, h) ({uiState, uiConstants} as model) =
           }
       }
     
-    state : UIState
+    state : UILayout
     state =
-      { uiState
+      { uiLayout
         | dimensions =
             { dim
               | viewport = ( w, h )
@@ -984,7 +1116,7 @@ resizeViewport (w, h) ({uiState, uiConstants} as model) =
       |> recalculate_uistate
   in
     { model
-      | uiState = state
+      | uiLayout = state
       , uiConstants = constants
     }
 
@@ -1193,7 +1325,7 @@ refreshComputationsList : Model -> Model
 refreshComputationsList model =
   let
     (computation_views, updated_model) =
-      packagesToGraphViews (sidebarGraphDimensions model.uiState) model
+      packagesToGraphViews (sidebarGraphDimensions model.uiLayout) model
     as_dict =
       List.foldl (\v -> AutoDict.insert v.id v) (AutoDict.empty Uuid.toString) computation_views
   in
@@ -1208,11 +1340,11 @@ refreshComputationsList model =
 selectNavIcon : NavigatorIcon -> Model -> Model
 selectNavIcon icon model =
   { model
-    | uiState =
-        let uiState = model.uiState in
-        { uiState
+    | uiLayout =
+        let uiLayout = model.uiLayout in
+        { uiLayout
           | selected =
-            let selected = uiState.selected in
+            let selected = uiLayout.selected in
             { selected | sideBar = icon }
         }
   }
@@ -2748,7 +2880,7 @@ beginDeletionInteraction package_uuid affected package model =
     (mainGraph, model_) =
       solvedViewFromComputation
         GraphEditor.coordinateForces
-        (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiState.dimensions.viewport)
+        (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiLayout.dimensions.viewport)
         Independent True package.computation model
     (directViews, model__) =
       affected
@@ -2760,7 +2892,7 @@ beginDeletionInteraction package_uuid affected package model =
             (v, m_) =
               solvedViewFromComputation
                 GraphEditor.coordinateForces
-                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
+                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiLayout.dimensions.viewport)
                 Independent True pkg.computation m
           in
             (v :: acc, m_)
@@ -2776,7 +2908,7 @@ beginDeletionInteraction package_uuid affected package model =
             (v, m_) =
               solvedViewFromComputation
                 GraphEditor.coordinateForces
-                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiState.dimensions.viewport)
+                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiLayout.dimensions.viewport)
                 Independent True pkg.computation m
           in
             (v :: acc, m_)
@@ -2867,7 +2999,7 @@ expandStep n results props model =
           (gv_uuid, model__) =
             solvedViewFromComputation
               GraphEditor.spreadOutForces
-              (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiState.dimensions.bottomPanel)
+              (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiLayout.dimensions.bottomPanel)
               Independent True
               step.computation
               model
@@ -2931,7 +3063,7 @@ step_execution orig_graphview execution_function test model =
           in
           solvedViewFromComputation
             GraphEditor.spreadOutForces
-            model.uiState.dimensions.mainEditor
+            model.uiLayout.dimensions.mainEditor
             Independent True
             step.computation
             model
@@ -3036,7 +3168,7 @@ update_package pkg_uuid msg model =
           (\pkg ->
             removeViews [ model.mainGraphView ] model
             |> solvedViewFromComputation GraphEditor.coordinateForces
-                model.uiState.dimensions.mainEditor MainEditor False pkg.computation
+                model.uiLayout.dimensions.mainEditor MainEditor False pkg.computation
             |> linkToPackage pkg.packageIdentifier
             |> Tuple.second
             |> setProperties
@@ -3188,8 +3320,8 @@ update msg model =
               |> setProperties
             else -- such a drag.
               { model
-                | uiState =
-                    dragSplitter coord movement model.uiConstants model.uiState
+                | uiLayout =
+                    dragSplitter coord movement model.uiConstants model.uiLayout
               }
               |> updateMainEditorDimensions
               |> setProperties
@@ -3247,11 +3379,11 @@ update msg model =
 
     SelectTool item ->
       ( { model
-          | uiState =
-              let uiState = model.uiState in
-              { uiState
+          | uiLayout =
+              let uiLayout = model.uiLayout in
+              { uiLayout
                 | selected =
-                    let selected = uiState.selected in
+                    let selected = uiLayout.selected in
                     { selected | bottomPanel = item }
               }
         }
@@ -3265,7 +3397,7 @@ update msg model =
 
     ToggleAreaVisibility where_ ->
       ( { model
-          | uiState = toggleAreaVisibility where_ model.uiState
+          | uiLayout = toggleAreaVisibility where_ model.uiLayout
         }
         |> updateMainEditorDimensions
         |> setProperties
@@ -3392,7 +3524,7 @@ update msg model =
         ( _, with_graph_view ) =
           solvedViewFromComputation
             GraphEditor.coordinateForces
-            model.uiState.dimensions.mainEditor
+            model.uiLayout.dimensions.mainEditor
             MainEditor
             False
             pkg.computation
@@ -3792,7 +3924,7 @@ viewNavigatorsArea : Model -> Html Msg
 viewNavigatorsArea model =
   div
     [ HA.class "sidebar-container" ]
-    [ if not model.uiState.open.sideBar then
+    [ if not model.uiLayout.open.sideBar then
         div [] []
       else
         div
@@ -3800,20 +3932,20 @@ viewNavigatorsArea model =
           [ button
               [ HA.classList
                   [ ("navigation-icon computation-icon", True)
-                  , ("active", model.uiState.selected.sideBar == ComputationsIcon)
+                  , ("active", model.uiLayout.selected.sideBar == ComputationsIcon)
                   ]
               , HA.title "Computations"
-              , (model.uiState.selected.sideBar /= ComputationsIcon)
+              , (model.uiLayout.selected.sideBar /= ComputationsIcon)
                 |> thenPermitInteraction (HE.onClick (SelectNavigation ComputationsIcon))
               ]
               [ text "📁"]
           , button
               [ HA.classList
                   [ ("navigation-icon test-icon", True)
-                  , ("active", model.uiState.selected.sideBar == TestsIcon)
+                  , ("active", model.uiLayout.selected.sideBar == TestsIcon)
                   ]
               , HA.title "Tests"
-              , (model.uiState.selected.sideBar /= TestsIcon)
+              , (model.uiLayout.selected.sideBar /= TestsIcon)
                 |> thenPermitInteraction (HE.onClick (SelectNavigation TestsIcon))
               ]
               [ text "🧪"
@@ -3874,21 +4006,21 @@ viewNavigatorsArea model =
                 |> Maybe.withDefault (text "")
               ]
           ]
-    , if not model.uiState.open.sideBar then
+    , if not model.uiLayout.open.sideBar then
         text ""
       else
         div
           [ HA.class "sidebar"
           , HA.css
               [ Css.width <| Css.px <|
-                  if model.uiState.open.sideBar then
-                    Tuple.first model.uiState.dimensions.sideBar
+                  if model.uiLayout.open.sideBar then
+                    Tuple.first model.uiLayout.dimensions.sideBar
                   else
                     0
               ]
           ]
-          [ debugDimensions model.uiState.dimensions.sideBar
-          , case model.uiState.selected.sideBar of
+          [ debugDimensions model.uiLayout.dimensions.sideBar
+          , case model.uiLayout.selected.sideBar of
               ComputationsIcon ->
                 viewComputationsSidebar model
               TestsIcon ->
@@ -4451,20 +4583,20 @@ viewToolsArea model =
         [ button
             [ HA.classList
                 [ ("tool-icon", True)
-                , ("active", model.uiState.selected.bottomPanel == TestingToolIcon)
+                , ("active", model.uiLayout.selected.bottomPanel == TestingToolIcon)
                 ]
             , HA.title "Testing"
-            , (model.uiState.selected.bottomPanel /= TestingToolIcon)
+            , (model.uiLayout.selected.bottomPanel /= TestingToolIcon)
               |> thenPermitInteraction (HE.onClick (SelectTool TestingToolIcon))
             ]
             [ text "🔬"]
         , button
             [ HA.classList
                 [ ("tool-icon", True)
-                , ("active", model.uiState.selected.bottomPanel == MetadataToolIcon)
+                , ("active", model.uiLayout.selected.bottomPanel == MetadataToolIcon)
                 ]
             , HA.title "Tests"
-            , (model.uiState.selected.bottomPanel /= MetadataToolIcon)
+            , (model.uiLayout.selected.bottomPanel /= MetadataToolIcon)
               |> thenPermitInteraction (HE.onClick (SelectTool MetadataToolIcon))
             ]
             [ text "📝" ]
@@ -4473,14 +4605,14 @@ viewToolsArea model =
         [ HA.class "tools-area"
         , HA.css
             [ Css.height <| Css.px <|
-                if model.uiState.open.bottomPanel then
-                  Tuple.second model.uiState.dimensions.bottomPanel
+                if model.uiLayout.open.bottomPanel then
+                  Tuple.second model.uiLayout.dimensions.bottomPanel
                 else
                   0
             ]
         ]
-        [ debugDimensions model.uiState.dimensions.bottomPanel
-        , case model.uiState.selected.bottomPanel of
+        [ debugDimensions model.uiLayout.dimensions.bottomPanel
+        , case model.uiLayout.selected.bottomPanel of
             MetadataToolIcon ->
               AutoDict.get model.selectedPackage model.packages
               |> Maybe.map (viewMetadataTool)
@@ -4517,11 +4649,11 @@ viewMainInterface model =
   div
     [ HA.class "editor-frame" ]
     [ viewNavigatorsArea model
-    , if model.uiState.open.sideBar then
+    , if model.uiLayout.open.sideBar then
         viewSplitter
           5 LeftRight
           model
-          (model.uiState.open.sideBar)
+          (model.uiLayout.open.sideBar)
       else
         div [] []
     , div
@@ -4529,11 +4661,11 @@ viewMainInterface model =
         [ div
             [ HA.class "editor-main"
             , HA.css
-                [ Css.maxWidth <| px <| Tuple.first model.uiState.dimensions.mainEditor
-                , Css.maxHeight <| px <| Tuple.second model.uiState.dimensions.mainEditor
+                [ Css.maxWidth <| px <| Tuple.first model.uiLayout.dimensions.mainEditor
+                , Css.maxHeight <| px <| Tuple.second model.uiLayout.dimensions.mainEditor
                 ]
             ]
-            [ debugDimensions model.uiState.dimensions.mainEditor
+            [ debugDimensions model.uiLayout.dimensions.mainEditor
             , AutoDict.get model.mainGraphView model.graph_views
               |> Maybe.map (GraphEditor.viewGraph)
               |> Maybe.withDefault
@@ -4542,16 +4674,16 @@ viewMainInterface model =
         , viewSplitter
             4 UpDown
             model
-            model.uiState.open.bottomPanel
+            model.uiLayout.open.bottomPanel
         , viewToolsArea model
         ]
     -- we have these down here so that they WILL sit on top of the panning-region bars for the
     -- main area.
-    , if not model.uiState.open.sideBar then
+    , if not model.uiLayout.open.sideBar then
         viewCollapsedAreaButton LeftRight
       else
         text ""
-    , if not model.uiState.open.bottomPanel then
+    , if not model.uiLayout.open.bottomPanel then
         viewCollapsedAreaButton UpDown
       else
         text ""

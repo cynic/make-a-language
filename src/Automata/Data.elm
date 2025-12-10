@@ -141,7 +141,7 @@ type alias Model =
   , mainGraphView : Uuid
   -- this is the GraphPackage that is selected
   , selectedPackage : Uuid
-  , uiState : UIState
+  , uiLayout : UILayout
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
   , interactionsDict : InteractionsDict
@@ -305,7 +305,7 @@ type alias UIConstants =
 -}
 type alias Dimensions = ( Float, Float )
 
-type alias UIState =
+type alias UILayout =
   { dimensions :
     { -- the part that slides out on the left
       sideBar : Dimensions
