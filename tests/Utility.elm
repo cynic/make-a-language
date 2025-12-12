@@ -1,7 +1,6 @@
 module Utility exposing
   ( ag, dfa, mkDFA_input, mkDFA, ag_equals, dfa_equals, dummyEntity
-  , mkConn, mkAutomatonGraph, dummy_uuid, ag_cmp_and_equals
-  , mkAutomatonGraphWithUuid, uuid_from_int
+  , mkConn, mkAutomatonGraph, dummy_uuid, ag_cmp_and_equals, uuid_from_int
   )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
@@ -133,8 +132,8 @@ mkConn s =
   in
     helper (String.toList s) (AutoSet.empty transitionToString)
 
-mkAutomatonGraphWithValues : Uuid -> (NodeId -> Entity) -> List (NodeId, String, NodeId) -> AutomatonGraph
-mkAutomatonGraphWithValues uuid valueFunction ts =
+mkAutomatonGraphWithValues : (NodeId -> Entity) -> List (NodeId, String, NodeId) -> AutomatonGraph
+mkAutomatonGraphWithValues valueFunction ts =
   let
     edges =
       List.foldl
@@ -165,26 +164,22 @@ mkAutomatonGraphWithValues uuid valueFunction ts =
     case nodes of
       [] ->
         { graph = Graph.fromNodesAndEdges [{ id = 0, label = valueFunction 0}] []
-        , graphIdentifier = uuid
+        , description = Nothing
         , root = 0
         }
       _ ->
         { graph =
             Graph.fromNodesAndEdges nodes edges
-        , graphIdentifier = uuid
+        , description = Nothing
         , root =
             case ts of
               (src, _, _)::_ -> src
               _ -> 0
         }
 
-mkAutomatonGraphWithUuid : Uuid -> List (NodeId, String, NodeId) -> AutomatonGraph
-mkAutomatonGraphWithUuid uuid =
-  mkAutomatonGraphWithValues uuid (dummyEntity)
-
 mkAutomatonGraph : List (NodeId, String, NodeId) -> AutomatonGraph
 mkAutomatonGraph =
-  mkAutomatonGraphWithValues dummy_uuid (dummyEntity)
+  mkAutomatonGraphWithValues (dummyEntity)
 
 -- Parser for converting string representation to DFA transitions
 dfa_transitionsParser : Parser (List (Int, Char, Int))

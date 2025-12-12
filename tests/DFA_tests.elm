@@ -83,7 +83,7 @@ czech l expectedRecognized =
         dfa =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
           fromWords x
-        minimality = D.minimality (toAutomatonGraph Utility.dummy_uuid dfa)
+        minimality = D.minimality (toAutomatonGraph dfa)
         -- recognized = D.verifiedRecognizedWords (toAutomatonGraph Utility.dummy_uuid dfa)
       in
         -- if recognized /= expectedRecognized then
@@ -301,8 +301,8 @@ suite =
               dfa2 = Utility.mkDFA [ (0, 'a', 1), (1, 'b', 2), (2, 'd', 3) ] [3]
             in
               Utility.ag_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "nodes are rechecked as necessary, after other nodes are processed" <|
           \_ ->
             let
@@ -310,8 +310,8 @@ suite =
               dfa2 = Utility.mkDFA [ (6, 'a', 6), (6, 'e', 7), (7, 'b', 6), (7, 'f', 8), (8, 'g', 9) ] [7,9]
             in
               Utility.ag_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "process nodes only when necessary" <|
           \_ ->
             let
@@ -319,8 +319,8 @@ suite =
               dfa2 = Utility.mkDFA [ (6, 'a', 7), (6, 'e', 7), (7, 'b', 8), (7, 'f', 8), (8, 'g', 9) ] [7,9]
             in
               Utility.ag_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "nodes should be processed in order of whether they are 'last', so that right-language is preserved" <|
           \_ ->
             let
@@ -328,8 +328,8 @@ suite =
               dfa2 = Utility.mkDFA [ (6, 'a', 6), (6, 'e', 7), (7, 'b', 9), (7, 'f', 8), (8, 'g', 9) ] [9]
             in
               Utility.ag_cmp_and_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "recursive references should be regarded as equivalent if their `via` matches" <|
           \_ ->
             let
@@ -337,8 +337,8 @@ suite =
               dfa2 = Utility.mkDFA [ (1, 'a', 3), (1, 'd', 2), (2, 'b', 2), (2, 'e', 3) ] [3]
             in
               Utility.ag_cmp_and_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "minimality edge-case 1: multiple-hop resolution" <|
           \_ ->
             let
@@ -346,8 +346,8 @@ suite =
               dfa2 = Utility.mkDFA [ (5, 'a', 7), (5, 'd', 6), (6, 'b', 5), (6, 'e', 7) ] [6,7]
             in
               Utility.ag_cmp_and_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "minimality edge-case 2: multiple-hop resolution" <|
           \_ ->
             let
@@ -355,8 +355,8 @@ suite =
               dfa2 = Utility.mkDFA [ (5, 'a', 7), (5, 'd', 6), (6, 'b', 5), (6, 'e', 7) ] [6]
             in
               Utility.ag_cmp_and_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
         , test "minimality edge-case 3: multiple-hop resolution" <|
           \_ ->
             let
@@ -364,24 +364,24 @@ suite =
               dfa2 = Utility.mkDFA [ (5, 'a', 5), (5, 'd', 6), (6, 'b', 7), (6, 'e', 7) ] [6]
             in
               Utility.ag_cmp_and_equals
-                (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-                (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+                (toAutomatonGraph (union dfa1 dfa2))
+                (toAutomatonGraph (union dfa2 dfa1))
 
         , fuzz (Fuzz.pair (dfaGenerator 2 4) (dfaGenerator 2 4)) "DFA union is commutative (simple tests)" <|
           \(dfa1, dfa2) ->
             Utility.ag_cmp_and_equals
-              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+              (toAutomatonGraph (union dfa1 dfa2))
+              (toAutomatonGraph (union dfa2 dfa1))
         , fuzz (Fuzz.pair (dfaGenerator 3 6) (dfaGenerator 3 6)) "DFA union is commutative (advanced tests)" <|
           \(dfa1, dfa2) ->
             Utility.ag_cmp_and_equals
-              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+              (toAutomatonGraph (union dfa1 dfa2))
+              (toAutomatonGraph (union dfa2 dfa1))
         , fuzz (Fuzz.pair (dfaGenerator 25 10) (dfaGenerator 25 10)) "DFA union is commutative (stress tests)" <|
           \(dfa1, dfa2) ->
             Utility.ag_cmp_and_equals
-              (toAutomatonGraph Utility.dummy_uuid (union dfa1 dfa2))
-              (toAutomatonGraph Utility.dummy_uuid (union dfa2 dfa1))
+              (toAutomatonGraph (union dfa1 dfa2))
+              (toAutomatonGraph (union dfa2 dfa1))
         ]
       , describe "cheaper one-shot tests; uncomment the relevant expensive test for a full workout"
         [

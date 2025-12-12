@@ -71,13 +71,13 @@ ag s_ =
     case nodes of
       [] ->
         { graph = Graph.fromNodesAndEdges [{ id = 0, label = { id = 0, x = 0, y = 0, vx = 0, vy = 0, effect = NoEffect } }] []
-        , graphIdentifier = dummy_uuid
+        , description = Nothing
         , root = 0
         }
       _ ->
         { graph =
             Graph.fromNodesAndEdges nodes edges
-        , graphIdentifier = dummy_uuid
+        , description = Nothing
         , root =
             case ts of
               (src, _, _)::_ -> src
