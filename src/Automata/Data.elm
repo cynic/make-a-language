@@ -14,9 +14,7 @@ import Force
 import Binary
 import SHA
 import Dict exposing (Dict)
-import Html.Events
 import Json.Decode
-import Html
 import Html.Styled.Events
 import Html.Styled
 import TypedSvg.Core
@@ -26,42 +24,17 @@ import Css
 
 -- Note: Graph.NodeId is just an alias for Int. (2025).
 
-{-------------------------------------------------------
-  Main.elm
---------------------------------------------------------}
+type alias Coordinate =
+  { x : Float, y : Float }
 
-type alias Flags =
-  { width : Float
-  , height : Float
-  , initialSeed : Int
-  , extendedSeeds : List Int
-  , startTime : Time.Posix
-  , packages : List GraphPackage
-  }
+type alias Dimension =
+  { w : Float, h : Float }
 
--- type GraphView_Msg
-  -- | SwitchVia AcceptChoice
+type alias CoordinateLike a =
+  { a | x : Float, y : Float }
 
-  -- | RunComputation
-  -- | StepExecution
-  -- | StopExecution
-  -- | SwitchToNextComputation
-  -- | SwitchToPreviousComputation
-  -- | UpdateCurrentPackage GraphPackage
-
-type NavigatorIcon
-  = ComputationsIcon
-  -- | SearchIcon
-  -- | GitIcon
-  | TestsIcon
-  -- | ExtensionsIcon
-
-type ToolIcon
-  = TestingToolIcon
-  | MetadataToolIcon
-
-type CancelWhat
-  = Cancel
+type alias DimensionLike a =
+  { a | w : Float, h : Float }
 
 type alias Rectangle =
   { x : Float
@@ -70,17 +43,32 @@ type alias Rectangle =
   , h : Float
   }
 
+type alias Flags =
+  { viewport : Dimension
+  , initialSeed : Int
+  , extendedSeeds : List Int
+  , startTime : Time.Posix
+  , packages : List GraphPackage
+  }
+
+type NavigatorIcon
+  = ComputationsIcon
+  | TestsIcon
+
+type ToolIcon
+  = TestingToolIcon
+  | MetadataToolIcon
+
 type GraphViewMsg
-  = StartDraggingNode NodeId
+  = StartDraggingNode NodeId Coordinate
   | Pan Int Int
   | StopPan
   | ResetPan
-  | SelectNode NodeId
+  | SelectNode NodeId Coordinate
   | SelectSpace
-  | MoveNode (Float, Float)
+  | MoveNode Coordinate
   | StopDraggingNode
   | StartSplit NodeId
-  -- | Zoom Float
 
 type PackageMsg
   = SelectPackage
@@ -102,8 +90,8 @@ type Msg
   | SelectTool ToolIcon
   | QuickInput String
   | ToggleConnectionTransition AcceptVia
-  | OnResize (Float, Float)
-  | EditConnection (Float, Float) Uuid NodeId NodeId Connection
+  | OnResize Dimension
+  | EditConnection Coordinate Uuid NodeId NodeId Connection
   | Escape -- the universal "No! Go Back!" key & command
   | CrashWithMessage String
   | Undo
@@ -117,14 +105,6 @@ type Msg
   | ResetComputation
   | ToggleDebugStep Int
   
-  -- more general messages
-  -- | Tick
-  -- | Seconded Time.Posix
-  -- | UpdateTestPanelContent String TestExpectation
-  -- | UpdateDescriptionPanelContent String
-  -- | RunExecution
-  -- | ResetExecution
-  -- | StepThroughExecution
 type alias PackageDict =
   AutoDict.Dict String Uuid GraphPackage
 
@@ -152,26 +132,21 @@ type alias Model =
 type InteractionState
     -- split a node into two, so I can work on the parts separately
   = SplittingNode NodeSplitData SplitNodeInterfaceProperties
-  | DraggingNode NodeId
+  | DraggingNode NodeId Coordinate
   | DraggingSplitter SplitterMovement
-  | ChoosingDestinationFor NodeId PossibleDestination
+  | ChoosingDestinationFor NodeId PossibleDestination Coordinate
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
   | Executing (List ExecutionData) ExecutionProperties
   | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =
-  { computation : AutomatonGraph -- the UUID is inside the model's .userGraph.graphIdentifier
-  -- , dimensions : ( Float, Float )
+  { computation : AutomatonGraph
   , packageIdentifier : Uuid
   , created : Time.Posix -- for ordering
   , currentTestKey : Uuid
   , tests : AutoDict.Dict String Uuid Test
   }
-
-{-------------------------------------------------------
-  ForceDirectedGraph.elm
---------------------------------------------------------}
 
 type alias NodeSplitData =
   { to_split : NodeId
@@ -281,7 +256,7 @@ type alias ConnectionAlteration =
 -}
 
 type PossibleDestination
-  = NewNode NodeId (Float, Float)
+  = NewNode NodeId Coordinate
   | ExistingNode NodeId Connection
 
 type AcceptChoice
@@ -303,12 +278,11 @@ type alias UIConstants =
 {-
   The `Side Bar` on the left contains the `Tool View`s.
 -}
-type alias Dimensions = ( Float, Float )
 
 type alias UILayout =
   { dimensions :
     { -- the part that slides out on the left
-      sideBar : Dimensions
+      sideBar : Dimension
       -- the strip that contains the Selector items for
       -- the different "navigators" (file-view, test,
       -- version control, search, etc etc) has a fixed
@@ -317,16 +291,16 @@ type alias UILayout =
       -- the area at the bottom-right hosts "tools" or
       -- "outputs".  (I think that, for generality (🧨),
       -- I should call these "tools").
-    , bottomPanel : Dimensions
+    , bottomPanel : Dimension
       -- this is the area on left of the bottom-panel, which
       -- allows us to select which "tool" we want to see.
       -- Just like the strip for selecting "navigators", this
       -- is a fixed size: 36px.
       -- 
       -- this is the "main" editor area
-    , mainEditor : Dimensions
+    , mainEditor : Dimension
       -- this is the viewport
-    , viewport : Dimensions
+    , viewport : Dimension
     }
   , open :
     -- a panel can be open or closed.
@@ -370,16 +344,14 @@ type Cardinality
   | Unidirectional
   | Recursive
 
-type alias Coordinate a =
-  { a | x : Float, y : Float }
 
 type alias PathBetweenReturn =
   { pathString : String
-  , transition_coordinates : Coordinate {}
+  , transition_coordinates : Coordinate
   , length : Float
-  , control_point : Coordinate {}
-  , source_connection_point : Coordinate {}
-  , target_connection_point : Coordinate {}
+  , control_point : Coordinate
+  , source_connection_point : Coordinate
+  , target_connection_point : Coordinate
   }
 
 type LinkHighlighting
@@ -398,42 +370,35 @@ type alias LinkDrawingData =
         , chosen : AutoDict.Dict String AcceptVia Int
         }
   , connection : Connection
-  , highlighting : Maybe LinkHighlighting
   }
 
-type ExclusiveNodeAttributes
-  = DrawSelected
-  | DrawCurrentExecutionNode
-  | DrawPhantom
-
 type alias NodeDrawingData =
-  { exclusiveAttributes : Maybe ExclusiveNodeAttributes
-  , isTerminal : Bool
+  { isTerminal : Bool
   , isDisconnected : Bool
-  , coordinates : (Float, Float)
+  , coordinates : Coordinate
   , isRoot : Bool
   , canSplit : Bool
   , view_uuid : Uuid
   , isSelected : Bool
   }
 
+type alias GraphReferenceDescriptions =
+  AutoDict.Dict String Uuid String
+
 type alias DrawingData =
   { link_drawing : Dict (NodeId, NodeId) LinkDrawingData
   , node_drawing : Dict NodeId NodeDrawingData
+  , selected_nodes : Set NodeId
+  , phantom_node : Maybe NodeId
+  , graphReferenceDescriptions : GraphReferenceDescriptions
+  , highlighted_links : Set (NodeId, NodeId)
+  , lowlighted_links : Set (NodeId, NodeId)
   }
 
 type InterfaceLocation -- for GraphView
   = Sidebar
   | MainEditor
   | Independent
-
-type alias NodesVsViewport =
-  { inside : Set (Coordinate {})
-  , above : Set (Coordinate {})
-  , below : Set (Coordinate {})
-  , to_left : Set (Coordinate {})
-  , to_right : Set (Coordinate {})
-  }
 
 type ActivePanDirection
   = ToTopLeft
@@ -451,17 +416,8 @@ type alias GraphView =
   , graphPackage : Maybe Uuid
   , fitClosely : Bool
   , interfaceLocation : InterfaceLocation
-  , host_dimensions : (Float, Float) -- (w,h) of svg element
-  , host_coordinates : (Float, Float) -- (x,y) of svg element
-  , guest_dimensions : (Float, Float) -- (w,h) of svg viewport
-  , guest_coordinates : (Float, Float) -- (x,y) of svg viewport
-  -- when I pan, I always want to keep at least some part of the graph in view.
-  -- This box defines the coordinates of a box beyond whose edges I cannot pan.
-    -- `forces` includes:
-    -- - graph forces of attraction and repulsion
-    -- - node forces to pull the root towards the center
-    -- - viewport forces to center the graph
-  -- , zoom : Float -- zoom-factor
+  , host : Dimension -- (w,h) of svg element
+  , guest : Rectangle -- (w,h) of svg viewport
   , pan : (Float, Float) -- panning offset, x and y
   , activePanDirection : Maybe ActivePanDirection
   , disconnectedNodes : Set NodeId
@@ -775,7 +731,7 @@ setY : Float -> { a | y : Float } -> { a | y : Float }
 setY new_y node =
   { node | y = if isNaN new_y then node.y + 0.002 else new_y }
 
-setXY : Float -> Float -> Coordinate a -> Coordinate a
+setXY : Float -> Float -> CoordinateLike a -> CoordinateLike a
 setXY new_x new_y node =
   node |> setX new_x |> setY new_y
 

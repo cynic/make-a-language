@@ -1,52 +1,31 @@
 module GraphEditor exposing (..)
-import Color
-import Force
+import AutoDict
+import Automata.Data exposing (..)
+import Automata.DFA as DFA
+import AutoSet
 import Css
+import Dict
+import Force
 import Graph exposing (Graph, NodeContext, NodeId)
-import Html.Styled.Events as HE
-import Html.Styled exposing
-  (Html, div)
--- import Html.Events.Extra.Mouse as Mouse exposing (Button(..))
+import Html.Styled exposing (div, Html)
 import Html.Styled.Attributes as HA
+import Html.Styled.Events as HE
+import IntDict
 import Json.Decode as D
 import Json.Encode as E
-import TypedSvg exposing
-  (circle, g, svg, title, text_, marker, path, defs, tspan, rect)
-import TypedSvg.Attributes exposing
-  ( class, fill, viewBox, id, refX, refY, orient, d
-  , transform, dy)
-import TypedSvg.Events exposing (onClick)
-import TypedSvg.Attributes.InPx exposing
-  ( cx, cy, r, x, y, height
-  , markerWidth, markerHeight, width, rx , ry)
-import TypedSvg.Core exposing (Svg, text)
-import TypedSvg.Types exposing
-  (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..)
-  , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..)
-  , MeetOrSlice(..), Align(..), Scale(..)
-  , percent
-  )
-import TypedSvg.Attributes.InPx as Px
-import Set exposing (Set)
-import AutoSet
-import IntDict
-import Dict
 import List.Extra as List
-import Automata.DFA as DFA exposing (fromAutomatonGraph, toAutomatonGraph)
-import Automata.Data exposing (..)
-import Dict exposing (Dict)
 import Maybe.Extra as Maybe
-import Uuid
-import Uuid exposing (Uuid)
-import AutoDict
-import Automata.Debugging as Debugging
-import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY)
-import Automata.Debugging exposing (println)
-import VirtualDom
 import Random.Pcg.Extended as Random
-import TypedSvg.Attributes exposing (stroke)
-import Automata.Debugging exposing (debugLog_)
-import Graph exposing (alongOutgoingEdges)
+import Set
+import TypedSvg exposing (circle, defs, g, marker, path, rect, svg, text_, title, tspan)
+import TypedSvg.Attributes exposing (class, d, dy, fill, id, orient, refX, refY, transform, viewBox)
+import TypedSvg.Attributes.InPx exposing (cx, cy, height, markerHeight, markerWidth, rx, ry, width, x, y)
+import TypedSvg.Core exposing (text, Svg)
+import TypedSvg.Events exposing (onClick)
+import TypedSvg.Types exposing (..)
+import Uuid exposing (Uuid)
+import VirtualDom
+
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -407,7 +386,7 @@ removeLink_graphchange src dest g =
     - 2 = 16x10px badge
     - 4 = 30x18px badge
 -}
-viewGraphReference : Uuid.Uuid -> Int -> Float -> Float -> Svg a
+viewGraphReference : Uuid -> Int -> Float -> Float -> Svg a
 viewGraphReference uuid scale x_ y_ =
   let
     pixels = getPalette uuid
@@ -522,8 +501,8 @@ viewLinkLabel drawing_data =
     drawing_data.connection
   |> (\(_, _, elems) -> g [] elems)
 
-viewLink : GraphView -> (NodeId, NodeId) -> LinkDrawingData -> Svg Msg
-viewLink {id, properties} (from, to) drawing_data =
+viewLink : GraphView -> (NodeId, NodeId) -> DrawingData -> LinkDrawingData -> Svg Msg
+viewLink {id, properties} (from, to) {highlighted_links, phantom_node, lowlighted_links} drawing_data =
       let
         x_ = drawing_data.pathBetween.transition_coordinates.x
         y_ = drawing_data.pathBetween.transition_coordinates.y
@@ -547,15 +526,12 @@ viewLink {id, properties} (from, to) drawing_data =
             Nothing ->
               viewLinkLabel drawing_data
         linkClass =
-          case drawing_data.highlighting of
-            Just Phantom ->
-              [ "link", "phantom" ]
-            Just Highlight ->
-              [ "link", "highlight" ]
-            Just Lowlight ->
-              [ "link", "lowlight" ]
-            Nothing ->
-              [ "link" ]
+          conditionalList
+            [ ( "link", True )
+            , ( "phantom", phantom_node == Just to )
+            , ( "highlight", Set.member (from, to) highlighted_links )
+            , ( "lowlight", Set.member (to, from) lowlighted_links )
+            ]
       in
         g
           [ class [ "link-group" ] ]
@@ -574,7 +550,7 @@ viewLink {id, properties} (from, to) drawing_data =
               [ class linkClass
               , properties.canSelectConnections
                 |> thenPermitSvgInteraction
-                    (onClick (EditConnection (x_, y_) id from to drawing_data.connection))
+                    (onClick (EditConnection {x = x_, y = y_} id from to drawing_data.connection))
               ]
               [ transitionLabel
               , if properties.canSelectConnections then
@@ -625,15 +601,15 @@ viewLink {id, properties} (from, to) drawing_data =
           --     []
           ]
 
-viewNode : GraphViewProperties -> NodeId -> NodeDrawingData -> Svg Msg
-viewNode properties id data =
+viewNode : GraphViewProperties -> NodeId -> DrawingData -> NodeDrawingData -> Svg Msg
+viewNode properties id {selected_nodes, phantom_node} data =
   let
     nodeClass =
       conditionalList
         [ ("graph-node", True)
-        , ("selected", data.exclusiveAttributes == Just DrawSelected)
-        , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
-        , ("phantom", data.exclusiveAttributes == Just DrawPhantom)
+        , ("selected", Set.member id selected_nodes)
+        -- , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
+        , ("phantom", phantom_node == Just id)
         , ("disconnected", data.isDisconnected)
         , ("start", data.isRoot)
         , ("terminal", data.isTerminal)
@@ -665,9 +641,7 @@ viewNode properties id data =
       else
         ""
       )
-      ++ "\n#" ++ String.fromInt id ++ "; " ++ String.fromFloat (fewDP node_x) ++ ", " ++ String.fromFloat (fewDP node_y) -- DEBUGGING          
-    ( node_x, node_y ) =
-      data.coordinates
+      ++ "\n#" ++ String.fromInt id ++ "; " ++ String.fromFloat (fewDP data.coordinates.x) ++ ", " ++ String.fromFloat (fewDP data.coordinates.y) -- DEBUGGING          
   in
     g
       [ class nodeClass
@@ -682,7 +656,10 @@ viewNode properties id data =
                     else
                         D.fail "Unwanted event"
                   else if properties.canSelectNodes then
-                    D.succeed (GraphViewMsg data.view_uuid <| SelectNode id)
+                    D.map2
+                      (\x y -> GraphViewMsg data.view_uuid <| SelectNode id { x = x, y = y })
+                      (D.field "clientX" D.float)
+                      (D.field "clientY" D.float)
                   else
                     D.fail "Unwanted event"
                 )
@@ -698,7 +675,10 @@ viewNode properties id data =
               ( D.field "shiftKey" D.bool
                 |> D.andThen (\shiftPressed ->
                   if shiftPressed then
-                    D.succeed (GraphViewMsg data.view_uuid <| StartDraggingNode id)
+                    D.map2
+                      (\x y -> GraphViewMsg data.view_uuid <| StartDraggingNode id {x = x, y = y})
+                      (D.field "clientX" D.float)
+                      (D.field "clientY" D.float)
                   else
                     D.fail "Unwanted event"
                 )
@@ -708,8 +688,8 @@ viewNode properties id data =
           TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
       ]
       [ circle
-          [ cx node_x
-          , cy node_y
+          [ cx data.coordinates.x
+          , cy data.coordinates.y
           , class nodeClass
           ]
           []
@@ -753,16 +733,15 @@ arrowheadDefs =
 
 
 viewUndoRedoVisualisation : GraphView -> Svg a
-viewUndoRedoVisualisation { undoBuffer, redoBuffer, guest_coordinates, guest_dimensions } =
+viewUndoRedoVisualisation { undoBuffer, redoBuffer, guest } =
   let
-    x_ = Tuple.first guest_coordinates
-    h = Tuple.second guest_coordinates + Tuple.second guest_dimensions
+    bottom_y = guest.y + guest.h
     rect_width = 30
     rect_height = 10
     rect_spacing = 3
     num_undo = List.length undoBuffer
     idxToY idx =
-      h - (toFloat (15 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
+      bottom_y - (toFloat (15 + idx * (rect_height + 1) + idx * (rect_spacing - 1)))
   in
     g
       []
@@ -774,7 +753,7 @@ viewUndoRedoVisualisation { undoBuffer, redoBuffer, guest_coordinates, guest_dim
                 , TypedSvg.Attributes.InPx.height rect_height
                 , fill <| Paint (List.getAt idx colorScale.svg.best_to_worst |> Maybe.withDefault colorScale.svg.worst)
                 , ry 2
-                , x (x_ + 5)
+                , x (guest.x + 5)
                 , y <| idxToY idx
                 , class ["undo", if num_undo - 1 == idx then "current" else ""]
                 ]
@@ -789,7 +768,7 @@ viewUndoRedoVisualisation { undoBuffer, redoBuffer, guest_coordinates, guest_dim
                 [ TypedSvg.Attributes.InPx.width rect_width
                 , TypedSvg.Attributes.InPx.height rect_height
                 , ry 2
-                , x (x_ + 5)
+                , x (guest.x + 5)
                 , y <| idxToY (idx + num_undo)
                 , class ["redo"]
                 ]
@@ -853,11 +832,11 @@ viewMainSvgContent graph_view =
     --     []
     , Dict.toList graph_view.drawingData.link_drawing
       -- draw any phantom link last, because it should be displayed on top of everything else.
-      |> List.sortBy (\(_, data) -> if Maybe.isJust data.highlighting then 1 else 0)
-      |> List.map (\((from, to), data) -> viewLink graph_view (from, to) data)
+      |> List.sortBy (\(edge, _) -> if Set.member edge graph_view.drawingData.highlighted_links then 1 else 0)
+      |> List.map (\((from, to), data) -> viewLink graph_view (from, to) graph_view.drawingData data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
-      |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId data)
+      |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId graph_view.drawingData data)
       |> g [ class [ "nodes" ] ]
     ]
 
@@ -935,12 +914,8 @@ viewMainSvgContent graph_view =
 --     break (String.toList text) 0 [] []
 
 viewGraph : GraphView -> Html Msg
-viewGraph graphView =
+viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) =
   let
-    properties = graphView.properties
-    ( host_w, host_h ) = graphView.host_dimensions
-    ( guest_w, guest_h) = graphView.guest_dimensions
-    ( guest_x, guest_y ) = graphView.guest_coordinates
     mkArrow : String -> String -> Html Msg
     mkArrow direction pathString =
       -- this will be laid out in CSS via grid
@@ -959,16 +934,16 @@ viewGraph graphView =
       [ HA.class "graph-container"
       , HA.property "uiType" (E.string "graph-view")
       , HA.css
-          [ Css.width (Css.px host_w)
-          , Css.height (Css.px host_h)
+          [ Css.width (Css.px host.w)
+          , Css.height (Css.px host.h)
           ]
-      , HA.attribute "graph-id" (Uuid.toString graphView.id)
+      , HA.attribute "graph-id" (Uuid.toString id)
       -- , HE.onMouseOver (GraphViewMsg gv RequestCoordinates)
       ]
       [ svg
-          ([ viewBox guest_x guest_y guest_w guest_h
-          , TypedSvg.Attributes.InPx.width host_w
-          , TypedSvg.Attributes.InPx.height host_h
+          ([ viewBox guest.x guest.y guest.w guest.h
+          , TypedSvg.Attributes.InPx.width host.w
+          , TypedSvg.Attributes.InPx.height host.h
           , class
               ( conditionalList
                   [ ("graph", True)
@@ -979,7 +954,7 @@ viewGraph graphView =
                   ]
               )
           , properties.canSelectEmptySpace
-            |> thenPermitSvgInteraction (onClick (GraphViewMsg graphView.id SelectSpace))
+            |> thenPermitSvgInteraction (onClick (GraphViewMsg id SelectSpace))
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
             viewUndoRedoVisualisation graphView
@@ -998,17 +973,17 @@ viewGraph graphView =
                     -- ]
                     -- [ text (" 🔍 " ++ String.fromInt (round <| graphView.zoom * 100) ++ "%") ]
                   text_
-                    [ x <| (guest_x + guest_w) - 5
-                    , y <| (guest_y + guest_h) - 10
+                    [ x <| (guest.x + guest.w) - 5
+                    , y <| (guest.y + guest.h) - 10
                     , class [ "status-line", "pan" ]
                     ]
                     [ tspan
-                        ( if graphView.pan == (0, 0) then
+                        ( if pan == (0, 0) then
                             []
                           else
                             [ class [ "pan-reset" ]
                             , properties.canPan
-                              |> thenPermitSvgInteraction (onClick (GraphViewMsg graphView.id ResetPan))
+                              |> thenPermitSvgInteraction (onClick (GraphViewMsg id ResetPan))
                             ]
                         )
                         [ text "🧭"
@@ -1016,7 +991,7 @@ viewGraph graphView =
                         ]
                     , tspan
                         []
-                        [ text <| " " ++ panToString graphView.pan
+                        [ text <| " " ++ panToString pan
                         ]
                     ]
                 -- , case graphView.interactionsDict of
@@ -1046,7 +1021,7 @@ viewGraph graphView =
           ]
           |> Html.Styled.fromUnstyled
       , if properties.canPan then
-          case graphView.activePanDirection of
+          case activePanDirection of
             Just ToTop ->
               mkArrow "top"           "M10 2 L2 18 L18 18 Z"
             Just ToBottom ->

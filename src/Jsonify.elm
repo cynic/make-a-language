@@ -87,12 +87,12 @@ decodeFlags =
   )
   |> D.andThen
     (\resolutionDict ->
-      D.map2 (\w h -> (w, h))
+      D.map2 Dimension
         (D.field "width" D.float)
         (D.field "height" D.float)
       |> D.andThen
-        (\(w, h) ->
-          D.map4 (Flags w h)
+        (\dim ->
+          D.map4 (Flags dim)
             (D.field "initialSeed" D.int)
             (D.field "extendedSeeds" <| D.list D.int)
             (D.field "startTime" <| D.map Time.millisToPosix D.int)

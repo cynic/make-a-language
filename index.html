@@ -70,7 +70,7 @@
         }
         const rect = element.getBoundingClientRect();
         if (isNearEdge(mx, my, rect)) {
-          console.log("Near edge.");
+          // console.log("Near edge.");
           if (!document.hidden && windowHasFocus) {
             const coordinates = detectEdgeRegion(mx, my, rect);
             if (coordinates) {
@@ -79,12 +79,12 @@
           }
           setTimeout(() => panWhile(uuid, element), 40);
         } else if (isInBounds(mx, my, rect)) {
-          console.log("In bounds.");
+          // console.log("In bounds.");
           // no longer on an edge.
           app.ports.stopPan.send(uuid);
           setTimeout(() => considerPan(uuid, element), 40);
         } else {
-          console.log("Out of bounds.");
+          // console.log("Out of bounds.");
           // out of the element area entirely; no recursion.
           app.ports.stopPan.send(uuid);
         }

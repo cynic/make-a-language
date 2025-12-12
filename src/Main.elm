@@ -47,12 +47,6 @@ Quality / technology requirements:
    explain why that is the case.
 -}
 
-canExecute : Model -> Uuid -> Bool
-canExecute { graph_views } uuid =
-  AutoDict.get uuid graph_views
-  |> Maybe.map (.undoBuffer >> List.isEmpty)
-  |> Maybe.withDefault False
-
 getUuid : Model -> (Uuid, Model)
 getUuid model =
   let
@@ -73,6 +67,12 @@ getUuid2 model =
     (b, m_) = getUuid m
   in
     ( a, b, m_ )
+
+descriptionsForPackages : PackageDict -> GraphReferenceDescriptions
+descriptionsForPackages packages =
+  AutoDict.toList packages
+  |> List.filterMap (\(k, v) -> Maybe.combineSecond (k, v.computation.description))
+  |> AutoDict.fromList Uuid.toString
 
 nodeDrawingForPackage : AutomatonGraph -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
 nodeDrawingForPackage ag graphView_uuid interactions =
@@ -99,27 +99,11 @@ nodeDrawingForPackage ag graphView_uuid interactions =
             Graph.get node.id ag.graph
         in
           ( node.id
-          , { exclusiveAttributes =
-                case peekInteraction (Just graphView_uuid) interactions of
-                  Just (DraggingNode node_id) ->
-                    maybe_fromBool
-                      (node.id == node_id)
-                      DrawSelected
-                  Just (Executing (result::_) _) ->
-                    maybe_fromBool
-                      ( result.currentNode == node.id )
-                      DrawCurrentExecutionNode
-                  Just (ChoosingDestinationFor _ (NewNode phantom _)) ->
-                    maybe_fromBool
-                      (node.id == phantom)
-                      DrawPhantom
-                  _ ->
-                    Nothing
-            , isDisconnected = Set.member node.id disconnectedNodes
+          , { isDisconnected = Set.member node.id disconnectedNodes
             , isTerminal =
                 Maybe.map isTerminalNode nodeContext
                 |> Maybe.withDefault False
-            , coordinates = ( node.label.x, node.label.y )
+            , coordinates = Coordinate node.label.x node.label.y
             , isRoot = node.id == ag.root
             , canSplit =
                 Maybe.map isSplittable nodeContext
@@ -168,7 +152,7 @@ descriptionsForConnection connection packages =
     )
   |> AutoDict.fromList Uuid.toString
 
-path_between : { a | x : Float, y : Float } -> { b | x : Float, y : Float } -> Cardinality -> PathBetweenReturn
+path_between : CoordinateLike a -> CoordinateLike b -> Cardinality -> PathBetweenReturn
 path_between sourceXY_orig destXY_orig cardinality =
   {- we're doing a curved line, using a quadratic path.
       So, let's make a triangle. The two points at the "base" are the
@@ -319,7 +303,6 @@ linkDrawingForEdge sourceNode destNode connection packages =
             sourceNode.node.label
             destNode.node.label
             cardinality
-      , highlighting = Nothing
       }
     )
 
@@ -354,40 +337,27 @@ linkDrawingForPackage ag packages =
 
 fitGraphViewToGraph : GraphView -> GraphView
 fitGraphViewToGraph graphView =
-  let
-    guest_viewport =
+  { graphView
+  | guest =
       calculateGuestDimensionsForHost
-        graphView.host_dimensions
+        graphView.host
         graphView.fitClosely -- we are fitting closely around.
         graphView.computation.graph
-  in
-    { graphView
-    | guest_dimensions = guest_viewport.dimensions
-    , guest_coordinates = guest_viewport.coordinates
-    }
+  }
 
-mkGraphView : Uuid -> AutomatonGraph -> (Float, Float) -> Bool -> InterfaceLocation -> PackageDict -> InteractionsDict -> GraphView
-mkGraphView id ag (w, h) removePadding location packages interactions =
-  let
-    -- now that we have the positions, calculate the dimensions of
-    -- the viewport.
-    -- first, let's get the aspect ratio.  That will let us figure out
-    -- the height of the viewport "automatically" once we have the right width.
-    guest_viewport =
-      calculateGuestDimensionsForHost
-        (w, h)
-        removePadding
-        ag.graph
-  in
+mkGraphView : Uuid -> AutomatonGraph -> Dimension -> Bool -> InterfaceLocation -> PackageDict -> InteractionsDict -> GraphView
+mkGraphView id ag dim removePadding location packages interactions =
     { id = id
     , computation = ag
     , graphPackage = Nothing
     , interfaceLocation = location
     , fitClosely = removePadding
-    , host_dimensions = (w, h)
-    , host_coordinates = (-1, -1)
-    , guest_dimensions = guest_viewport.dimensions
-    , guest_coordinates = guest_viewport.coordinates
+    , host = dim
+    , guest =
+        calculateGuestDimensionsForHost
+          dim
+          removePadding
+          ag.graph
     , pan = ( 0, 0 )
     , activePanDirection = Nothing
     , disconnectedNodes = Set.empty
@@ -395,6 +365,11 @@ mkGraphView id ag (w, h) removePadding location packages interactions =
     , drawingData =
         { link_drawing = linkDrawingForPackage ag packages
         , node_drawing = nodeDrawingForPackage ag id interactions
+        , selected_nodes = Set.empty
+        , phantom_node = Nothing
+        , graphReferenceDescriptions = descriptionsForPackages packages
+        , highlighted_links = Set.empty
+        , lowlighted_links = Set.empty
         }
     , undoBuffer = []
     , redoBuffer = []
@@ -418,12 +393,12 @@ upsertGraphView uuid graph_view model =
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
     `naiveViewFromPackage` instead.
 -}
-viewFromComputation : GraphEditor.ComputeGraphResult -> (Float, Float) -> InterfaceLocation -> Bool -> Model -> (GraphView, Model)
-viewFromComputation computed (w, h) location removePadding model =
+viewFromComputation : GraphEditor.ComputeGraphResult -> Dimension -> InterfaceLocation -> Bool -> Model -> (GraphView, Model)
+viewFromComputation computed dim location removePadding model =
   let
     (id, model_) = getUuid model
     graph_view =
-      mkGraphView id computed.solvedGraph (w, h) removePadding location model_.packages model_.interactionsDict
+      mkGraphView id computed.solvedGraph dim removePadding location model_.packages model_.interactionsDict
   in
     ( graph_view
     , upsertGraphView id graph_view model_
@@ -432,23 +407,23 @@ viewFromComputation computed (w, h) location removePadding model =
 {-| Creates a new GraphView from a provided GraphPackage, accepting the provided layout
     uncritically, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-naiveViewFromComputation : (Float, Float) -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
-naiveViewFromComputation (w, h) location createFrozen ag model =
+naiveViewFromComputation : Dimension -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
+naiveViewFromComputation dim location createFrozen ag model =
   viewFromComputation
     { solvedGraph = ag
     , simulation = Force.simulation []
     , forces = []
     }
-    (w, h) location createFrozen model
+    dim location createFrozen model
 
 {-| Creates a new GraphView from a provided GraphPackage, solves the forces for the relevant
     AutomatonGraph, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-solvedViewFromComputation : (AutomatonGraph -> List (Force.Force NodeId)) -> (Float, Float) -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
-solvedViewFromComputation computer (w, h) location createFrozen ag model =
+solvedViewFromComputation : (AutomatonGraph -> List (Force.Force NodeId)) -> Dimension -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
+solvedViewFromComputation computer dim location createFrozen ag model =
   viewFromComputation
     (GraphEditor.computeGraphFully computer ag)
-    (w, h) location createFrozen model
+    dim location createFrozen model
 
 linkToPackage : Uuid -> (GraphView, Model) -> (GraphView, Model)
 linkToPackage package_uuid (graph_view, model) =
@@ -472,48 +447,54 @@ centerAndHighlight links graph_view =
     adjusted =
       expand_bounds inner_padding bounds
     aspect_ratio =
-      Tuple.first graph_view.host_dimensions / Tuple.second graph_view.host_dimensions
+      graph_view.host.w / graph_view.host.h
     last_node =
       List.last links
       |> Maybe.map Tuple.second
       |> Maybe.withDefault (graph_view.computation.root)
     linkSet = Set.fromList links
-    determine_dimensions (x, y) (w, h) =
-      if w / Tuple.first graph_view.host_dimensions < 0.25 then
+    determine_dimensions : Rectangle -> Rectangle
+    determine_dimensions orig_rect =
+      if orig_rect.w / graph_view.host.w < 0.25 then
         -- expand to at least this amount.
         let
-          new_w = 0.25 * Tuple.first graph_view.host_dimensions
+          new_w = 0.25 * graph_view.host.w
           -- so, how much do I need to expand on either side?
-          diff = (new_w - w) / 2
+          diff = (new_w - orig_rect.w) / 2
         in
-          ((x - diff, y), (new_w, new_w / aspect_ratio))
+          { x = orig_rect.x - diff
+          , y = orig_rect.y
+          , w = new_w
+          , h = new_w / aspect_ratio
+          }
       else
-        ((x, y), (w, h))
-    ( guest_coords, guest_dims ) =
-      determine_dimensions
-        (adjusted.min.x, adjusted.min.y)
-        (adjusted.max.x - adjusted.min.x, (adjusted.max.x - adjusted.min.x) / aspect_ratio)
+        orig_rect
+    (highlight, lowlight) =
+      Dict.foldl (\(src, dest) _ (h, l) ->
+        if Set.member (src, dest) linkSet then
+          -- this is a link to highlight.
+          ( Set.insert (src, dest) h, l )
+        else if src == last_node then
+          ( h, l ) -- neither highlight nor lowlight
+        else
+          ( h, Set.insert (src, dest) l )
+      )
+      (Set.empty, Set.empty)
+      graph_view.drawingData.link_drawing
+
   in
     { graph_view
       | drawingData =
           let drawingData = graph_view.drawingData in
             { drawingData
-              | link_drawing =
-                  Dict.map (\(src, dest) link ->
-                    if Set.member (src, dest) linkSet then
-                      -- this is a link to highlight.
-                      { link | highlighting = Just Highlight }
-                    else if src == last_node then
-                      { link | highlighting = Nothing }
-                    else
-                      { link | highlighting = Just Lowlight }
-                  )
-                  drawingData.link_drawing
+              | highlighted_links = highlight
+              , lowlighted_links = lowlight
             }
-      , guest_coordinates = guest_coords
-          -- ( adjusted.min.x, adjusted.min.y )
-      , guest_dimensions = guest_dims
-          -- ( adjusted.max.x - adjusted.min.x, (adjusted.max.x - adjusted.min.x) / aspect_ratio )
+      , guest =
+          determine_dimensions <|
+            Rectangle adjusted.min.x adjusted.min.y
+              (adjusted.max.x - adjusted.min.x)
+              ((adjusted.max.x - adjusted.min.x) / aspect_ratio)
     }
 
 -- MAIN
@@ -542,7 +523,7 @@ init flags =
     decoded =
       D.decodeValue decodeFlags flags
       |> Result.mapError (\err -> Debug.log "OH NO! FLAGS WAS NOT PARSED CORRECTLY!!" err)
-      |> Result.withDefault (Flags 800 600 0 [] (Time.millisToPosix 0) [])
+      |> Result.withDefault (Flags {w = 800, h = 600} 0 [] (Time.millisToPosix 0) [])
     
     (packages, mainPackage, initialSeed) =
       let
@@ -591,28 +572,28 @@ init flags =
     constants =
       { sideBarWidth =
           { min = 100
-          , max = decoded.width / 2 - 60
-          , initial = clamp 100 (decoded.width / 2 - 60) 300
+          , max = decoded.viewport.w / 2 - 60
+          , initial = clamp 100 (decoded.viewport.w / 2 - 60) 300
           }
       , toolsPanelHeight =
           { min = 80
-          , max = decoded.height / 2 - 40
-          , initial = clamp 80 (decoded.height / 2 - 40) 200
+          , max = decoded.viewport.h / 2 - 40
+          , initial = clamp 80 (decoded.viewport.h / 2 - 40) 200
           }
       }
     state : UILayout
     state =
       { dimensions =
-          { sideBar = ( constants.sideBarWidth.initial, decoded.height )
+          { sideBar = Dimension constants.sideBarWidth.initial decoded.viewport.h
           , bottomPanel =
-              ( decoded.width - constants.sideBarWidth.initial - 8 - 48
-              , constants.toolsPanelHeight.initial
-              )
+              Dimension
+                ( decoded.viewport.w - constants.sideBarWidth.initial - 8 - 48 )
+                ( constants.toolsPanelHeight.initial )
           , mainEditor =
-              ( decoded.width - constants.sideBarWidth.initial - 8 - 48
-              , decoded.height - constants.toolsPanelHeight.initial - 8
-              )
-          , viewport = ( decoded.width, decoded.height )
+              Dimension
+                ( decoded.viewport.w - constants.sideBarWidth.initial - 8 - 48 )
+                ( decoded.viewport.h - constants.toolsPanelHeight.initial - 8 )
+          , viewport = decoded.viewport
           }
       , open =
           { bottomPanel = True
@@ -668,8 +649,10 @@ updateGraphInView updater graph_view model =
     ( { graph_view
         | computation = ag
         , drawingData =
-            { link_drawing = linkDrawingForPackage ag model.packages
-            , node_drawing = nodeDrawingForPackage ag graph_view.id model.interactionsDict
+            let dd = graph_view.drawingData in
+            { dd
+              | link_drawing = linkDrawingForPackage ag model.packages
+              , node_drawing = nodeDrawingForPackage ag graph_view.id model.interactionsDict
             }
         , disconnectedNodes = DFA.identifyDisconnectedNodes ag
       }
@@ -696,114 +679,28 @@ updateGraphView uuid f dict =
   |> Maybe.map (\updatedView -> AutoDict.insert uuid updatedView dict)
   |> Maybe.withDefault dict
 
-{-
-updateGraphView : Uuid -> GraphView_Msg -> Model -> Model
-updateGraphView uuid msg model =
-  case msg of
-    Zoom amount ->
-      let
-        zoomAmount = if amount < 0 then 0.05 else -0.05
-        newZoom = clamp 0.5 2.5 (model.zoom + zoomAmount)
-      in
-        if newZoom == model.zoom then
-          model
-        else
-          { model | zoom = newZoom }
-
-    ResetView ->
-      { model | zoom = 1.0, pan = ( 0, 0 ) }
-    
-    Reheat ->
-      -- If I'm not doing anything else, permit auto-layout
-      case model.interactionsDict of
-        Nothing ->
-          { model
-          | simulation = Force.simulation (model.basicForces ++ model.viewportForces)
-          , specificForces = IntDict.empty -- cancel moves that were made before
-          }
-        _ ->
-          model
-        
-    RunComputation ->
-      let
-        pkg = model.package
-      in
-        case model.interactionsDict of
-          Just (Executing original executionResult) ->
-            { model
-              | interactionsDict = Just <| Executing original (DFA.run executionResult)
-              , currentPackage =
-                  { pkg
-                    | computation =
-                        executionResultAutomatonGraph executionResult
-                        |> Maybe.withDefault pkg.computation
-                  }
-            }
-          _ ->
-            model -- 'run' isn't valid in any other context.
-
-    StepExecution ->
-      let
-        pkg = model.package
-      in
-        case model.interactionsDict of
-          Just (Executing original executionResult) ->
-            { model
-              | interactionsDict = Just <| Executing original (DFA.step executionResult)
-              , currentPackage =
-                  { pkg
-                    | computation =
-                        executionResultAutomatonGraph executionResult
-                        |> Maybe.withDefault pkg.computation
-                        |> debugAutomatonGraph "After step"
-                  }
-            }
-          _ ->
-            model -- 'step' isn't valid in any other context.
-
-    StopExecution ->
-      let
-        pkg = model.package
-      in
-        case model.interactionsDict of
-          Just (Executing original _) ->
-            { model
-              | interactionsDict = Nothing
-              , currentPackage =
-                  { pkg
-                    | computation = original
-                  }
-            }
-          _ ->
-            model -- 'stop' isn't valid in any other context.
--}
-
 {-| When either the sidebar or the bottom-panel have changed dimensions, this should be
     called to figure out what changes need to be made to any of the other dimensions.
 -}
 recalculate_uistate : UILayout -> UILayout
 recalculate_uistate ({dimensions} as ui) =
   let
-    sidebar_width =
-        Tuple.first dimensions.sideBar
-    panel_height =
-        Tuple.second dimensions.bottomPanel
     visible_sidebar_width_plus_splitter =
-      if ui.open.sideBar then sidebar_width + 8 + 48 else 0
+      if ui.open.sideBar then dimensions.sideBar.w + 8 + 48 else 0
     visible_panel_height_plus_splitter =
-      if ui.open.bottomPanel then panel_height + 8 else 0
+      if ui.open.bottomPanel then dimensions.bottomPanel.h + 8 else 0
   in
   { ui
     | dimensions =
         { dimensions
           | bottomPanel =
-              ( Tuple.first dimensions.viewport - visible_sidebar_width_plus_splitter
-              , panel_height
-              )
+              { w = dimensions.viewport.w - visible_sidebar_width_plus_splitter
+              , h = dimensions.bottomPanel.h
+              }
           , mainEditor =
-              ( Tuple.first dimensions.viewport - visible_sidebar_width_plus_splitter
-              , Tuple.second dimensions.viewport - visible_panel_height_plus_splitter
-              )
+              { w = dimensions.viewport.w - visible_sidebar_width_plus_splitter
+              , h = dimensions.viewport.h - visible_panel_height_plus_splitter
+              }
         }
   }
 
@@ -815,8 +712,8 @@ type alias GuestDimensions =
   }
 
 type alias Bounds =
-  { min : Coordinate {}
-  , max : Coordinate {}
+  { min : Coordinate
+  , max : Coordinate
   }
 
 bounds_for : List NodeId -> Graph.Graph Entity Connection -> Bounds
@@ -861,8 +758,8 @@ expand_bounds n bounds =
 {-| Accepts host dimensions, view properties, and a graph, and calculates the
     appropriate guest coordinates & guest dimensions (i.e. viewport).
 -}
-calculateGuestDimensionsForHost : (Float, Float) -> Bool -> Graph.Graph Entity Connection -> GuestDimensions
-calculateGuestDimensionsForHost (w, h) removePadding graph =
+calculateGuestDimensionsForHost : DimensionLike a -> Bool -> Graph.Graph Entity Connection -> Rectangle
+calculateGuestDimensionsForHost {w, h} removePadding graph =
   let
     aspectRatio : Float
     aspectRatio =
@@ -901,43 +798,18 @@ calculateGuestDimensionsForHost (w, h) removePadding graph =
         (raw.max.y - raw.min.y) -- bounds calc
       -- |> Debug.log "Auto-height (via aspect-ratio)"
     -- now, we want a center within that autoHeight.
-    guestCoordinates =
-      ( adjusted.min.x, center_y - autoHeight / 2 )
-      -- |> Debug.log "Top-left (X,Y) of SVG viewport"
-    guestDimensions =
-      ( adjusted.max.x - adjusted.min.x, autoHeight )
-      -- |> Debug.log "(Width, Height) of SVG viewport" 
-    pad_inner_x =
-      0.15 * (raw.max.x - raw.min.x)
-      -- |> Debug.log "Inner-rectangle X padding (for panning)"
-    pad_inner_y =
-      0.15 * (raw.max.y - raw.min.y)
-      -- |> Debug.log "Inner-rectangle Y padding (for panning)"
-    x_inner =
-      raw.min.x + pad_inner_x
-      -- |> Debug.log "Inner-rectangle X (for panning)"
-    y_inner =
-      raw.min.y + pad_inner_y
-      -- |> Debug.log "Inner-rectangle Y (for panning)"
-    width_inner =
-      (raw.max.x - pad_inner_x * 2) - raw.min.x
-      -- |> Debug.log "Inner-rectangle width (for panning)"
-    height_inner =
-      (raw.max.y - pad_inner_y * 2) - raw.min.y
-      -- |> Debug.log "Inner-rectangle height (for panning)"
   in
-    { dimensions = guestDimensions
-    , coordinates = guestCoordinates
-    , inner_coordinates = ( x_inner, y_inner )
-    , inner_dimensions = ( width_inner, height_inner )
+    { x = adjusted.min.x
+    , y = center_y - autoHeight / 2
+    , w = adjusted.max.x - adjusted.min.x
+    , h = autoHeight
     }
 
-sidebarGraphDimensions : UILayout -> ( Float, Float )
+sidebarGraphDimensions : UILayout -> Dimension
 sidebarGraphDimensions uiLayout =
-  let
-    ( w, _ ) = uiLayout.dimensions.sideBar
-  in
-  ( w - 20 , 9/16 * ( w - 20 ) )
+  Dimension
+    ( uiLayout.dimensions.sideBar.w - 20 )
+    ( 9/16 * ( uiLayout.dimensions.sideBar.w - 20 ))
 
 handleConnectionRemoval : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
 handleConnectionRemoval uuid {source, dest, connection, deleteTargetIfCancelled} viewsToRemove model =
@@ -955,40 +827,27 @@ updateMainEditorDimensions ({uiLayout} as model) =
   let
     updateMain : GraphView -> GraphView
     updateMain graph_view =
-      let
-        guest_viewport =
-          calculateGuestDimensionsForHost
-            uiLayout.dimensions.mainEditor
-            False
-            graph_view.computation.graph
-      in
-        { graph_view
-          | host_dimensions = uiLayout.dimensions.mainEditor
-          , guest_dimensions = guest_viewport.dimensions
-          , guest_coordinates = guest_viewport.coordinates
-          , host_coordinates =
-              if uiLayout.open.sideBar then
-                (Tuple.first uiLayout.dimensions.sideBar + 8 + 48, 0)
-              else
-                (0, 0)
-        }
+      { graph_view
+        | host = uiLayout.dimensions.mainEditor
+        , guest =
+            calculateGuestDimensionsForHost
+              uiLayout.dimensions.mainEditor
+              False
+              graph_view.computation.graph
+      }
     updateSidebar : GraphView -> GraphView
     updateSidebar graph_view =
       let
         sidebarDimensions =
           sidebarGraphDimensions uiLayout
-        guest_viewport =
-          calculateGuestDimensionsForHost
-            sidebarDimensions
-            True
-            graph_view.computation.graph
       in
         { graph_view
-          | host_dimensions = sidebarDimensions
-          , guest_dimensions = guest_viewport.dimensions
-          , guest_coordinates = guest_viewport.coordinates
-          , host_coordinates =
-              (0, 0) -- this is nonsense. But since I'm not panning in these, I think it's fine.
+          | host = sidebarDimensions
+          , guest = 
+              calculateGuestDimensionsForHost
+                sidebarDimensions
+                True
+                graph_view.computation.graph          
         }
   in
     -- On resize, I must update the dimensions for the graph view that
@@ -1021,20 +880,20 @@ dragSplitter coord movement constants ({dimensions} as ui) =
       if movement == LeftRight then
         clamp constants.sideBarWidth.min constants.sideBarWidth.max coord
       else
-        Tuple.first dimensions.sideBar
+        dimensions.sideBar.w
     panel_height =
       if movement == UpDown then
-        clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Tuple.second dimensions.viewport - 8 - coord)
+        clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (dimensions.viewport.h - 8 - coord)
       else
-        Tuple.second dimensions.bottomPanel
+        dimensions.bottomPanel.h
   in
     { ui
       | dimensions =
           { dimensions
             | sideBar =
-                ( sidebar_width, Tuple.second dimensions.sideBar )
+                Dimension sidebar_width dimensions.sideBar.h
             , bottomPanel =
-                ( Tuple.first dimensions.bottomPanel, panel_height )
+                Dimension dimensions.bottomPanel.w panel_height
           }
     }
     |> recalculate_uistate
@@ -1055,8 +914,8 @@ toggleAreaVisibility where_ ({open} as ui) =
   }
   |> recalculate_uistate
 
-resizeViewport : (Float, Float) -> Model -> Model
-resizeViewport (w, h) ({uiLayout, uiConstants} as model) =
+resizeViewport : Dimension -> Model -> Model
+resizeViewport {w, h} ({uiLayout, uiConstants} as model) =
   let
     dim = uiLayout.dimensions
     constants : UIConstants
@@ -1066,13 +925,13 @@ resizeViewport (w, h) ({uiLayout, uiConstants} as model) =
             let sbw = uiConstants.sideBarWidth in
             { sbw
               | max = w / 2 - 60
-              , initial = clamp sbw.min (w / 2 - 60) (Tuple.first dim.sideBar)
+              , initial = clamp sbw.min (w / 2 - 60) (dim.sideBar.w)
             }
       , toolsPanelHeight =
           let tph = uiConstants.toolsPanelHeight in
           { tph
             | max = h / 2 - 40
-            , initial = clamp tph.min (h / 2 - 40) (Tuple.second dim.bottomPanel)
+            , initial = clamp tph.min (h / 2 - 40) (dim.bottomPanel.h)
           }
       }
     
@@ -1081,15 +940,15 @@ resizeViewport (w, h) ({uiLayout, uiConstants} as model) =
       { uiLayout
         | dimensions =
             { dim
-              | viewport = ( w, h )
+              | viewport = Dimension w h
               , sideBar =
-                  ( clamp constants.sideBarWidth.min constants.sideBarWidth.max (Tuple.first dim.sideBar)
-                  , Tuple.second dim.sideBar
-                  )
+                  { w = clamp constants.sideBarWidth.min constants.sideBarWidth.max (dim.sideBar.w)
+                  , h = dim.sideBar.h
+                  }
               , bottomPanel =
-                  ( Tuple.first dim.bottomPanel
-                  , clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (Tuple.second dim.bottomPanel)
-                  )
+                  { w = dim.bottomPanel.w
+                  , h = clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (dim.bottomPanel.h)
+                  }
             }
       }
       |> recalculate_uistate
@@ -1187,25 +1046,23 @@ type PanMovement
   | Same
 
 panGraphView : Int -> Int -> GraphView -> GraphView
-panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, computation, properties} as graph_view) =
+panGraphView xMovement yMovement ({guest, pan, computation, properties} as graph_view) =
   let
-    ( guest_x, guest_y ) = guest_coordinates
-    ( guest_w, guest_h ) = guest_dimensions
     ( pan_x, pan_y ) = pan
     -- this is a rectangle that is inset from the maximum bounds.
     movement_amount_x =
       -- if the space to traverse is large, then move by a larger amount.
-      max 1 (ceiling (guest_w / 250)) |> toFloat
+      max 1 (ceiling (guest.w / 250)) |> toFloat
     movement_amount_y =
       -- if the space to traverse is large, then move by a larger amount.
-      max 1 (ceiling (guest_h / 250)) |> toFloat
+      max 1 (ceiling (guest.h / 250)) |> toFloat
     ( new_pan_x, new_pan_y ) =
       ( pan_x + toFloat xMovement * movement_amount_x
       , pan_y + toFloat yMovement * movement_amount_y
       )
     ((sx, sy), (ex, ey)) = -- this is after the proposed pan.
-      ( ((guest_x + new_pan_x), (guest_y + new_pan_y))
-      , ((guest_x + new_pan_x + guest_w), (guest_y + new_pan_y + guest_h))
+      ( ((guest.x + new_pan_x), (guest.y + new_pan_y))
+      , ((guest.x + new_pan_x + guest.w), (guest.y + new_pan_y + guest.h))
       )
     graph_nodes =
       Graph.nodes computation.graph
@@ -1241,7 +1098,7 @@ panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, com
         -- We must check whether we are HEADING TO another node, and if so, THEN we can
         -- permit the pan.
         ( let
-            orig_center = Math.Vector2.vec2 (guest_x + pan_x + guest_w / 2) (guest_y + pan_y + guest_h / 2)
+            orig_center = Math.Vector2.vec2 (guest.x + pan_x + guest.w / 2) (guest.y + pan_y + guest.h / 2)
             new_center = Math.Vector2.vec2 ((sx + ex) / 2) ((sy + ey) / 2)
           in
             -- am I heading towards any graph node?
@@ -1284,13 +1141,13 @@ panGraphView xMovement yMovement ({guest_coordinates, guest_dimensions, pan, com
     else
       { graph_view | activePanDirection = Nothing }
 
-packagesToGraphViews : (Float, Float) -> Model -> (List GraphView, Model)
-packagesToGraphViews (w, h) model =
+packagesToGraphViews : Dimension -> Model -> (List GraphView, Model)
+packagesToGraphViews dim model =
   List.foldl
     (\g (acc, model_) ->
       let
         ( v, model__) =
-          solvedViewFromComputation GraphEditor.coordinateForces (w, h) Sidebar True g.computation model_
+          solvedViewFromComputation GraphEditor.coordinateForces dim Sidebar True g.computation model_
       in
         (v :: acc, model__)
     )
@@ -1335,14 +1192,73 @@ removeViews uuids model =
         List.foldl AutoDict.remove model.graph_views uuids
   }
 
+nodeHostCoordToHostCoord : Coordinate -> Coordinate -> GraphView -> Coordinate
+nodeHostCoordToHostCoord node_coord svg_coord {host, guest, pan} =
+  let
+    -- find out distance from the left edge of the SVG, as SVG coordinates
+    ( pan_x, pan_y ) = pan
+    from_left =
+      (pan_x + svg_coord.x) - guest.x
+      -- |> Debug.log "Distance from left-edge to node (in SVG coordinates)"
+    -- find out how many SVG coordinates are in a host coordinate
+    x_host_per_svg =
+      host.w / guest.w
+      -- |> Debug.log "SVG px per host px"
+    host_on_left =
+      from_left * x_host_per_svg
+      -- |> Debug.log "Distance from left-edge to node (in Host coordinates)"
+    host_left =
+      node_coord.x - host_on_left
+      -- |> Debug.log "Host left edge is at"
+    from_top =
+      (pan_y + svg_coord.y) - guest.y
+    y_host_per_svg =
+      host.h / guest.h
+    host_on_top =
+      from_top * y_host_per_svg
+    host_top =
+      node_coord.y - host_on_top
+  in
+    { x = host_left, y = host_top }
+    |> Debug.log "Left/Top of container"
+
 update_graphview : Uuid -> GraphViewMsg -> Model -> ( Model, Cmd Msg )
 update_graphview uuid ui_msg model =
-  case ui_msg of
-    StartDraggingNode nodeId ->
-      ( pushInteractionForStack (Just uuid) (DraggingNode nodeId) model
-        |> setProperties
-      , Cmd.none
+  let
+    calculate_host_coord : Coordinate -> NodeId -> Maybe Coordinate
+    calculate_host_coord node_host_coord nodeId =
+      AutoDict.get uuid model.graph_views
+      |> Maybe.andThen (\gv ->
+        Maybe.combineSecond
+          ( gv
+          , Graph.get nodeId gv.computation.graph
+            |> Maybe.map
+              (\ctx ->
+                { x = ctx.node.label.x, y = ctx.node.label.y }
+                |> Debug.log "SVG coordinates of node"
+              )
+          )
       )
+      |> Maybe.map
+        (\(gv, svg_coord) ->
+          nodeHostCoordToHostCoord
+            ( node_host_coord
+              |> Debug.log "Host coordinates of node"
+            )
+            svg_coord
+            gv
+        )
+  in
+  case ui_msg of
+    StartDraggingNode nodeId node_host_coord ->
+      calculate_host_coord node_host_coord nodeId
+      |> Maybe.map (\host_coord ->
+        ( pushInteractionForStack (Just uuid) (DraggingNode nodeId host_coord) model
+          |> setProperties
+        , Cmd.none
+        )
+      )
+      |> Maybe.withDefault (model, Cmd.none)
 
     Pan pan_x pan_y ->
       ( { model
@@ -1378,33 +1294,37 @@ update_graphview uuid ui_msg model =
       , Cmd.none
       )
 
-    SelectNode node_id ->
+    SelectNode node_id node_coord ->
       ( case popInteraction (Just uuid) model of
-          Just (ChoosingDestinationFor src etc, model_) ->
+          Just (ChoosingDestinationFor src etc _, model_) ->
             selectDestination uuid src etc model_
           _ -> -- includes 'Nothing'
             -- this is the initial selection.
-            selectSourceNode model uuid node_id
-            |> setProperties
+            calculate_host_coord node_coord node_id
+            |> Maybe.map (\host_coord ->
+              selectSourceNode model uuid host_coord node_id
+              |> setProperties
+            )
+            |> Maybe.withDefault model
       , Cmd.none
       )
 
     SelectSpace ->
       ( case popInteraction (Just uuid) model of
-          Just (ChoosingDestinationFor src etc, model_) ->
+          Just (ChoosingDestinationFor src etc _, model_) ->
             selectDestination uuid src etc model_
           _ ->
             model
       , Cmd.none
       )
     
-    MoveNode (x, y) ->
+    MoveNode coord ->
       ( case peekInteraction (Just uuid) model.interactionsDict of
-          Just (DraggingNode node_id) ->
-            dragNode uuid (x, y) node_id model
+          Just (DraggingNode node_id _) ->
+            dragNode uuid coord node_id model
             |> setProperties
-          Just (ChoosingDestinationFor _ _) ->
-            movePhantomNode uuid (x, y) model
+          Just (ChoosingDestinationFor _ _ _) ->
+            movePhantomNode uuid coord model
             |> setProperties
           _ ->
             model
@@ -1639,9 +1559,9 @@ filterConnectionEditorGraphs s referenceList model =
     )
   |> List.map .id
 
-editConnection : Maybe Uuid -> (Float, Float) -> ConnectionAlteration -> Model -> Model
-editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model =
-  packagesToGraphViews (430, 3/6 * 430) model
+editConnection : Maybe Uuid -> Coordinate -> ConnectionAlteration -> Model -> Model
+editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model =
+  packagesToGraphViews { w = 430, h = 3/6 * 430} model
   |>  (\(graph_views, model_) ->
         AutoDict.get model.mainGraphView model.graph_views
         |> Maybe.map (\gv ->
@@ -1654,7 +1574,7 @@ editConnection view_uuid (x, y) ({source, dest, connection} as alteration) model
                   GraphEditor.updateLink_graphchange source dest connection gv.computation
             ( main_view, updated_model ) =
               naiveViewFromComputation
-                ( 250 , 250 ) Independent True
+                { w = 250 , h = 250 } Independent True
                 ag model_
             solidified_model =
               solidifyPhantoms main_view.id source dest updated_model
@@ -1693,8 +1613,8 @@ unusedNodeId {graph} =
   |> Maybe.map (Tuple.second >> (+) 1)
   |> Maybe.withDefault 0
 
-selectSourceNode : Model -> Uuid -> NodeId -> Model
-selectSourceNode model view_uuid node_id =
+selectSourceNode : Model -> Uuid -> Coordinate -> NodeId -> Model
+selectSourceNode model view_uuid host_coord node_id =
   -- initially, you must click on a node to select it.
   -- therefore, we are initially always looking at a recursive
   -- connection to the same node!
@@ -1714,7 +1634,6 @@ selectSourceNode model view_uuid node_id =
                 Recursive
           , executionData = Nothing
           , connection = AutoSet.empty transitionToString
-          , highlighting = Just Phantom
           }
         interaction =
           ChoosingDestinationFor node_id
@@ -1723,18 +1642,15 @@ selectSourceNode model view_uuid node_id =
                   |> Maybe.withDefault (AutoSet.empty transitionToString)
                 )
             )
+            host_coord
       in
         pushInteractionForStack (Just view_uuid) interaction model
           -- and now modify the drawing-data for that view
         |> updateDrawingData view_uuid
             (\drawingData ->
               { drawingData
-                | node_drawing =
-                    Dict.update node_id
-                      (Maybe.map (\source_node ->
-                        { source_node | isSelected = True }
-                      ))
-                      drawingData.node_drawing
+                | selected_nodes = Set.insert node_id drawingData.selected_nodes
+                , phantom_node = Nothing
                 , link_drawing =
                     Dict.insert (node_id, node_id) linkDrawingData drawingData.link_drawing
               }
@@ -1754,37 +1670,23 @@ solidifyPhantoms view_uuid src phantom_id model =
   updateDrawingData view_uuid
     (\drawingData ->
       { drawingData
-        | node_drawing =
-            Dict.update phantom_id
-              (Maybe.map (\phantom ->
-                { phantom | exclusiveAttributes = Nothing }
-              ))
-              drawingData.node_drawing
-            |> Dict.update src
-              (Maybe.map (\srcNode ->
-                { srcNode | isSelected = False }
-              ))
-        , link_drawing =
-            ( Dict.update (src, phantom_id)
-                (Maybe.map (\existing_link ->
-                  { existing_link | highlighting = Nothing }
-                ))
-                drawingData.link_drawing
-            )
+        | selected_nodes = Set.empty
+        , phantom_node = Nothing
+        , highlighted_links =
+            Set.remove (src, phantom_id) drawingData.highlighted_links
       }
     )
     model
 
-switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> (Float, Float) -> Graph.NodeContext Entity Connection -> Model -> Model
-switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (x_, y_) sourceNodeContext model =
+switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view svg_coords host_coords sourceNodeContext model =
   let
     phantom_nodeid =
       unusedNodeId graph_view.computation
     nodeData =
-      { exclusiveAttributes = Just DrawPhantom
-      , isTerminal = True
+      { isTerminal = True
       , isDisconnected = False
-      , coordinates = (x_, y_)
+      , coordinates = svg_coords
       , isRoot = False
       , canSplit = False
       , view_uuid = view_uuid
@@ -1796,11 +1698,10 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
       , pathBetween =
           path_between -- calculate the link path
             sourceNodeContext.node.label
-            { x = x_, y = y_ }
+            svg_coords
             Unidirectional
       , executionData = Nothing
       , connection = AutoSet.empty transitionToString
-      , highlighting = Just Phantom
       }
   in
     updateDrawingData view_uuid
@@ -1811,21 +1712,21 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view (
               ( if old_conn_is_empty then
                   Dict.remove (sourceNodeContext.node.id, existing_id) drawingData.link_drawing
                 else
-                  Dict.update (sourceNodeContext.node.id, existing_id)
-                    (Maybe.map (\existing_link ->
-                      { existing_link | highlighting = Nothing }
-                    ))
-                    drawingData.link_drawing
+                  drawingData.link_drawing
               )
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, phantom_nodeid) linkData
+          , highlighted_links =
+              Set.remove (sourceNodeContext.node.id, existing_id) drawingData.highlighted_links
+          , phantom_node = Just phantom_nodeid
         }
       )
       model
     -- we've made the changes, so set the interaction
     |> replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
-            ( NewNode phantom_nodeid (x_, y_) )
+            ( NewNode phantom_nodeid svg_coords )
+            host_coords
         )
 
 phantomLinkDrawingForExisting : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> LinkDrawingData
@@ -1847,11 +1748,10 @@ phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model =
           cardinality
     , executionData = Nothing
     , connection = connection
-    , highlighting = Just Phantom
     }
 
-switchFromPhantomToExisting : Uuid -> NodeId -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
-switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext existingNodeContext model =
+switchFromPhantomToExisting : Uuid -> NodeId -> Coordinate -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext existingNodeContext model =
   let
     linkData = -- this is the new calculated link-path
       phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model
@@ -1866,6 +1766,7 @@ switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext existingNodeC
               Dict.remove (sourceNodeContext.node.id, phantom_id) drawingData.link_drawing
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, existingNodeContext.node.id) linkData
+          , phantom_node = Nothing
         }
       )
       model
@@ -1873,10 +1774,11 @@ switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext existingNodeC
     |> replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
             ( ExistingNode existingNodeContext.node.id linkData.connection )
+            host_coords
         )
 
-switchFromExistingToExisting : Uuid -> Bool -> NodeId -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
-switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNodeContext nearbyNodeContext model =
+switchFromExistingToExisting : Uuid -> Bool -> NodeId -> Coordinate -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coords sourceNodeContext nearbyNodeContext model =
   let
     linkData = -- this is the new calculated link-path
       phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext model
@@ -1893,6 +1795,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNode
               )
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, nearbyNodeContext.node.id) linkData
+          , phantom_node = Nothing
         }
       )
       model
@@ -1900,17 +1803,18 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing sourceNode
     |> replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
             ( ExistingNode nearbyNodeContext.node.id linkData.connection )
+            host_coords
         )
 
-updatePhantomMovement : Uuid -> NodeId -> ( Float, Float ) -> Graph.NodeContext Entity Connection -> Model -> Model
-updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model =
+updatePhantomMovement : Uuid -> NodeId -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
+updatePhantomMovement view_uuid phantom_id svg_coords host_coords sourceNodeContext model =
   updateDrawingData view_uuid
     (\drawingData ->
         { drawingData
           | node_drawing =
               Dict.update phantom_id
                 (Maybe.map (\nodeData ->
-                  { nodeData | coordinates = (x_, y_) }
+                  { nodeData | coordinates = svg_coords }
                 ))
                 drawingData.node_drawing
           , link_drawing =
@@ -1920,7 +1824,7 @@ updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model =
                     | pathBetween =
                         path_between
                           sourceNodeContext.node.label
-                          { x = x_, y = y_ }
+                          svg_coords
                           Unidirectional
                   }
                 ))
@@ -1929,10 +1833,10 @@ updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model =
     )
     model
   |> replaceInteraction (Just view_uuid)
-    ( ChoosingDestinationFor sourceNodeContext.node.id (NewNode phantom_id (x_, y_)) )
+    ( ChoosingDestinationFor sourceNodeContext.node.id (NewNode phantom_id svg_coords) host_coords )
 
-movePhantomNodeInView : Uuid -> GraphView -> (Float, Float) -> Model -> Model
-movePhantomNodeInView view_uuid graph_view (x_, y_) model =
+movePhantomNodeInView : Uuid -> GraphView -> Coordinate -> Model -> Model
+movePhantomNodeInView view_uuid graph_view svg_coord model =
   -- in the event, the `x_` and `y_` have already been translated
   -- into guest-viewport coordinates, accounting for pan information.
   let
@@ -1943,26 +1847,24 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
     nearby_node_lockOnDistance : Float
     nearby_node_lockOnDistance = 36 -- min distance before arrow inverts…
 
-    nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> (Float, Float) -> GraphView -> b
-    nearby_node_func f distance mouseCoords { computation } =
+    nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Coordinate -> GraphView -> b
+    nearby_node_func f distance mouse { computation } =
       -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
       let
-        ( mouse_x, mouse_y ) =
-          mouseCoords -- |> Debug.log "Mousecoords"
         square_dist = distance * distance
       in
         f
           (\node ->
             let
-              dx = node.label.x - mouse_x
-              dy = node.label.y - mouse_y
+              dx = node.label.x - mouse.x
+              dy = node.label.y - mouse.y
             in
               -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
               dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
           )
           (Graph.nodes computation.graph)
 
-    nearby_node : Float -> (Float, Float) -> GraphView -> Maybe (Graph.Node Entity)
+    nearby_node : Float -> Coordinate -> GraphView -> Maybe (Graph.Node Entity)
     nearby_node =
       nearby_node_func List.find
 
@@ -1973,13 +1875,13 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
   in
     -- first, let's find this thing.
     case peekInteraction (Just view_uuid) model.interactionsDict of
-      Just (ChoosingDestinationFor source (NewNode phantom_id _)) ->
+      Just (ChoosingDestinationFor source (NewNode phantom_id _) host_coords) ->
         -- okay, so there is a phantom node already there and active.
         -- in the easiest case, we just need to move its (x,y) coordinates, and be done.
         -- But if we are close enough to "lock on" to a nearby node, then we need to
         -- change this interaction to reflect that instead.  So, which case do we
         -- have?
-        case nearby_node nearby_node_lockOnDistance (x_, y_) graph_view of
+        case nearby_node nearby_node_lockOnDistance svg_coord graph_view of
           Just nearbyNode ->
             -- ooh, we're close to a lock-on node. Okay. Let's get rid of the phantom
             -- node; then calculate the link path (might be straight or curved or recursive)
@@ -1988,7 +1890,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
             -- Lastly, we set the interaction to the correct value.            
             Maybe.map2
               (\sourceNodeContext nearbyNodeContext ->
-                  switchFromPhantomToExisting view_uuid phantom_id sourceNodeContext nearbyNodeContext model
+                  switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext nearbyNodeContext model
               )
               (Graph.get source graph_view.computation.graph)
               (Graph.get nearbyNode.id graph_view.computation.graph)
@@ -1997,18 +1899,18 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
             -- great, there is no nearby node; just update the (x, y).
             Maybe.map
               (\sourceNodeContext ->
-                updatePhantomMovement view_uuid phantom_id (x_, y_) sourceNodeContext model
+                updatePhantomMovement view_uuid phantom_id svg_coord host_coords sourceNodeContext model
               )
               (Graph.get source graph_view.computation.graph)
             |> Maybe.withDefault model
-      Just (ChoosingDestinationFor source (ExistingNode existing_node conn)) ->
+      Just (ChoosingDestinationFor source (ExistingNode existing_node conn) host_coords) ->
         -- here the situation is "reversed":
         -- If I find a neighbour, and it is the existing neighbour, then I need do
         -- nothing.
         -- If I find a neighbour, and it is NOT the existing neighbour, then I need to
         -- switch to it.
         -- If I don't find a neighbour, then I must switch to a phantom node.
-        case nearby_node nearby_node_lockOnDistance (x_, y_) graph_view of
+        case nearby_node nearby_node_lockOnDistance svg_coord graph_view of
           Just nearbyNode ->
             if existing_node == nearbyNode.id then
               -- no change needed.
@@ -2017,7 +1919,7 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
               -- switch to the new node.
               Maybe.map2
                 (\sourceNodeContext nearbyNodeContext ->
-                    switchFromExistingToExisting view_uuid (AutoSet.isEmpty conn) existing_node sourceNodeContext nearbyNodeContext model
+                    switchFromExistingToExisting view_uuid (AutoSet.isEmpty conn) existing_node host_coords sourceNodeContext nearbyNodeContext model
                 )
                 (Graph.get source graph_view.computation.graph)
                 (Graph.get nearbyNode.id graph_view.computation.graph)
@@ -2025,20 +1927,21 @@ movePhantomNodeInView view_uuid graph_view (x_, y_) model =
           Nothing ->
             -- there is no nearby node; move from the existing node to a phantom node. 
             Maybe.map
-              (\sourceNodeContext -> switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view (x_, y_) sourceNodeContext model)
+              (\sourceNodeContext ->
+                switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view svg_coord host_coords sourceNodeContext model)
               (Graph.get source graph_view.computation.graph)
             |> Maybe.withDefault model
       _ ->
         model
 
-movePhantomNode : Uuid -> (Float, Float) -> Model -> Model
-movePhantomNode view_uuid (x_, y_) model =
+movePhantomNode : Uuid -> Coordinate -> Model -> Model
+movePhantomNode view_uuid coord model =
   AutoDict.get view_uuid model.graph_views
-  |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv (x_, y_) model)
+  |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv coord model)
   |> Maybe.withDefault model
 
-dragNodeInView : Uuid -> GraphView -> (Float, Float) -> Graph.NodeContext Entity Connection -> Model -> Model
-dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
+dragNodeInView : Uuid -> GraphView -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
+dragNodeInView view_uuid graph_view svg_coords nodeContext model =
   let
     vertices_in =
       IntDict.toList nodeContext.incoming
@@ -2063,25 +1966,26 @@ dragNodeInView view_uuid graph_view (x_, y_) nodeContext model =
   in
     updateDrawingData view_uuid
       (\drawingData ->
-        { node_drawing =
+        { drawingData
+          | node_drawing =
             Dict.update nodeContext.node.id
               (Maybe.map (\node ->
-                { node | coordinates = (x_, y_) }
+                { node | coordinates = svg_coords }
               ))
               drawingData.node_drawing
-        , link_drawing =
-            List.foldl
-              (\( (src, dest), data ) ->
-                Dict.insert (src, dest) data
-              )
-              drawingData.link_drawing
-              (vertices_in ++ vertices_out)
-        }
+          , link_drawing =
+              List.foldl
+                (\( (src, dest), data ) ->
+                  Dict.insert (src, dest) data
+                )
+                drawingData.link_drawing
+                (vertices_in ++ vertices_out)
+          }
       )
       model
 
-dragNode : Uuid -> (Float, Float) -> NodeId -> Model -> Model
-dragNode view_uuid (x_, y_) nodeId model =
+dragNode : Uuid -> Coordinate -> NodeId -> Model -> Model
+dragNode view_uuid svg_coord nodeId model =
   AutoDict.get view_uuid model.graph_views
   |> Maybe.andThen
     (\gv ->
@@ -2100,7 +2004,7 @@ dragNode view_uuid (x_, y_) nodeId model =
                 { id = nodeId
                 , label =
                   let e = nodeContext.node.label in
-                  { e | x = x_, y = y_ }
+                  { e | x = svg_coord.x, y = svg_coord.y }
                 }
           }
         gv_ : GraphView
@@ -2123,7 +2027,7 @@ dragNode view_uuid (x_, y_) nodeId model =
                 updateGraphView view_uuid (\_ -> Just gv_) model.graph_views
           }
       in
-        dragNodeInView view_uuid gv_ (x_, y_) updatedCtx model_
+        dragNodeInView view_uuid gv_ svg_coord updatedCtx model_
     )
   |> Maybe.withDefault model
 
@@ -2167,7 +2071,7 @@ cancelNewNodeCreation view_uuid model =
         model_
   in
     case popInteraction (Just view_uuid) model of
-      Just (ChoosingDestinationFor source (NewNode dest _), model_) ->
+      Just (ChoosingDestinationFor source (NewNode dest _) _, model_) ->
         kill source dest model_
       Just (EditingConnection {source, dest, deleteTargetIfCancelled} _, model_) ->
         if deleteTargetIfCancelled then
@@ -2179,8 +2083,8 @@ cancelNewNodeCreation view_uuid model =
         println "🚨 ERROR $DBMWMGYERCC" -- how am I in this function, if neither of these is cancelled??
         model
 
-createNewGraphNode : Uuid -> NodeId -> (Float, Float) -> Model -> Model
-createNewGraphNode view_uuid node_id (x, y) model =
+createNewGraphNode : Uuid -> NodeId -> Coordinate -> Model -> Model
+createNewGraphNode view_uuid node_id svg_coord model =
   let
     viewWithNode : GraphView -> GraphView
     viewWithNode graph_view = -- ensure that the destination node exists in the graph.
@@ -2194,7 +2098,7 @@ createNewGraphNode view_uuid node_id (x, y) model =
                       { id = node_id
                       , label =
                           entity node_id NoEffect
-                          |> (\e -> { e | x = x, y = y })
+                          |> (\e -> { e | x = svg_coord.x, y = svg_coord.y })
                       }
                   , incoming = IntDict.empty
                   , outgoing = IntDict.empty
@@ -2309,9 +2213,9 @@ setProperties model =
                   case peekInteraction (Just k) model.interactionsDict of
                     Just (SplittingNode _ _) ->
                       whenSplittingNode
-                    Just (DraggingNode _) ->
+                    Just (DraggingNode _ _) ->
                       whenDraggingNode
-                    Just (ChoosingDestinationFor _ _) ->
+                    Just (ChoosingDestinationFor _ _ _) ->
                       whenSourceNodeSelected v.id
                     Just (EditingConnection _ _) ->
                       whenEditingConnection
@@ -2393,9 +2297,9 @@ setProperties model =
         case mostRecentInteraction model of
           Just (_, SplittingNode _ _) ->
             whenSplittingNode
-          Just (_, DraggingNode _) ->
+          Just (_, DraggingNode _ _) ->
             whenDraggingNode
-          Just (_, ChoosingDestinationFor _ _) ->
+          Just (_, ChoosingDestinationFor _ _ _) ->
             whenSourceNodeSelected
           Just (_, EditingConnection _ _) ->
             whenEditingConnection
@@ -2418,12 +2322,12 @@ setProperties model =
 selectDestination : Uuid -> NodeId -> PossibleDestination -> Model -> Model
 selectDestination view_uuid src possible_dest model =
   case possible_dest of
-    NewNode phantom_id (x, y) ->
+    NewNode phantom_id svg_coord ->
       -- I've clicked on some kind of an empty space.  I'll want to create this node,
       -- and then proceed to edit the connection.
-      createNewGraphNode view_uuid phantom_id (x, y) model
+      createNewGraphNode view_uuid phantom_id svg_coord model
       -- editConnection will call setProperties
-      |> editConnection (Just view_uuid) (x, y)
+      |> editConnection (Just view_uuid) svg_coord
           { source = src
           , dest = phantom_id
           , connection = AutoSet.empty transitionToString
@@ -2431,16 +2335,16 @@ selectDestination view_uuid src possible_dest model =
           }
     ExistingNode dest_id conn ->
       let
-        (x, y) =
+        svg_coord =
           AutoDict.get view_uuid model.graph_views
           |> Maybe.andThen (\gv -> Graph.get dest_id gv.computation.graph)
-          |> Maybe.map (\ctx -> (ctx.node.label.x, ctx.node.label.y))
-          |> Maybe.withDefault (0, 0)
+          |> Maybe.map (\ctx -> Coordinate ctx.node.label.x ctx.node.label.y)
+          |> Maybe.withDefault (Coordinate 0 0)
       in
         -- we already have a node selected, and now, an existing
         -- node is being selected as the destination.
         -- editConnection will call setProperties
-        editConnection (Just view_uuid) (x, y)
+        editConnection (Just view_uuid) svg_coord
           { source = src
           , dest = dest_id
           , connection = conn
@@ -2482,10 +2386,8 @@ deleteLinkFromView view_uuid source dest conn model =
                 | drawingData =
                     let drawingData = graph_view.drawingData in
                     { drawingData
-                      | link_drawing =
-                          Dict.update (source, dest)
-                            (Maybe.map (\link -> { link | highlighting = Nothing }))
-                            drawingData.link_drawing
+                      | highlighted_links =
+                          Set.remove (source, dest) drawingData.highlighted_links
                     }
               }
             ))
@@ -2525,7 +2427,7 @@ startSplit uuid graph_view nodeContext model =
   let
     ( main_view, updated_model ) =
       naiveViewFromComputation
-        ( 250 , 250 ) Independent True
+        { w = 250 , h = 250 } Independent True
         graph_view.computation model
     edges_in =
       IntDict.keys nodeContext.incoming
@@ -2676,6 +2578,11 @@ commitOrConfirm model =
               | computation =
                   let ag = gv.computation in
                   { ag | graph = Graph.remove dest ag.graph }
+              , drawingData =
+                  let dd = gv.drawingData in
+                  { dd
+                    | phantom_node = Nothing
+                  }
             }
             newGraph model_
 
@@ -2859,7 +2766,9 @@ beginDeletionInteraction package_uuid affected package model =
     (mainGraph, model_) =
       solvedViewFromComputation
         GraphEditor.coordinateForces
-        (Tuple.mapBoth (\v -> v / 3) (\v -> v / 3) model.uiLayout.dimensions.viewport)
+        { w = model.uiLayout.dimensions.viewport.w / 3
+        , h = model.uiLayout.dimensions.viewport.h / 3
+        }
         Independent True package.computation model
     (directViews, model__) =
       affected
@@ -2871,7 +2780,9 @@ beginDeletionInteraction package_uuid affected package model =
             (v, m_) =
               solvedViewFromComputation
                 GraphEditor.coordinateForces
-                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiLayout.dimensions.viewport)
+                { w = m.uiLayout.dimensions.viewport.w / 7
+                , h = m.uiLayout.dimensions.viewport.h / 7
+                }
                 Independent True pkg.computation m
           in
             (v :: acc, m_)
@@ -2887,7 +2798,9 @@ beginDeletionInteraction package_uuid affected package model =
             (v, m_) =
               solvedViewFromComputation
                 GraphEditor.coordinateForces
-                (Tuple.mapBoth (\d -> d / 7) (\d -> d / 7) m.uiLayout.dimensions.viewport)
+                { w = m.uiLayout.dimensions.viewport.w / 7
+                , h = m.uiLayout.dimensions.viewport.h / 7
+                }
                 Independent True pkg.computation m
           in
             (v :: acc, m_)
@@ -2978,7 +2891,9 @@ expandStep n results props model =
           (gv_uuid, model__) =
             solvedViewFromComputation
               GraphEditor.spreadOutForces
-              (Tuple.mapBoth (\v -> v - 128) (\v -> v - 40) model.uiLayout.dimensions.bottomPanel)
+              { w = model.uiLayout.dimensions.bottomPanel.w - 128
+              , h = model.uiLayout.dimensions.bottomPanel.h - 40
+              }
               Independent True
               step.computation
               model
@@ -3395,10 +3310,10 @@ update msg model =
               -- huh!  Looks like there's nothing to do!  So why was I called??
               -- Ideally, I shouldn't even spawn an event if there's nothing to do.
               model
-            Just (Just uuid, ChoosingDestinationFor _ (NewNode _ _), _) ->
+            Just (Just uuid, ChoosingDestinationFor _ (NewNode _ _) _, _) ->
               cancelNewNodeCreation uuid model -- this will pop, and also handle graph/UI changes too.
               |> setProperties
-            Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _), _) ->
+            Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _) _, _) ->
               removePhantomLink uuid source dest model
             Just (Just uuid, EditingConnection alteration {referenceList, mainGraph}, model_) ->
               handleConnectionRemoval uuid alteration (mainGraph :: referenceList) model_ 
@@ -3664,31 +3579,28 @@ isFailingTest = isPassingTest >> Maybe.map not
 -}
 
 {-| Given host coordinates, translate them to guest-viewport coordinates -}
-translateHostCoordinates : (Float, Float) -> GraphView -> (Float, Float)
-translateHostCoordinates (x, y) graph_view =
+translateHostCoordinates : Coordinate -> Coordinate -> GraphView -> Coordinate
+translateHostCoordinates host_coord mouse {host, guest, pan} =
   let
-    ( x_host, y_host ) = graph_view.host_coordinates
-    ( w_host, h_host ) = graph_view.host_dimensions
-    ( x_guest, y_guest ) = graph_view.guest_coordinates
-    ( w_guest, h_guest ) = graph_view.guest_dimensions
-    ( pan_x, pan_y ) = graph_view.pan
-    translate_dimension coord coord_host coord_guest dim_host dim_guest pan =
+    ( pan_x, pan_y ) = pan
+    translate_dimension coord coord_host coord_guest dim_host dim_guest pan_ =
       if coord <= coord_host then
-        coord_guest + pan -- on the (left/top) edge
+        coord_guest + pan_ -- on the (left/top) edge
       else if coord >= coord_host + dim_host then
-        coord_guest + dim_guest + pan -- on the (right/bottom) edge
+        coord_guest + dim_guest + pan_ -- on the (right/bottom) edge
       else
         -- this is in the actual area
         let
           ratio = dim_guest / dim_host
         in
-          (coord - coord_host) * ratio + coord_guest + pan
+          (coord - coord_host) * ratio + coord_guest + pan_
     translate_x =
-      translate_dimension x x_host x_guest w_host w_guest pan_x
+      translate_dimension mouse.x host_coord.x guest.x host.w guest.w pan_x
     translate_y =
-      translate_dimension y y_host y_guest h_host h_guest pan_y
+      translate_dimension mouse.y host_coord.y guest.y host.h guest.h pan_y
   in
-    ( translate_x, translate_y )
+    { x = translate_x, y = translate_y }
+    -- |> Debug.log "Translated host coordinates"
 
 -- SUBSCRIPTIONS
 
@@ -3766,7 +3678,11 @@ subscriptions model =
             )
         )
     resizeSubscription =
-      BE.onResize (\w h -> OnResize (toFloat w, toFloat h) {- |> Debug.log "Raw resize values" -})
+      BE.onResize
+        (\w h ->
+          OnResize { w = toFloat w, h = toFloat h }
+          -- |> Debug.log "Raw resize values"
+        )
     splitterSubscriptions =
       case peekInteraction Nothing model.interactionsDict of
         Just (DraggingSplitter LeftRight) ->
@@ -3785,7 +3701,7 @@ subscriptions model =
           []
     nodeMoveSubscriptions =
       let
-        createNodeMoveSubscription uuid =
+        createNodeMoveSubscription host_coords uuid =
           AutoDict.get uuid model.graph_views
           |> Maybe.map
             (\graph_view ->
@@ -3793,7 +3709,7 @@ subscriptions model =
                   ( D.map2
                       (\x y ->
                         MoveNode
-                          (graph_view |> translateHostCoordinates (x, y))
+                          (graph_view |> translateHostCoordinates host_coords (Coordinate x y))
                         |> GraphViewMsg uuid
                       )
                       (D.field "clientX" D.float)
@@ -3806,11 +3722,11 @@ subscriptions model =
         |> List.filterMap
           (\(maybeUuid, (_, stack)) ->
             case (maybeUuid, stack) of
-              (Just uuid, ChoosingDestinationFor _ _ :: _) ->
-                Just <| createNodeMoveSubscription uuid
-              (Just uuid, DraggingNode _ :: _) ->
+              (Just uuid, ChoosingDestinationFor _ _ host_coords :: _) ->
+                Just <| createNodeMoveSubscription host_coords uuid
+              (Just uuid, DraggingNode _ host_coords :: _) ->
                 Just <| Sub.batch 
-                  [ createNodeMoveSubscription uuid
+                  [ createNodeMoveSubscription host_coords uuid
                   , BE.onMouseUp (D.succeed (GraphViewMsg uuid <| StopDraggingNode))
                   ]
               _ ->
@@ -3887,8 +3803,8 @@ debugElement otherClass s =
       []
       []
 
-debugDimensions : Dimensions -> Html a
-debugDimensions (w, h) =
+debugDimensions : Dimension -> Html a
+debugDimensions {w, h} =
   debugElement "width height" (String.fromFloat w ++ "×" ++ String.fromFloat h)
 
 debugHeight : Float -> Html a
@@ -3993,7 +3909,7 @@ viewNavigatorsArea model =
           , HA.css
               [ Css.width <| Css.px <|
                   if model.uiLayout.open.sideBar then
-                    Tuple.first model.uiLayout.dimensions.sideBar
+                    model.uiLayout.dimensions.sideBar.w
                   else
                     0
               ]
@@ -4154,7 +4070,7 @@ viewComputationsSidebar model =
         [ HA.class "computations-explorer" ]
         ( List.filterMap
             (\pkg_uuid ->
-                AutoDict.get model.mainGraphView model.graph_views
+                AutoDict.get pkg_uuid model.graph_views
                 |> Maybe.map
                   (\graph_view ->
                     div
@@ -4585,7 +4501,7 @@ viewToolsArea model =
         , HA.css
             [ Css.height <| Css.px <|
                 if model.uiLayout.open.bottomPanel then
-                  Tuple.second model.uiLayout.dimensions.bottomPanel
+                  model.uiLayout.dimensions.bottomPanel.h
                 else
                   0
             ]
@@ -4640,8 +4556,8 @@ viewMainInterface model =
         [ div
             [ HA.class "editor-main"
             , HA.css
-                [ Css.maxWidth <| px <| Tuple.first model.uiLayout.dimensions.mainEditor
-                , Css.maxHeight <| px <| Tuple.second model.uiLayout.dimensions.mainEditor
+                [ Css.maxWidth <| px <| model.uiLayout.dimensions.mainEditor.w
+                , Css.maxHeight <| px <| model.uiLayout.dimensions.mainEditor.h
                 ]
             ]
             [ debugDimensions model.uiLayout.dimensions.mainEditor
