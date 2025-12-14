@@ -1221,7 +1221,7 @@ nodeHostCoordToHostCoord node_coord svg_coord {host, guest, pan} =
       node_coord.y - host_on_top
   in
     { x = host_left, y = host_top }
-    |> Debug.log "Left/Top of container"
+    -- |> Debug.log "Left/Top of container"
 
 update_graphview : Uuid -> GraphViewMsg -> Model -> ( Model, Cmd Msg )
 update_graphview uuid ui_msg model =
@@ -1236,7 +1236,7 @@ update_graphview uuid ui_msg model =
             |> Maybe.map
               (\ctx ->
                 { x = ctx.node.label.x, y = ctx.node.label.y }
-                |> Debug.log "SVG coordinates of node"
+                -- |> Debug.log "SVG coordinates of node"
               )
           )
       )
@@ -1244,7 +1244,7 @@ update_graphview uuid ui_msg model =
         (\(gv, svg_coord) ->
           nodeHostCoordToHostCoord
             ( node_host_coord
-              |> Debug.log "Host coordinates of node"
+              -- |> Debug.log "Host coordinates of node"
             )
             svg_coord
             gv
@@ -2666,21 +2666,24 @@ commitOrConfirm model =
               )
             else
               let
-                new_gv =
+                without_undoredo =
                   { gv
-                    | computation =
-                        GraphEditor.applyChangesToGraph gv.computation
                     -- clear the undo/redo buffers
-                    , undoBuffer = []
+                    | undoBuffer = []
                     , redoBuffer = []
                   }
+                model_ =
+                  updateGraphInView
+                    (GraphEditor.applyChangesToGraph)
+                    without_undoredo
+                    model
                 updated_model =
-                  updatePackageFromView new_gv.id model
+                  updatePackageFromView model.mainGraphView model_
                   |> refreshComputationsList
                   |> setProperties
               in
                 ( updated_model
-                , new_gv.graphPackage
+                , gv.graphPackage
                   |> Maybe.andThen (\pkg_uuid -> AutoDict.get pkg_uuid model.packages)
                   |> Maybe.map persistPackage
                   |> Maybe.withDefault Cmd.none

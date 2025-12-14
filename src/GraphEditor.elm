@@ -26,6 +26,7 @@ import TypedSvg.Types exposing (..)
 import Uuid exposing (Uuid)
 import VirtualDom
 import Automata.Debugging exposing (debugLog_)
+import Automata.Debugging exposing (debugAutomatonGraph)
 
 
   -- to add: Execute, Step, Stop
@@ -284,9 +285,10 @@ applyChangesToGraph : AutomatonGraph -> AutomatonGraph
 applyChangesToGraph g =
   -- debugAutomatonGraph "Initial from user" g |> \_ ->
   DFA.removeDisconnectedNodes g
-  -- |> debugAutomatonGraph "After removing disconnected"
+  |> debugAutomatonGraph "After removing disconnected"
   |> (DFA.fromAutomatonGraph >> DFA.toAutomatonGraph)
   |> (\g_ -> { g_ | description = g.description }) -- restore description.
+  |> debugAutomatonGraph "After conversion round-trip"
 
 newnode_graphchange : NodeId -> Float -> Float -> Connection -> AutomatonGraph -> AutomatonGraph
 newnode_graphchange src x y conn g =
