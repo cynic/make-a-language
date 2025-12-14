@@ -47,7 +47,7 @@ encodeGraphPackage pkg =
     --       , ("h", E.float <| Tuple.second pkg.dimensions)
     --       ]
     --   )
-    , ("uuid", Uuid.encode pkg.packageIdentifier)
+    , ("packageIdentifier", Uuid.encode pkg.packageIdentifier)
     , ("created", E.int (Time.posixToMillis pkg.created))
     , ("tests", DFA.encodeAutoDict Uuid.toString encodeTest pkg.tests)
     , ("currentTestKey", Uuid.encode pkg.currentTestKey)
@@ -67,7 +67,7 @@ decodeGraphPackage resolutionDict =
         --     (D.at ["dimensions", "w"] D.float)
         --     (D.at ["dimensions", "h"] D.float)
         -- )
-        (D.field "uuid" <| Uuid.decoder)
+        (D.field "packageIdentifier" <| Uuid.decoder)
         (D.field "created" <| D.map Time.millisToPosix D.int)
         (D.field "currentTestKey" Uuid.decoder)
         (D.field "tests" <| DFA.decodeAutoDict Uuid.toString Uuid.fromString (decodeTest resolutionDict graph))
