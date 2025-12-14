@@ -74,8 +74,8 @@ descriptionsForPackages packages =
   |> List.filterMap (\(k, v) -> Maybe.combineSecond (k, v.computation.description))
   |> AutoDict.fromList Uuid.toString
 
-nodeDrawingForPackage : AutomatonGraph -> Uuid -> InteractionsDict -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage ag graphView_uuid interactions =
+nodeDrawingForPackage : AutomatonGraph -> Uuid -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage ag graphView_uuid =
   let
     disconnectedNodes =
       DFA.identifyDisconnectedNodes ag
@@ -345,8 +345,8 @@ fitGraphViewToGraph graphView =
         graphView.computation.graph
   }
 
-mkGraphView : Uuid -> AutomatonGraph -> Dimension -> Bool -> InterfaceLocation -> PackageDict -> InteractionsDict -> GraphView
-mkGraphView id ag dim removePadding location packages interactions =
+mkGraphView : Uuid -> AutomatonGraph -> Dimension -> Bool -> InterfaceLocation -> PackageDict -> GraphView
+mkGraphView id ag dim removePadding location packages =
     { id = id
     , computation = ag
     , graphPackage = Nothing
@@ -364,7 +364,7 @@ mkGraphView id ag dim removePadding location packages interactions =
     , properties = nilViewProperties
     , drawingData =
         { link_drawing = linkDrawingForPackage ag packages
-        , node_drawing = nodeDrawingForPackage ag id interactions
+        , node_drawing = nodeDrawingForPackage ag id
         , selected_nodes = Set.empty
         , phantom_node = Nothing
         , graphReferenceDescriptions = descriptionsForPackages packages
@@ -398,7 +398,7 @@ viewFromComputation computed dim location removePadding model =
   let
     (id, model_) = getUuid model
     graph_view =
-      mkGraphView id computed.solvedGraph dim removePadding location model_.packages model_.interactionsDict
+      mkGraphView id computed.solvedGraph dim removePadding location model_.packages
   in
     ( graph_view
     , upsertGraphView id graph_view model_
@@ -652,7 +652,7 @@ updateGraphInView updater graph_view model =
             let dd = graph_view.drawingData in
             { dd
               | link_drawing = linkDrawingForPackage ag model.packages
-              , node_drawing = nodeDrawingForPackage ag graph_view.id model.interactionsDict
+              , node_drawing = nodeDrawingForPackage ag graph_view.id
             }
         , disconnectedNodes = DFA.identifyDisconnectedNodes ag
       }
@@ -2572,20 +2572,22 @@ commitOrConfirm model =
 
     confirmPhantomNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
     confirmPhantomNode src dest conn gv model_ =
-      GraphEditor.updateLink_graphchange src dest conn gv.computation
-      |> \newGraph ->
-          commit_change
-            { gv
-              | computation =
-                  let ag = gv.computation in
-                  { ag | graph = Graph.remove dest ag.graph }
-              , drawingData =
-                  let dd = gv.drawingData in
-                  { dd
-                    | phantom_node = Nothing
-                  }
-            }
-            newGraph model_
+      let
+        ag = GraphEditor.updateLink_graphchange src dest conn gv.computation
+      in
+      commit_change
+        { gv
+          | computation = ag
+          , drawingData =
+              let dd = gv.drawingData in
+              { dd
+                | phantom_node = Nothing
+                , link_drawing = linkDrawingForPackage ag model.packages
+                , node_drawing = nodeDrawingForPackage ag gv.id
+              }
+        }
+        ag model_
+          
 
     removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
     removeLink src dest gv model_ =

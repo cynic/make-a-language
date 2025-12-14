@@ -25,6 +25,7 @@ import TypedSvg.Events exposing (onClick)
 import TypedSvg.Types exposing (..)
 import Uuid exposing (Uuid)
 import VirtualDom
+import Automata.Debugging exposing (debugLog_)
 
 
   -- to add: Execute, Step, Stop
