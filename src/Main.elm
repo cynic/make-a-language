@@ -1198,7 +1198,7 @@ nodeHostCoordToHostCoord node_coord svg_coord {host, guest, pan} =
     -- find out distance from the left edge of the SVG, as SVG coordinates
     ( pan_x, pan_y ) = pan
     from_left =
-      (pan_x + svg_coord.x) - guest.x
+      (svg_coord.x - pan_x) - guest.x
       -- |> Debug.log "Distance from left-edge to node (in SVG coordinates)"
     -- find out how many SVG coordinates are in a host coordinate
     x_host_per_svg =
@@ -1211,7 +1211,7 @@ nodeHostCoordToHostCoord node_coord svg_coord {host, guest, pan} =
       node_coord.x - host_on_left
       -- |> Debug.log "Host left edge is at"
     from_top =
-      (pan_y + svg_coord.y) - guest.y
+      (svg_coord.y - pan_y) - guest.y
     y_host_per_svg =
       host.h / guest.h
     host_on_top =
