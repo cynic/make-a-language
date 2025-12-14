@@ -1148,6 +1148,7 @@ packagesToGraphViews dim model =
       let
         ( v, model__) =
           solvedViewFromComputation GraphEditor.coordinateForces dim Sidebar True g.computation model_
+          |> linkToPackage g.packageIdentifier
       in
         (v :: acc, model__)
     )
@@ -3064,10 +3065,19 @@ update_package pkg_uuid msg model =
             |> solvedViewFromComputation GraphEditor.coordinateForces
                 model.uiLayout.dimensions.mainEditor MainEditor False pkg.computation
             |> linkToPackage pkg.packageIdentifier
-            |> Tuple.second
+            |>(\(gv, m) ->
+                { m
+                  | selectedPackage = pkg.packageIdentifier
+                  , mainGraphView = gv.id
+                }
+              )
             |> setProperties
           )
-        |> Maybe.withDefault model
+        |> Maybe.withDefaultLazy
+          (\() ->
+            println "[update→SelectPackage] Could not find the requested package"
+            model
+          )
       , Cmd.none
       )
 
@@ -4069,32 +4079,36 @@ viewComputationsSidebar model =
       div
         [ HA.class "computations-explorer" ]
         ( List.filterMap
-            (\pkg_uuid ->
-                AutoDict.get pkg_uuid model.graph_views
-                |> Maybe.map
+            (\gv_uuid ->
+                AutoDict.get gv_uuid model.graph_views
+                |> Maybe.andThen
                   (\graph_view ->
-                    div
-                      [ HA.class "package"
-                      , graph_view.properties.canSelectPackage
-                        |> thenPermitInteraction (HE.onClick (PackageMsg pkg_uuid SelectPackage))
-                      ]
-                      [ GraphEditor.viewGraph graph_view
-                      , div
-                          [ HA.class "description" ]
-                          [ graph_view.computation.description
-                            |> Maybe.withDefault "(no description)"
-                            |> text
+                    Maybe.map
+                      (\pkg_uuid ->
+                        div
+                          [ HA.class "package"
+                          , graph_view.properties.canSelectPackage
+                            |> thenPermitInteraction (HE.onClick (PackageMsg pkg_uuid SelectPackage))
                           ]
-                      , if graph_view.graphPackage == mainPkgUuid || not graph_view.properties.canDeletePackage then
-                          text ""
-                        else
-                          div
-                            [ HA.class "delete-button"
-                            , HA.title "Delete"
-                            , HE.onClick (PackageMsg pkg_uuid DeletePackage)
-                            ]
-                            [ text "🚮" ]
-                      ]
+                          [ GraphEditor.viewGraph graph_view
+                          , div
+                              [ HA.class "description" ]
+                              [ graph_view.computation.description
+                                |> Maybe.withDefault "(no description)"
+                                |> text
+                              ]
+                          , if graph_view.graphPackage == mainPkgUuid || not graph_view.properties.canDeletePackage then
+                              text ""
+                            else
+                              div
+                                [ HA.class "delete-button"
+                                , HA.title "Delete"
+                                , HE.onClick (PackageMsg pkg_uuid DeletePackage)
+                                ]
+                                [ text "🚮" ]
+                          ]
+                      )
+                      graph_view.graphPackage
                   )
             )
             model.computationsExplorer

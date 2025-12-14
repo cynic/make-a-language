@@ -270,7 +270,7 @@
     db_open.onupgradeneeded = (e) => { // also called during initial creation
       // right now, there's only one version, so I'm going to be v.lazy.
       const mydb = e.target.result;
-      const computations = mydb.createObjectStore("computations", { "keyPath" : "uuid" });
+      const computations = mydb.createObjectStore("computations", { "keyPath" : "packageIdentifier" });
     };
     db_open.onsuccess = (e) => {
       e.target.result.onerror = (err) => {
