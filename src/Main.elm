@@ -2182,14 +2182,14 @@ setProperties model =
             | canPan = True
             , canDragNodes = True
           }
-        whenSimulatingForces : GraphViewPropertySetter
-        whenSimulatingForces =
-          { nilViewProperties
-            | canSelectConnections = True
-            , canSelectNodes = True
-            , canSplitNodes = True
-            , canPan = True
-          }
+        -- whenSimulatingForces : GraphViewPropertySetter
+        -- whenSimulatingForces =
+        --   { nilViewProperties
+        --     | canSelectConnections = True
+        --     , canSelectNodes = True
+        --     , canSplitNodes = True
+        --     , canPan = True
+        --   }
         otherwise : Uuid -> GraphViewPropertySetter
         otherwise id =
           { nilViewProperties
@@ -2221,8 +2221,8 @@ setProperties model =
                       whenEditingConnection
                     Just (Executing _ _) ->
                       whenExecuting
-                    Just (SimulatingForces _ _ _) ->
-                      whenSimulatingForces
+                    -- Just (SimulatingForces _ _ _) ->
+                    --   whenSimulatingForces
                     Just (DraggingSplitter _) ->
                       whenDraggingSplitter
                     Just (DeletingPackage _ _) ->
@@ -2270,16 +2270,16 @@ setProperties model =
           , canDeleteTestInput = True
           , canCreateTestInput = True
           }
-        whenSimulatingForces : MainPropertySetter
-        whenSimulatingForces =
-          { nilMainProperties
-            | canDragSplitter = True
-            , canSelectNewPackage = True
-            , canCreateNewPackage = True
-            , canLoadTestInput = True
-            , canDeleteTestInput = True
-            , canCreateTestInput = True
-          }
+        -- whenSimulatingForces : MainPropertySetter
+        -- whenSimulatingForces =
+        --   { nilMainProperties
+        --     | canDragSplitter = True
+        --     , canSelectNewPackage = True
+        --     , canCreateNewPackage = True
+        --     , canLoadTestInput = True
+        --     , canDeleteTestInput = True
+        --     , canCreateTestInput = True
+        --   }
         otherwise : MainPropertySetter
         otherwise =
           { nilMainProperties
@@ -2305,8 +2305,8 @@ setProperties model =
             whenEditingConnection
           Just (_, Executing _ _) ->
             whenExecuting
-          Just (_, SimulatingForces _ _ _) ->
-            whenSimulatingForces
+          -- Just (_, SimulatingForces _ _ _) ->
+          --   whenSimulatingForces
           Just (_, DraggingSplitter _) ->
             whenDraggingSplitter
           Just (_, DeletingPackage _ _) ->

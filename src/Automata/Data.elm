@@ -136,7 +136,7 @@ type InteractionState
   | DraggingSplitter SplitterMovement
   | ChoosingDestinationFor NodeId PossibleDestination Coordinate
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
-  | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
+  -- | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
   | Executing (List ExecutionData) ExecutionProperties
   | DeletingPackage Uuid DeletingPackageProperties
 
