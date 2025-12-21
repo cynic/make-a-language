@@ -35,7 +35,8 @@ import TypedSvg.Attributes
 import TypedSvg.Attributes.InPx exposing (x, y)
 import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..) , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
 import Uuid exposing (Uuid)
-
+import Changes as C
+import Queries as Q
 
 {-
 Quality / technology requirements:
@@ -67,12 +68,6 @@ getUuid2 model =
     (b, m_) = getUuid m
   in
     ( a, b, m_ )
-
-descriptionsForPackages : PackageDict -> GraphReferenceDescriptions
-descriptionsForPackages packages =
-  AutoDict.toList packages
-  |> List.filterMap (\(k, v) -> Maybe.combineSecond (k, v.computation.description))
-  |> AutoDict.fromList Uuid.toString
 
 nodeDrawingForPackage : AutomatonGraph -> Uuid -> Dict NodeId NodeDrawingData
 nodeDrawingForPackage ag graphView_uuid =
@@ -115,17 +110,12 @@ nodeDrawingForPackage ag graphView_uuid =
       )
     |> Dict.fromList
 
-linkExistsInGraph : Graph.NodeContext Entity Connection -> NodeId -> Bool
-linkExistsInGraph from to =
-  -- does a link exist from `from` to `to`?
-  IntDict.member to from.outgoing
-  -- |> Debug.log ("Checking for #" ++ String.fromInt to ++ " in #" ++ String.fromInt from.node.id ++ "'s outgoing list " ++ Debug.toString (IntDict.keys from.outgoing))
 
 identifyCardinalityViaContext : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
 identifyCardinalityViaContext from to =
   if to.node.id == from then
     Recursive
-  else if linkExistsInGraph to from then -- i.e. in opposite direction
+  else if Q.linkExistsInGraph to from then -- i.e. in opposite direction
     Bidirectional
   else
     Unidirectional
@@ -136,21 +126,6 @@ identifyCardinality from to {computation} =
   |> Maybe.map
     (\toContext -> identifyCardinalityViaContext from toContext)
   |> Maybe.withDefault Unidirectional
-
-descriptionsForConnection : Connection -> PackageDict -> AutoDict.Dict String Uuid String
-descriptionsForConnection connection packages =
-  AutoSet.toList connection
-  |> List.filterMap
-    (\{via} ->
-        case via of
-          ViaCharacter _ ->
-            Nothing
-          ViaGraphReference uuid ->
-            AutoDict.get uuid packages
-            |> Maybe.andThen (.computation >> .description)
-            |> Maybe.map (\s -> ( uuid, s ))
-    )
-  |> AutoDict.fromList Uuid.toString
 
 path_between : CoordinateLike a -> CoordinateLike b -> Cardinality -> PathBetweenReturn
 path_between sourceXY_orig destXY_orig cardinality =
@@ -296,7 +271,7 @@ linkDrawingForEdge sourceNode destNode connection packages =
     , { cardinality = cardinality
       , executionData = Nothing
       , graphReferenceDescriptions =
-          descriptionsForConnection connection packages
+          Q.descriptionsForConnection connection packages
       , connection = connection
       , pathBetween =
           path_between
@@ -367,7 +342,7 @@ mkGraphView id ag dim removePadding location packages =
         , node_drawing = nodeDrawingForPackage ag id
         , selected_nodes = Set.empty
         , phantom_node = Nothing
-        , graphReferenceDescriptions = descriptionsForPackages packages
+        , graphReferenceDescriptions = Q.descriptionsForPackages packages
         , highlighted_links = Set.empty
         , lowlighted_links = Set.empty
         }
@@ -1578,7 +1553,7 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
                 { w = 250 , h = 250 } Independent True
                 ag model_
             solidified_model =
-              solidifyPhantoms main_view.id source dest updated_model
+              C.solidifyPhantoms main_view.id source dest updated_model
           in
             (List.map .id graph_views, main_view.id, solidified_model)
           )
@@ -1664,20 +1639,18 @@ selectSourceNode model view_uuid host_coord node_id =
    an equaly ridiculous number of functions!!
 -}
 
-{-| Called to turn phantoms, in the node-drawing data only, into solid things
--}
-solidifyPhantoms : Uuid -> NodeId -> NodeId -> Model -> Model
-solidifyPhantoms view_uuid src phantom_id model =
-  updateDrawingData view_uuid
-    (\drawingData ->
-      { drawingData
-        | selected_nodes = Set.empty
-        , phantom_node = Nothing
-        , highlighted_links =
-            Set.remove (src, phantom_id) drawingData.highlighted_links
-      }
-    )
-    model
+-- solidifyPhantoms : Uuid -> NodeId -> NodeId -> Model -> Model
+-- solidifyPhantoms view_uuid src phantom_id model =
+--   updateDrawingData view_uuid
+--     (\drawingData ->
+--       { drawingData
+--         | selected_nodes = Set.empty
+--         , phantom_node = Nothing
+--         , highlighted_links =
+--             Set.remove (src, phantom_id) drawingData.highlighted_links
+--       }
+--     )
+--     model
 
 switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
 switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view svg_coords host_coords sourceNodeContext model =
@@ -1741,7 +1714,7 @@ phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model =
   in
     { cardinality = cardinality
     , graphReferenceDescriptions =
-        descriptionsForConnection connection model.packages
+        Q.descriptionsForConnection connection model.packages
     , pathBetween =
         path_between -- calculate the link path
           sourceNodeContext.node.label
