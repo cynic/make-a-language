@@ -120,13 +120,6 @@ identifyCardinalityViaContext from to =
   else
     Unidirectional
 
-identifyCardinality : NodeId -> NodeId -> GraphView -> Cardinality
-identifyCardinality from to {computation} =
-  Graph.get to computation.graph
-  |> Maybe.map
-    (\toContext -> identifyCardinalityViaContext from toContext)
-  |> Maybe.withDefault Unidirectional
-
 path_between : CoordinateLike a -> CoordinateLike b -> Cardinality -> PathBetweenReturn
 path_between sourceXY_orig destXY_orig cardinality =
   {- we're doing a curved line, using a quadratic path.
@@ -316,7 +309,7 @@ fitGraphViewToGraph graphView =
   | guest =
       calculateGuestDimensionsForHost
         graphView.host
-        graphView.fitClosely -- we are fitting closely around.
+        graphView.fitClosely
         graphView.computation.graph
   }
 
@@ -349,58 +342,33 @@ mkGraphView id ag dim removePadding packages =
     , redoBuffer = []
     }
 
-upsertGraphView : Uuid -> GraphView -> Model -> Model
-upsertGraphView uuid graph_view model =
-  { model
-    | graph_views =
-        AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
-  }
+type GraphViewType
+  = Unsolved
+  | SolvedWith (AutomatonGraph -> List (Force.Force NodeId))
 
-{-| Probably not the function you want. Look at `solvedViewFromPackage` and
-    `naiveViewFromPackage` instead.
--}
-viewFromComputation : GraphEditor.ComputeGraphResult -> Dimension -> Bool -> Model -> (GraphView, Model)
-viewFromComputation computed dim removePadding model =
+makeGraphView : Uuid -> GraphViewType -> Dimension -> Bool -> PackageDict -> AutomatonGraph -> GraphView
+makeGraphView id viewType dim fitClosely packages ag =
   let
-    (id, model_) = getUuid model
+    computeResult =
+      case viewType of
+        Unsolved ->
+          { solvedGraph = ag
+          , simulation = Force.simulation []
+          , forces = []
+          }
+        SolvedWith f ->
+          GraphEditor.computeGraphFully f ag
     graph_view =
-      mkGraphView id computed.solvedGraph dim removePadding model_.packages
+      mkGraphView id computeResult.solvedGraph dim fitClosely packages
   in
-    ( graph_view
-    , upsertGraphView id graph_view model_
-    )
+    graph_view
 
-{-| Creates a new GraphView from a provided GraphPackage, accepting the provided layout
-    uncritically, and adds the GraphView to the `graph_views` dictionary in the `Model`.
--}
-naiveViewFromComputation : Dimension -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
-naiveViewFromComputation dim createFrozen ag model =
-  viewFromComputation
-    { solvedGraph = ag
-    , simulation = Force.simulation []
-    , forces = []
-    }
-    dim createFrozen model
-
-{-| Creates a new GraphView from a provided GraphPackage, solves the forces for the relevant
-    AutomatonGraph, and adds the GraphView to the `graph_views` dictionary in the `Model`.
--}
-solvedViewFromComputation : (AutomatonGraph -> List (Force.Force NodeId)) -> Dimension -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
-solvedViewFromComputation computer dim createFrozen ag model =
-  viewFromComputation
-    (GraphEditor.computeGraphFully computer ag)
-    dim createFrozen model
-
-linkToPackage : Uuid -> (GraphView, Model) -> (GraphView, Model)
-linkToPackage package_uuid (graph_view, model) =
-    if AutoDict.member package_uuid model.packages then
-      let
-        gv =
-          { graph_view | graphPackage = Just package_uuid }
-      in
-        (  gv , upsertGraphView gv.id gv model )
-    else
-      ( graph_view, model )
+linkGraphViewToPackage : PackageDict -> Uuid -> GraphView -> GraphView
+linkGraphViewToPackage packages package_uuid graph_view =
+  if AutoDict.member package_uuid packages then
+    { graph_view | graphPackage = Just package_uuid }
+  else
+    graph_view
 
 centerAndHighlight : List (NodeId, NodeId) -> GraphView -> GraphView
 centerAndHighlight links graph_view =
@@ -588,16 +556,19 @@ init flags =
       -- I _know_ that this will succeed, because I've added this
       -- exact one
       let
-        ( v, model_with_viewDict) =
-          solvedViewFromComputation
-            GraphEditor.coordinateForces
+        (id, model_) =
+          getUuid model_excl_views
+        gv =
+          makeGraphView id
+            (SolvedWith GraphEditor.coordinateForces)
             state.dimensions.mainEditor
             False
+            model_.packages
             mainPackage.computation
-            model_excl_views
-          |> linkToPackage mainPackage.packageIdentifier
+          |> linkGraphViewToPackage model_.packages mainPackage.packageIdentifier
       in
-        { model_with_viewDict | mainGraphView = v.id }
+        C.upsertGraphView gv model_
+        |> C.setMainView id
   in
     ( selectNavIcon ComputationsIcon model
       |> refreshComputationsList
@@ -610,20 +581,20 @@ updateGraphInView updater graph_view model =
   let
     ag = updater graph_view.computation
   in
-  upsertGraphView graph_view.id
-    ( { graph_view
-        | computation = ag
-        , drawingData =
-            let dd = graph_view.drawingData in
-            { dd
-              | link_drawing = linkDrawingForPackage ag model.packages
-              , node_drawing = nodeDrawingForPackage ag graph_view.id
-            }
-        , disconnectedNodes = DFA.identifyDisconnectedNodes ag
-      }
-      |> fitGraphViewToGraph
-    )
-    model
+    C.upsertGraphView
+      ( { graph_view
+          | computation = ag
+          , drawingData =
+              let dd = graph_view.drawingData in
+              { dd
+                | link_drawing = linkDrawingForPackage ag model.packages
+                , node_drawing = nodeDrawingForPackage ag graph_view.id
+              }
+          , disconnectedNodes = DFA.identifyDisconnectedNodes ag
+        }
+        |> fitGraphViewToGraph
+      )
+      model
 
 -- UPDATE
 
@@ -636,13 +607,6 @@ updateGraphInView updater graph_view model =
 persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
-
-updateGraphView : Uuid -> (GraphView -> Maybe GraphView) -> AutoDict.Dict String Uuid GraphView -> AutoDict.Dict String Uuid GraphView
-updateGraphView uuid f dict =
-  AutoDict.get uuid dict
-  |> Maybe.andThen f
-  |> Maybe.map (\updatedView -> AutoDict.insert uuid updatedView dict)
-  |> Maybe.withDefault dict
 
 {-| When either the sidebar or the bottom-panel have changed dimensions, this should be
     called to figure out what changes need to be made to any of the other dimensions.
@@ -1104,28 +1068,36 @@ panGraphView xMovement yMovement ({guest, pan, computation, properties} as graph
     else
       { graph_view | activePanDirection = Nothing }
 
-packagesToGraphViews : Dimension -> Model -> (List GraphView, Model)
-packagesToGraphViews dim model =
+packagesToGraphViews : Dimension -> Model -> List GraphPackage -> (List GraphView, Model)
+packagesToGraphViews dim model list =
   List.foldl
     (\g (acc, model_) ->
       let
-        ( v, model__) =
-          solvedViewFromComputation GraphEditor.coordinateForces dim True g.computation model_
-          |> linkToPackage g.packageIdentifier
+        (id, model__) =
+          getUuid model_
+        gv =
+          makeGraphView id
+            (SolvedWith GraphEditor.coordinateForces)
+            dim True model_.packages
+            g.computation
+          |> linkGraphViewToPackage model_.packages g.packageIdentifier
       in
-        (v :: acc, model__)
+        ( gv :: acc
+        , C.upsertGraphView gv model__
+        )
     )
     ( [], model )
-    ( AutoDict.values model.packages
-      |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
-    )
+    ( List.sortBy (.created >> Time.posixToMillis >> (*) -1) list)
+    -- ( AutoDict.values model.packages
+    --   |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
+    -- )
 
 {-| Expensive. Refresh all computations. -}
 refreshComputationsList : Model -> Model
 refreshComputationsList model =
   let
     (computation_views, updated_model) =
-      packagesToGraphViews (sidebarGraphDimensions model.uiLayout) model
+      packagesToGraphViews (sidebarGraphDimensions model.uiLayout) model (AutoDict.values model.packages)
     as_dict =
       List.foldl (\v -> AutoDict.insert v.id v) (AutoDict.empty Uuid.toString) computation_views
   in
@@ -1525,7 +1497,7 @@ filterConnectionEditorGraphs s referenceList model =
 
 editConnection : Maybe Uuid -> Coordinate -> ConnectionAlteration -> Model -> Model
 editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model =
-  packagesToGraphViews { w = 430, h = 3/6 * 430} model
+  packagesToGraphViews { w = 430, h = 3/6 * 430} model (AutoDict.values model.packages)
   |>  (\(graph_views, model_) ->
         AutoDict.get model.mainGraphView model.graph_views
         |> Maybe.map (\gv ->
@@ -1536,12 +1508,13 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
                   GraphEditor.newnode_graphchange source x y connection gv.computation
                 Just _ ->
                   GraphEditor.updateLink_graphchange source dest connection gv.computation
-            ( main_view, updated_model ) =
-              naiveViewFromComputation
-                { w = 250 , h = 250 } True
-                ag model_
+            (id, model__) =
+              getUuid model_
+            main_view =
+              makeGraphView id Unsolved { w = 250, h = 250 } True model__.packages ag
             solidified_model =
-              C.solidifyPhantoms main_view.id source dest updated_model
+              C.upsertGraphView main_view model__
+              |> C.solidifyPhantoms main_view.id source dest
           in
             (List.map .id graph_views, main_view.id, solidified_model)
           )
@@ -1554,7 +1527,8 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
               Just (EditingConnection _ _) -> replaceInteraction
               _ -> pushInteractionForStack
         in
-          stackModify view_uuid
+          C.updateGraphView main_uuid (centerAndHighlight [ (source, dest) ]) model_
+          |> stackModify view_uuid
             ( EditingConnection alteration
                 { referenceList = uuids
                 , shownList = uuids
@@ -1562,12 +1536,6 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
                 , editingMode = CharacterInput
                 }
             )
-            { model_
-              | graph_views =
-                  updateGraphView main_uuid
-                    (centerAndHighlight [ (source, dest) ] >> Just)
-                    model_.graph_views
-            }
       )
   |> setProperties
 
@@ -1983,13 +1951,9 @@ dragNode view_uuid svg_coord nodeId model =
               let ag = gv.computation in
               { ag | graph = Graph.insert updatedCtx ag.graph }
           }
-        model_ =
-          { model
-            | graph_views =
-                updateGraphView view_uuid (\_ -> Just gv_) model.graph_views
-          }
       in
-        dragNodeInView view_uuid gv_ svg_coord updatedCtx model_
+        C.upsertGraphView gv_ model
+        |> dragNodeInView view_uuid gv_ svg_coord updatedCtx
     )
   |> Maybe.withDefault model
 
@@ -2387,15 +2351,20 @@ deleteNodeFromView view_uuid source dest model =
 startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -> Model
 startSplit uuid graph_view nodeContext model =
   let
-    ( main_view, updated_model ) =
-      naiveViewFromComputation
-        { w = 250 , h = 250 } True
-        graph_view.computation model
+    -- ( main_view, updated_model ) =
+    (id, model_) =
+      getUuid model
+    main_view =
+      makeGraphView id
+        Unsolved { w = 250, h = 250 }
+        True model_.packages
+        graph_view.computation
     edges_in =
       IntDict.keys nodeContext.incoming
       |> List.map (\to -> (to, nodeContext.node.id))
   in
-    pushInteractionForStack (Just uuid)
+    C.upsertGraphView main_view model_
+    |> pushInteractionForStack (Just uuid)
       ( SplittingNode
           { to_split = nodeContext.node.id
           , left = AutoSet.empty transitionToString
@@ -2413,17 +2382,7 @@ startSplit uuid graph_view nodeContext model =
           { mainGraph = main_view.id
           }
       )
-      updated_model
-    |> (\model_ ->
-          { model_
-            | graph_views =
-                updateGraphView main_view.id
-                  ( centerAndHighlight ( edges_in {- ++ edges_out -} )
-                  >> Just
-                  )
-                  model_.graph_views
-          }
-      )
+    |> C.updateGraphView main_view.id (centerAndHighlight edges_in)
     |> setProperties
 
 toResolutionDict : PackageDict -> ResolutionDict
@@ -2522,7 +2481,7 @@ commitOrConfirm model =
             , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
           }
         updated_model =
-          upsertGraphView updated_view.id (fitGraphViewToGraph updated_view) model_
+          C.upsertGraphView (fitGraphViewToGraph updated_view) model_
       in
         refreshComputationsList updated_model
     
@@ -2730,49 +2689,30 @@ beginDeletionInteraction package_uuid affected package model =
     indirect =
       AutoSet.toList indirectSet
       |> Debug.log "indirect"
-    (mainGraph, model_) =
-      solvedViewFromComputation
-        GraphEditor.coordinateForces
+    (id, model_) =
+      getUuid model
+    mainGraph =
+      makeGraphView id (SolvedWith GraphEditor.coordinateForces)
         { w = model.uiLayout.dimensions.viewport.w / 3
         , h = model.uiLayout.dimensions.viewport.h / 3
         }
-        True package.computation model
+        True model.packages package.computation
     (directViews, model__) =
       affected
       |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
-      |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
-      |> List.foldl
-        (\pkg (acc, m) ->
-          let
-            (v, m_) =
-              solvedViewFromComputation
-                GraphEditor.coordinateForces
-                { w = m.uiLayout.dimensions.viewport.w / 7
-                , h = m.uiLayout.dimensions.viewport.h / 7
-                }
-                True pkg.computation m
-          in
-            (v :: acc, m_)
-        )
-        ([], model_)
+      |> packagesToGraphViews 
+          { w = model.uiLayout.dimensions.viewport.w / 7
+          , h = model.uiLayout.dimensions.viewport.h / 7
+          }
+          (C.upsertGraphView mainGraph model_)
     (indirectViews, model___) =
       indirect
       |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
-      |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
-      |> List.foldl
-        (\pkg (acc, m) ->
-          let
-            (v, m_) =
-              solvedViewFromComputation
-                GraphEditor.coordinateForces
-                { w = m.uiLayout.dimensions.viewport.w / 7
-                , h = m.uiLayout.dimensions.viewport.h / 7
-                }
-                True pkg.computation m
-          in
-            (v :: acc, m_)
-        )
-        ([], model__)
+      |> packagesToGraphViews 
+          { w = model.uiLayout.dimensions.viewport.w / 7
+          , h = model.uiLayout.dimensions.viewport.h / 7
+          }
+          model__
     props =
       { affectedPackages = affected
       , indirectlyAffectedPackages = indirect
@@ -2855,27 +2795,21 @@ expandStep n results props model =
       Maybe.map (\step ->
         let
           edges = executing_edges step
-          (gv_uuid, model__) =
-            solvedViewFromComputation
-              GraphEditor.spreadOutForces
+          (id, model_) =
+            getUuid model
+          gv =
+            makeGraphView id (SolvedWith GraphEditor.spreadOutForces)
               { w = model.uiLayout.dimensions.bottomPanel.w - 128
               , h = model.uiLayout.dimensions.bottomPanel.h - 40
               }
               True
+              model.packages
               step.computation
-              model
-            |>(\({id}, m) ->
-                ( id
-                , { m
-                    | graph_views =
-                        AutoDict.update id
-                          (Maybe.map <| centerAndHighlight edges)
-                          m.graph_views
-                  }
-                )
-              )
+          model__ =
+            C.upsertGraphView gv model_
+            |> C.updateGraphView gv.id (centerAndHighlight edges)
         in
-          ( gv_uuid , model__ )
+          ( gv.id , model__ )
       )
       selectedStep
   in
@@ -2916,38 +2850,32 @@ step_execution orig_graphview execution_function test model =
       execution_function previously_executed
     head_step =
       List.head applied_step
-    (new_graphview_uuid, model_) =
+    (id, model_) =
+      getUuid model
+    (graph_view, model__) =
       Maybe.map
         (\step ->
           let
             edges = executing_edges step
+            gv =
+              makeGraphView id (SolvedWith GraphEditor.spreadOutForces)
+                model.uiLayout.dimensions.mainEditor
+                True model.packages step.computation
+            executed_model =
+              C.upsertGraphView gv model_
+              |> C.updateGraphView gv.id (centerAndHighlight edges)
           in
-          solvedViewFromComputation
-            GraphEditor.spreadOutForces
-            model.uiLayout.dimensions.mainEditor
-            True
-            step.computation
-            model
-          |>(\({id}, m) ->
-              ( id
-              , { m
-                  | graph_views =
-                      AutoDict.update id
-                        (Maybe.map <| centerAndHighlight edges)
-                        m.graph_views
-                }
-              )
-            )
+            (gv, executed_model)
         ) head_step
-      |> Maybe.withDefault (orig_graphview.id, model)
+      |> Maybe.withDefault (orig_graphview, model_)
     updated_props =
       Maybe.withDefault
         { expandedSteps = IntDict.empty
         }
         previous_props
   in
-    interactionFunction applied_step updated_props model_
-    |> (\model__ -> { model__ | mainGraphView = new_graphview_uuid })
+    interactionFunction applied_step updated_props model__
+    |> C.setMainView graph_view.id
     |> setProperties
 
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
@@ -3027,17 +2955,20 @@ update_package pkg_uuid msg model =
       ( AutoDict.get pkg_uuid model.packages
         |> Maybe.map
           (\pkg ->
-            removeViews [ model.mainGraphView ] model
-            |> solvedViewFromComputation GraphEditor.coordinateForces
-                model.uiLayout.dimensions.mainEditor False pkg.computation
-            |> linkToPackage pkg.packageIdentifier
-            |>(\(gv, m) ->
-                { m
-                  | selectedPackage = pkg.packageIdentifier
-                  , mainGraphView = gv.id
-                }
-              )
-            |> setProperties
+            let
+              (id, model_) =
+                getUuid model
+              gv =
+                makeGraphView id (SolvedWith GraphEditor.coordinateForces)
+                  model.uiLayout.dimensions.mainEditor
+                  False model.packages pkg.computation
+                |> linkGraphViewToPackage model.packages pkg.packageIdentifier              
+            in
+              C.upsertGraphView gv model_
+              |> removeViews [ model.mainGraphView ]
+              |> C.setMainView gv.id
+              |> C.selectPackage pkg.packageIdentifier
+              |> setProperties
           )
         |> Maybe.withDefaultLazy
           (\() ->
@@ -3391,15 +3322,16 @@ update msg model =
             )
         updated_model =
           { model_ | packages = AutoDict.insert mainUuid pkg model.packages }
-        ( _, with_graph_view ) =
-          solvedViewFromComputation
-            GraphEditor.coordinateForces
+        (id, model__) =
+          getUuid updated_model
+        gv =
+          makeGraphView id (SolvedWith GraphEditor.coordinateForces)
             model.uiLayout.dimensions.mainEditor
             False
+            model__.packages
             pkg.computation
-            updated_model
       in
-        ( with_graph_view
+        ( C.upsertGraphView gv model__
           |> refreshComputationsList
           |> setProperties
         , persistPackage pkg

@@ -1,5 +1,9 @@
 module Changes exposing
-  ( solidifyPhantoms
+  ( selectPackage
+  , setMainView
+  , solidifyPhantoms
+  , updateGraphView
+  , upsertGraphView
   )
 import Automata.Data exposing (..)
 import Uuid exposing (Uuid)
@@ -7,12 +11,20 @@ import Graph exposing (NodeId)
 import Set
 import AutoDict
 
-upsertGraphView : Uuid -> GraphView -> Model -> Model
-upsertGraphView uuid graph_view model =
+upsertGraphView : GraphView -> Model -> Model
+upsertGraphView graph_view model =
   { model
     | graph_views =
-        AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
+        AutoDict.insert graph_view.id graph_view model.graph_views
   }
+
+updateGraphView : Uuid -> (GraphView -> GraphView) -> Model -> Model
+updateGraphView uuid f model =
+  AutoDict.get uuid model.graph_views
+  |> Maybe.map (\gv ->
+    { model | graph_views = AutoDict.insert uuid (f gv) model.graph_views }
+  )
+  |> Maybe.withDefault model
 
 updateDrawingData : Uuid -> (DrawingData -> DrawingData) -> Model -> Model
 updateDrawingData view_uuid f model =
@@ -46,3 +58,11 @@ solidifyPhantoms view_uuid src phantom_id model =
       }
     )
     model
+
+setMainView : Uuid -> Model -> Model
+setMainView uuid model =
+  { model | mainGraphView = uuid }
+
+selectPackage : Uuid -> Model -> Model
+selectPackage uuid model =
+  { model | selectedPackage = uuid }

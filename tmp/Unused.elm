@@ -636,3 +636,11 @@ explore node s graph =
   |> IntDict.values
   |> List.filterMap identity
   |> List.concat
+
+-- Original source: Main.elm
+identifyCardinality : NodeId -> NodeId -> GraphView -> Cardinality
+identifyCardinality from to {computation} =
+  Graph.get to computation.graph
+  |> Maybe.map
+    (\toContext -> identifyCardinalityViaContext from toContext)
+  |> Maybe.withDefault Unidirectional
