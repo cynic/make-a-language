@@ -313,35 +313,6 @@ fitGraphViewToGraph graphView =
         graphView.computation.graph
   }
 
-mkGraphView : Uuid -> AutomatonGraph -> Dimension -> Bool -> PackageDict -> GraphView
-mkGraphView id ag dim removePadding packages =
-    { id = id
-    , computation = ag
-    , graphPackage = Nothing
-    , fitClosely = removePadding
-    , host = dim
-    , guest =
-        calculateGuestDimensionsForHost
-          dim
-          removePadding
-          ag.graph
-    , pan = ( 0, 0 )
-    , activePanDirection = Nothing
-    , disconnectedNodes = Set.empty
-    , properties = nilViewProperties
-    , drawingData =
-        { link_drawing = linkDrawingForPackage ag packages
-        , node_drawing = nodeDrawingForPackage ag id
-        , selected_nodes = Set.empty
-        , phantom_node = Nothing
-        , graphReferenceDescriptions = Q.descriptionsForPackages packages
-        , highlighted_links = Set.empty
-        , lowlighted_links = Set.empty
-        }
-    , undoBuffer = []
-    , redoBuffer = []
-    }
-
 type GraphViewType
   = Unsolved
   | SolvedWith (AutomatonGraph -> List (Force.Force NodeId))
@@ -358,10 +329,33 @@ makeGraphView id viewType dim fitClosely packages ag =
           }
         SolvedWith f ->
           GraphEditor.computeGraphFully f ag
-    graph_view =
-      mkGraphView id computeResult.solvedGraph dim fitClosely packages
   in
-    graph_view
+    { id = id
+    , computation = computeResult.solvedGraph
+    , graphPackage = Nothing
+    , fitClosely = fitClosely
+    , host = dim
+    , guest =
+        calculateGuestDimensionsForHost
+          dim
+          fitClosely
+          computeResult.solvedGraph.graph
+    , pan = ( 0, 0 )
+    , activePanDirection = Nothing
+    , disconnectedNodes = Set.empty
+    , properties = nilViewProperties
+    , drawingData =
+        { link_drawing = linkDrawingForPackage computeResult.solvedGraph packages
+        , node_drawing = nodeDrawingForPackage computeResult.solvedGraph id
+        , selected_nodes = Set.empty
+        , phantom_node = Nothing
+        , graphReferenceDescriptions = Q.descriptionsForPackages packages
+        , highlighted_links = Set.empty
+        , lowlighted_links = Set.empty
+        }
+    , undoBuffer = []
+    , redoBuffer = []
+    }
 
 linkGraphViewToPackage : PackageDict -> Uuid -> GraphView -> GraphView
 linkGraphViewToPackage packages package_uuid graph_view =
