@@ -690,15 +690,43 @@ sidebarGraphDimensions uiLayout =
     ( uiLayout.dimensions.sideBar.w - 20 )
     ( 9/16 * ( uiLayout.dimensions.sideBar.w - 20 ))
 
-handleConnectionRemoval : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
-handleConnectionRemoval uuid {source, dest, connection, deleteTargetIfCancelled} viewsToRemove model =
-  if deleteTargetIfCancelled then
-    removeViews viewsToRemove model
-    |> deleteNodeFromView uuid source dest
-  else
-    -- does link deletion IF appropriate.
-    removeViews viewsToRemove model
-    |> deleteLinkFromView uuid source dest connection
+escapeConnectionEditor : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
+escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
+  case {- Debug.log "targetKind" -} targetKind of
+    PhantomNodeNewConnection ->
+      C.removeViews viewsToRemove model
+      |> C.updateGraphView uuid
+        ( C.mapGraph (Graph.remove dest)
+          >> C.mapDrawingData
+            (\dd ->
+              { dd
+                | link_drawing = Dict.remove (source, dest) dd.link_drawing
+                , node_drawing = Dict.remove dest dd.node_drawing
+                , selected_nodes = Set.empty
+              }
+            )
+        )
+    ExistingNodeNewConnection ->
+      C.removeViews viewsToRemove model
+      |> C.updateGraphView uuid
+        ( C.mapGraph
+            ( Graph.update dest
+                (Maybe.map (\destCtx ->
+                  { destCtx | incoming = IntDict.remove source destCtx.incoming }
+                ))
+            )
+          >> C.mapDrawingData
+            (\dd ->
+              { dd
+                | link_drawing = Dict.remove (source, dest) dd.link_drawing
+                , selected_nodes = Set.empty
+              }
+            )
+        )
+    ExistingNodeExistingConnection ->
+      C.removeViews viewsToRemove model 
+      |> C.updateGraphView uuid
+        ( C.mapDrawingData (\dd -> { dd | selected_nodes = Set.empty }) )
 
 
 updateMainEditorDimensions : Model -> Model
@@ -955,7 +983,7 @@ packagesToGraphViews dim model list =
         )
     )
     ( [], model )
-    ( List.sortBy (.created >> Time.posixToMillis >> (*) -1) list)
+    ( List.sortBy (.created >> Time.posixToMillis) list)
     -- ( AutoDict.values model.packages
     --   |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
     -- )
@@ -987,13 +1015,6 @@ selectNavIcon icon model =
             let selected = uiLayout.selected in
             { selected | sideBar = icon }
         }
-  }
-
-removeViews : List Uuid -> Model -> Model
-removeViews uuids model =
-  { model
-    | graph_views =
-        List.foldl AutoDict.remove model.graph_views uuids
   }
 
 nodeHostCoordToHostCoord : Coordinate -> Coordinate -> GraphView -> Coordinate
@@ -1867,8 +1888,8 @@ cancelNewNodeCreation view_uuid model =
     case C.popInteraction (Just view_uuid) model of
       Just (ChoosingDestinationFor source (NewNode dest _) _, model_) ->
         kill source dest model_
-      Just (EditingConnection {source, dest, deleteTargetIfCancelled} _, model_) ->
-        if deleteTargetIfCancelled then
+      Just (EditingConnection {source, dest, targetKind} _, model_) ->
+        if targetKind == PhantomNodeNewConnection then
           kill source dest model_
         else
           println "🚨 ERROR WHMD(MWOEI" -- how am I in this function, if there's no new node??
@@ -2125,15 +2146,19 @@ selectDestination view_uuid src possible_dest model =
           { source = src
           , dest = phantom_id
           , connection = AutoSet.empty transitionToString
-          , deleteTargetIfCancelled = True
+          , targetKind = PhantomNodeNewConnection
           }
     ExistingNode dest_id conn ->
       let
+        graph_view = AutoDict.get view_uuid model.graph_views
         svg_coord =
-          AutoDict.get view_uuid model.graph_views
-          |> Maybe.andThen (\gv -> Graph.get dest_id gv.computation.graph)
+          Maybe.andThen (\gv -> Graph.get dest_id gv.computation.graph) graph_view
           |> Maybe.map (\ctx -> Coordinate ctx.node.label.x ctx.node.label.y)
           |> Maybe.withDefault (Coordinate 0 0)
+        existing_connection =
+          Maybe.andThen (\gv -> Graph.get src gv.computation.graph) graph_view
+          |> Maybe.map (\ctx -> Q.linkExistsInGraph ctx dest_id)
+          |> Maybe.withDefault False
       in
         -- we already have a node selected, and now, an existing
         -- node is being selected as the destination.
@@ -2142,79 +2167,13 @@ selectDestination view_uuid src possible_dest model =
           { source = src
           , dest = dest_id
           , connection = conn
-          , deleteTargetIfCancelled = False
+          , targetKind =
+              if existing_connection then
+                ExistingNodeExistingConnection
+              else
+                ExistingNodeNewConnection
           }
           model
-
-deleteLinkFromView : Uuid -> NodeId -> NodeId -> Connection -> Model -> Model
-deleteLinkFromView view_uuid source dest conn model =
-  let
-    emptyConnection : GraphView -> Model
-    emptyConnection graph_view =
-      let
-        alterPackage ag =
-          { ag
-            | graph =
-                Graph.update dest
-                  (Maybe.map (\destContext ->
-                    { destContext
-                      | incoming =
-                          IntDict.remove source destContext.incoming
-                    }
-                  ))
-                  ag.graph
-          }
-      in
-        updateGraphInView alterPackage graph_view model
-  in
-  if AutoSet.isEmpty conn then
-    AutoDict.get view_uuid model.graph_views
-    |> Maybe.map emptyConnection
-    |> Maybe.withDefault model
-  else
-    { model
-      | graph_views =
-          AutoDict.update view_uuid
-            (Maybe.map (\graph_view ->
-              { graph_view
-                | drawingData =
-                    let drawingData = graph_view.drawingData in
-                    { drawingData
-                      | highlighted_links =
-                          Set.remove (source, dest) drawingData.highlighted_links
-                    }
-              }
-            ))
-            model.graph_views
-    }
-
-deleteNodeFromView : Uuid -> NodeId -> NodeId -> Model -> Model
-deleteNodeFromView view_uuid source dest model =
-  let
-    model_ =
-      updateDrawingData view_uuid
-        (\drawingData ->
-            { drawingData
-              | link_drawing =
-                  Dict.remove (source, dest) drawingData.link_drawing
-              , node_drawing =
-                  Dict.remove dest drawingData.node_drawing
-            }
-        )
-        model
-  in
-      { model_
-        | graph_views =
-            AutoDict.update view_uuid
-              (Maybe.map (\graph_view ->
-                { graph_view
-                  | computation =
-                    let ag = graph_view.computation in
-                    { ag | graph = Graph.remove dest ag.graph }
-                }
-              ))
-              model_.graph_views
-      }
 
 startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -> Model
 startSplit uuid graph_view nodeContext model =
@@ -2386,7 +2345,7 @@ commitOrConfirm model =
     case C.popMostRecentInteraction model of
       Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
         ( if AutoSet.isEmpty left || AutoSet.isEmpty right then
-            removeViews [ mainGraph ] model_
+             C.removeViews [ mainGraph ] model_
           else
             AutoDict.get gv_uuid model_.graph_views
             |> Maybe.andThen
@@ -2399,34 +2358,35 @@ commitOrConfirm model =
             |> Maybe.map (\(gv, nodeContext) ->
               splitNode nodeContext left gv
               |> \newGraph ->
-                  removeViews [ mainGraph ] model_
+                   C.removeViews [ mainGraph ] model_
                   |> commit_change gv newGraph
             )
             |> Maybe.withDefault model_
             |> setProperties
         , Cmd.none
         )
-      Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled }) {mainGraph, referenceList}, model_) ->
+      Just (Just gv_uuid, EditingConnection ({ source, dest, connection, targetKind }) {mainGraph, referenceList}, model_) ->
           -- create such an automatongraph
           ( AutoDict.get (gv_uuid) model_.graph_views   
             |> Maybe.map
               (\gv ->
-                if deleteTargetIfCancelled then
-                  -- this one comes from a phantom node.
-                  removeViews (mainGraph :: referenceList) model_
-                  -- because this comes from a phantom node, ensure that we
-                  -- remove the 'dest' from the graph before confirming it as
-                  -- the previous graph.
-                  |> confirmPhantomNode source dest connection gv
-                  |> setProperties
-                else if AutoSet.isEmpty connection then
-                  removeViews (mainGraph :: referenceList) model_
-                  |> removeLink source dest gv
-                  |> setProperties
-                else
-                  removeViews (mainGraph :: referenceList) model_
-                  |> updateExistingNode source dest connection gv
-                  |> setProperties
+                case targetKind of
+                  PhantomNodeNewConnection ->
+                    -- this one comes from a phantom node.
+                    C.removeViews (mainGraph :: referenceList) model_
+                    -- because this comes from a phantom node, ensure that we
+                    -- remove the 'dest' from the graph before confirming it as
+                    -- the previous graph.
+                    |> confirmPhantomNode source dest connection gv
+                    |> setProperties
+                  ExistingNodeNewConnection ->
+                    C.removeViews (mainGraph :: referenceList) model_
+                    |> removeLink source dest gv
+                    |> setProperties
+                  ExistingNodeExistingConnection ->
+                    C.removeViews (mainGraph :: referenceList) model_
+                    |> updateExistingNode source dest connection gv
+                    |> setProperties
               )
             |> Maybe.withDefault model_
           , Cmd.none
@@ -2434,7 +2394,7 @@ commitOrConfirm model =
       Just (Nothing, DeletingPackage to_delete props, model_) ->
         let
           updated_model =
-            removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
+             C.removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
             |> deletePackageFromModel to_delete
             |> refreshComputationsList
             |> setProperties
@@ -2610,7 +2570,7 @@ deletePackage package model =
             viewsContainingPackage package_uuid without_package
             |> List.map .id
         in
-          ( removeViews relevant_views without_package
+          (  C.removeViews relevant_views without_package
           , Ports.deleteFromStorage (Uuid.toString package_uuid)
           )
       _ ->
@@ -2833,7 +2793,7 @@ update_package pkg_uuid msg model =
                 |> linkGraphViewToPackage model.packages pkg.packageIdentifier              
             in
               C.upsertGraphView gv model_
-              |> removeViews [ model.mainGraphView ]
+              |>  C.removeViews [ model.mainGraphView ]
               |> C.setMainView gv.id
               |> C.selectPackage pkg.packageIdentifier
               |> setProperties
@@ -3091,13 +3051,13 @@ update msg model =
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _) _, _) ->
               removePhantomLink uuid source dest model
             Just (Just uuid, EditingConnection alteration {referenceList, mainGraph}, model_) ->
-              handleConnectionRemoval uuid alteration (mainGraph :: referenceList) model_ 
+              escapeConnectionEditor uuid alteration (mainGraph :: referenceList) model_ 
               |> setProperties
             Just (Just _, SplittingNode _ props, model_) ->
-              removeViews [ props.mainGraph ] model_
+               C.removeViews [ props.mainGraph ] model_
               |> setProperties
             Just (Nothing, DeletingPackage _ {mainGraph, directViews, indirectViews}, model_) ->
-              removeViews (mainGraph :: directViews ++ indirectViews) model_
+               C.removeViews (mainGraph :: directViews ++ indirectViews) model_
               |> setProperties
             Just (_, _, model_) ->
               setProperties model_ -- yay, I could pop from the global
@@ -3111,7 +3071,7 @@ update msg model =
           { source = src
           , dest = dest
           , connection = connection
-          , deleteTargetIfCancelled = False
+          , targetKind = ExistingNodeExistingConnection
           }
           model
       , Cmd.none

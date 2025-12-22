@@ -1,7 +1,10 @@
 module Changes exposing
-  ( popInteraction
+  ( mapDrawingData
+  , mapGraph
+  , popInteraction
   , popMostRecentInteraction
   , pushInteractionForStack
+  , removeViews
   , replaceInteraction
   , selectPackage
   , setMainView
@@ -9,13 +12,16 @@ module Changes exposing
   , updateGraphView
   , upsertGraphView
   )
-import Automata.Data exposing (..)
-import Uuid exposing (Uuid)
-import Graph exposing (NodeId)
-import List.Extra as List
-import Set
 import AutoDict
+import AutoSet
+import Automata.Data exposing (..)
+import Dict
+import Graph exposing (NodeId, Graph(..))
+import IntDict
+import List.Extra as List
 import Queries as Q
+import Set
+import Uuid exposing (Uuid)
 
 upsertGraphView : GraphView -> Model -> Model
 upsertGraphView graph_view model =
@@ -137,3 +143,26 @@ replaceInteraction uuid interaction model =
   popInteraction uuid model
   |> Maybe.map (\(_, model_) -> pushInteractionForStack uuid interaction model_)
   |> Maybe.withDefault model
+
+removeViews : List Uuid -> Model -> Model
+removeViews uuids model =
+  { model
+    | graph_views =
+        List.foldl AutoDict.remove model.graph_views uuids
+  }
+
+mapDrawingData : (DrawingData -> DrawingData) -> GraphView -> GraphView
+mapDrawingData f gv =
+  { gv | drawingData = f gv.drawingData }
+
+mapGraph : (Graph Entity Connection -> Graph Entity Connection) -> GraphView -> GraphView
+mapGraph f gv =
+  { gv
+    | computation =
+        let ag = gv.computation in
+        { ag | graph = f ag.graph }
+  }
+
+mapComputation : (AutomatonGraph -> AutomatonGraph) -> GraphView -> GraphView
+mapComputation f gv =
+  { gv | computation = f gv.computation }

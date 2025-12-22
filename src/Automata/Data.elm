@@ -188,11 +188,16 @@ type AreaUITarget
   = NavigatorsArea
   | ToolsArea
 
+type ConnectionTarget
+  = PhantomNodeNewConnection -- brand new "phantom" node
+  | ExistingNodeExistingConnection -- known node, and a known connection to it
+  | ExistingNodeNewConnection -- known node, but a new connection to it
+
 type alias ConnectionAlteration =
   { source : NodeId
   , dest : NodeId
   , connection : Connection
-  , deleteTargetIfCancelled : Bool
+  , targetKind : ConnectionTarget
   }
 
 {-  Let's go over UI interactions, and the state machine behind
