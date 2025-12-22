@@ -1,7 +1,10 @@
 module Queries exposing
-    ( descriptionsForPackages
-    , linkExistsInGraph
+    ( bounds_for
     , descriptionsForConnection
+    , descriptionsForPackages
+    , linkExistsInGraph
+    , mostRecentInteraction
+    , peekInteraction
     )
 import Automata.Data exposing (..)
 import AutoDict
@@ -10,6 +13,8 @@ import Maybe.Extra as Maybe
 import Uuid exposing (Uuid)
 import Graph exposing (NodeContext, NodeId)
 import IntDict
+import Set
+import List.Extra as List
 
 descriptionsForPackages : PackageDict -> GraphReferenceDescriptions
 descriptionsForPackages packages =
@@ -37,3 +42,52 @@ descriptionsForConnection connection packages =
             |> Maybe.map (\s -> ( uuid, s ))
     )
   |> AutoDict.fromList Uuid.toString
+
+bounds_for : List NodeId -> Graph.Graph Entity Connection -> Bounds
+bounds_for nodeIds graph =
+  let
+    contexts =
+      (Set.fromList >> Set.toList) nodeIds
+      |> List.filterMap (\id -> Graph.get id graph)
+      -- |> debugLog_ "[bounds_for] contexts to check" (List.map (.node >> .label))
+  in
+  -- Now find out: where is the bounding box for the nodes?
+    case contexts of
+      [] ->
+        { min = { x = 0, y = 0 }, max = { x = 0, y = 0 } }
+        -- |> Debug.log "Default Bounds"
+      h::t ->
+        List.foldl
+          (\ctx best ->
+            { min =
+                { x = min ctx.node.label.x best.min.x
+                , y = min ctx.node.label.y best.min.y
+                }
+            , max =
+                { x = max ctx.node.label.x best.max.x
+                , y = max ctx.node.label.y best.max.y
+                }
+            }
+          )
+          { min = { x = h.node.label.x, y = h.node.label.y }
+          , max = { x = h.node.label.x, y = h.node.label.y }
+          }
+          t
+          -- |> Debug.log "[bounds_for] Raw Bounds"
+
+peekInteraction : Maybe Uuid -> InteractionsDict -> Maybe InteractionState
+peekInteraction uuid interactions =
+  AutoDict.get uuid interactions
+  |> Maybe.map Tuple.second
+  |> Maybe.andThen List.head
+
+mostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState)
+mostRecentInteraction model =
+  AutoDict.toList model.interactionsDict
+  |> List.maximumBy (Tuple.second >> Tuple.first)
+  |> Maybe.andThen
+    (\(uuid, (_, interaction)) ->
+      case interaction of
+        [] -> Nothing
+        h::_ -> Just (uuid, h)
+    )

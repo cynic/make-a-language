@@ -43,6 +43,11 @@ type alias Rectangle =
   , h : Float
   }
 
+type alias Bounds =
+  { min : Coordinate
+  , max : Coordinate
+  }
+
 type alias Flags =
   { viewport : Dimension
   , initialSeed : Int

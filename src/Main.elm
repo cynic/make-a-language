@@ -374,7 +374,7 @@ centerAndHighlight : List (NodeId, NodeId) -> GraphView -> GraphView
 centerAndHighlight links graph_view =
   let
     bounds =
-      bounds_for
+      Q.bounds_for
         (List.foldl (\(a, b) acc -> a :: b :: acc) [] links)
         graph_view.computation.graph
     inner_padding = 60
@@ -633,50 +633,6 @@ recalculate_uistate ({dimensions} as ui) =
         }
   }
 
-type alias GuestDimensions =
-  { dimensions : (Float, Float)
-  , coordinates : (Float, Float)
-  , inner_coordinates : (Float, Float)
-  , inner_dimensions : (Float, Float)
-  }
-
-type alias Bounds =
-  { min : Coordinate
-  , max : Coordinate
-  }
-
-bounds_for : List NodeId -> Graph.Graph Entity Connection -> Bounds
-bounds_for nodeIds graph =
-  let
-    contexts =
-      (Set.fromList >> Set.toList) nodeIds
-      |> List.filterMap (\id -> Graph.get id graph)
-      -- |> debugLog_ "[bounds_for] contexts to check" (List.map (.node >> .label))
-  in
-  -- Now find out: where is the bounding box for the nodes?
-    case contexts of
-      [] ->
-        { min = { x = 0, y = 0 }, max = { x = 0, y = 0 } }
-        -- |> Debug.log "Default Bounds"
-      h::t ->
-        List.foldl
-          (\ctx best ->
-            { min =
-                { x = min ctx.node.label.x best.min.x
-                , y = min ctx.node.label.y best.min.y
-                }
-            , max =
-                { x = max ctx.node.label.x best.max.x
-                , y = max ctx.node.label.y best.max.y
-                }
-            }
-          )
-          { min = { x = h.node.label.x, y = h.node.label.y }
-          , max = { x = h.node.label.x, y = h.node.label.y }
-          }
-          t
-          -- |> Debug.log "[bounds_for] Raw Bounds"
-
 expand_bounds : Float -> Bounds -> Bounds
 expand_bounds n bounds =
   { bounds
@@ -695,7 +651,7 @@ calculateGuestDimensionsForHost {w, h} removePadding graph =
       w / h
       -- |> Debug.log "Viewport aspect-ratio"
     raw =
-      bounds_for (Graph.nodeIds graph) graph
+      Q.bounds_for (Graph.nodeIds graph) graph
     inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
     inner_pad =
       if removePadding then
@@ -884,88 +840,6 @@ resizeViewport {w, h} ({uiLayout, uiConstants} as model) =
       | uiLayout = state
       , uiConstants = constants
     }
-
-{-| Push an interaction onto the an interaction-stack.  If no such interaction-stack
-    exists, create one before pushing.
--}
-pushInteractionForStack : Maybe Uuid -> InteractionState -> Model -> Model
-pushInteractionForStack uuid interaction model =
-  let
-    new_recent_number =
-      AutoDict.values model.interactionsDict
-      |> List.maximumBy Tuple.first
-      |> Maybe.map (Tuple.first >> (+) 1)
-      |> Maybe.withDefault 0
-  in
-  { model
-    | interactionsDict =
-        AutoDict.update uuid
-          ( Maybe.withDefault (0, [])
-          >> (\(_, stack) -> Just (new_recent_number, interaction :: stack))
-          )
-          model.interactionsDict
-  }
-
-{-| Pop an interaction from a particular stack.  If there are no interactions left on the
-    stack, then the stack disappears.
--}
-popInteraction : Maybe Uuid -> Model -> Maybe (InteractionState, Model)
-popInteraction uuid model =
-  -- annoyingly, I can't use .update for this because I want to _also_ return the head…
-  -- so, in most cases, there are going to be two key lookups.
-  -- Oh well!
-
-  -- get the stack
-  case AutoDict.get uuid model.interactionsDict of
-    Just (_, [h]) ->
-      println "One interaction on this stack; removing the stack itself."
-      Just <|
-        ( h
-        , { model | interactionsDict = AutoDict.remove uuid model.interactionsDict }
-        )
-    Just (r, h :: t) ->
-      -- if it has something, pop, and also return an updated model
-      println "More than one interaction on this stack; removing the topmost interaction."
-      Just <|
-        ( h
-        , { model | interactionsDict = AutoDict.insert uuid (r - 1, t) model.interactionsDict }
-        )
-    _ ->
-      println "Was called to pop, but there's nothing to pop!"
-      -- if there's nothing, or there was no such dict, there's nothing
-      -- to do
-      Nothing
-
-popMostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState, Model)
-popMostRecentInteraction model =
-  mostRecentInteraction model
-  |> Maybe.andThen (\(uuid, _) ->
-    popInteraction uuid model
-    |> Maybe.map (\(interaction, model_) -> (uuid, interaction, model_))
-  )
-
-peekInteraction : Maybe Uuid -> InteractionsDict -> Maybe InteractionState
-peekInteraction uuid interactions =
-  AutoDict.get uuid interactions
-  |> Maybe.map Tuple.second
-  |> Maybe.andThen List.head
-
-replaceInteraction : Maybe Uuid -> InteractionState -> Model -> Model
-replaceInteraction uuid interaction model =
-  popInteraction uuid model
-  |> Maybe.map (\(_, model_) -> pushInteractionForStack uuid interaction model_)
-  |> Maybe.withDefault model
-
-mostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState)
-mostRecentInteraction model =
-  AutoDict.toList model.interactionsDict
-  |> List.maximumBy (Tuple.second >> Tuple.first)
-  |> Maybe.andThen
-    (\(uuid, (_, interaction)) ->
-      case interaction of
-        [] -> Nothing
-        h::_ -> Just (uuid, h)
-    )
 
 type PanMovement
   = Less
@@ -1189,7 +1063,7 @@ update_graphview uuid ui_msg model =
     StartDraggingNode nodeId node_host_coord ->
       calculate_host_coord node_host_coord nodeId
       |> Maybe.map (\host_coord ->
-        ( pushInteractionForStack (Just uuid) (DraggingNode nodeId host_coord) model
+        ( C.pushInteractionForStack (Just uuid) (DraggingNode nodeId host_coord) model
           |> setProperties
         , Cmd.none
         )
@@ -1231,7 +1105,7 @@ update_graphview uuid ui_msg model =
       )
 
     SelectNode node_id node_coord ->
-      ( case popInteraction (Just uuid) model of
+      ( case C.popInteraction (Just uuid) model of
           Just (ChoosingDestinationFor src etc _, model_) ->
             selectDestination uuid src etc model_
           _ -> -- includes 'Nothing'
@@ -1246,7 +1120,7 @@ update_graphview uuid ui_msg model =
       )
 
     SelectSpace ->
-      ( case popInteraction (Just uuid) model of
+      ( case C.popInteraction (Just uuid) model of
           Just (ChoosingDestinationFor src etc _, model_) ->
             selectDestination uuid src etc model_
           _ ->
@@ -1255,7 +1129,7 @@ update_graphview uuid ui_msg model =
       )
     
     MoveNode coord ->
-      ( case peekInteraction (Just uuid) model.interactionsDict of
+      ( case Q.peekInteraction (Just uuid) model.interactionsDict of
           Just (DraggingNode node_id _) ->
             dragNode uuid coord node_id model
             |> setProperties
@@ -1268,7 +1142,7 @@ update_graphview uuid ui_msg model =
       )
 
     StopDraggingNode ->
-      ( popInteraction (Just uuid) model
+      ( C.popInteraction (Just uuid) model
         |> Maybe.map (Tuple.second >> setProperties)
         |> Maybe.withDefault model
       , Cmd.none
@@ -1402,7 +1276,7 @@ nodeSplitSwitch props key_uuid via ({left, right} as data) model =
       else
         ( left, right )
   in
-    replaceInteraction key_uuid
+    C.replaceInteraction key_uuid
       ( SplittingNode
           { data | left = newLeft, right = newRight } 
           props
@@ -1421,11 +1295,11 @@ handleConnectionEditorInput key_uuid input alteration props model =
       |> Maybe.withDefault model
     GraphReferenceSearch _ ->
       if String.contains "`" input then
-        replaceInteraction key_uuid
+        C.replaceInteraction key_uuid
           ( EditingConnection alteration { props | editingMode = CharacterInput } )
           model
       else
-        replaceInteraction key_uuid
+        C.replaceInteraction key_uuid
           ( EditingConnection alteration
               { props
                 | editingMode = GraphReferenceSearch input
@@ -1438,11 +1312,11 @@ handleConnectionCharacterInput : ConnectionEditorProperties -> Maybe Uuid -> Cha
 handleConnectionCharacterInput props key_uuid ch alteration model =
   case ch of
     '`' ->
-      replaceInteraction key_uuid
+      C.replaceInteraction key_uuid
         ( EditingConnection alteration { props | editingMode = GraphReferenceSearch "" } )
         model
     _ ->
-      replaceInteraction key_uuid
+      C.replaceInteraction key_uuid
         ( EditingConnection
             { alteration | connection = toggleConnectionTransition (ViaCharacter ch) alteration.connection }
             props
@@ -1523,9 +1397,9 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
   |>  (\(uuids, main_uuid, model_) ->
         let
           stackModify =
-            case peekInteraction view_uuid model_.interactionsDict of
-              Just (EditingConnection _ _) -> replaceInteraction
-              _ -> pushInteractionForStack
+            case Q.peekInteraction view_uuid model_.interactionsDict of
+              Just (EditingConnection _ _) -> C.replaceInteraction
+              _ -> C.pushInteractionForStack
         in
           C.updateGraphView main_uuid (centerAndHighlight [ (source, dest) ]) model_
           |> stackModify view_uuid
@@ -1576,7 +1450,7 @@ selectSourceNode model view_uuid host_coord node_id =
             )
             host_coord
       in
-        pushInteractionForStack (Just view_uuid) interaction model
+        C.pushInteractionForStack (Just view_uuid) interaction model
           -- and now modify the drawing-data for that view
         |> updateDrawingData view_uuid
             (\drawingData ->
@@ -1653,7 +1527,7 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view s
       )
       model
     -- we've made the changes, so set the interaction
-    |> replaceInteraction (Just view_uuid)
+    |> C.replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
             ( NewNode phantom_nodeid svg_coords )
             host_coords
@@ -1701,7 +1575,7 @@ switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext e
       )
       model
     -- we've made the changes, so set the interaction
-    |> replaceInteraction (Just view_uuid)
+    |> C.replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
             ( ExistingNode existingNodeContext.node.id linkData.connection )
             host_coords
@@ -1730,7 +1604,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coord
       )
       model
     -- we've made the changes, so set the interaction
-    |> replaceInteraction (Just view_uuid)
+    |> C.replaceInteraction (Just view_uuid)
         ( ChoosingDestinationFor sourceNodeContext.node.id
             ( ExistingNode nearbyNodeContext.node.id linkData.connection )
             host_coords
@@ -1762,7 +1636,7 @@ updatePhantomMovement view_uuid phantom_id svg_coords host_coords sourceNodeCont
         }
     )
     model
-  |> replaceInteraction (Just view_uuid)
+  |> C.replaceInteraction (Just view_uuid)
     ( ChoosingDestinationFor sourceNodeContext.node.id (NewNode phantom_id svg_coords) host_coords )
 
 movePhantomNodeInView : Uuid -> GraphView -> Coordinate -> Model -> Model
@@ -1804,7 +1678,7 @@ movePhantomNodeInView view_uuid graph_view svg_coord model =
 
   in
     -- first, let's find this thing.
-    case peekInteraction (Just view_uuid) model.interactionsDict of
+    case Q.peekInteraction (Just view_uuid) model.interactionsDict of
       Just (ChoosingDestinationFor source (NewNode phantom_id _) host_coords) ->
         -- okay, so there is a phantom node already there and active.
         -- in the easiest case, we just need to move its (x,y) coordinates, and be done.
@@ -1996,7 +1870,7 @@ cancelNewNodeCreation view_uuid model =
         )
         model_
   in
-    case popInteraction (Just view_uuid) model of
+    case C.popInteraction (Just view_uuid) model of
       Just (ChoosingDestinationFor source (NewNode dest _) _, model_) ->
         kill source dest model_
       Just (EditingConnection {source, dest, deleteTargetIfCancelled} _, model_) ->
@@ -2136,7 +2010,7 @@ setProperties model =
           (\k v ->
             { v
               | properties =
-                  case peekInteraction (Just k) model.interactionsDict of
+                  case Q.peekInteraction (Just k) model.interactionsDict of
                     Just (SplittingNode _ _) ->
                       whenSplittingNode
                     Just (DraggingNode _ _) ->
@@ -2220,7 +2094,7 @@ setProperties model =
         whenDeletingPackage =
           { nilMainProperties | canEscape = True }
       in
-        case mostRecentInteraction model of
+        case Q.mostRecentInteraction model of
           Just (_, SplittingNode _ _) ->
             whenSplittingNode
           Just (_, DraggingNode _ _) ->
@@ -2364,7 +2238,7 @@ startSplit uuid graph_view nodeContext model =
       |> List.map (\to -> (to, nodeContext.node.id))
   in
     C.upsertGraphView main_view model_
-    |> pushInteractionForStack (Just uuid)
+    |> C.pushInteractionForStack (Just uuid)
       ( SplittingNode
           { to_split = nodeContext.node.id
           , left = AutoSet.empty transitionToString
@@ -2515,7 +2389,7 @@ commitOrConfirm model =
       |> \newGraph -> commit_change gv newGraph model_
 
   in
-    case popMostRecentInteraction model of
+    case C.popMostRecentInteraction model of
       Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
         ( if AutoSet.isEmpty left || AutoSet.isEmpty right then
             removeViews [ mainGraph ] model_
@@ -2538,7 +2412,7 @@ commitOrConfirm model =
             |> setProperties
         , Cmd.none
         )
-      Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled } as alteration) {mainGraph, referenceList}, model_) ->
+      Just (Just gv_uuid, EditingConnection ({ source, dest, connection, deleteTargetIfCancelled }) {mainGraph, referenceList}, model_) ->
           -- create such an automatongraph
           ( AutoDict.get (gv_uuid) model_.graph_views   
             |> Maybe.map
@@ -2721,7 +2595,7 @@ beginDeletionInteraction package_uuid affected package model =
       , indirectViews = indirectViews |> List.map .id
       }
   in
-    pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
+    C.pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
 
 deletePackage : GraphPackage -> Model -> ( Model, Cmd Msg )
 deletePackage package model =
@@ -2815,7 +2689,7 @@ expandStep n results props model =
   in
     Maybe.map
       (\(gv_uuid, model__) ->
-        replaceInteraction Nothing
+        C.replaceInteraction Nothing
             (Executing results
               { props
                 | expandedSteps = IntDict.insert n gv_uuid props.expandedSteps
@@ -2831,19 +2705,19 @@ step_execution : GraphView -> (List ExecutionData -> List ExecutionData) -> Test
 step_execution orig_graphview execution_function test model =
   let
     (previously_executed, previous_props, interactionFunction) =
-      case peekInteraction Nothing model.interactionsDict of
+      case Q.peekInteraction Nothing model.interactionsDict of
         Just ( Executing results props ) ->
           ( results
           , Just props
           , \new_hx new_props ->
-              replaceInteraction Nothing (Executing new_hx new_props)
+              C.replaceInteraction Nothing (Executing new_hx new_props)
           )
         _ ->
           ( DFA.load test.input (toResolutionDict model.packages) orig_graphview.computation
             |> List.singleton
           , Nothing
           , \new_hx new_props ->
-              pushInteractionForStack Nothing (Executing new_hx new_props)
+              C.pushInteractionForStack Nothing (Executing new_hx new_props)
           )
     applied_step : List ExecutionData
     applied_step =
@@ -2994,7 +2868,7 @@ update_package pkg_uuid msg model =
               update_model p model
               |> (\m -> { m | randomSeed = newSeed })
           in
-            case popInteraction Nothing updated_model of
+            case C.popInteraction Nothing updated_model of
               Just ( Executing _ _ , model_ ) ->
                 -- stop executing, if I was executing.
                 -- I've got a different(?) test selected now!
@@ -3017,7 +2891,7 @@ update_package pkg_uuid msg model =
             updated_model =
               update_model p model
           in
-            case popInteraction Nothing updated_model of
+            case C.popInteraction Nothing updated_model of
               Just ( Executing _ _ , model_ ) ->
                 -- stop executing, if I was executing.
                 -- I've got a different(?) test selected now!
@@ -3113,7 +2987,7 @@ update msg model =
       update_package uuid pkg_msg model
 
     DragSplitter shouldStop coord ->
-      ( case popInteraction (Nothing) model of
+      ( case C.popInteraction (Nothing) model of
           Just (DraggingSplitter movement, model_) ->
             if shouldStop then -- do not, in fact, drag the splitter.
               model_
@@ -3132,7 +3006,7 @@ update msg model =
       )
 
     QuickInput input ->
-      ( case mostRecentInteraction model of
+      ( case Q.mostRecentInteraction model of
           Just (key_uuid, EditingConnection alteration props) ->
             handleConnectionEditorInput key_uuid input alteration props model
           Just (key_uuid, SplittingNode data props) ->
@@ -3147,9 +3021,9 @@ update msg model =
       )
 
     ToggleConnectionTransition via ->
-        ( case mostRecentInteraction model of
+        ( case Q.mostRecentInteraction model of
             Just (key_uuid, EditingConnection ({connection} as alteration) props) ->
-              replaceInteraction key_uuid 
+              C.replaceInteraction key_uuid 
                 ( EditingConnection
                     { alteration | connection = toggleConnectionTransition via connection }
                     props
@@ -3205,14 +3079,14 @@ update msg model =
       , Cmd.none
       )
     StartDraggingSplitter movement ->
-      ( pushInteractionForStack (Nothing) (DraggingSplitter movement) model
+      ( C.pushInteractionForStack (Nothing) (DraggingSplitter movement) model
         |> setProperties
       , Cmd.none
       )
 
     Escape ->
       ( if model.properties.canEscape then
-          case popMostRecentInteraction model of
+          case C.popMostRecentInteraction model of
             Nothing -> -- hmm, let's look at the local interactions of the main editor window.
               -- huh!  Looks like there's nothing to do!  So why was I called??
               -- Ideally, I shouldn't even spawn an event if there's nothing to do.
@@ -3254,7 +3128,7 @@ update msg model =
           | graph_views =
               AutoDict.update model.mainGraphView
                 (Maybe.map (\graph_view ->
-                    case (mostRecentInteraction model, graph_view.undoBuffer) of
+                    case (Q.mostRecentInteraction model, graph_view.undoBuffer) of
                       (_, []) ->
                         graph_view
                       (Just _, _) ->
@@ -3277,7 +3151,7 @@ update msg model =
           | graph_views =
               AutoDict.update model.mainGraphView
                 (Maybe.map (\graph_view ->
-                    case (mostRecentInteraction model, graph_view.redoBuffer) of
+                    case (Q.mostRecentInteraction model, graph_view.redoBuffer) of
                       (_, []) ->
                         graph_view
                       (Just _, _) ->
@@ -3426,14 +3300,14 @@ update msg model =
         )
 
     ResetComputation ->
-      case popInteraction Nothing model of
+      case C.popInteraction Nothing model of
         Just ( Executing _ _ , model_ ) ->
           ( setProperties model_, Cmd.none )
         _ ->
           ( model, Cmd.none )
 
     ToggleDebugStep n ->
-      ( case peekInteraction Nothing model.interactionsDict of
+      ( case Q.peekInteraction Nothing model.interactionsDict of
           Just ( Executing results props ) ->
             case IntDict.get n props.expandedSteps of
               Just id ->
@@ -3442,7 +3316,7 @@ update msg model =
                   | graph_views = AutoDict.remove id model.graph_views
                 }
                 -- and now get rid of the expanded step
-                |> replaceInteraction Nothing
+                |> C.replaceInteraction Nothing
                     (Executing results
                       { props
                         | expandedSteps =
@@ -3541,7 +3415,7 @@ subscriptions model =
               case String.toLower key of
                 "escape" ->
                   if model.properties.canEscape then                        
-                    case mostRecentInteraction model of
+                    case Q.mostRecentInteraction model of
                       Just (_, EditingConnection _ _) ->
                         if ctrlPressed then
                           D.succeed Escape
@@ -3557,7 +3431,7 @@ subscriptions model =
                   else
                     D.fail "Escape not permitted at this point"
                 "enter" ->
-                  case mostRecentInteraction model of
+                  case Q.mostRecentInteraction model of
                     Just (_, EditingConnection _ _) ->
                       if ctrlPressed then
                         D.succeed Confirm
@@ -3591,7 +3465,7 @@ subscriptions model =
           -- |> Debug.log "Raw resize values"
         )
     splitterSubscriptions =
-      case peekInteraction Nothing model.interactionsDict of
+      case Q.peekInteraction Nothing model.interactionsDict of
         Just (DraggingSplitter LeftRight) ->
           let
             -- navigatorbarwidth + splitterwidth/2
@@ -4058,7 +3932,7 @@ viewSplitter zIdx movement model areaOpen =
             []
         ]
     topOfStack =
-      peekInteraction Nothing model.interactionsDict
+      Q.peekInteraction Nothing model.interactionsDict
   in
     div
       [ HA.classList
@@ -4184,7 +4058,7 @@ viewTestingTool pkg test model =
   in
   div
     [ HA.class "tool-content testing" ]
-    [ case peekInteraction Nothing model.interactionsDict of
+    [ case Q.peekInteraction Nothing model.interactionsDict of
         Just (Executing ((h::t) as results) props) ->
           div
             [ HA.class "step-through" ]
@@ -4860,7 +4734,7 @@ view : Model -> Html Msg
 view model =
   div
     []
-    [ case mostRecentInteraction model of
+    [ case Q.mostRecentInteraction model of
         Just (Just _, EditingConnection {connection} props) ->
           viewConnectionEditor model connection props
         Just (Just _, SplittingNode data props) ->

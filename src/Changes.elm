@@ -1,5 +1,9 @@
 module Changes exposing
-  ( selectPackage
+  ( popInteraction
+  , popMostRecentInteraction
+  , pushInteractionForStack
+  , replaceInteraction
+  , selectPackage
   , setMainView
   , solidifyPhantoms
   , updateGraphView
@@ -8,8 +12,10 @@ module Changes exposing
 import Automata.Data exposing (..)
 import Uuid exposing (Uuid)
 import Graph exposing (NodeId)
+import List.Extra as List
 import Set
 import AutoDict
+import Queries as Q
 
 upsertGraphView : GraphView -> Model -> Model
 upsertGraphView graph_view model =
@@ -66,3 +72,68 @@ setMainView uuid model =
 selectPackage : Uuid -> Model -> Model
 selectPackage uuid model =
   { model | selectedPackage = uuid }
+
+{-| Push an interaction onto the an interaction-stack.  If no such interaction-stack
+    exists, create one before pushing.
+-}
+pushInteractionForStack : Maybe Uuid -> InteractionState -> Model -> Model
+pushInteractionForStack uuid interaction model =
+  let
+    new_recent_number =
+      AutoDict.values model.interactionsDict
+      |> List.maximumBy Tuple.first
+      |> Maybe.map (Tuple.first >> (+) 1)
+      |> Maybe.withDefault 0
+  in
+  { model
+    | interactionsDict =
+        AutoDict.update uuid
+          ( Maybe.withDefault (0, [])
+          >> (\(_, stack) -> Just (new_recent_number, interaction :: stack))
+          )
+          model.interactionsDict
+  }
+
+{-| Pop an interaction from a particular stack.  If there are no interactions left on the
+    stack, then the stack disappears.
+-}
+popInteraction : Maybe Uuid -> Model -> Maybe (InteractionState, Model)
+popInteraction uuid model =
+  -- annoyingly, I can't use .update for this because I want to _also_ return the head…
+  -- so, in most cases, there are going to be two key lookups.
+  -- Oh well!
+
+  -- get the stack
+  case AutoDict.get uuid model.interactionsDict of
+    Just (_, [h]) ->
+      -- println "One interaction on this stack; removing the stack itself."
+      Just <|
+        ( h
+        , { model | interactionsDict = AutoDict.remove uuid model.interactionsDict }
+        )
+    Just (r, h :: t) ->
+      -- if it has something, pop, and also return an updated model
+      -- println "More than one interaction on this stack; removing the topmost interaction."
+      Just <|
+        ( h
+        , { model | interactionsDict = AutoDict.insert uuid (r - 1, t) model.interactionsDict }
+        )
+    _ ->
+      -- println "Was called to pop, but there's nothing to pop!"
+      -- if there's nothing, or there was no such dict, there's nothing
+      -- to do
+      Nothing
+
+popMostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState, Model)
+popMostRecentInteraction model =
+  Q.mostRecentInteraction model
+  |> Maybe.andThen (\(uuid, _) ->
+    popInteraction uuid model
+    |> Maybe.map (\(interaction, model_) -> (uuid, interaction, model_))
+  )
+
+replaceInteraction : Maybe Uuid -> InteractionState -> Model -> Model
+replaceInteraction uuid interaction model =
+  popInteraction uuid model
+  |> Maybe.map (\(_, model_) -> pushInteractionForStack uuid interaction model_)
+  |> Maybe.withDefault model
