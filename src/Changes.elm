@@ -7,6 +7,13 @@ import Graph exposing (NodeId)
 import Set
 import AutoDict
 
+upsertGraphView : Uuid -> GraphView -> Model -> Model
+upsertGraphView uuid graph_view model =
+  { model
+    | graph_views =
+        AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
+  }
+
 updateDrawingData : Uuid -> (DrawingData -> DrawingData) -> Model -> Model
 updateDrawingData view_uuid f model =
   { model

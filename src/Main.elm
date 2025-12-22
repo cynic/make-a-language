@@ -320,12 +320,11 @@ fitGraphViewToGraph graphView =
         graphView.computation.graph
   }
 
-mkGraphView : Uuid -> AutomatonGraph -> Dimension -> Bool -> InterfaceLocation -> PackageDict -> GraphView
-mkGraphView id ag dim removePadding location packages =
+mkGraphView : Uuid -> AutomatonGraph -> Dimension -> Bool -> PackageDict -> GraphView
+mkGraphView id ag dim removePadding packages =
     { id = id
     , computation = ag
     , graphPackage = Nothing
-    , interfaceLocation = location
     , fitClosely = removePadding
     , host = dim
     , guest =
@@ -352,28 +351,20 @@ mkGraphView id ag dim removePadding location packages =
 
 upsertGraphView : Uuid -> GraphView -> Model -> Model
 upsertGraphView uuid graph_view model =
-  let
-    new_main =
-      if graph_view.interfaceLocation == MainEditor then
-        uuid
-      else
-        model.mainGraphView
-  in
   { model
     | graph_views =
         AutoDict.insert uuid { graph_view | id = uuid } model.graph_views
-    , mainGraphView = new_main
   }
 
 {-| Probably not the function you want. Look at `solvedViewFromPackage` and
     `naiveViewFromPackage` instead.
 -}
-viewFromComputation : GraphEditor.ComputeGraphResult -> Dimension -> InterfaceLocation -> Bool -> Model -> (GraphView, Model)
-viewFromComputation computed dim location removePadding model =
+viewFromComputation : GraphEditor.ComputeGraphResult -> Dimension -> Bool -> Model -> (GraphView, Model)
+viewFromComputation computed dim removePadding model =
   let
     (id, model_) = getUuid model
     graph_view =
-      mkGraphView id computed.solvedGraph dim removePadding location model_.packages
+      mkGraphView id computed.solvedGraph dim removePadding model_.packages
   in
     ( graph_view
     , upsertGraphView id graph_view model_
@@ -382,23 +373,23 @@ viewFromComputation computed dim location removePadding model =
 {-| Creates a new GraphView from a provided GraphPackage, accepting the provided layout
     uncritically, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-naiveViewFromComputation : Dimension -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
-naiveViewFromComputation dim location createFrozen ag model =
+naiveViewFromComputation : Dimension -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
+naiveViewFromComputation dim createFrozen ag model =
   viewFromComputation
     { solvedGraph = ag
     , simulation = Force.simulation []
     , forces = []
     }
-    dim location createFrozen model
+    dim createFrozen model
 
 {-| Creates a new GraphView from a provided GraphPackage, solves the forces for the relevant
     AutomatonGraph, and adds the GraphView to the `graph_views` dictionary in the `Model`.
 -}
-solvedViewFromComputation : (AutomatonGraph -> List (Force.Force NodeId)) -> Dimension -> InterfaceLocation -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
-solvedViewFromComputation computer dim location createFrozen ag model =
+solvedViewFromComputation : (AutomatonGraph -> List (Force.Force NodeId)) -> Dimension -> Bool -> AutomatonGraph -> Model -> (GraphView, Model)
+solvedViewFromComputation computer dim createFrozen ag model =
   viewFromComputation
     (GraphEditor.computeGraphFully computer ag)
-    dim location createFrozen model
+    dim createFrozen model
 
 linkToPackage : Uuid -> (GraphView, Model) -> (GraphView, Model)
 linkToPackage package_uuid (graph_view, model) =
@@ -601,7 +592,6 @@ init flags =
           solvedViewFromComputation
             GraphEditor.coordinateForces
             state.dimensions.mainEditor
-            MainEditor
             False
             mainPackage.computation
             model_excl_views
@@ -798,7 +788,7 @@ handleConnectionRemoval uuid {source, dest, connection, deleteTargetIfCancelled}
 
 
 updateMainEditorDimensions : Model -> Model
-updateMainEditorDimensions ({uiLayout} as model) =
+updateMainEditorDimensions ({uiLayout, mainGraphView, computationsExplorer} as model) =
   let
     updateMain : GraphView -> GraphView
     updateMain graph_view =
@@ -824,6 +814,8 @@ updateMainEditorDimensions ({uiLayout} as model) =
                 True
                 graph_view.computation.graph          
         }
+    sidebarIds =
+      AutoSet.fromList Uuid.toString computationsExplorer
   in
     -- On resize, I must update the dimensions for the graph view that
     -- is displayed in the "main" editor section as well.
@@ -831,17 +823,13 @@ updateMainEditorDimensions ({uiLayout} as model) =
       | graph_views =
           AutoDict.map
             (\_ graph_view ->
-                case graph_view.interfaceLocation of
-                  MainEditor ->
-                    updateMain graph_view
-                  Sidebar ->
-                    if uiLayout.open.sideBar then
-                      updateSidebar graph_view
-                    else
-                      graph_view -- don't bother.
-                  Independent ->
-                    -- no resizing.
-                    graph_view
+              if graph_view.id == mainGraphView then
+                updateMain graph_view
+              else if uiLayout.open.sideBar && AutoSet.member graph_view.id sidebarIds then
+                updateSidebar graph_view
+              else
+                -- no resizing.
+                graph_view
             )
             model.graph_views
     }
@@ -1122,7 +1110,7 @@ packagesToGraphViews dim model =
     (\g (acc, model_) ->
       let
         ( v, model__) =
-          solvedViewFromComputation GraphEditor.coordinateForces dim Sidebar True g.computation model_
+          solvedViewFromComputation GraphEditor.coordinateForces dim True g.computation model_
           |> linkToPackage g.packageIdentifier
       in
         (v :: acc, model__)
@@ -1550,7 +1538,7 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
                   GraphEditor.updateLink_graphchange source dest connection gv.computation
             ( main_view, updated_model ) =
               naiveViewFromComputation
-                { w = 250 , h = 250 } Independent True
+                { w = 250 , h = 250 } True
                 ag model_
             solidified_model =
               C.solidifyPhantoms main_view.id source dest updated_model
@@ -2401,7 +2389,7 @@ startSplit uuid graph_view nodeContext model =
   let
     ( main_view, updated_model ) =
       naiveViewFromComputation
-        { w = 250 , h = 250 } Independent True
+        { w = 250 , h = 250 } True
         graph_view.computation model
     edges_in =
       IntDict.keys nodeContext.incoming
@@ -2444,18 +2432,18 @@ toResolutionDict packages =
 
 deletePackageFromModel : Uuid -> Model -> Model
 deletePackageFromModel uuid model =
-  let
-    filterTransition : Transition -> Bool
-    filterTransition {via} =
-      case via of
-        ViaGraphReference ref ->
-          ref /= uuid
-        _ ->
-          True
-    filterConnection : Connection -> Connection
-    filterConnection conn =
-      AutoSet.filter filterTransition conn
-  in
+  -- let
+  --   filterTransition : Transition -> Bool
+  --   filterTransition {via} =
+  --     case via of
+  --       ViaGraphReference ref ->
+  --         ref /= uuid
+  --       _ ->
+  --         True
+    -- filterConnection : Connection -> Connection
+    -- filterConnection conn =
+    --   AutoSet.filter filterTransition conn
+  -- in
   { model
     | packages =
         AutoDict.remove uuid model.packages
@@ -2748,7 +2736,7 @@ beginDeletionInteraction package_uuid affected package model =
         { w = model.uiLayout.dimensions.viewport.w / 3
         , h = model.uiLayout.dimensions.viewport.h / 3
         }
-        Independent True package.computation model
+        True package.computation model
     (directViews, model__) =
       affected
       |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
@@ -2762,7 +2750,7 @@ beginDeletionInteraction package_uuid affected package model =
                 { w = m.uiLayout.dimensions.viewport.w / 7
                 , h = m.uiLayout.dimensions.viewport.h / 7
                 }
-                Independent True pkg.computation m
+                True pkg.computation m
           in
             (v :: acc, m_)
         )
@@ -2780,7 +2768,7 @@ beginDeletionInteraction package_uuid affected package model =
                 { w = m.uiLayout.dimensions.viewport.w / 7
                 , h = m.uiLayout.dimensions.viewport.h / 7
                 }
-                Independent True pkg.computation m
+                True pkg.computation m
           in
             (v :: acc, m_)
         )
@@ -2873,7 +2861,7 @@ expandStep n results props model =
               { w = model.uiLayout.dimensions.bottomPanel.w - 128
               , h = model.uiLayout.dimensions.bottomPanel.h - 40
               }
-              Independent True
+              True
               step.computation
               model
             |>(\({id}, m) ->
@@ -2937,7 +2925,7 @@ step_execution orig_graphview execution_function test model =
           solvedViewFromComputation
             GraphEditor.spreadOutForces
             model.uiLayout.dimensions.mainEditor
-            Independent True
+            True
             step.computation
             model
           |>(\({id}, m) ->
@@ -3041,7 +3029,7 @@ update_package pkg_uuid msg model =
           (\pkg ->
             removeViews [ model.mainGraphView ] model
             |> solvedViewFromComputation GraphEditor.coordinateForces
-                model.uiLayout.dimensions.mainEditor MainEditor False pkg.computation
+                model.uiLayout.dimensions.mainEditor False pkg.computation
             |> linkToPackage pkg.packageIdentifier
             |>(\(gv, m) ->
                 { m
@@ -3407,7 +3395,6 @@ update msg model =
           solvedViewFromComputation
             GraphEditor.coordinateForces
             model.uiLayout.dimensions.mainEditor
-            MainEditor
             False
             pkg.computation
             updated_model

@@ -395,11 +395,6 @@ type alias DrawingData =
   , lowlighted_links : Set (NodeId, NodeId)
   }
 
-type InterfaceLocation -- for GraphView
-  = Sidebar
-  | MainEditor
-  | Independent
-
 type ActivePanDirection
   = ToTopLeft
   | ToTop
@@ -415,7 +410,6 @@ type alias GraphView =
   , computation : AutomatonGraph
   , graphPackage : Maybe Uuid
   , fitClosely : Bool
-  , interfaceLocation : InterfaceLocation
   , host : Dimension -- (w,h) of svg element
   , guest : Rectangle -- (w,h) of svg viewport
   , pan : (Float, Float) -- panning offset, x and y
