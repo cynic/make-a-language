@@ -20,7 +20,6 @@ import Json.Decode as D
 import Json.Encode as E
 import Jsonify exposing (..)
 import List.Extra as List
-import Math.Vector2 exposing (distance)
 import Maybe.Extra as Maybe
 import Platform.Cmd as Cmd
 import Ports exposing (..)
@@ -690,45 +689,6 @@ sidebarGraphDimensions uiLayout =
     ( uiLayout.dimensions.sideBar.w - 20 )
     ( 9/16 * ( uiLayout.dimensions.sideBar.w - 20 ))
 
-escapeConnectionEditor : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
-escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
-  case {- Debug.log "targetKind" -} targetKind of
-    PhantomNodeNewConnection ->
-      C.removeViews viewsToRemove model
-      |> C.updateGraphView uuid
-        ( C.mapGraph (Graph.remove dest)
-          >> C.mapDrawingData
-            (\dd ->
-              { dd
-                | link_drawing = Dict.remove (source, dest) dd.link_drawing
-                , node_drawing = Dict.remove dest dd.node_drawing
-                , selected_nodes = Set.empty
-              }
-            )
-        )
-    ExistingNodeNewConnection ->
-      C.removeViews viewsToRemove model
-      |> C.updateGraphView uuid
-        ( C.mapGraph
-            ( Graph.update dest
-                (Maybe.map (\destCtx ->
-                  { destCtx | incoming = IntDict.remove source destCtx.incoming }
-                ))
-            )
-          >> C.mapDrawingData
-            (\dd ->
-              { dd
-                | link_drawing = Dict.remove (source, dest) dd.link_drawing
-                , selected_nodes = Set.empty
-              }
-            )
-        )
-    ExistingNodeExistingConnection ->
-      C.removeViews viewsToRemove model 
-      |> C.updateGraphView uuid
-        ( C.mapDrawingData (\dd -> { dd | selected_nodes = Set.empty }) )
-
-
 updateMainEditorDimensions : Model -> Model
 updateMainEditorDimensions ({uiLayout, mainGraphView, computationsExplorer} as model) =
   let
@@ -863,106 +823,43 @@ resizeViewport {w, h} ({uiLayout, uiConstants} as model) =
       , uiConstants = constants
     }
 
-type PanMovement
-  = Less
-  | More
-  | Same
-
-panGraphView : Int -> Int -> GraphView -> GraphView
-panGraphView xMovement yMovement ({guest, pan, computation, properties} as graph_view) =
-  let
-    ( pan_x, pan_y ) = pan
-    -- this is a rectangle that is inset from the maximum bounds.
-    movement_amount_x =
-      -- if the space to traverse is large, then move by a larger amount.
-      max 1 (ceiling (guest.w / 250)) |> toFloat
-    movement_amount_y =
-      -- if the space to traverse is large, then move by a larger amount.
-      max 1 (ceiling (guest.h / 250)) |> toFloat
-    ( new_pan_x, new_pan_y ) =
-      ( pan_x + toFloat xMovement * movement_amount_x
-      , pan_y + toFloat yMovement * movement_amount_y
-      )
-    ((sx, sy), (ex, ey)) = -- this is after the proposed pan.
-      ( ((guest.x + new_pan_x), (guest.y + new_pan_y))
-      , ((guest.x + new_pan_x + guest.w), (guest.y + new_pan_y + guest.h))
-      )
-    graph_nodes =
-      Graph.nodes computation.graph
-      -- |> debugLog_ "[panGraphView] nodes to check" (List.map .id)
-    is_okay =
-      List.any
-        (\node ->
-          -- we want to check whether any node is within the screen bounds.
-          -- debugLog_ "[panGraphView] Checking against " (\v -> (v.id, v.label.x ,v.label.y)) node |> \_ ->
-          node.label.x > sx &&
-          node.label.y > sy &&
-          node.label.x < ex &&
-          node.label.y < ey
+escapeConnectionEditor : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
+escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
+  case {- Debug.log "targetKind" -} targetKind of
+    PhantomNodeNewConnection ->
+      C.removeViews viewsToRemove model
+      |> C.updateGraphView uuid
+        ( C.mapGraph (Graph.remove dest)
+          >> C.mapDrawingData
+            (\dd ->
+              { dd
+                | link_drawing = Dict.remove (source, dest) dd.link_drawing
+                , node_drawing = Dict.remove dest dd.node_drawing
+                , selected_nodes = Set.empty
+              }
+            )
         )
-        graph_nodes
-      -- |> Debug.log "[panGraphView] is okay?"
-    is_really_okay =
-      is_okay ||
-        -- here's where it gets … tricky.
-        -- see, there can be a node on the screen.  But due to the aspect ratio,
-        -- it may be that there is only a few nodes on the screen—and the remaining
-        -- nodes are off the screen, but separated by a distance that is larger than the
-        -- screen width/height.  In such a case, we won't be able to pan to them with the
-        -- `is_okay` check, because we will be prevented from panning that drives all of
-        -- the existing nodes off the screen.  So we are, effectively, trapped in a local
-        -- minimum!
-        --
-        -- So, how do we address this?
-        --
-        -- Well, first of all, this is an edge-case.  So if the cheap check passes, then
-        -- we don't actually want to do any other checks.  But if the cheap check doesn't
-        -- pass, we've got more work to do.  And this is that work right here…
-        -- We must check whether we are HEADING TO another node, and if so, THEN we can
-        -- permit the pan.
-        ( let
-            orig_center = Math.Vector2.vec2 (guest.x + pan_x + guest.w / 2) (guest.y + pan_y + guest.h / 2)
-            new_center = Math.Vector2.vec2 ((sx + ex) / 2) ((sy + ey) / 2)
-          in
-            -- am I heading towards any graph node?
-            List.any
-              (\node ->
-                let
-                  node_center = Math.Vector2.vec2 node.label.x node.label.y
-                in
-                  distance node_center new_center < distance node_center orig_center
-              )
-              graph_nodes
+    ExistingNodeNewConnection ->
+      C.removeViews viewsToRemove model
+      |> C.updateGraphView uuid
+        ( C.mapGraph
+            ( Graph.update dest
+                (Maybe.map (\destCtx ->
+                  { destCtx | incoming = IntDict.remove source destCtx.incoming }
+                ))
+            )
+          >> C.mapDrawingData
+            (\dd ->
+              { dd
+                | link_drawing = Dict.remove (source, dest) dd.link_drawing
+                , selected_nodes = Set.empty
+              }
+            )
         )
-    activePanDirection =
-      -- working around a compiler bug, which is why I have this +1 nonsense.
-      case xMovement+1 of
-        0 ->
-          case yMovement+1 of
-            0 -> Just ToTopLeft
-            2 -> Just ToBottomLeft
-            1 -> Just ToLeft
-            _ -> Nothing
-        1 ->
-          case yMovement+1 of
-            0 -> Just ToTop
-            2 -> Just ToBottom
-            _ -> Nothing
-        2 ->
-          case yMovement+1 of
-            0 -> Just ToTopRight
-            2 -> Just ToBottomRight
-            1 -> Just ToRight
-            _ -> Nothing
-        _ -> Nothing
-  in
-    if properties.canPan && is_really_okay then
-      { graph_view
-        | pan = ( new_pan_x , new_pan_y )
-        , activePanDirection = activePanDirection
-      }
-    else
-      { graph_view | activePanDirection = Nothing }
+    ExistingNodeExistingConnection ->
+      C.removeViews viewsToRemove model 
+      |> C.updateGraphView uuid
+        ( C.mapDrawingData (\dd -> { dd | selected_nodes = Set.empty }) )
 
 packagesToGraphViews : Dimension -> Model -> List GraphPackage -> (List GraphView, Model)
 packagesToGraphViews dim model list =
@@ -1089,7 +986,7 @@ update_graphview uuid ui_msg model =
       ( { model
           | graph_views =
               AutoDict.update uuid
-                (Maybe.map (panGraphView pan_x pan_y))
+                (Maybe.map (GraphEditor.panGraphView pan_x pan_y))
                 model.graph_views
         }
       , Cmd.none

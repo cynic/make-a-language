@@ -14,6 +14,7 @@ import IntDict
 import Json.Decode as D
 import Json.Encode as E
 import List.Extra as List
+import Math.Vector2 exposing (distance)
 import Maybe.Extra as Maybe
 import Random.Pcg.Extended as Random
 import Set
@@ -360,28 +361,102 @@ removeLink_graphchange src dest g =
   }
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
--- paletteColors : { state : { normal : Color.Color, start : Color.Color, terminal : Color.Color }, edge : Color.Color, transition : { nonFinal : Color.Color, final : Color.Color }, background : Color.Color }
--- paletteColors =
---   { state =
---     { normal = Color.rgb255 0 222 255
---     , start = Color.rgb255 0 35 135
---     , terminal = Color.rgb255 0 123 167
---     }
---   , edge = Color.hsl 1 0 0.35
---   , transition =
---       { nonFinal = Color.hsl 1 0 0.25
---       -- orange is from ≈31°-39° (←red, orange, yellow→).
---       , final = Color.darkOrange
---       }
---   , background = Color.grey -- for painting a surrounding stroke
---   }
+panGraphView : Int -> Int -> GraphView -> GraphView
+panGraphView xMovement yMovement ({guest, pan, computation, properties} as graph_view) =
+  let
+    ( pan_x, pan_y ) = pan
+    -- this is a rectangle that is inset from the maximum bounds.
+    movement_amount_x =
+      -- if the space to traverse is large, then move by a larger amount.
+      max 1 (ceiling (guest.w / 250)) |> toFloat
+    movement_amount_y =
+      -- if the space to traverse is large, then move by a larger amount.
+      max 1 (ceiling (guest.h / 250)) |> toFloat
+    ( new_pan_x, new_pan_y ) =
+      ( pan_x + toFloat xMovement * movement_amount_x
+      , pan_y + toFloat yMovement * movement_amount_y
+      )
+    ((sx, sy), (ex, ey)) = -- this is after the proposed pan.
+      ( ((guest.x + new_pan_x), (guest.y + new_pan_y))
+      , ((guest.x + new_pan_x + guest.w), (guest.y + new_pan_y + guest.h))
+      )
+    graph_nodes =
+      Graph.nodes computation.graph
+      -- |> debugLog_ "[panGraphView] nodes to check" (List.map .id)
+    is_okay =
+      List.any
+        (\node ->
+          -- we want to check whether any node is within the screen bounds.
+          -- debugLog_ "[panGraphView] Checking against " (\v -> (v.id, v.label.x ,v.label.y)) node |> \_ ->
+          node.label.x > sx &&
+          node.label.y > sy &&
+          node.label.x < ex &&
+          node.label.y < ey
+        )
+        graph_nodes
+      -- |> Debug.log "[panGraphView] is okay?"
+    is_really_okay =
+      is_okay ||
+        -- here's where it gets … tricky.
+        -- see, there can be a node on the screen.  But due to the aspect ratio,
+        -- it may be that there is only a few nodes on the screen—and the remaining
+        -- nodes are off the screen, but separated by a distance that is larger than the
+        -- screen width/height.  In such a case, we won't be able to pan to them with the
+        -- `is_okay` check, because we will be prevented from panning that drives all of
+        -- the existing nodes off the screen.  So we are, effectively, trapped in a local
+        -- minimum!
+        --
+        -- So, how do we address this?
+        --
+        -- Well, first of all, this is an edge-case.  So if the cheap check passes, then
+        -- we don't actually want to do any other checks.  But if the cheap check doesn't
+        -- pass, we've got more work to do.  And this is that work right here…
+        -- We must check whether we are HEADING TO another node, and if so, THEN we can
+        -- permit the pan.
+        ( let
+            orig_center = Math.Vector2.vec2 (guest.x + pan_x + guest.w / 2) (guest.y + pan_y + guest.h / 2)
+            new_center = Math.Vector2.vec2 ((sx + ex) / 2) ((sy + ey) / 2)
+          in
+            -- am I heading towards any graph node?
+            List.any
+              (\node ->
+                let
+                  node_center = Math.Vector2.vec2 node.label.x node.label.y
+                in
+                  distance node_center new_center < distance node_center orig_center
+              )
+              graph_nodes
+        )
+    activePanDirection =
+      -- working around a compiler bug, which is why I have this +1 nonsense.
+      case xMovement+1 of
+        0 ->
+          case yMovement+1 of
+            0 -> Just ToTopLeft
+            2 -> Just ToBottomLeft
+            1 -> Just ToLeft
+            _ -> Nothing
+        1 ->
+          case yMovement+1 of
+            0 -> Just ToTop
+            2 -> Just ToBottom
+            _ -> Nothing
+        2 ->
+          case yMovement+1 of
+            0 -> Just ToTopRight
+            2 -> Just ToBottomRight
+            1 -> Just ToRight
+            _ -> Nothing
+        _ -> Nothing
+  in
+    if properties.canPan && is_really_okay then
+      { graph_view
+        | pan = ( new_pan_x , new_pan_y )
+        , activePanDirection = activePanDirection
+      }
+    else
+      { graph_view | activePanDirection = Nothing }
 
-
--- type LinkType
---   = Confirmed Cardinality -- in the confirmed graph.
---   | Prospective Cardinality -- user is playing around, hasn't clicked yet.
---   | New Cardinality -- user has clicked, but entirety isn't approved yet.
---                     -- When it is approved, we'll see it under Confirmed.
 
 {-| (2+7n)×(2+4n)-pixel UUID-representing badges.
     
