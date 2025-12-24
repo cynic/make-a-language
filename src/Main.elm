@@ -864,26 +864,18 @@ escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
 packagesToGraphViews : Dimension -> Model -> List GraphPackage -> (List GraphView, Model)
 packagesToGraphViews dim model list =
   List.foldl
-    (\g (acc, model_) ->
+    (\pkg (acc, model_) ->
       let
-        (id, model__) =
+        ( id, model__ ) =
           getUuid model_
         gv =
-          makeGraphView id
-            (SolvedWith GraphEditor.coordinateForces)
-            dim True model_.packages
-            g.computation
-          |> linkGraphViewToPackage model_.packages g.packageIdentifier
+          makeGraphView id (SolvedWith GraphEditor.coordinateForces)
+            dim True model_.packages pkg.computation
       in
-        ( gv :: acc
-        , C.upsertGraphView gv model__
-        )
+        ( gv :: acc , C.upsertGraphView gv model__ )
     )
     ( [], model )
-    ( List.sortBy (.created >> Time.posixToMillis) list)
-    -- ( AutoDict.values model.packages
-    --   |> List.sortBy (.created >> Time.posixToMillis >> (*) -1)
-    -- )
+    ( List.sortBy (.created >> Time.posixToMillis) list )
 
 {-| Expensive. Refresh all computations. -}
 refreshComputationsList : Model -> Model
@@ -914,6 +906,11 @@ selectNavIcon icon model =
         }
   }
 
+{-| Given the host-space coordinates of a node, and that same node's coordinates in
+    the guest-space, find the (left, top) of the SVG element in host-coordinates.
+    By transmitting host-space coordinates only when needed—e.g. on click—we reduce the
+    amount of messages going to `update`, and we reduce our reliance on ports.
+-}
 nodeHostCoordToHostCoord : Coordinate -> Coordinate -> GraphView -> Coordinate
 nodeHostCoordToHostCoord node_coord svg_coord {host, guest, pan} =
   let
