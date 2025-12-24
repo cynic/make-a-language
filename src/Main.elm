@@ -346,7 +346,6 @@ makeGraphView id viewType dim fitClosely packages ag =
     , drawingData =
         { link_drawing = linkDrawingForPackage computeResult.solvedGraph packages
         , node_drawing = nodeDrawingForPackage computeResult.solvedGraph id
-        , selected_nodes = Set.empty
         , tentative_link = Nothing
         , graphReferenceDescriptions = Q.descriptionsForPackages packages
         , highlighted_links = Set.empty
@@ -835,7 +834,7 @@ escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
               { dd
                 | link_drawing = Dict.remove (source, dest) dd.link_drawing
                 , node_drawing = Dict.remove dest dd.node_drawing
-                , selected_nodes = Set.empty
+                , tentative_link = Nothing
               }
             )
         )
@@ -852,14 +851,14 @@ escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
             (\dd ->
               { dd
                 | link_drawing = Dict.remove (source, dest) dd.link_drawing
-                , selected_nodes = Set.empty
+                , tentative_link = Nothing
               }
             )
         )
     ExistingNodeExistingConnection ->
       C.removeViews viewsToRemove model 
       |> C.updateGraphView uuid
-        ( C.mapDrawingData (\dd -> { dd | selected_nodes = Set.empty }) )
+        ( C.mapDrawingData (\dd -> { dd | tentative_link = Nothing }) )
 
 packagesToGraphViews : Dimension -> Model -> List GraphPackage -> (List GraphView, Model)
 packagesToGraphViews dim model list =
@@ -1084,7 +1083,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
       recursive
       |> IntDict.values
       |> List.foldl AutoSet.union (AutoSet.empty transitionToString)
-      |> debugLog_ "recursive_connection" AutoSet.toList
+      -- |> debugLog_ "recursive_connection" AutoSet.toList
     ( leftConnections, rightConnections ) =
       nonRecursive
       |> IntDict.foldl
@@ -1098,7 +1097,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                         >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
                       )
                       l_
-                    |> debugLog_ "Added to Left" IntDict.toList
+                    -- |> debugLog_ "Added to Left" IntDict.toList
                   , r_
                   )
                 else
@@ -1108,7 +1107,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                       >> Maybe.orElseLazy (\() -> Just <| AutoSet.singleton transitionToString transition)
                     )
                     r_
-                    |> debugLog_ "Added to Right" IntDict.toList
+                    -- |> debugLog_ "Added to Right" IntDict.toList
                   )
               )
               (l, r)
@@ -1117,7 +1116,7 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
           (IntDict.empty, IntDict.empty)
     ag =
       graph_view.computation
-      |> debugAutomatonGraph "Before node-split"
+      -- |> debugAutomatonGraph "Before node-split"
     id = maxId ag + 1
     newUserGraph =
       { ag
@@ -1137,21 +1136,18 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
                   |>if AutoSet.isEmpty recursive_connection then identity
                     else IntDict.insert id recursive_connection
               }
-              |> debugGraph "After inserting left connections"
-            |> Graph.update node.node.id
-              (\_ ->
-                Just <|
+              -- |> debugGraph "After inserting left connections"
+            |> Graph.insert
                   { node
                     | incoming =
                         rightConnections
                         |> IntDict.insert node.node.id recursive_connection
                   }
-              )
-              |> debugGraph "After inserting right connections"
+              -- |> debugGraph "After inserting right connections"
       }
   in
     newUserGraph
-    |> debugAutomatonGraphXY "After node-split"
+    -- |> debugAutomatonGraphXY "After node-split"
 
 
 nodeSplitSwitch : SplitNodeInterfaceProperties -> Maybe Uuid -> AcceptVia -> NodeSplitData -> Model -> Model
@@ -1255,12 +1251,7 @@ toggleConnectionTransition acceptCondition conn =
           resultSet -- I've handled this above.
         else
           -- need to insert it.
-          AutoSet.insert
-            (Transition
-              False
-              acceptCondition
-            )
-            resultSet
+          AutoSet.insert (Transition False acceptCondition) resultSet
       )
 
 filterConnectionEditorGraphs : String -> List Uuid -> Model -> List Uuid
@@ -1339,6 +1330,10 @@ selectSourceNode model view_uuid host_coord node_id =
   |> Maybe.map
     (\nodeContext ->
       let
+        -- by default, the connection is recursive
+        connection =
+          IntDict.get node_id nodeContext.incoming
+          |> Maybe.withDefault (AutoSet.empty transitionToString)
         linkDrawingData : LinkDrawingData
         linkDrawingData =
           { cardinality = Recursive
@@ -1351,46 +1346,24 @@ selectSourceNode model view_uuid host_coord node_id =
           , executionData = Nothing
           , connection = AutoSet.empty transitionToString
           }
-        interaction =
-          ChoosingDestinationFor node_id
-            ( ExistingNode node_id
-                ( IntDict.get node_id nodeContext.incoming
-                  |> Maybe.withDefault (AutoSet.empty transitionToString)
-                )
-            )
-            host_coord
       in
-        C.pushInteractionForStack (Just view_uuid) interaction model
+        C.pushInteractionForStack (Just view_uuid)
+          ( ChoosingDestinationFor node_id
+              ( ExistingNode node_id connection )
+              host_coord
+          )
+          model
           -- and now modify the drawing-data for that view
         |> updateDrawingData view_uuid
             (\drawingData ->
               { drawingData
-                | selected_nodes = Set.insert node_id drawingData.selected_nodes
-                , tentative_link = Nothing
+                | tentative_link = Just (node_id, node_id)
                 , link_drawing =
                     Dict.insert (node_id, node_id) linkDrawingData drawingData.link_drawing
               }
             )
     )
   |> Maybe.withDefault model
-
-
-{- moving phantom node.  Wow, this is a ridiculous amount of code, separated into
-   an equaly ridiculous number of functions!!
--}
-
--- solidifyPhantoms : Uuid -> NodeId -> NodeId -> Model -> Model
--- solidifyPhantoms view_uuid src phantom_id model =
---   updateDrawingData view_uuid
---     (\drawingData ->
---       { drawingData
---         | selected_nodes = Set.empty
---         , tentative_link = Nothing
---         , highlighted_links =
---             Set.remove (src, phantom_id) drawingData.highlighted_links
---       }
---     )
---     model
 
 switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
 switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view svg_coords host_coords sourceNodeContext model =

@@ -680,12 +680,15 @@ viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowligh
           ]
 
 viewNode : GraphViewProperties -> NodeId -> DrawingData -> NodeDrawingData -> Svg Msg
-viewNode properties id {selected_nodes, tentative_link} data =
+viewNode properties id {tentative_link} data =
   let
     nodeClass =
       conditionalList
         [ ("graph-node", True)
-        , ("selected", Set.member id selected_nodes)
+        , ("selected"
+          , Maybe.map (Tuple.first >> (==) id) tentative_link
+            |> Maybe.withDefault False
+          )
         -- , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
         , ( "phantom"
           , Maybe.map (Tuple.second >> (==) id) tentative_link
