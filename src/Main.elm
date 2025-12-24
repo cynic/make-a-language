@@ -348,7 +348,7 @@ makeGraphView id viewType dim fitClosely packages ag =
         { link_drawing = linkDrawingForPackage computeResult.solvedGraph packages
         , node_drawing = nodeDrawingForPackage computeResult.solvedGraph id
         , selected_nodes = Set.empty
-        , phantom_node = Nothing
+        , tentative_link = Nothing
         , graphReferenceDescriptions = Q.descriptionsForPackages packages
         , highlighted_links = Set.empty
         , lowlighted_links = Set.empty
@@ -1403,7 +1403,7 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
               makeGraphView id Unsolved { w = 250, h = 250 } True model__.packages ag
             solidified_model =
               C.upsertGraphView main_view model__
-              |> C.solidifyPhantoms main_view.id source dest
+              |> C.convertTentativeLinkToPermanent main_view.id
           in
             (List.map .id graph_views, main_view.id, solidified_model)
           )
@@ -1471,7 +1471,7 @@ selectSourceNode model view_uuid host_coord node_id =
             (\drawingData ->
               { drawingData
                 | selected_nodes = Set.insert node_id drawingData.selected_nodes
-                , phantom_node = Nothing
+                , tentative_link = Nothing
                 , link_drawing =
                     Dict.insert (node_id, node_id) linkDrawingData drawingData.link_drawing
               }
@@ -1490,7 +1490,7 @@ selectSourceNode model view_uuid host_coord node_id =
 --     (\drawingData ->
 --       { drawingData
 --         | selected_nodes = Set.empty
---         , phantom_node = Nothing
+--         , tentative_link = Nothing
 --         , highlighted_links =
 --             Set.remove (src, phantom_id) drawingData.highlighted_links
 --       }
@@ -1537,7 +1537,7 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view s
               |> Dict.insert (sourceNodeContext.node.id, phantom_nodeid) linkData
           , highlighted_links =
               Set.remove (sourceNodeContext.node.id, existing_id) drawingData.highlighted_links
-          , phantom_node = Just phantom_nodeid
+          , tentative_link = Just (sourceNodeContext.node.id, phantom_nodeid)
         }
       )
       model
@@ -1585,7 +1585,7 @@ switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext e
               Dict.remove (sourceNodeContext.node.id, phantom_id) drawingData.link_drawing
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, existingNodeContext.node.id) linkData
-          , phantom_node = Nothing
+          , tentative_link = Nothing
         }
       )
       model
@@ -1614,7 +1614,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coord
               )
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, nearbyNodeContext.node.id) linkData
-          , phantom_node = Nothing
+          , tentative_link = Nothing
         }
       )
       model
@@ -2328,7 +2328,7 @@ commitOrConfirm model =
           , drawingData =
               let dd = gv.drawingData in
               { dd
-                | phantom_node = Nothing
+                | tentative_link = Nothing
                 , link_drawing = linkDrawingForPackage ag model.packages
                 , node_drawing = nodeDrawingForPackage ag gv.id
               }

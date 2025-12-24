@@ -399,7 +399,7 @@ type alias DrawingData =
   { link_drawing : Dict (NodeId, NodeId) LinkDrawingData
   , node_drawing : Dict NodeId NodeDrawingData
   , selected_nodes : Set NodeId
-  , phantom_node : Maybe NodeId
+  , tentative_link : Maybe (NodeId, NodeId)
   , graphReferenceDescriptions : GraphReferenceDescriptions
   , highlighted_links : Set (NodeId, NodeId)
   , lowlighted_links : Set (NodeId, NodeId)

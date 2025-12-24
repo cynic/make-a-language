@@ -8,7 +8,7 @@ module Changes exposing
   , replaceInteraction
   , selectPackage
   , setMainView
-  , solidifyPhantoms
+  , convertTentativeLinkToPermanent
   , updateGraphView
   , upsertGraphView
   )
@@ -53,8 +53,8 @@ updateDrawingData view_uuid f model =
 
 {-| Called to turn phantoms (nodes + edges) into solid things
 -}
-solidifyPhantoms : Uuid -> NodeId -> NodeId -> Model -> Model
-solidifyPhantoms view_uuid src phantom_id model =
+convertTentativeLinkToPermanent : Uuid -> Model -> Model
+convertTentativeLinkToPermanent view_uuid model =
 {-
   To solidify all phantom nodes:
   - there must be no `.phantom_node`
@@ -64,7 +64,7 @@ solidifyPhantoms view_uuid src phantom_id model =
     (\drawingData ->
       { drawingData
         -- | selected_nodes = Set.empty
-        | phantom_node = Nothing
+        | tentative_link = Nothing
         -- , highlighted_links =
         --     Set.remove (src, phantom_id) drawingData.highlighted_links
       }

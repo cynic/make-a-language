@@ -505,7 +505,7 @@ viewLinkLabel drawing_data =
   |> (\(_, _, elems) -> g [] elems)
 
 viewLink : GraphView -> (NodeId, NodeId) -> DrawingData -> LinkDrawingData -> Svg Msg
-viewLink {id, properties} (from, to) {highlighted_links, phantom_node, lowlighted_links} drawing_data =
+viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowlighted_links} drawing_data =
       let
         x_ = drawing_data.pathBetween.transition_coordinates.x
         y_ = drawing_data.pathBetween.transition_coordinates.y
@@ -531,7 +531,7 @@ viewLink {id, properties} (from, to) {highlighted_links, phantom_node, lowlighte
         linkClass =
           conditionalList
             [ ( "link", True )
-            , ( "phantom", phantom_node == Just to )
+            , ( "phantom", tentative_link == Just (from, to))
             , ( "highlight", Set.member (from, to) highlighted_links )
             , ( "lowlight", Set.member (to, from) lowlighted_links )
             ]
@@ -605,14 +605,17 @@ viewLink {id, properties} (from, to) {highlighted_links, phantom_node, lowlighte
           ]
 
 viewNode : GraphViewProperties -> NodeId -> DrawingData -> NodeDrawingData -> Svg Msg
-viewNode properties id {selected_nodes, phantom_node} data =
+viewNode properties id {selected_nodes, tentative_link} data =
   let
     nodeClass =
       conditionalList
         [ ("graph-node", True)
         , ("selected", Set.member id selected_nodes)
         -- , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
-        , ("phantom", phantom_node == Just id)
+        , ( "phantom"
+          , Maybe.map (Tuple.second >> (==) id) tentative_link
+            |> Maybe.withDefault False
+          )
         , ("disconnected", data.isDisconnected)
         , ("start", data.isRoot)
         , ("terminal", data.isTerminal)
