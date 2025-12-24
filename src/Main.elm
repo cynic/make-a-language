@@ -871,6 +871,7 @@ packagesToGraphViews dim model list =
         gv =
           makeGraphView id (SolvedWith GraphEditor.coordinateForces)
             dim True model_.packages pkg.computation
+          |> linkGraphViewToPackage model_.packages pkg.packageIdentifier
       in
         ( gv :: acc , C.upsertGraphView gv model__ )
     )
