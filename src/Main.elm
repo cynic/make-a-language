@@ -1687,6 +1687,7 @@ removePhantomLink view_uuid source dest =
       { drawingData
         | link_drawing =
             Dict.remove (source, dest) drawingData.link_drawing
+        , tentative_link = Nothing
       }
     )
 
@@ -1702,6 +1703,7 @@ cancelNewNodeCreation view_uuid model =
                 Dict.remove dest drawingData.node_drawing
             , link_drawing =
                 Dict.remove (source, dest) drawingData.link_drawing
+            , tentative_link = Nothing
           }
         )
         model_
@@ -1720,35 +1722,21 @@ cancelNewNodeCreation view_uuid model =
         model
 
 createNewGraphNode : Uuid -> NodeId -> Coordinate -> Model -> Model
-createNewGraphNode view_uuid node_id svg_coord model =
-  let
-    viewWithNode : GraphView -> GraphView
-    viewWithNode graph_view = -- ensure that the destination node exists in the graph.
-      { graph_view
-        | computation =
-          let computation = graph_view.computation in
-          { computation
-            | graph =
-                Graph.insert
-                  { node =
-                      { id = node_id
-                      , label =
-                          entity node_id NoEffect
-                          |> (\e -> { e | x = svg_coord.x, y = svg_coord.y })
-                      }
-                  , incoming = IntDict.empty
-                  , outgoing = IntDict.empty
-                  }
-                  computation.graph
-          }
-      }
-  in
-    { model
-      | graph_views =
-          AutoDict.update view_uuid
-            (Maybe.map (viewWithNode))
-            model.graph_views
-    }
+createNewGraphNode view_uuid node_id svg_coord =
+    C.updateGraphView view_uuid
+     (C.mapGraph
+        (Graph.insert
+            { node =
+                { id = node_id
+                , label =
+                    entity node_id NoEffect
+                    |> (\e -> { e | x = svg_coord.x, y = svg_coord.y })
+                }
+            , incoming = IntDict.empty
+            , outgoing = IntDict.empty
+            }
+        )
+     )
 
 nilMainProperties : MainUIProperties
 nilMainProperties =
@@ -1818,14 +1806,6 @@ setProperties model =
             | canPan = True
             , canDragNodes = True
           }
-        -- whenSimulatingForces : GraphViewPropertySetter
-        -- whenSimulatingForces =
-        --   { nilViewProperties
-        --     | canSelectConnections = True
-        --     , canSelectNodes = True
-        --     , canSplitNodes = True
-        --     , canPan = True
-        --   }
         otherwise : Uuid -> GraphViewPropertySetter
         otherwise id =
           { nilViewProperties
@@ -1857,8 +1837,6 @@ setProperties model =
                       whenEditingConnection
                     Just (Executing _ _) ->
                       whenExecuting
-                    -- Just (SimulatingForces _ _ _) ->
-                    --   whenSimulatingForces
                     Just (DraggingSplitter _) ->
                       whenDraggingSplitter
                     Just (DeletingPackage _ _) ->
@@ -1906,16 +1884,6 @@ setProperties model =
           , canDeleteTestInput = True
           , canCreateTestInput = True
           }
-        -- whenSimulatingForces : MainPropertySetter
-        -- whenSimulatingForces =
-        --   { nilMainProperties
-        --     | canDragSplitter = True
-        --     , canSelectNewPackage = True
-        --     , canCreateNewPackage = True
-        --     , canLoadTestInput = True
-        --     , canDeleteTestInput = True
-        --     , canCreateTestInput = True
-        --   }
         otherwise : MainPropertySetter
         otherwise =
           { nilMainProperties
@@ -1941,8 +1909,6 @@ setProperties model =
             whenEditingConnection
           Just (_, Executing _ _) ->
             whenExecuting
-          -- Just (_, SimulatingForces _ _ _) ->
-          --   whenSimulatingForces
           Just (_, DraggingSplitter _) ->
             whenDraggingSplitter
           Just (_, DeletingPackage _ _) ->
@@ -1999,7 +1965,6 @@ selectDestination view_uuid src possible_dest model =
 startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -> Model
 startSplit uuid graph_view nodeContext model =
   let
-    -- ( main_view, updated_model ) =
     (id, model_) =
       getUuid model
     main_view =
@@ -2039,49 +2004,10 @@ toResolutionDict packages =
 
 deletePackageFromModel : Uuid -> Model -> Model
 deletePackageFromModel uuid model =
-  -- let
-  --   filterTransition : Transition -> Bool
-  --   filterTransition {via} =
-  --     case via of
-  --       ViaGraphReference ref ->
-  --         ref /= uuid
-  --       _ ->
-  --         True
-    -- filterConnection : Connection -> Connection
-    -- filterConnection conn =
-    --   AutoSet.filter filterTransition conn
-  -- in
-  { model
-    | packages =
-        AutoDict.remove uuid model.packages
-        -- and now get rid of this package from the connections.
-        -- I'm NOT putting this in.
-        -- I may change my mind later.
-        -- But it causes some pretty widespread disruption, AND
-        -- a bunch of invalid AutomatonGraphs…
-        -- So for now: just no.
-        -- And I will have some invalid Graph references instead.
-{-
-        |> AutoDict.map
-          (\_ pkg ->
-            { pkg
-              | computation =
-                  let ag = pkg.computation in
-                  { ag
-                    | graph =
-                        Graph.mapEdges filterConnection  ag.graph
-                  }
-            }
-          )
--}
-  }
+  { model | packages = AutoDict.remove uuid model.packages }
 
 updatePackageFromView : Uuid -> Model -> Model
 updatePackageFromView gv_uuid model =
-  let
-    resolutionDict =
-      toResolutionDict model.packages
-  in
   AutoDict.get gv_uuid model.graph_views
   |> Maybe.andThen (\graph_view ->
     graph_view.graphPackage
@@ -2098,7 +2024,7 @@ updatePackageFromView gv_uuid model =
                         (\_ entry ->
                           { entry
                             | result =
-                                DFA.load entry.input resolutionDict graph_view.computation
+                                DFA.load entry.input (toResolutionDict model.packages) graph_view.computation
                                 |> DFA.run
                                 |> List.head
                                 |> Maybe.andThen .finalResult
