@@ -9,6 +9,7 @@ module Changes exposing
   , selectPackage
   , setMainView
   , convertTentativeLinkToPermanent
+  , updateDrawingData
   , updateGraphView
   , upsertGraphView
   )

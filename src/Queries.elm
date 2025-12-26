@@ -11,7 +11,7 @@ import AutoDict
 import AutoSet
 import Maybe.Extra as Maybe
 import Uuid exposing (Uuid)
-import Graph exposing (NodeContext, NodeId)
+import Graph exposing (NodeContext, NodeId, Graph)
 import IntDict
 import Set
 import List.Extra as List

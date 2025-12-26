@@ -1354,7 +1354,7 @@ selectSourceNode model view_uuid host_coord node_id =
           )
           model
           -- and now modify the drawing-data for that view
-        |> updateDrawingData view_uuid
+        |> C.updateDrawingData view_uuid
             (\drawingData ->
               { drawingData
                 | tentative_link = Just (node_id, node_id)
@@ -1382,16 +1382,13 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view s
     linkData = -- this is the new calculated link-path
       { cardinality = Unidirectional
       , graphReferenceDescriptions = AutoDict.empty Uuid.toString
-      , pathBetween =
-          path_between -- calculate the link path
-            sourceNodeContext.node.label
-            svg_coords
-            Unidirectional
+      , pathBetween = -- calculate the link path
+          path_between sourceNodeContext.node.label svg_coords Unidirectional
       , executionData = Nothing
       , connection = AutoSet.empty transitionToString
       }
   in
-    updateDrawingData view_uuid
+    C.updateDrawingData view_uuid
       (\drawingData ->
         { drawingData
           | node_drawing = Dict.insert phantom_nodeid nodeData drawingData.node_drawing
@@ -1403,8 +1400,6 @@ switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view s
               )
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, phantom_nodeid) linkData
-          , highlighted_links =
-              Set.remove (sourceNodeContext.node.id, existing_id) drawingData.highlighted_links
           , tentative_link = Just (sourceNodeContext.node.id, phantom_nodeid)
         }
       )
@@ -1443,7 +1438,7 @@ switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext e
     linkData = -- this is the new calculated link-path
       phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model
   in
-    updateDrawingData view_uuid
+    C.updateDrawingData view_uuid
       (\drawingData ->
         { drawingData
           | node_drawing =
@@ -1453,7 +1448,7 @@ switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext e
               Dict.remove (sourceNodeContext.node.id, phantom_id) drawingData.link_drawing
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, existingNodeContext.node.id) linkData
-          , tentative_link = Nothing
+          , tentative_link = Just (sourceNodeContext.node.id, existingNodeContext.node.id)
         }
       )
       model
@@ -1470,7 +1465,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coord
     linkData = -- this is the new calculated link-path
       phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext model
   in
-    updateDrawingData view_uuid
+    C.updateDrawingData view_uuid
       (\drawingData ->
         { drawingData
           | link_drawing =
@@ -1482,7 +1477,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coord
               )
               -- and add the link path to `some_node`
               |> Dict.insert (sourceNodeContext.node.id, nearbyNodeContext.node.id) linkData
-          , tentative_link = Nothing
+          , tentative_link = Just (sourceNodeContext.node.id, nearbyNodeContext.node.id)
         }
       )
       model
@@ -1495,7 +1490,7 @@ switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coord
 
 updatePhantomMovement : Uuid -> NodeId -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
 updatePhantomMovement view_uuid phantom_id svg_coords host_coords sourceNodeContext model =
-  updateDrawingData view_uuid
+  C.updateDrawingData view_uuid
     (\drawingData ->
         { drawingData
           | node_drawing =
@@ -1627,109 +1622,67 @@ movePhantomNode view_uuid coord model =
   |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv coord model)
   |> Maybe.withDefault model
 
-dragNodeInView : Uuid -> GraphView -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
-dragNodeInView view_uuid graph_view svg_coords nodeContext model =
-  let
-    vertices_in =
-      IntDict.toList nodeContext.incoming
-      |> List.filterMap
-        (\(k, conn) ->
-          Graph.get k graph_view.computation.graph
-          |> Maybe.map
-            (\sourceCtx ->
-              linkDrawingForEdge sourceCtx nodeContext conn model.packages
-            )
-        )
-    vertices_out =
-      IntDict.toList nodeContext.outgoing
-      |> List.filterMap
-        (\(k, conn) ->
-          Graph.get k graph_view.computation.graph
-          |> Maybe.map
-            (\targetCtx ->
-              linkDrawingForEdge nodeContext targetCtx conn model.packages
-            )
-        )
-  in
-    updateDrawingData view_uuid
-      (\drawingData ->
-        { drawingData
-          | node_drawing =
-            Dict.update nodeContext.node.id
-              (Maybe.map (\node ->
-                { node | coordinates = svg_coords }
-              ))
-              drawingData.node_drawing
-          , link_drawing =
-              List.foldl
-                (\( (src, dest), data ) ->
-                  Dict.insert (src, dest) data
-                )
-                drawingData.link_drawing
-                (vertices_in ++ vertices_out)
-          }
-      )
-      model
-
 dragNode : Uuid -> Coordinate -> NodeId -> Model -> Model
 dragNode view_uuid svg_coord nodeId model =
-  AutoDict.get view_uuid model.graph_views
-  |> Maybe.andThen
+  C.updateGraphView view_uuid
     (\gv ->
-      Maybe.combineSecond
-        ( gv
-        , Graph.get nodeId gv.computation.graph
-        )
-    )
-  |> Maybe.map
-    (\(gv, nodeContext) ->
       let
-        updatedCtx : Graph.NodeContext Entity Connection
-        updatedCtx =
-          { nodeContext
-            | node =
-                { id = nodeId
-                , label =
-                  let e = nodeContext.node.label in
-                  { e | x = svg_coord.x, y = svg_coord.y }
-                }
-          }
-        gv_ : GraphView
-        gv_ = -- 🤮🤮🤮🤮🤮🤮🤮🤮🤮 seriously, Elm, this syntax is disgusting
-          -- yes, reader, I know about lenses.
-          -- no, reader, I don't spend my days crafting dozens of lines of
-          -- boilerplate because somebody can't figure out how to get the
-          -- language syntax right.
-          -- *sigh*…
-          -- { gv | package.computation.graph = … } is how this SHOULD go.
-          -- but I guess this is just where we are today!
-          { gv
-            | computation =
-              let ag = gv.computation in
-              { ag | graph = Graph.insert updatedCtx ag.graph }
-          }
+        nodeContext = Graph.get nodeId gv.computation.graph
+        get_vertices getFan getDrawing =
+          Maybe.map
+            (\ctx ->
+              IntDict.toList (getFan ctx)
+              |> List.filterMap
+                (\(k, conn) ->
+                  Graph.get k gv.computation.graph
+                  |> Maybe.map (getDrawing conn ctx)
+                )
+            )
+            nodeContext
+          |> Maybe.withDefault []
+        vertices_in =
+          get_vertices .incoming (\conn otherCtx fanCtx -> linkDrawingForEdge fanCtx otherCtx conn model.packages)
+        vertices_out =
+          get_vertices .outgoing (\conn otherCtx fanCtx -> linkDrawingForEdge otherCtx fanCtx conn model.packages)
       in
-        C.upsertGraphView gv_ model
-        |> dragNodeInView view_uuid gv_ svg_coord updatedCtx
-    )
-  |> Maybe.withDefault model
-
-updateDrawingData : Uuid -> (DrawingData -> DrawingData) -> Model -> Model
-updateDrawingData view_uuid f model =
-  { model
-    | graph_views =
-        AutoDict.update view_uuid
-          (Maybe.map (\graph_view ->
-            { graph_view
-              | drawingData = f graph_view.drawingData
+        C.mapGraph
+          (Graph.update nodeId
+            (Maybe.map (\ctx ->
+              { ctx
+                | node =
+                    { id = nodeId
+                    , label =
+                        let e = ctx.node.label in
+                        { e | x = svg_coord.x, y = svg_coord.y }
+                    }
+              }
+            ))
+          )
+          gv
+        |> C.mapDrawingData
+          (\dd ->
+            { dd
+              | node_drawing =
+                  Dict.update nodeId
+                    (Maybe.map (\node ->
+                      { node | coordinates = svg_coord }
+                    ))
+                    dd.node_drawing
+              , link_drawing =
+                  List.foldl
+                    (\( (src, dest), data ) ->
+                      Dict.insert (src, dest) data
+                    )
+                    dd.link_drawing
+                    (vertices_in ++ vertices_out)
             }
-          ))
-          model.graph_views
-  }
+          )
+    )
+    model
 
 removePhantomLink : Uuid -> NodeId -> NodeId -> Model -> Model
 removePhantomLink view_uuid source dest =
-  updateDrawingData view_uuid
+  C.updateDrawingData view_uuid
     (\drawingData ->
       { drawingData
         | link_drawing =
@@ -1742,7 +1695,7 @@ cancelNewNodeCreation view_uuid model =
   let
     kill : NodeId -> NodeId -> Model -> Model
     kill source dest model_ =
-      updateDrawingData view_uuid
+      C.updateDrawingData view_uuid
         (\drawingData ->
           { drawingData
             | node_drawing =
