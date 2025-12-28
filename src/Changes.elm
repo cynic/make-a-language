@@ -1,5 +1,6 @@
 module Changes exposing
-  ( mapDrawingData
+  ( deletePackageFromModel
+  , mapDrawingData
   , mapGraph
   , popInteraction
   , popMostRecentInteraction
@@ -12,6 +13,7 @@ module Changes exposing
   , updateDrawingData
   , updateGraphView
   , upsertGraphView
+  , updatePackageFromView
   )
 import AutoDict
 import AutoSet
@@ -23,6 +25,7 @@ import List.Extra as List
 import Queries as Q
 import Set
 import Uuid exposing (Uuid)
+import Automata.DFA as DFA
 
 upsertGraphView : GraphView -> Model -> Model
 upsertGraphView graph_view model =
@@ -167,3 +170,41 @@ mapGraph f gv =
 mapComputation : (AutomatonGraph -> AutomatonGraph) -> GraphView -> GraphView
 mapComputation f gv =
   { gv | computation = f gv.computation }
+
+updatePackageFromView : Uuid -> Model -> Model
+updatePackageFromView gv_uuid model =
+  AutoDict.get gv_uuid model.graph_views
+  |> Maybe.andThen (\graph_view ->
+    graph_view.graphPackage
+    |> Maybe.map (\pkg_uuid ->
+      { model
+        | packages =
+            AutoDict.update pkg_uuid
+              (Maybe.map (\pkg ->
+                { pkg
+                  | computation = graph_view.computation
+                  -- run the tests
+                  , tests =
+                      AutoDict.map
+                        (\_ entry ->
+                          { entry
+                            | result =
+                                DFA.load entry.input (Q.resolutionDict model.packages) graph_view.computation
+                                |> DFA.run
+                                |> List.head
+                                |> Maybe.andThen .finalResult
+                                |> Maybe.withDefault (InternalError "no result received from test execution")
+                          }
+                        )
+                        pkg.tests
+                }
+              ))
+              model.packages
+      }
+    )
+  )
+  |> Maybe.withDefault model -- do nothing; there is no GV, or no link, or no package.
+
+deletePackageFromModel : Uuid -> Model -> Model
+deletePackageFromModel uuid model =
+  { model | packages = AutoDict.remove uuid model.packages }

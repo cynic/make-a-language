@@ -5,6 +5,7 @@ module Queries exposing
     , linkExistsInGraph
     , mostRecentInteraction
     , peekInteraction
+    , resolutionDict
     )
 import Automata.Data exposing (..)
 import AutoDict
@@ -91,3 +92,7 @@ mostRecentInteraction model =
         [] -> Nothing
         h::_ -> Just (uuid, h)
     )
+
+resolutionDict : PackageDict -> ResolutionDict
+resolutionDict packages =
+  AutoDict.map (\_ -> .computation) packages

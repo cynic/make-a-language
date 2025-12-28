@@ -1998,48 +1998,6 @@ startSplit uuid graph_view nodeContext model =
     |> C.updateGraphView main_view.id (centerAndHighlight edges_in)
     |> setProperties
 
-toResolutionDict : PackageDict -> ResolutionDict
-toResolutionDict packages =
-  AutoDict.map (\_ -> .computation) packages
-
-deletePackageFromModel : Uuid -> Model -> Model
-deletePackageFromModel uuid model =
-  { model | packages = AutoDict.remove uuid model.packages }
-
-updatePackageFromView : Uuid -> Model -> Model
-updatePackageFromView gv_uuid model =
-  AutoDict.get gv_uuid model.graph_views
-  |> Maybe.andThen (\graph_view ->
-    graph_view.graphPackage
-    |> Maybe.map (\pkg_uuid ->
-      { model
-        | packages =
-            AutoDict.update pkg_uuid
-              (Maybe.map (\pkg ->
-                { pkg
-                  | computation = graph_view.computation
-                  -- run the tests
-                  , tests =
-                      AutoDict.map
-                        (\_ entry ->
-                          { entry
-                            | result =
-                                DFA.load entry.input (toResolutionDict model.packages) graph_view.computation
-                                |> DFA.run
-                                |> List.head
-                                |> Maybe.andThen .finalResult
-                                |> Maybe.withDefault (InternalError "no result received from test execution")
-                          }
-                        )
-                        pkg.tests
-                }
-              ))
-              model.packages
-      }
-    )
-  )
-  |> Maybe.withDefault model -- do nothing; there is no GV, or no link, or no package.
-
 commitOrConfirm : Model -> (Model, Cmd Msg)
 commitOrConfirm model =
   -- What am I confirming?
@@ -2142,7 +2100,7 @@ commitOrConfirm model =
         let
           updated_model =
              C.removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
-            |> deletePackageFromModel to_delete
+            |> C.deletePackageFromModel to_delete
             |> refreshComputationsList
             |> setProperties
         in
@@ -2173,7 +2131,7 @@ commitOrConfirm model =
                     without_undoredo
                     model
                 updated_model =
-                  updatePackageFromView model.mainGraphView model_
+                  C.updatePackageFromView model.mainGraphView model_
                   |> refreshComputationsList
                   |> setProperties
               in
@@ -2359,49 +2317,6 @@ executing_edges data =
     )
     |> Maybe.withDefault []
 
-expandStep : Int -> List ExecutionData -> ExecutionProperties -> Model -> Model
-expandStep n results props model =
-  let
-    relevantSteps = -- ordered from most recent to least recent
-      List.dropWhile (.step >> (/=) n) results
-    selectedStep =
-      List.head relevantSteps
-    with_graphview =
-      Maybe.map (\step ->
-        let
-          edges = executing_edges step
-          (id, model_) =
-            getUuid model
-          gv =
-            makeGraphView id (SolvedWith GraphEditor.spreadOutForces)
-              { w = model.uiLayout.dimensions.bottomPanel.w - 128
-              , h = model.uiLayout.dimensions.bottomPanel.h - 40
-              }
-              True
-              model.packages
-              step.computation
-          model__ =
-            C.upsertGraphView gv model_
-            |> C.updateGraphView gv.id (centerAndHighlight edges)
-        in
-          ( gv.id , model__ )
-      )
-      selectedStep
-  in
-    Maybe.map
-      (\(gv_uuid, model__) ->
-        C.replaceInteraction Nothing
-            (Executing results
-              { props
-                | expandedSteps = IntDict.insert n gv_uuid props.expandedSteps
-              }
-            )
-            model__
-        |> setProperties
-      )
-      with_graphview
-    |> Maybe.withDefault model
-
 step_execution : GraphView -> (List ExecutionData -> List ExecutionData) -> Test -> Model -> Model
 step_execution orig_graphview execution_function test model =
   let
@@ -2414,7 +2329,7 @@ step_execution orig_graphview execution_function test model =
               C.replaceInteraction Nothing (Executing new_hx new_props)
           )
         _ ->
-          ( DFA.load test.input (toResolutionDict model.packages) orig_graphview.computation
+          ( DFA.load test.input (Q.resolutionDict model.packages) orig_graphview.computation
             |> List.singleton
           , Nothing
           , \new_hx new_props ->
@@ -2469,7 +2384,7 @@ update_package pkg_uuid msg model =
                   { test
                     | input = s
                     , result =
-                        DFA.load s (toResolutionDict model.packages) p.computation
+                        DFA.load s (Q.resolutionDict model.packages) p.computation
                         |> DFA.run
                         |> List.head
                         |> Maybe.andThen .finalResult
@@ -2480,7 +2395,7 @@ update_package pkg_uuid msg model =
                 (Just { input = s
                   , expectation = ExpectAccepted
                   , result =
-                      DFA.load s (toResolutionDict model.packages) p.computation
+                      DFA.load s (Q.resolutionDict model.packages) p.computation
                       |> DFA.run
                       |> List.head
                       |> Maybe.andThen .finalResult

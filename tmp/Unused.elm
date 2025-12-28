@@ -644,3 +644,47 @@ identifyCardinality from to {computation} =
   |> Maybe.map
     (\toContext -> identifyCardinalityViaContext from toContext)
   |> Maybe.withDefault Unidirectional
+
+-- Original source: Main.elm
+expandStep : Int -> List ExecutionData -> ExecutionProperties -> Model -> Model
+expandStep n results props model =
+  let
+    relevantSteps = -- ordered from most recent to least recent
+      List.dropWhile (.step >> (/=) n) results
+    selectedStep =
+      List.head relevantSteps
+    with_graphview =
+      Maybe.map (\step ->
+        let
+          edges = executing_edges step
+          (id, model_) =
+            getUuid model
+          gv =
+            makeGraphView id (SolvedWith GraphEditor.spreadOutForces)
+              { w = model.uiLayout.dimensions.bottomPanel.w - 128
+              , h = model.uiLayout.dimensions.bottomPanel.h - 40
+              }
+              True
+              model.packages
+              step.computation
+          model__ =
+            C.upsertGraphView gv model_
+            |> C.updateGraphView gv.id (centerAndHighlight edges)
+        in
+          ( gv.id , model__ )
+      )
+      selectedStep
+  in
+    Maybe.map
+      (\(gv_uuid, model__) ->
+        C.replaceInteraction Nothing
+            (Executing results
+              { props
+                | expandedSteps = IntDict.insert n gv_uuid props.expandedSteps
+              }
+            )
+            model__
+        |> setProperties
+      )
+      with_graphview
+    |> Maybe.withDefault model
