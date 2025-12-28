@@ -4,8 +4,11 @@ module Queries exposing
     , descriptionsForPackages
     , linkExistsInGraph
     , mostRecentInteraction
+    , packagesAffectedBy
+    , packagesAndRefs
     , peekInteraction
     , resolutionDict
+    , viewsContainingPackage
     )
 import Automata.Data exposing (..)
 import AutoDict
@@ -96,3 +99,44 @@ mostRecentInteraction model =
 resolutionDict : PackageDict -> ResolutionDict
 resolutionDict packages =
   AutoDict.map (\_ -> .computation) packages
+
+viewsContainingPackage : Uuid -> Model -> List GraphView
+viewsContainingPackage package_uuid m =
+  AutoDict.values m.graph_views
+  |> List.filter (\gv -> gv.graphPackage == Just package_uuid)
+
+packagesAndRefs : Model -> List (Uuid, AutoSet.Set String Uuid)
+packagesAndRefs {packages} =
+  AutoDict.values packages
+  |> List.foldl
+    (\pkg acc ->
+      ( pkg.packageIdentifier
+      , Graph.edges pkg.computation.graph
+        |> List.foldl
+            (\{label} set ->
+              AutoSet.foldl
+                (\{via} set_ ->
+                  case via of
+                    ViaGraphReference ref ->
+                      AutoSet.insert ref set_
+                    _ ->
+                      set_
+                )
+                set
+                label
+            )
+            (AutoSet.empty Uuid.toString)
+      ) :: acc
+    )
+    []
+
+packagesAffectedBy : Uuid -> Model -> List Uuid
+packagesAffectedBy uuid model =
+  packagesAndRefs model
+  |> List.filterMap
+    (\(package_uuid, refs) ->
+      if AutoSet.member uuid refs then
+        Just package_uuid
+      else
+        Nothing
+    )

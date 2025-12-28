@@ -2144,53 +2144,13 @@ commitOrConfirm model =
           )
         |> Maybe.withDefault ( model, Cmd.none )
 
-viewsContainingPackage : Uuid -> Model -> List GraphView
-viewsContainingPackage package_uuid m =
-  AutoDict.values m.graph_views
-  |> List.filter (\gv -> gv.graphPackage == Just package_uuid)
-
-packagesAndRefs : Model -> List (Uuid, AutoSet.Set String Uuid)
-packagesAndRefs {packages} =
-  AutoDict.values packages
-  |> List.foldl
-    (\pkg acc ->
-      ( pkg.packageIdentifier
-      , Graph.edges pkg.computation.graph
-        |> List.foldl
-            (\{label} set ->
-              AutoSet.foldl
-                (\{via} set_ ->
-                  case via of
-                    ViaGraphReference ref ->
-                      AutoSet.insert ref set_
-                    _ ->
-                      set_
-                )
-                set
-                label
-            )
-            (AutoSet.empty Uuid.toString)
-      ) :: acc
-    )
-    []
-
-packagesAffectedBy : Uuid -> Model -> List Uuid
-packagesAffectedBy uuid model =
-  packagesAndRefs model
-  |> List.filterMap
-    (\(package_uuid, refs) ->
-      if AutoSet.member uuid refs then
-        Just package_uuid
-      else
-        Nothing
-    )
 
 beginDeletionInteraction : Uuid -> List Uuid -> GraphPackage -> Model -> Model
 beginDeletionInteraction package_uuid affected package model =
   -- Erk; it depends on whether you're okay with the consequences.
   let
     all_packages : List (Uuid, AutoSet.Set String Uuid)
-    all_packages = packagesAndRefs model
+    all_packages = Q.packagesAndRefs model
     indirectlyAffected to_check known_indirect =
       let
         (i, o) =
@@ -2263,7 +2223,7 @@ deletePackage package model =
     package_uuid = package.packageIdentifier
     affected : List Uuid
     affected =
-      packagesAffectedBy package_uuid model
+      Q.packagesAffectedBy package_uuid model
   in
     case affected of
       [] ->
@@ -2272,7 +2232,7 @@ deletePackage package model =
           without_package =
             { model | packages = AutoDict.remove package_uuid model.packages }
           relevant_views =
-            viewsContainingPackage package_uuid without_package
+            Q.viewsContainingPackage package_uuid without_package
             |> List.map .id
         in
           (  C.removeViews relevant_views without_package
@@ -2562,7 +2522,7 @@ update_package pkg_uuid msg model =
               |>(\m ->
                   { m
                     | graph_views =
-                        viewsContainingPackage pkg_uuid m
+                        Q.viewsContainingPackage pkg_uuid m
                         |> List.foldl
                           (\gv -> AutoDict.insert gv.id (change_description s gv))
                           m.graph_views
