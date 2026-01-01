@@ -1,5 +1,6 @@
 module Changes exposing
   ( deletePackageFromModel
+  , linkGraphViewToPackage
   , mapDrawingData
   , mapGraph
   , popInteraction
@@ -208,3 +209,10 @@ updatePackageFromView gv_uuid model =
 deletePackageFromModel : Uuid -> Model -> Model
 deletePackageFromModel uuid model =
   { model | packages = AutoDict.remove uuid model.packages }
+
+linkGraphViewToPackage : PackageDict -> Uuid -> GraphView -> GraphView
+linkGraphViewToPackage packages package_uuid graph_view =
+  if AutoDict.member package_uuid packages then
+    { graph_view | graphPackage = Just package_uuid }
+  else
+    graph_view

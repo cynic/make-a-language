@@ -7,6 +7,7 @@ import AutoSet
 import Basics.Extra exposing (..)
 import Browser
 import Browser.Events as BE
+import Changes as C
 import Css exposing (px)
 import Dict exposing (Dict)
 import Force
@@ -23,6 +24,7 @@ import List.Extra as List
 import Maybe.Extra as Maybe
 import Platform.Cmd as Cmd
 import Ports exposing (..)
+import Queries as Q
 import Random.Pcg.Extended as Random
 import Set
 import Svg.Styled exposing (svg)
@@ -33,9 +35,8 @@ import TypedSvg exposing (g)
 import TypedSvg.Attributes
 import TypedSvg.Attributes.InPx exposing (x, y)
 import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..) , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
+import UILogic as UI
 import Uuid exposing (Uuid)
-import Changes as C
-import Queries as Q
 
 {-
 Quality / technology requirements:
@@ -46,382 +47,6 @@ Quality / technology requirements:
    or impractical.  If impossible or impractical, a comment should be left to
    explain why that is the case.
 -}
-
-getUuid : Model -> (Uuid, Model)
-getUuid model =
-  let
-    (v, newSeed) =
-      Random.step
-      --(Random.int Basics.minSafeInteger Basics.maxSafeInteger)
-      Uuid.generator
-      model.randomSeed
-    updatedModel =
-      { model | randomSeed = newSeed }
-  in
-    ( v, updatedModel )
-
-getUuid2 : Model -> (Uuid, Uuid, Model)
-getUuid2 model =
-  let
-    (a, m) = getUuid model
-    (b, m_) = getUuid m
-  in
-    ( a, b, m_ )
-
-nodeDrawingForPackage : AutomatonGraph -> Uuid -> Dict NodeId NodeDrawingData
-nodeDrawingForPackage ag graphView_uuid =
-  let
-    disconnectedNodes =
-      DFA.identifyDisconnectedNodes ag
-    isSplittable : Graph.NodeContext Entity Connection -> Bool
-    isSplittable graphNode =
-      let
-        nonRecursive =
-          IntDict.filter (\k _ -> k /= graphNode.node.id) graphNode.incoming
-      in
-        IntDict.size nonRecursive > 1 ||
-        ( IntDict.findMin nonRecursive
-          |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
-          |> Maybe.withDefault False
-        )
-  in
-    Graph.nodes ag.graph
-    |> List.map
-      (\node ->
-        let
-          nodeContext =
-            Graph.get node.id ag.graph
-        in
-          ( node.id
-          , { isDisconnected = Set.member node.id disconnectedNodes
-            , isTerminal =
-                Maybe.map isTerminalNode nodeContext
-                |> Maybe.withDefault False
-            , coordinates = Coordinate node.label.x node.label.y
-            , isRoot = node.id == ag.root
-            , canSplit =
-                Maybe.map isSplittable nodeContext
-                |> Maybe.withDefault False
-            , view_uuid = graphView_uuid
-            , isSelected = False
-            }
-          )
-      )
-    |> Dict.fromList
-
-
-identifyCardinalityViaContext : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
-identifyCardinalityViaContext from to =
-  if to.node.id == from then
-    Recursive
-  else if Q.linkExistsInGraph to from then -- i.e. in opposite direction
-    Bidirectional
-  else
-    Unidirectional
-
-path_between : CoordinateLike a -> CoordinateLike b -> Cardinality -> PathBetweenReturn
-path_between sourceXY_orig destXY_orig cardinality =
-  {- we're doing a curved line, using a quadratic path.
-      So, let's make a triangle. The two points at the "base" are the
-      start and end of the connection ("source" and "target").  Now,
-      take two lines at an angle Θ from both sides, and where they
-      meet is our control point.  We can then adjust the angle "up" and
-      "down" until we are satisfied with the look.
-      
-      Of course, because the angles are equal, the length of the lines is
-      also equal.  So another equivalent way of going about it is by getting
-      the midpoint and then pushing a line "up", orthogonal to that midpoint,
-      and saying that this is the control point.  As the length of the line
-      increases, the angle increases too.
-  --}
-  let
-    nodeRadius = 7
-    radius_from = 7
-    radius_to = 5
-    sourceXY =
-      case cardinality of
-        Recursive ->
-          { x = sourceXY_orig.x - nodeRadius
-          , y = sourceXY_orig.y
-          }
-        _ ->
-          { x = sourceXY_orig.x, y = sourceXY_orig.y }
-    destXY =
-      case cardinality of
-        Recursive ->
-          { x = sourceXY_orig.x + nodeRadius
-          , y = sourceXY_orig.y
-          }
-        _ ->
-          { x = destXY_orig.x, y = destXY_orig.y }
-    d_y = sourceXY.y - destXY.y
-    d_x = sourceXY.x - destXY.x
-    orig_line_len = sqrt (d_x * d_x + d_y * d_y)
-    curvature =
-      case cardinality of
-        Bidirectional ->
-          1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
-        Unidirectional ->
-          0
-        Recursive ->
-          e
-    orthogonal_len =
-      curvature * orig_line_len
-    orthogonal_vector =
-      -- normalised
-      { x = (destXY.y - sourceXY.y) / orig_line_len
-      , y = (destXY.x - sourceXY.x) / orig_line_len
-      }
-    parametric_direction_vector =
-      -- normalised
-      { y = (destXY.y - sourceXY.y) / orig_line_len
-      , x = (destXY.x - sourceXY.x) / orig_line_len
-      }
-    half_len = orig_line_len / 2
-    midPoint =
-      -- I can do this early because the midpoint should remain the midpoint,
-      -- no matter how I place the actual targets
-      { x = destXY.x - half_len * parametric_direction_vector.x
-      , y = destXY.y - half_len * parametric_direction_vector.y
-      }
-    -- with the midpoint, I can work out the control points.
-    control_point =
-      { x = midPoint.x + orthogonal_len * orthogonal_vector.x
-      , y = midPoint.y - orthogonal_len * orthogonal_vector.y
-      }
-    hypotenuse_len =
-      sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
-    -- now, with the control point, I can make the source & target hypotenuse vectors
-    source_hypotenuse_vector =
-      -- normalised
-      { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
-      , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
-      }
-    dest_hypotenuse_vector =
-      { x = -( control_point.x - destXY.x ) / hypotenuse_len
-      , y = -( control_point.y - destXY.y ) / hypotenuse_len
-      }
-    shorten_source =
-      { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
-      , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
-      }
-    shorten_target =
-      -- the extra addition is for the stroke-width (which is 3px)
-      { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
-      , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
-      }
-    line_len =
-      let
-        dx = shorten_target.x - shorten_source.x
-        dy = shorten_target.y - shorten_source.y
-      in
-        sqrt (dx * dx + dy * dy)
-    -- control_point =
-    --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
-    --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
-    --   }
-    linePath =
-      case cardinality of
-        Recursive ->
-          "M " ++ String.fromFloat (shorten_source.x)
-          ++ " " ++ String.fromFloat (shorten_source.y)
-          ++ " c -14,-14 28,-14 " ++ String.fromFloat (nodeRadius * 2) ++ ",0"
-          --      ^    ^  ^   ^
-          --      a    b  c   d
-          -- to "raise" it, increase the numerical values of b and d (e.g. to -25 and -25).
-          -- to "widen" it, increase the numerical values of a and c (e.g. to -21 and 35).
-          -- increase/decrease numbers by the same amount to maintain symmetry.
-          -- the last two numbers give the offset for the destination.
-        _ ->
-          "M " ++ String.fromFloat (shorten_source.x)
-          ++ " " ++ String.fromFloat (shorten_source.y)
-          ++ " Q " ++ String.fromFloat control_point.x
-          ++ " " ++ String.fromFloat control_point.y
-          ++ " " ++ String.fromFloat (shorten_target.x)
-          ++ " " ++ String.fromFloat (shorten_target.y)
-    transition_coordinates =
-      { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
-      , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
-      }
-  in
-    { pathString = linePath
-    , transition_coordinates = transition_coordinates
-    , length = line_len
-    , control_point = control_point
-    , source_connection_point = shorten_source
-    , target_connection_point = shorten_target
-    }
-
-linkDrawingForEdge : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Connection -> PackageDict -> ( (NodeId, NodeId), LinkDrawingData )
-linkDrawingForEdge sourceNode destNode connection packages =
-  let
-    cardinality : Cardinality
-    cardinality =
-      identifyCardinalityViaContext sourceNode.node.id destNode
-  in
-    ( (sourceNode.node.id, destNode.node.id)
-    , { cardinality = cardinality
-      , executionData = Nothing
-      , graphReferenceDescriptions =
-          Q.descriptionsForConnection connection packages
-      , connection = connection
-      , pathBetween =
-          path_between
-            sourceNode.node.label
-            destNode.node.label
-            cardinality
-      }
-    )
-
-linkDrawingForPackage : AutomatonGraph -> PackageDict -> Dict (NodeId, NodeId) LinkDrawingData
-linkDrawingForPackage ag packages =
-  let
-    edgeContexts =
-      Graph.edges ag.graph
-      |> List.filterMap
-          (\edge ->
-            Maybe.andThen2
-              (\f t ->
-                -- this will happen when there is a "removed" edge,
-                -- but it hasn't been confirmed yet.
-                -- The "invisible" link will anchor with forces, rather
-                -- than having the disconnected nodes fly off into the
-                -- wild blue yonder…
-                if AutoSet.isEmpty edge.label then
-                  Nothing
-                else
-                  Just { sourceNode = f, destNode = t, label = edge.label })
-              (Graph.get edge.from ag.graph)
-              (Graph.get edge.to ag.graph)
-          )
-  in
-    edgeContexts
-    |> List.map
-        (\{sourceNode, destNode, label} ->
-          linkDrawingForEdge sourceNode destNode label packages
-        )
-    |> Dict.fromList
-
-fitGraphViewToGraph : GraphView -> GraphView
-fitGraphViewToGraph graphView =
-  { graphView
-  | guest =
-      calculateGuestDimensionsForHost
-        graphView.host
-        graphView.fitClosely
-        graphView.computation.graph
-  }
-
-type GraphViewType
-  = Unsolved
-  | SolvedWith (AutomatonGraph -> List (Force.Force NodeId))
-
-makeGraphView : Uuid -> GraphViewType -> Dimension -> Bool -> PackageDict -> AutomatonGraph -> GraphView
-makeGraphView id viewType dim fitClosely packages ag =
-  let
-    computeResult =
-      case viewType of
-        Unsolved ->
-          { solvedGraph = ag
-          , simulation = Force.simulation []
-          , forces = []
-          }
-        SolvedWith f ->
-          GraphEditor.computeGraphFully f ag
-  in
-    { id = id
-    , computation = computeResult.solvedGraph
-    , graphPackage = Nothing
-    , fitClosely = fitClosely
-    , host = dim
-    , guest =
-        calculateGuestDimensionsForHost
-          dim
-          fitClosely
-          computeResult.solvedGraph.graph
-    , pan = ( 0, 0 )
-    , activePanDirection = Nothing
-    , disconnectedNodes = Set.empty
-    , properties = nilViewProperties
-    , drawingData =
-        { link_drawing = linkDrawingForPackage computeResult.solvedGraph packages
-        , node_drawing = nodeDrawingForPackage computeResult.solvedGraph id
-        , tentative_link = Nothing
-        , graphReferenceDescriptions = Q.descriptionsForPackages packages
-        , highlighted_links = Set.empty
-        , lowlighted_links = Set.empty
-        }
-    , undoBuffer = []
-    , redoBuffer = []
-    }
-
-linkGraphViewToPackage : PackageDict -> Uuid -> GraphView -> GraphView
-linkGraphViewToPackage packages package_uuid graph_view =
-  if AutoDict.member package_uuid packages then
-    { graph_view | graphPackage = Just package_uuid }
-  else
-    graph_view
-
-centerAndHighlight : List (NodeId, NodeId) -> GraphView -> GraphView
-centerAndHighlight links graph_view =
-  let
-    bounds =
-      Q.bounds_for
-        (List.foldl (\(a, b) acc -> a :: b :: acc) [] links)
-        graph_view.computation.graph
-    inner_padding = 60
-    adjusted =
-      expand_bounds inner_padding bounds
-    aspect_ratio =
-      graph_view.host.w / graph_view.host.h
-    last_node =
-      List.last links
-      |> Maybe.map Tuple.second
-      |> Maybe.withDefault (graph_view.computation.root)
-    linkSet = Set.fromList links
-    determine_dimensions : Rectangle -> Rectangle
-    determine_dimensions orig_rect =
-      if orig_rect.w / graph_view.host.w < 0.25 then
-        -- expand to at least this amount.
-        let
-          new_w = 0.25 * graph_view.host.w
-          -- so, how much do I need to expand on either side?
-          diff = (new_w - orig_rect.w) / 2
-        in
-          { x = orig_rect.x - diff
-          , y = orig_rect.y
-          , w = new_w
-          , h = new_w / aspect_ratio
-          }
-      else
-        orig_rect
-    (highlight, lowlight) =
-      Dict.foldl (\(src, dest) _ (h, l) ->
-        if Set.member (src, dest) linkSet then
-          -- this is a link to highlight.
-          ( Set.insert (src, dest) h, l )
-        else if src == last_node then
-          ( h, l ) -- neither highlight nor lowlight
-        else
-          ( h, Set.insert (src, dest) l )
-      )
-      (Set.empty, Set.empty)
-      graph_view.drawingData.link_drawing
-
-  in
-    { graph_view
-      | drawingData =
-          let drawingData = graph_view.drawingData in
-            { drawingData
-              | highlighted_links = highlight
-              , lowlighted_links = lowlight
-            }
-      , guest =
-          determine_dimensions <|
-            Rectangle adjusted.min.x adjusted.min.y
-              (adjusted.max.x - adjusted.min.x)
-              ((adjusted.max.x - adjusted.min.x) / aspect_ratio)
-    }
 
 -- MAIN
 
@@ -541,7 +166,7 @@ init flags =
       , uiConstants = constants
       , randomSeed = initialSeed
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
-      , properties = nilMainProperties
+      , properties = UI.nilMainProperties
       , computationsExplorer = []
       }
     model =
@@ -551,20 +176,17 @@ init flags =
         (id, model_) =
           getUuid model_excl_views
         gv =
-          makeGraphView id
-            (SolvedWith GraphEditor.coordinateForces)
-            state.dimensions.mainEditor
-            False
-            model_.packages
+          UI.makeGraphView id SolvedByCoordinateForces
+            state.dimensions.mainEditor False model_.packages
             mainPackage.computation
-          |> linkGraphViewToPackage model_.packages mainPackage.packageIdentifier
+          |> C.linkGraphViewToPackage model_.packages mainPackage.packageIdentifier
       in
         C.upsertGraphView gv model_
         |> C.setMainView id
   in
-    ( selectNavIcon ComputationsIcon model
-      |> refreshComputationsList
-      |> setProperties
+    ( UI.selectNavIcon ComputationsIcon model
+      |> UI.refreshComputationsList
+      |> UI.setProperties
     , Cmd.none
     )
 
@@ -574,17 +196,9 @@ updateGraphInView updater graph_view model =
     ag = updater graph_view.computation
   in
     C.upsertGraphView
-      ( { graph_view
-          | computation = ag
-          , drawingData =
-              let dd = graph_view.drawingData in
-              { dd
-                | link_drawing = linkDrawingForPackage ag model.packages
-                , node_drawing = nodeDrawingForPackage ag graph_view.id
-              }
-          , disconnectedNodes = DFA.identifyDisconnectedNodes ag
-        }
-        |> fitGraphViewToGraph
+      ( { graph_view | computation = ag }
+        |> GraphEditor.recalculateLinksAndNodes model.packages
+        |> UI.fitGraphViewToGraph
       )
       model
 
@@ -600,380 +214,14 @@ persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
 
-{-| When either the sidebar or the bottom-panel have changed dimensions, this should be
-    called to figure out what changes need to be made to any of the other dimensions.
--}
-recalculate_uistate : UILayout -> UILayout
-recalculate_uistate ({dimensions} as ui) =
-  let
-    visible_sidebar_width_plus_splitter =
-      if ui.open.sideBar then dimensions.sideBar.w + 8 + 48 else 0
-    visible_panel_height_plus_splitter =
-      if ui.open.bottomPanel then dimensions.bottomPanel.h + 8 else 0
-  in
-  { ui
-    | dimensions =
-        { dimensions
-          | bottomPanel =
-              { w = dimensions.viewport.w - visible_sidebar_width_plus_splitter
-              , h = dimensions.bottomPanel.h
-              }
-          , mainEditor =
-              { w = dimensions.viewport.w - visible_sidebar_width_plus_splitter
-              , h = dimensions.viewport.h - visible_panel_height_plus_splitter
-              }
-        }
-  }
-
-expand_bounds : Float -> Bounds -> Bounds
-expand_bounds n bounds =
-  { bounds
-    | min = { x = bounds.min.x - n, y = bounds.min.y - n }
-    , max = { x = bounds.max.x + n, y = bounds.max.y + n }
-  }
-
-{-| Accepts host dimensions, view properties, and a graph, and calculates the
-    appropriate guest coordinates & guest dimensions (i.e. viewport).
--}
-calculateGuestDimensionsForHost : DimensionLike a -> Bool -> Graph.Graph Entity Connection -> Rectangle
-calculateGuestDimensionsForHost {w, h} removePadding graph =
-  let
-    aspectRatio : Float
-    aspectRatio =
-      w / h
-      -- |> Debug.log "Viewport aspect-ratio"
-    raw =
-      Q.bounds_for (Graph.nodeIds graph) graph
-    inner_pad : Float -- 85-105 in SVG-coordinates seems to be a "good" amount of space
-    inner_pad =
-      if removePadding then
-        -- we don't need any buffer.
-        -- So, just put in a "buffer" for the node radius.
-        if raw.max.x - raw.min.x < 60 then
-          60 -- this is the minimum amount. It is enough to show a single node.
-        else
-          15
-      else
-        -- when we edit (e.g. make new nodes etc), we want some free space around to put
-        -- those nodes.  That is what this is for.
-        95
-    -- the forces on the graph place the root at (0, 0).
-    -- they also pull all the other nodes to the right and to the
-    -- y-axis center.
-    -- So I can take the number of nodes and multiply by, say, 150 and
-    -- I shouldn't be too far off from a maximum.
-    adjusted =
-      expand_bounds inner_pad raw
-      -- |> Debug.log "After-padding Bounds"
-    -- from this, I can figure out the appropriate coordinates
-    center_y =
-      (adjusted.min.y + adjusted.max.y) / 2
-      -- |> Debug.log "center-y"
-    autoHeight =
-      max
-        ((adjusted.max.x - adjusted.min.x) / aspectRatio) -- aspect-ratio calc
-        (raw.max.y - raw.min.y) -- bounds calc
-      -- |> Debug.log "Auto-height (via aspect-ratio)"
-    -- now, we want a center within that autoHeight.
-  in
-    { x = adjusted.min.x
-    , y = center_y - autoHeight / 2
-    , w = adjusted.max.x - adjusted.min.x
-    , h = autoHeight
-    }
-
-sidebarGraphDimensions : UILayout -> Dimension
-sidebarGraphDimensions uiLayout =
-  Dimension
-    ( uiLayout.dimensions.sideBar.w - 20 )
-    ( 9/16 * ( uiLayout.dimensions.sideBar.w - 20 ))
-
-updateMainEditorDimensions : Model -> Model
-updateMainEditorDimensions ({uiLayout, mainGraphView, computationsExplorer} as model) =
-  let
-    updateMain : GraphView -> GraphView
-    updateMain graph_view =
-      { graph_view
-        | host = uiLayout.dimensions.mainEditor
-        , guest =
-            calculateGuestDimensionsForHost
-              uiLayout.dimensions.mainEditor
-              False
-              graph_view.computation.graph
-      }
-    updateSidebar : GraphView -> GraphView
-    updateSidebar graph_view =
-      let
-        sidebarDimensions =
-          sidebarGraphDimensions uiLayout
-      in
-        { graph_view
-          | host = sidebarDimensions
-          , guest = 
-              calculateGuestDimensionsForHost
-                sidebarDimensions
-                True
-                graph_view.computation.graph          
-        }
-    sidebarIds =
-      AutoSet.fromList Uuid.toString computationsExplorer
-  in
-    -- On resize, I must update the dimensions for the graph view that
-    -- is displayed in the "main" editor section as well.
-    { model
-      | graph_views =
-          AutoDict.map
-            (\_ graph_view ->
-              if graph_view.id == mainGraphView then
-                updateMain graph_view
-              else if uiLayout.open.sideBar && AutoSet.member graph_view.id sidebarIds then
-                updateSidebar graph_view
-              else
-                -- no resizing.
-                graph_view
-            )
-            model.graph_views
-    }
-
-{-| Drag a specified splitter to a specified coordinate. Returns an updated `UIState`.
--}
-dragSplitter : Float -> SplitterMovement -> UIConstants -> UILayout -> UILayout
-dragSplitter coord movement constants ({dimensions} as ui) =
-  let
-    sidebar_width =
-      if movement == LeftRight then
-        clamp constants.sideBarWidth.min constants.sideBarWidth.max coord
-      else
-        dimensions.sideBar.w
-    panel_height =
-      if movement == UpDown then
-        clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (dimensions.viewport.h - 8 - coord)
-      else
-        dimensions.bottomPanel.h
-  in
-    { ui
-      | dimensions =
-          { dimensions
-            | sideBar =
-                Dimension sidebar_width dimensions.sideBar.h
-            , bottomPanel =
-                Dimension dimensions.bottomPanel.w panel_height
-          }
-    }
-    |> recalculate_uistate
-
-{-| Collapse or expand an area (i.e. either sidebar or bottom-panel).
-    Returns the updated `UIState` with correct dimensions.
--}
-toggleAreaVisibility : AreaUITarget -> UILayout -> UILayout
-toggleAreaVisibility where_ ({open} as ui) =
-  { ui
-    | open =
-        { open
-          | sideBar =
-              if where_ == NavigatorsArea then not open.sideBar else open.sideBar
-          , bottomPanel =
-              if where_ == ToolsArea then not open.bottomPanel else open.bottomPanel
-        }
-  }
-  |> recalculate_uistate
-
-resizeViewport : Dimension -> Model -> Model
-resizeViewport {w, h} ({uiLayout, uiConstants} as model) =
-  let
-    dim = uiLayout.dimensions
-    constants : UIConstants
-    constants =
-      { uiConstants
-        | sideBarWidth =
-            let sbw = uiConstants.sideBarWidth in
-            { sbw
-              | max = w / 2 - 60
-              , initial = clamp sbw.min (w / 2 - 60) (dim.sideBar.w)
-            }
-      , toolsPanelHeight =
-          let tph = uiConstants.toolsPanelHeight in
-          { tph
-            | max = h / 2 - 40
-            , initial = clamp tph.min (h / 2 - 40) (dim.bottomPanel.h)
-          }
-      }
-    
-    state : UILayout
-    state =
-      { uiLayout
-        | dimensions =
-            { dim
-              | viewport = Dimension w h
-              , sideBar =
-                  { w = clamp constants.sideBarWidth.min constants.sideBarWidth.max (dim.sideBar.w)
-                  , h = dim.sideBar.h
-                  }
-              , bottomPanel =
-                  { w = dim.bottomPanel.w
-                  , h = clamp constants.toolsPanelHeight.min constants.toolsPanelHeight.max (dim.bottomPanel.h)
-                  }
-            }
-      }
-      |> recalculate_uistate
-  in
-    { model
-      | uiLayout = state
-      , uiConstants = constants
-    }
-
-escapeConnectionEditor : Uuid -> ConnectionAlteration -> List Uuid -> Model -> Model
-escapeConnectionEditor uuid {source, dest, targetKind} viewsToRemove model =
-  case {- Debug.log "targetKind" -} targetKind of
-    PhantomNodeNewConnection ->
-      C.removeViews viewsToRemove model
-      |> C.updateGraphView uuid
-        ( C.mapGraph (Graph.remove dest)
-          >> C.mapDrawingData
-            (\dd ->
-              { dd
-                | link_drawing = Dict.remove (source, dest) dd.link_drawing
-                , node_drawing = Dict.remove dest dd.node_drawing
-                , tentative_link = Nothing
-              }
-            )
-        )
-    ExistingNodeNewConnection ->
-      C.removeViews viewsToRemove model
-      |> C.updateGraphView uuid
-        ( C.mapGraph
-            ( Graph.update dest
-                (Maybe.map (\destCtx ->
-                  { destCtx | incoming = IntDict.remove source destCtx.incoming }
-                ))
-            )
-          >> C.mapDrawingData
-            (\dd ->
-              { dd
-                | link_drawing = Dict.remove (source, dest) dd.link_drawing
-                , tentative_link = Nothing
-              }
-            )
-        )
-    ExistingNodeExistingConnection ->
-      C.removeViews viewsToRemove model 
-      |> C.updateGraphView uuid
-        ( C.mapDrawingData (\dd -> { dd | tentative_link = Nothing }) )
-
-packagesToGraphViews : Dimension -> Model -> List GraphPackage -> (List GraphView, Model)
-packagesToGraphViews dim model list =
-  List.foldl
-    (\pkg (acc, model_) ->
-      let
-        ( id, model__ ) =
-          getUuid model_
-        gv =
-          makeGraphView id (SolvedWith GraphEditor.coordinateForces)
-            dim True model_.packages pkg.computation
-          |> linkGraphViewToPackage model_.packages pkg.packageIdentifier
-      in
-        ( gv :: acc , C.upsertGraphView gv model__ )
-    )
-    ( [], model )
-    ( List.sortBy (.created >> Time.posixToMillis) list )
-
-{-| Expensive. Refresh all computations. -}
-refreshComputationsList : Model -> Model
-refreshComputationsList model =
-  let
-    (computation_views, updated_model) =
-      packagesToGraphViews (sidebarGraphDimensions model.uiLayout) model (AutoDict.values model.packages)
-    as_dict =
-      List.foldl (\v -> AutoDict.insert v.id v) (AutoDict.empty Uuid.toString) computation_views
-  in
-    { updated_model
-      | graph_views =
-          List.foldl AutoDict.remove model.graph_views model.computationsExplorer
-          |> AutoDict.union as_dict
-      , computationsExplorer =
-          List.map .id computation_views
-    }
-
-selectNavIcon : NavigatorIcon -> Model -> Model
-selectNavIcon icon model =
-  { model
-    | uiLayout =
-        let uiLayout = model.uiLayout in
-        { uiLayout
-          | selected =
-            let selected = uiLayout.selected in
-            { selected | sideBar = icon }
-        }
-  }
-
-{-| Given the host-space coordinates of a node, and that same node's coordinates in
-    the guest-space, find the (left, top) of the SVG element in host-coordinates.
-    By transmitting host-space coordinates only when needed—e.g. on click—we reduce the
-    amount of messages going to `update`, and we reduce our reliance on ports.
--}
-nodeHostCoordToHostCoord : Coordinate -> Coordinate -> GraphView -> Coordinate
-nodeHostCoordToHostCoord node_coord svg_coord {host, guest, pan} =
-  let
-    -- find out distance from the left edge of the SVG, as SVG coordinates
-    ( pan_x, pan_y ) = pan
-    from_left =
-      (svg_coord.x - pan_x) - guest.x
-      -- |> Debug.log "Distance from left-edge to node (in SVG coordinates)"
-    -- find out how many SVG coordinates are in a host coordinate
-    x_host_per_svg =
-      host.w / guest.w
-      -- |> Debug.log "SVG px per host px"
-    host_on_left =
-      from_left * x_host_per_svg
-      -- |> Debug.log "Distance from left-edge to node (in Host coordinates)"
-    host_left =
-      node_coord.x - host_on_left
-      -- |> Debug.log "Host left edge is at"
-    from_top =
-      (svg_coord.y - pan_y) - guest.y
-    y_host_per_svg =
-      host.h / guest.h
-    host_on_top =
-      from_top * y_host_per_svg
-    host_top =
-      node_coord.y - host_on_top
-  in
-    { x = host_left, y = host_top }
-    -- |> Debug.log "Left/Top of container"
-
 update_graphview : Uuid -> GraphViewMsg -> Model -> ( Model, Cmd Msg )
 update_graphview uuid ui_msg model =
-  let
-    calculate_host_coord : Coordinate -> NodeId -> Maybe Coordinate
-    calculate_host_coord node_host_coord nodeId =
-      AutoDict.get uuid model.graph_views
-      |> Maybe.andThen (\gv ->
-        Maybe.combineSecond
-          ( gv
-          , Graph.get nodeId gv.computation.graph
-            |> Maybe.map
-              (\ctx ->
-                { x = ctx.node.label.x, y = ctx.node.label.y }
-                -- |> Debug.log "SVG coordinates of node"
-              )
-          )
-      )
-      |> Maybe.map
-        (\(gv, svg_coord) ->
-          nodeHostCoordToHostCoord
-            ( node_host_coord
-              -- |> Debug.log "Host coordinates of node"
-            )
-            svg_coord
-            gv
-        )
-  in
   case ui_msg of
     StartDraggingNode nodeId node_host_coord ->
-      calculate_host_coord node_host_coord nodeId
+      UI.calculate_host_coord uuid model node_host_coord nodeId
       |> Maybe.map (\host_coord ->
         ( C.pushInteractionForStack (Just uuid) (DraggingNode nodeId host_coord) model
-          |> setProperties
+          |> UI.setProperties
         , Cmd.none
         )
       )
@@ -1019,10 +267,10 @@ update_graphview uuid ui_msg model =
             selectDestination uuid src etc model_
           _ -> -- includes 'Nothing'
             -- this is the initial selection.
-            calculate_host_coord node_coord node_id
+            UI.calculate_host_coord uuid model node_coord node_id
             |> Maybe.map (\host_coord ->
-              selectSourceNode model uuid host_coord node_id
-              |> setProperties
+              GraphEditor.selectSourceNode model uuid host_coord node_id
+              |> UI.setProperties
             )
             |> Maybe.withDefault model
       , Cmd.none
@@ -1040,11 +288,11 @@ update_graphview uuid ui_msg model =
     MoveNode coord ->
       ( case Q.peekInteraction (Just uuid) model.interactionsDict of
           Just (DraggingNode node_id _) ->
-            dragNode uuid coord node_id model
-            |> setProperties
+            GraphEditor.dragNode uuid coord node_id model
+            |> UI.setProperties
           Just (ChoosingDestinationFor _ _ _) ->
-            movePhantomNode uuid coord model
-            |> setProperties
+            GraphEditor.movePhantomNode uuid coord model
+            |> UI.setProperties
           _ ->
             model
       , Cmd.none
@@ -1052,7 +300,7 @@ update_graphview uuid ui_msg model =
 
     StopDraggingNode ->
       ( C.popInteraction (Just uuid) model
-        |> Maybe.map (Tuple.second >> setProperties)
+        |> Maybe.map (Tuple.second >> UI.setProperties)
         |> Maybe.withDefault model
       , Cmd.none
       )
@@ -1067,7 +315,7 @@ update_graphview uuid ui_msg model =
             )
         |> Maybe.map
           (\(graph_view, nodeContext) ->
-            startSplit uuid graph_view nodeContext model
+            UI.startSplit uuid graph_view nodeContext model
           )
         |> Maybe.withDefault model
       , Cmd.none
@@ -1149,787 +397,15 @@ splitNode node left graph_view = -- turns out that "right" isn't needed. Hmmm!!!
     newUserGraph
     -- |> debugAutomatonGraphXY "After node-split"
 
-
-nodeSplitSwitch : SplitNodeInterfaceProperties -> Maybe Uuid -> AcceptVia -> NodeSplitData -> Model -> Model
-nodeSplitSwitch props key_uuid via ({left, right} as data) model =
-  let
-    tr finality =
-      Transition finality via
-    onLeft_0 = AutoSet.member (tr False) left
-    onLeft_1 = AutoSet.member (tr True) left
-    onRight_0 = AutoSet.member (tr False) right
-    onRight_1 = AutoSet.member (tr True) right
-    pushToRight t =
-      ( AutoSet.remove t left, AutoSet.insert t right )
-    pushToLeft t =
-      ( AutoSet.insert t left, AutoSet.remove t right )
-    ( newLeft, newRight ) =
-      if onLeft_0 && onLeft_1 then
-        -- push the non-terminal to the right.
-        pushToRight (tr False)
-      else if onLeft_1 then
-        -- push the terminal to the right
-        pushToRight (tr True)
-      else if onRight_0 && onRight_1 then
-        -- push the non-terminal to the left
-        pushToLeft (tr False)
-      else if onRight_1 then
-        pushToLeft (tr True)
-      else if onLeft_0 then
-        pushToRight (tr False)
-      else if onRight_0 then
-        pushToLeft (tr False)
-      else
-        ( left, right )
-  in
-    C.replaceInteraction key_uuid
-      ( SplittingNode
-          { data | left = newLeft, right = newRight } 
-          props
-      )
-      model
-    |> setProperties
-
-handleConnectionEditorInput : Maybe Uuid -> String -> ConnectionAlteration -> ConnectionEditorProperties -> Model -> Model
-handleConnectionEditorInput key_uuid input alteration props model =
-  case props.editingMode of
-    CharacterInput ->
-      String.toList input
-      |> List.head
-      |> Maybe.map
-        (\ch -> handleConnectionCharacterInput props key_uuid ch alteration model)
-      |> Maybe.withDefault model
-    GraphReferenceSearch _ ->
-      if String.contains "`" input then
-        C.replaceInteraction key_uuid
-          ( EditingConnection alteration { props | editingMode = CharacterInput } )
-          model
-      else
-        C.replaceInteraction key_uuid
-          ( EditingConnection alteration
-              { props
-                | editingMode = GraphReferenceSearch input
-                , shownList = filterConnectionEditorGraphs input props.referenceList model
-              }
-          )
-          model
-
-handleConnectionCharacterInput : ConnectionEditorProperties -> Maybe Uuid -> Char -> ConnectionAlteration -> Model -> Model
-handleConnectionCharacterInput props key_uuid ch alteration model =
-  case ch of
-    '`' ->
-      C.replaceInteraction key_uuid
-        ( EditingConnection alteration { props | editingMode = GraphReferenceSearch "" } )
-        model
-    _ ->
-      C.replaceInteraction key_uuid
-        ( EditingConnection
-            { alteration | connection = toggleConnectionTransition (ViaCharacter ch) alteration.connection }
-            props
-        )
-        model
-
-toggleConnectionTransition : AcceptVia -> Connection -> Connection
-toggleConnectionTransition acceptCondition conn =
-  AutoSet.foldl
-    (\t (seen, state) ->
-      if t.via == acceptCondition then
-        -- I've found the right transition.  Now, update or remove or…?
-        if t.isFinal then
-          ( True, state ) -- skip it; i.e., remove it.
-        else
-          ( True
-          , AutoSet.insert { t | isFinal = True } state -- make it final
-          )
-      else
-        (seen, AutoSet.insert t state)
-    )
-    (False, AutoSet.empty transitionToString)
-    conn
-  |>  (\(seen, resultSet) ->
-        if seen then
-          resultSet -- I've handled this above.
-        else
-          -- need to insert it.
-          AutoSet.insert (Transition False acceptCondition) resultSet
-      )
-
-filterConnectionEditorGraphs : String -> List Uuid -> Model -> List Uuid
-filterConnectionEditorGraphs s referenceList model =
-  let
-    v = String.toLower s
-  in
-  List.filterMap (\uuid -> AutoDict.get uuid model.graph_views) referenceList
-  |> List.filter
-    (\gv ->
-      case gv.computation.description of
-        Nothing ->
-          True -- include; there's nothing to filter on.
-        Just desc ->
-          String.contains v (String.toLower desc)
-    )
-  |> List.map .id
-
-editConnection : Maybe Uuid -> Coordinate -> ConnectionAlteration -> Model -> Model
-editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model =
-  packagesToGraphViews { w = 430, h = 3/6 * 430} model (AutoDict.values model.packages)
-  |>  (\(graph_views, model_) ->
-        AutoDict.get model.mainGraphView model.graph_views
-        |> Maybe.map (\gv ->
-          let
-            ag =
-              case Graph.get dest gv.computation.graph of
-                Nothing ->
-                  GraphEditor.newnode_graphchange source x y connection gv.computation
-                Just _ ->
-                  GraphEditor.updateLink_graphchange source dest connection gv.computation
-            (id, model__) =
-              getUuid model_
-            main_view =
-              makeGraphView id Unsolved { w = 250, h = 250 } True model__.packages ag
-            solidified_model =
-              C.upsertGraphView main_view model__
-              |> C.convertTentativeLinkToPermanent main_view.id
-          in
-            (List.map .id graph_views, main_view.id, solidified_model)
-          )
-        |> Maybe.withDefault ( List.map .id graph_views, model.mainGraphView, model_ )
-      )
-  |>  (\(uuids, main_uuid, model_) ->
-        let
-          stackModify =
-            case Q.peekInteraction view_uuid model_.interactionsDict of
-              Just (EditingConnection _ _) -> C.replaceInteraction
-              _ -> C.pushInteractionForStack
-        in
-          C.updateGraphView main_uuid (centerAndHighlight [ (source, dest) ]) model_
-          |> stackModify view_uuid
-            ( EditingConnection alteration
-                { referenceList = uuids
-                , shownList = uuids
-                , mainGraph = main_uuid
-                , editingMode = CharacterInput
-                }
-            )
-      )
-  |> setProperties
-
-unusedNodeId : AutomatonGraph -> NodeId
-unusedNodeId {graph} =
-  Graph.nodeIdRange graph
-  |> Maybe.map (Tuple.second >> (+) 1)
-  |> Maybe.withDefault 0
-
-selectSourceNode : Model -> Uuid -> Coordinate -> NodeId -> Model
-selectSourceNode model view_uuid host_coord node_id =
-  -- initially, you must click on a node to select it.
-  -- therefore, we are initially always looking at a recursive
-  -- connection to the same node!
-  AutoDict.get view_uuid model.graph_views
-  |> Maybe.andThen (.computation >> .graph >> Graph.get node_id)
-  |> Maybe.map
-    (\nodeContext ->
-      let
-        -- by default, the connection is recursive
-        connection =
-          IntDict.get node_id nodeContext.incoming
-          |> Maybe.withDefault (AutoSet.empty transitionToString)
-        linkDrawingData : LinkDrawingData
-        linkDrawingData =
-          { cardinality = Recursive
-          , graphReferenceDescriptions = AutoDict.empty Uuid.toString
-          , pathBetween =
-              path_between
-                nodeContext.node.label
-                nodeContext.node.label
-                Recursive
-          , executionData = Nothing
-          , connection = AutoSet.empty transitionToString
-          }
-      in
-        C.pushInteractionForStack (Just view_uuid)
-          ( ChoosingDestinationFor node_id
-              ( ExistingNode node_id connection )
-              host_coord
-          )
-          model
-          -- and now modify the drawing-data for that view
-        |> C.updateDrawingData view_uuid
-            (\drawingData ->
-              { drawingData
-                | tentative_link = Just (node_id, node_id)
-                , link_drawing =
-                    Dict.insert (node_id, node_id) linkDrawingData drawingData.link_drawing
-              }
-            )
-    )
-  |> Maybe.withDefault model
-
-switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
-switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view svg_coords host_coords sourceNodeContext model =
-  let
-    phantom_nodeid =
-      unusedNodeId graph_view.computation
-    nodeData =
-      { isTerminal = True
-      , isDisconnected = False
-      , coordinates = svg_coords
-      , isRoot = False
-      , canSplit = False
-      , view_uuid = view_uuid
-      , isSelected = False
-      }
-    linkData = -- this is the new calculated link-path
-      { cardinality = Unidirectional
-      , graphReferenceDescriptions = AutoDict.empty Uuid.toString
-      , pathBetween = -- calculate the link path
-          path_between sourceNodeContext.node.label svg_coords Unidirectional
-      , executionData = Nothing
-      , connection = AutoSet.empty transitionToString
-      }
-  in
-    C.updateDrawingData view_uuid
-      (\drawingData ->
-        { drawingData
-          | node_drawing = Dict.insert phantom_nodeid nodeData drawingData.node_drawing
-          , link_drawing =
-              ( if old_conn_is_empty then
-                  Dict.remove (sourceNodeContext.node.id, existing_id) drawingData.link_drawing
-                else
-                  drawingData.link_drawing
-              )
-              -- and add the link path to `some_node`
-              |> Dict.insert (sourceNodeContext.node.id, phantom_nodeid) linkData
-          , tentative_link = Just (sourceNodeContext.node.id, phantom_nodeid)
-        }
-      )
-      model
-    -- we've made the changes, so set the interaction
-    |> C.replaceInteraction (Just view_uuid)
-        ( ChoosingDestinationFor sourceNodeContext.node.id
-            ( NewNode phantom_nodeid svg_coords )
-            host_coords
-        )
-
-phantomLinkDrawingForExisting : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> LinkDrawingData
-phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model =
-  let
-    cardinality =
-      identifyCardinalityViaContext sourceNodeContext.node.id existingNodeContext
-    connection =
-      IntDict.get sourceNodeContext.node.id existingNodeContext.incoming
-      |> Maybe.withDefaultLazy (\() -> AutoSet.empty transitionToString)
-  in
-    { cardinality = cardinality
-    , graphReferenceDescriptions =
-        Q.descriptionsForConnection connection model.packages
-    , pathBetween =
-        path_between -- calculate the link path
-          sourceNodeContext.node.label
-          existingNodeContext.node.label
-          cardinality
-    , executionData = Nothing
-    , connection = connection
-    }
-
-switchFromPhantomToExisting : Uuid -> NodeId -> Coordinate -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
-switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext existingNodeContext model =
-  let
-    linkData = -- this is the new calculated link-path
-      phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model
-  in
-    C.updateDrawingData view_uuid
-      (\drawingData ->
-        { drawingData
-          | node_drawing =
-              Dict.remove phantom_id drawingData.node_drawing
-          , link_drawing =
-              -- get rid of the old phantom link
-              Dict.remove (sourceNodeContext.node.id, phantom_id) drawingData.link_drawing
-              -- and add the link path to `some_node`
-              |> Dict.insert (sourceNodeContext.node.id, existingNodeContext.node.id) linkData
-          , tentative_link = Just (sourceNodeContext.node.id, existingNodeContext.node.id)
-        }
-      )
-      model
-    -- we've made the changes, so set the interaction
-    |> C.replaceInteraction (Just view_uuid)
-        ( ChoosingDestinationFor sourceNodeContext.node.id
-            ( ExistingNode existingNodeContext.node.id linkData.connection )
-            host_coords
-        )
-
-switchFromExistingToExisting : Uuid -> Bool -> NodeId -> Coordinate -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
-switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coords sourceNodeContext nearbyNodeContext model =
-  let
-    linkData = -- this is the new calculated link-path
-      phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext model
-  in
-    C.updateDrawingData view_uuid
-      (\drawingData ->
-        { drawingData
-          | link_drawing =
-              -- get rid of the old phantom link, if necessary
-              ( if old_conn_is_empty then
-                  Dict.remove (sourceNodeContext.node.id, old_existing) drawingData.link_drawing
-                else
-                  drawingData.link_drawing
-              )
-              -- and add the link path to `some_node`
-              |> Dict.insert (sourceNodeContext.node.id, nearbyNodeContext.node.id) linkData
-          , tentative_link = Just (sourceNodeContext.node.id, nearbyNodeContext.node.id)
-        }
-      )
-      model
-    -- we've made the changes, so set the interaction
-    |> C.replaceInteraction (Just view_uuid)
-        ( ChoosingDestinationFor sourceNodeContext.node.id
-            ( ExistingNode nearbyNodeContext.node.id linkData.connection )
-            host_coords
-        )
-
-updatePhantomMovement : Uuid -> NodeId -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
-updatePhantomMovement view_uuid phantom_id svg_coords host_coords sourceNodeContext model =
-  C.updateDrawingData view_uuid
-    (\drawingData ->
-        { drawingData
-          | node_drawing =
-              Dict.update phantom_id
-                (Maybe.map (\nodeData ->
-                  { nodeData | coordinates = svg_coords }
-                ))
-                drawingData.node_drawing
-          , link_drawing =
-              Dict.update (sourceNodeContext.node.id, phantom_id)
-                (Maybe.map (\linkData ->
-                  { linkData
-                    | pathBetween =
-                        path_between
-                          sourceNodeContext.node.label
-                          svg_coords
-                          Unidirectional
-                  }
-                ))
-                drawingData.link_drawing
-        }
-    )
-    model
-  |> C.replaceInteraction (Just view_uuid)
-    ( ChoosingDestinationFor sourceNodeContext.node.id (NewNode phantom_id svg_coords) host_coords )
-
-movePhantomNodeInView : Uuid -> GraphView -> Coordinate -> Model -> Model
-movePhantomNodeInView view_uuid graph_view svg_coord model =
-  -- in the event, the `x_` and `y_` have already been translated
-  -- into guest-viewport coordinates, accounting for pan information.
-  let
-    -- what is the destination of this link?
-    -- Sounds like a simple question: it's the phantom node, of course.  But when the
-    -- phantom node gets too close to a REAL node, then it should switch to that node;
-    -- and when it is far enough away, then it should switch back.
-    nearby_node_lockOnDistance : Float
-    nearby_node_lockOnDistance = 36 -- min distance before arrow inverts…
-
-    nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Coordinate -> GraphView -> b
-    nearby_node_func f distance mouse { computation } =
-      -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
-      let
-        square_dist = distance * distance
-      in
-        f
-          (\node ->
-            let
-              dx = node.label.x - mouse.x
-              dy = node.label.y - mouse.y
-            in
-              -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
-              dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
-          )
-          (Graph.nodes computation.graph)
-
-    nearby_node : Float -> Coordinate -> GraphView -> Maybe (Graph.Node Entity)
-    nearby_node =
-      nearby_node_func List.find
-
-    -- nearby_nodes : Float -> (Float, Float) -> GraphView -> List (Graph.Node Entity)
-    -- nearby_nodes =
-    --   nearby_node_func List.filter
-
-  in
-    -- first, let's find this thing.
-    case Q.peekInteraction (Just view_uuid) model.interactionsDict of
-      Just (ChoosingDestinationFor source (NewNode phantom_id _) host_coords) ->
-        -- okay, so there is a phantom node already there and active.
-        -- in the easiest case, we just need to move its (x,y) coordinates, and be done.
-        -- But if we are close enough to "lock on" to a nearby node, then we need to
-        -- change this interaction to reflect that instead.  So, which case do we
-        -- have?
-        case nearby_node nearby_node_lockOnDistance svg_coord graph_view of
-          Just nearbyNode ->
-            -- ooh, we're close to a lock-on node. Okay. Let's get rid of the phantom
-            -- node; then calculate the link path (might be straight or curved or recursive)
-            -- based on the node; and then get rid of the old link path, and put in the
-            -- new one.
-            -- Lastly, we set the interaction to the correct value.            
-            Maybe.map2
-              (\sourceNodeContext nearbyNodeContext ->
-                  switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext nearbyNodeContext model
-              )
-              (Graph.get source graph_view.computation.graph)
-              (Graph.get nearbyNode.id graph_view.computation.graph)
-            |> Maybe.withDefault model
-          Nothing ->
-            -- great, there is no nearby node; just update the (x, y).
-            Maybe.map
-              (\sourceNodeContext ->
-                updatePhantomMovement view_uuid phantom_id svg_coord host_coords sourceNodeContext model
-              )
-              (Graph.get source graph_view.computation.graph)
-            |> Maybe.withDefault model
-      Just (ChoosingDestinationFor source (ExistingNode existing_node conn) host_coords) ->
-        -- here the situation is "reversed":
-        -- If I find a neighbour, and it is the existing neighbour, then I need do
-        -- nothing.
-        -- If I find a neighbour, and it is NOT the existing neighbour, then I need to
-        -- switch to it.
-        -- If I don't find a neighbour, then I must switch to a phantom node.
-        case nearby_node nearby_node_lockOnDistance svg_coord graph_view of
-          Just nearbyNode ->
-            if existing_node == nearbyNode.id then
-              -- no change needed.
-              model
-            else
-              -- switch to the new node.
-              Maybe.map2
-                (\sourceNodeContext nearbyNodeContext ->
-                    switchFromExistingToExisting view_uuid (AutoSet.isEmpty conn) existing_node host_coords sourceNodeContext nearbyNodeContext model
-                )
-                (Graph.get source graph_view.computation.graph)
-                (Graph.get nearbyNode.id graph_view.computation.graph)
-              |> Maybe.withDefault model -- no changes made.
-          Nothing ->
-            -- there is no nearby node; move from the existing node to a phantom node. 
-            Maybe.map
-              (\sourceNodeContext ->
-                switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view svg_coord host_coords sourceNodeContext model)
-              (Graph.get source graph_view.computation.graph)
-            |> Maybe.withDefault model
-      _ ->
-        model
-
-movePhantomNode : Uuid -> Coordinate -> Model -> Model
-movePhantomNode view_uuid coord model =
-  AutoDict.get view_uuid model.graph_views
-  |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv coord model)
-  |> Maybe.withDefault model
-
-dragNode : Uuid -> Coordinate -> NodeId -> Model -> Model
-dragNode view_uuid svg_coord nodeId model =
-  C.updateGraphView view_uuid
-    (\gv ->
-      let
-        nodeContext = Graph.get nodeId gv.computation.graph
-        get_vertices getFan getDrawing =
-          Maybe.map
-            (\ctx ->
-              IntDict.toList (getFan ctx)
-              |> List.filterMap
-                (\(k, conn) ->
-                  Graph.get k gv.computation.graph
-                  |> Maybe.map (getDrawing conn ctx)
-                )
-            )
-            nodeContext
-          |> Maybe.withDefault []
-        vertices_in =
-          get_vertices .incoming (\conn otherCtx fanCtx -> linkDrawingForEdge fanCtx otherCtx conn model.packages)
-        vertices_out =
-          get_vertices .outgoing (\conn otherCtx fanCtx -> linkDrawingForEdge otherCtx fanCtx conn model.packages)
-      in
-        C.mapGraph
-          (Graph.update nodeId
-            (Maybe.map (\ctx ->
-              { ctx
-                | node =
-                    { id = nodeId
-                    , label =
-                        let e = ctx.node.label in
-                        { e | x = svg_coord.x, y = svg_coord.y }
-                    }
-              }
-            ))
-          )
-          gv
-        |> C.mapDrawingData
-          (\dd ->
-            { dd
-              | node_drawing =
-                  Dict.update nodeId
-                    (Maybe.map (\node ->
-                      { node | coordinates = svg_coord }
-                    ))
-                    dd.node_drawing
-              , link_drawing =
-                  List.foldl
-                    (\( (src, dest), data ) ->
-                      Dict.insert (src, dest) data
-                    )
-                    dd.link_drawing
-                    (vertices_in ++ vertices_out)
-            }
-          )
-    )
-    model
-
-removePhantomLink : Uuid -> NodeId -> NodeId -> Model -> Model
-removePhantomLink view_uuid source dest =
-  C.updateDrawingData view_uuid
-    (\drawingData ->
-      { drawingData
-        | link_drawing =
-            Dict.remove (source, dest) drawingData.link_drawing
-        , tentative_link = Nothing
-      }
-    )
-
-cancelNewNodeCreation : Uuid -> Model -> Model
-cancelNewNodeCreation view_uuid model =
-  let
-    kill : NodeId -> NodeId -> Model -> Model
-    kill source dest model_ =
-      C.updateDrawingData view_uuid
-        (\drawingData ->
-          { drawingData
-            | node_drawing =
-                Dict.remove dest drawingData.node_drawing
-            , link_drawing =
-                Dict.remove (source, dest) drawingData.link_drawing
-            , tentative_link = Nothing
-          }
-        )
-        model_
-  in
-    case C.popInteraction (Just view_uuid) model of
-      Just (ChoosingDestinationFor source (NewNode dest _) _, model_) ->
-        kill source dest model_
-      Just (EditingConnection {source, dest, targetKind} _, model_) ->
-        if targetKind == PhantomNodeNewConnection then
-          kill source dest model_
-        else
-          println "🚨 ERROR WHMD(MWOEI" -- how am I in this function, if there's no new node??
-          model
-      _ ->
-        println "🚨 ERROR $DBMWMGYERCC" -- how am I in this function, if neither of these is cancelled??
-        model
-
-createNewGraphNode : Uuid -> NodeId -> Coordinate -> Model -> Model
-createNewGraphNode view_uuid node_id svg_coord =
-    C.updateGraphView view_uuid
-     (C.mapGraph
-        (Graph.insert
-            { node =
-                { id = node_id
-                , label =
-                    entity node_id NoEffect
-                    |> (\e -> { e | x = svg_coord.x, y = svg_coord.y })
-                }
-            , incoming = IntDict.empty
-            , outgoing = IntDict.empty
-            }
-        )
-     )
-
-nilMainProperties : MainUIProperties
-nilMainProperties =
-  { canEscape = False
-  , canDragSplitter = False
-  , canAcceptCharacters = False
-  , canSelectNewPackage = False
-  , canCreateNewPackage = False
-  , canLoadTestInput = False
-  , canDeleteTestInput = False
-  , canCreateTestInput = False
-  }
-
-nilViewProperties : GraphViewProperties
-nilViewProperties =
-  { canSelectConnections = False
-  , canSelectEmptySpace = False
-  , canSelectNodes = False
-  , canSplitNodes = False
-  , canDragNodes = False
-  , canInspectRefs = False
-  , canPan = False
-  , canDeletePackage = False
-  , canSelectPackage = False
-  }
-
-type alias GraphViewPropertySetter = GraphViewProperties
-type alias MainPropertySetter = MainUIProperties
-
-setProperties : Model -> Model
-setProperties model =
-  let
-    setLocalProperties : GraphViewDict -> GraphViewDict
-    setLocalProperties =
-      let
-        whenSplittingNode : GraphViewPropertySetter
-        whenSplittingNode =
-          { nilViewProperties
-            | canDragNodes = True
-            , canInspectRefs = True
-            , canPan = True
-          } -- this is a message. the quick brown fox jumps over the lazy dog.
-        whenDraggingNode : GraphViewPropertySetter
-        whenDraggingNode =
-          { nilViewProperties | canPan = True }
-        whenDraggingSplitter : GraphViewPropertySetter
-        whenDraggingSplitter =
-          nilViewProperties
-        whenSourceNodeSelected : Uuid -> GraphViewPropertySetter
-        whenSourceNodeSelected id =
-          { nilViewProperties
-            | canSelectEmptySpace = model.mainGraphView == id
-            , canSelectNodes = model.mainGraphView == id
-            , canSplitNodes = model.mainGraphView == id
-            , canDragNodes = model.mainGraphView == id
-            , canPan = True
-          }
-        whenEditingConnection : GraphViewPropertySetter
-        whenEditingConnection =
-          { nilViewProperties
-            | canInspectRefs = True
-            , canPan = True
-          }
-        whenExecuting : GraphViewPropertySetter
-        whenExecuting =
-          { nilViewProperties
-            | canPan = True
-            , canDragNodes = True
-          }
-        otherwise : Uuid -> GraphViewPropertySetter
-        otherwise id =
-          { nilViewProperties
-            | canSelectNodes = model.mainGraphView == id
-            , canSplitNodes = model.mainGraphView == id
-            , canDragNodes = model.mainGraphView == id
-            , canSelectConnections = model.mainGraphView == id
-            , canInspectRefs = True
-            , canPan = True
-            , canSelectPackage = List.member id model.computationsExplorer
-            , canDeletePackage = List.member id model.computationsExplorer
-          }
-        whenDeletingPackage : GraphViewPropertySetter
-        whenDeletingPackage =
-          { nilViewProperties | canPan = True }
-      in
-        AutoDict.map
-          (\k v ->
-            { v
-              | properties =
-                  case Q.peekInteraction (Just k) model.interactionsDict of
-                    Just (SplittingNode _ _) ->
-                      whenSplittingNode
-                    Just (DraggingNode _ _) ->
-                      whenDraggingNode
-                    Just (ChoosingDestinationFor _ _ _) ->
-                      whenSourceNodeSelected v.id
-                    Just (EditingConnection _ _) ->
-                      whenEditingConnection
-                    Just (Executing _ _) ->
-                      whenExecuting
-                    Just (DraggingSplitter _) ->
-                      whenDraggingSplitter
-                    Just (DeletingPackage _ _) ->
-                      whenDeletingPackage
-                    Nothing ->
-                     otherwise v.id
-            }
-          )
-    setMainProperties : MainUIProperties
-    setMainProperties =
-      let
-        whenSplittingNode : MainPropertySetter
-        whenSplittingNode =
-          { nilMainProperties
-            | canEscape = True
-            , canDragSplitter = True
-            , canAcceptCharacters = True
-          }
-        whenDraggingNode : MainPropertySetter
-        whenDraggingNode =
-          { nilMainProperties | canEscape = True }
-        whenDraggingSplitter : MainPropertySetter
-        whenDraggingSplitter =
-          nilMainProperties
-        whenSourceNodeSelected : MainPropertySetter
-        whenSourceNodeSelected =
-          { nilMainProperties
-            | canEscape = True
-            , canDragSplitter = True
-            , canSelectNewPackage = True
-            , canCreateNewPackage = True
-          }
-        whenEditingConnection : MainPropertySetter
-        whenEditingConnection =
-          { nilMainProperties
-          | canEscape = True
-          , canAcceptCharacters = True
-          }
-        whenExecuting : MainPropertySetter
-        whenExecuting =
-          { nilMainProperties
-          | canEscape = True
-          , canDragSplitter = True
-          , canLoadTestInput = True
-          , canDeleteTestInput = True
-          , canCreateTestInput = True
-          }
-        otherwise : MainPropertySetter
-        otherwise =
-          { nilMainProperties
-            | canDragSplitter = True
-            , canSelectNewPackage = True
-            , canCreateNewPackage = True
-            , canLoadTestInput = True
-            , canDeleteTestInput = True
-            , canCreateTestInput = True
-          }
-        whenDeletingPackage : MainPropertySetter
-        whenDeletingPackage =
-          { nilMainProperties | canEscape = True }
-      in
-        case Q.mostRecentInteraction model of
-          Just (_, SplittingNode _ _) ->
-            whenSplittingNode
-          Just (_, DraggingNode _ _) ->
-            whenDraggingNode
-          Just (_, ChoosingDestinationFor _ _ _) ->
-            whenSourceNodeSelected
-          Just (_, EditingConnection _ _) ->
-            whenEditingConnection
-          Just (_, Executing _ _) ->
-            whenExecuting
-          Just (_, DraggingSplitter _) ->
-            whenDraggingSplitter
-          Just (_, DeletingPackage _ _) ->
-            whenDeletingPackage
-          Nothing ->
-            otherwise
-  in
-    { model
-      | graph_views = setLocalProperties model.graph_views
-      , properties = setMainProperties
-    }
-    
 selectDestination : Uuid -> NodeId -> PossibleDestination -> Model -> Model
 selectDestination view_uuid src possible_dest model =
   case possible_dest of
     NewNode phantom_id svg_coord ->
       -- I've clicked on some kind of an empty space.  I'll want to create this node,
       -- and then proceed to edit the connection.
-      createNewGraphNode view_uuid phantom_id svg_coord model
-      -- editConnection will call setProperties
-      |> editConnection (Just view_uuid) svg_coord
+      GraphEditor.createNewGraphNode view_uuid phantom_id svg_coord model
+      -- editConnection will call UI.setProperties
+      |> UI.editConnection (Just view_uuid) svg_coord
           { source = src
           , dest = phantom_id
           , connection = AutoSet.empty transitionToString
@@ -1949,8 +425,8 @@ selectDestination view_uuid src possible_dest model =
       in
         -- we already have a node selected, and now, an existing
         -- node is being selected as the destination.
-        -- editConnection will call setProperties
-        editConnection (Just view_uuid) svg_coord
+        -- editConnection will call UI.setProperties
+        UI.editConnection (Just view_uuid) svg_coord
           { source = src
           , dest = dest_id
           , connection = conn
@@ -1961,42 +437,6 @@ selectDestination view_uuid src possible_dest model =
                 ExistingNodeNewConnection
           }
           model
-
-startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -> Model
-startSplit uuid graph_view nodeContext model =
-  let
-    (id, model_) =
-      getUuid model
-    main_view =
-      makeGraphView id
-        Unsolved { w = 250, h = 250 }
-        True model_.packages
-        graph_view.computation
-    edges_in =
-      IntDict.keys nodeContext.incoming
-      |> List.map (\to -> (to, nodeContext.node.id))
-  in
-    C.upsertGraphView main_view model_
-    |> C.pushInteractionForStack (Just uuid)
-      ( SplittingNode
-          { to_split = nodeContext.node.id
-          , left = AutoSet.empty transitionToString
-          , right =
-              IntDict.foldl
-                (\k v acc ->
-                    if k /= nodeContext.node.id then
-                      AutoSet.union v acc
-                    else
-                      acc
-                )
-                (AutoSet.empty transitionToString)
-                nodeContext.incoming
-          }
-          { mainGraph = main_view.id
-          }
-      )
-    |> C.updateGraphView main_view.id (centerAndHighlight edges_in)
-    |> setProperties
 
 commitOrConfirm : Model -> (Model, Cmd Msg)
 commitOrConfirm model =
@@ -2013,9 +453,9 @@ commitOrConfirm model =
             , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
           }
         updated_model =
-          C.upsertGraphView (fitGraphViewToGraph updated_view) model_
+          C.upsertGraphView (UI.fitGraphViewToGraph updated_view) model_
       in
-        refreshComputationsList updated_model
+        UI.refreshComputationsList updated_model
     
     updateExistingNode : NodeId -> NodeId -> Connection -> GraphView -> Model -> Model
     updateExistingNode src dest conn gv model_ =
@@ -2034,8 +474,8 @@ commitOrConfirm model =
               let dd = gv.drawingData in
               { dd
                 | tentative_link = Nothing
-                , link_drawing = linkDrawingForPackage ag model.packages
-                , node_drawing = nodeDrawingForPackage ag gv.id
+                , link_drawing = GraphEditor.linkDrawingForPackage ag model.packages
+                , node_drawing = GraphEditor.nodeDrawingForPackage ag gv.id
               }
         }
         ag model_
@@ -2067,7 +507,7 @@ commitOrConfirm model =
                   |> commit_change gv newGraph
             )
             |> Maybe.withDefault model_
-            |> setProperties
+            |> UI.setProperties
         , Cmd.none
         )
       Just (Just gv_uuid, EditingConnection ({ source, dest, connection, targetKind }) {mainGraph, referenceList}, model_) ->
@@ -2083,15 +523,15 @@ commitOrConfirm model =
                     -- remove the 'dest' from the graph before confirming it as
                     -- the previous graph.
                     |> confirmPhantomNode source dest connection gv
-                    |> setProperties
+                    |> UI.setProperties
                   ExistingNodeNewConnection ->
                     C.removeViews (mainGraph :: referenceList) model_
                     |> removeLink source dest gv
-                    |> setProperties
+                    |> UI.setProperties
                   ExistingNodeExistingConnection ->
                     C.removeViews (mainGraph :: referenceList) model_
                     |> updateExistingNode source dest connection gv
-                    |> setProperties
+                    |> UI.setProperties
               )
             |> Maybe.withDefault model_
           , Cmd.none
@@ -2101,8 +541,8 @@ commitOrConfirm model =
           updated_model =
              C.removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
             |> C.deletePackageFromModel to_delete
-            |> refreshComputationsList
-            |> setProperties
+            |> UI.refreshComputationsList
+            |> UI.setProperties
         in
           ( updated_model
           , Ports.deleteFromStorage (Uuid.toString to_delete)
@@ -2132,8 +572,8 @@ commitOrConfirm model =
                     model
                 updated_model =
                   C.updatePackageFromView model.mainGraphView model_
-                  |> refreshComputationsList
-                  |> setProperties
+                  |> UI.refreshComputationsList
+                  |> UI.setProperties
               in
                 ( updated_model
                 , gv.graphPackage
@@ -2143,78 +583,6 @@ commitOrConfirm model =
                 )
           )
         |> Maybe.withDefault ( model, Cmd.none )
-
-
-beginDeletionInteraction : Uuid -> List Uuid -> GraphPackage -> Model -> Model
-beginDeletionInteraction package_uuid affected package model =
-  -- Erk; it depends on whether you're okay with the consequences.
-  let
-    all_packages : List (Uuid, AutoSet.Set String Uuid)
-    all_packages = Q.packagesAndRefs model
-    indirectlyAffected to_check known_indirect =
-      let
-        (i, o) =
-          List.partition
-            (\(_, refs) ->
-              AutoSet.size (AutoSet.intersect refs known_indirect) > 0
-            )
-            to_check
-      in
-        case i of
-          [] ->
-            -- there is nothing more that matches; we're done!
-            known_indirect
-          xs ->
-            List.map Tuple.first xs
-            |> AutoSet.fromList Uuid.toString
-            |> AutoSet.union known_indirect
-            |> indirectlyAffected o
-    affectedSet =
-      AutoSet.fromList Uuid.toString affected
-      |> Debug.log "affected"
-    indirectSet =
-      indirectlyAffected
-        -- exclude everything in the affectedSet from consideration.
-        (List.filter (\(u, _) -> not (AutoSet.member u affectedSet)) all_packages)
-        (affectedSet)
-      -- and now remove those which are directly affected.
-      |> (\s -> AutoSet.diff s affectedSet)
-    indirect =
-      AutoSet.toList indirectSet
-      |> Debug.log "indirect"
-    (id, model_) =
-      getUuid model
-    mainGraph =
-      makeGraphView id (SolvedWith GraphEditor.coordinateForces)
-        { w = model.uiLayout.dimensions.viewport.w / 3
-        , h = model.uiLayout.dimensions.viewport.h / 3
-        }
-        True model.packages package.computation
-    (directViews, model__) =
-      affected
-      |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
-      |> packagesToGraphViews 
-          { w = model.uiLayout.dimensions.viewport.w / 7
-          , h = model.uiLayout.dimensions.viewport.h / 7
-          }
-          (C.upsertGraphView mainGraph model_)
-    (indirectViews, model___) =
-      indirect
-      |> List.filterMap (\uuid -> AutoDict.get uuid model.packages)
-      |> packagesToGraphViews 
-          { w = model.uiLayout.dimensions.viewport.w / 7
-          , h = model.uiLayout.dimensions.viewport.h / 7
-          }
-          model__
-    props =
-      { affectedPackages = affected
-      , indirectlyAffectedPackages = indirect
-      , mainGraph = mainGraph.id
-      , directViews = directViews |> List.map .id
-      , indirectViews = indirectViews |> List.map .id
-      }
-  in
-    C.pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
 
 deletePackage : GraphPackage -> Model -> ( Model, Cmd Msg )
 deletePackage package model =
@@ -2239,7 +607,7 @@ deletePackage package model =
           , Ports.deleteFromStorage (Uuid.toString package_uuid)
           )
       _ ->
-        ( beginDeletionInteraction package_uuid affected package model
+        ( UI.beginDeletionInteraction package_uuid affected package model
         , Cmd.none
         )
 
@@ -2308,12 +676,12 @@ step_execution orig_graphview execution_function test model =
           let
             edges = executing_edges step
             gv =
-              makeGraphView id (SolvedWith GraphEditor.spreadOutForces)
+              UI.makeGraphView id SolvedBySpreadOutForces
                 model.uiLayout.dimensions.mainEditor
                 True model.packages step.computation
             executed_model =
               C.upsertGraphView gv model_
-              |> C.updateGraphView gv.id (centerAndHighlight edges)
+              |> C.updateGraphView gv.id (UI.centerAndHighlight edges)
           in
             (gv, executed_model)
         ) head_step
@@ -2326,7 +694,7 @@ step_execution orig_graphview execution_function test model =
   in
     interactionFunction applied_step updated_props model__
     |> C.setMainView graph_view.id
-    |> setProperties
+    |> UI.setProperties
 
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
@@ -2409,16 +777,16 @@ update_package pkg_uuid msg model =
               (id, model_) =
                 getUuid model
               gv =
-                makeGraphView id (SolvedWith GraphEditor.coordinateForces)
+                UI.makeGraphView id SolvedByCoordinateForces
                   model.uiLayout.dimensions.mainEditor
                   False model.packages pkg.computation
-                |> linkGraphViewToPackage model.packages pkg.packageIdentifier              
+                |> C.linkGraphViewToPackage model.packages pkg.packageIdentifier              
             in
               C.upsertGraphView gv model_
               |>  C.removeViews [ model.mainGraphView ]
               |> C.setMainView gv.id
               |> C.selectPackage pkg.packageIdentifier
-              |> setProperties
+              |> UI.setProperties
           )
         |> Maybe.withDefaultLazy
           (\() ->
@@ -2567,15 +935,15 @@ update msg model =
           Just (DraggingSplitter movement, model_) ->
             if shouldStop then -- do not, in fact, drag the splitter.
               model_
-              |> updateMainEditorDimensions
-              |> setProperties
+              |> UI.updateMainEditorDimensions
+              |> UI.setProperties
             else -- such a drag.
               { model
                 | uiLayout =
-                    dragSplitter coord movement model.uiConstants model.uiLayout
+                    UI.dragSplitter coord movement model.uiConstants model.uiLayout
               }
-              |> updateMainEditorDimensions
-              |> setProperties
+              |> UI.updateMainEditorDimensions
+              |> UI.setProperties
           _ ->
             model
       , Cmd.none
@@ -2584,12 +952,12 @@ update msg model =
     QuickInput input ->
       ( case Q.mostRecentInteraction model of
           Just (key_uuid, EditingConnection alteration props) ->
-            handleConnectionEditorInput key_uuid input alteration props model
+            UI.handleConnectionEditorInput key_uuid input alteration props model
           Just (key_uuid, SplittingNode data props) ->
             String.toList input
             |> List.head
             |> Maybe.map
-                (\ch -> nodeSplitSwitch props key_uuid (ViaCharacter ch) data model)
+                (\ch -> UI.nodeSplitSwitch props key_uuid (ViaCharacter ch) data model)
             |> Maybe.withDefault model
           _ ->
             model
@@ -2601,27 +969,27 @@ update msg model =
             Just (key_uuid, EditingConnection ({connection} as alteration) props) ->
               C.replaceInteraction key_uuid 
                 ( EditingConnection
-                    { alteration | connection = toggleConnectionTransition via connection }
+                    { alteration | connection = UI.toggleConnectionTransition via connection }
                     props
                 )
                 model
             Just (key_uuid, SplittingNode data props) ->
-              nodeSplitSwitch props key_uuid via data model
+              UI.nodeSplitSwitch props key_uuid via data model
             _ ->
               model
         , Cmd.none
         )
 
     SelectNavigation ComputationsIcon ->
-      ( selectNavIcon ComputationsIcon model
-        |> refreshComputationsList
-        |> setProperties
+      ( UI.selectNavIcon ComputationsIcon model
+        |> UI.refreshComputationsList
+        |> UI.setProperties
       , Cmd.none
       )
 
     SelectNavigation TestsIcon ->
-      ( selectNavIcon TestsIcon model
-        |> setProperties
+      ( UI.selectNavIcon TestsIcon model
+        |> UI.setProperties
       , Cmd.none
       )
 
@@ -2642,21 +1010,21 @@ update msg model =
       )
 
     OnResize dims ->
-      ( resizeViewport dims model
+      ( UI.resizeViewport dims model
       , Cmd.none
       )
 
     ToggleAreaVisibility where_ ->
       ( { model
-          | uiLayout = toggleAreaVisibility where_ model.uiLayout
+          | uiLayout = UI.toggleAreaVisibility where_ model.uiLayout
         }
-        |> updateMainEditorDimensions
-        |> setProperties
+        |> UI.updateMainEditorDimensions
+        |> UI.setProperties
       , Cmd.none
       )
     StartDraggingSplitter movement ->
       ( C.pushInteractionForStack (Nothing) (DraggingSplitter movement) model
-        |> setProperties
+        |> UI.setProperties
       , Cmd.none
       )
 
@@ -2668,28 +1036,28 @@ update msg model =
               -- Ideally, I shouldn't even spawn an event if there's nothing to do.
               model
             Just (Just uuid, ChoosingDestinationFor _ (NewNode _ _) _, _) ->
-              cancelNewNodeCreation uuid model -- this will pop, and also handle graph/UI changes too.
-              |> setProperties
+              GraphEditor.cancelNewNodeCreation uuid model -- this will pop, and also handle graph/UI changes too.
+              |> UI.setProperties
             Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _) _, _) ->
-              removePhantomLink uuid source dest model
+              GraphEditor.removePhantomLink uuid source dest model
             Just (Just uuid, EditingConnection alteration {referenceList, mainGraph}, model_) ->
-              escapeConnectionEditor uuid alteration (mainGraph :: referenceList) model_ 
-              |> setProperties
+              UI.escapeConnectionEditor uuid alteration (mainGraph :: referenceList) model_ 
+              |> UI.setProperties
             Just (Just _, SplittingNode _ props, model_) ->
                C.removeViews [ props.mainGraph ] model_
-              |> setProperties
+              |> UI.setProperties
             Just (Nothing, DeletingPackage _ {mainGraph, directViews, indirectViews}, model_) ->
                C.removeViews (mainGraph :: directViews ++ indirectViews) model_
-              |> setProperties
+              |> UI.setProperties
             Just (_, _, model_) ->
-              setProperties model_ -- yay, I could pop from the global
+              UI.setProperties model_ -- yay, I could pop from the global
         else
           model
       , Cmd.none
       )
 
     EditConnection coordinates uuid src dest connection ->
-      ( editConnection (Just uuid) coordinates
+      ( UI.editConnection (Just uuid) coordinates
           { source = src
           , dest = dest
           , connection = connection
@@ -2718,7 +1086,7 @@ update msg model =
                 ))
                 model.graph_views
         }
-        |> setProperties
+        |> UI.setProperties
       , Cmd.none
       )
 
@@ -2741,7 +1109,7 @@ update msg model =
                 ))
                 model.graph_views
         }
-        |> setProperties
+        |> UI.setProperties
       , Cmd.none
       )
 
@@ -2775,15 +1143,15 @@ update msg model =
         (id, model__) =
           getUuid updated_model
         gv =
-          makeGraphView id (SolvedWith GraphEditor.coordinateForces)
+          UI.makeGraphView id SolvedByCoordinateForces
             model.uiLayout.dimensions.mainEditor
             False
             model__.packages
             pkg.computation
       in
         ( C.upsertGraphView gv model__
-          |> refreshComputationsList
-          |> setProperties
+          |> UI.refreshComputationsList
+          |> UI.setProperties
         , persistPackage pkg
         )
 
@@ -2878,7 +1246,7 @@ update msg model =
     ResetComputation ->
       case C.popInteraction Nothing model of
         Just ( Executing _ _ , model_ ) ->
-          ( setProperties model_, Cmd.none )
+          ( UI.setProperties model_, Cmd.none )
         _ ->
           ( model, Cmd.none )
 
@@ -2899,7 +1267,7 @@ update msg model =
                             IntDict.remove n props.expandedSteps
                       }
                     )
-                |> setProperties
+                |> UI.setProperties
               Nothing ->
                 model
           _ ->

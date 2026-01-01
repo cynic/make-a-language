@@ -354,7 +354,6 @@ type Cardinality
   | Unidirectional
   | Recursive
 
-
 type alias PathBetweenReturn =
   { pathString : String
   , transition_coordinates : Coordinate
@@ -552,6 +551,11 @@ type alias Test =
   , result : ExecutionResult
   }
 
+type GraphViewType
+  = Unsolved
+  | SolvedByCoordinateForces
+  | SolvedBySpreadOutForces
+
 empty : AutomatonGraph
 empty =
   { graph = Graph.empty
@@ -608,28 +612,6 @@ truncate_uuid : Uuid -> String
 truncate_uuid uuid =
   (Uuid.toString uuid |> String.left 4) ++ "…"
 
--- honestly I don't know why this function is here 😅…
--- These kinds of functions are just calming and fun to make.
--- I never had an actual use for it, and probably never will…
--- uuid_string : Uuid -> String
--- uuid_string uuid =
---   let
---     lookup =
---       "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%^&*_=|`~§±¶÷×¤¢£¥©®™¿¡ØøÅåÇçÑñßÐðÞþŽžŠšŒœĐđĦħĲĳĿŀŁłŊŋŒœŦŧŊŋΘΛΞΣΦΨαβγδεζηθιλμξπρστυφωאבגדהוזחטיךכלםמןנסעףפץצקרשת٠١٢٣٤٥٦٧٨٩БГДЕЖЗИЙЛПУФЦЧШЪЫЭЮЯбвгдежзийклмнопрстуфхцчшщъыьэюя※Ω∆∞≠≈≡√∫∂↕⇑⇓♠♣♥♦♪♫"
---       |> String.toList
---       |> List.indexedMap (\i x -> (i, x))
---       |> Dict.fromList
---   in
---     ( Uuid.toString uuid
---       |> String.replace "-" ""
---       |> Binary.fromHex
---       |> Binary.chunksOf 8
---       |> List.map (\chunk -> Binary.toDecimal chunk)
---       |> List.filterMap (\i -> Dict.get i lookup)
---       |> List.take 4
---       |> String.fromList
---     ) ++ "…"
-
 {-| True if at least one transition terminates at this node,
     within the given execution context -}
 isTerminalNode : NodeContext a Connection -> Bool
@@ -647,9 +629,26 @@ isTerminalNode node =
     (node.incoming)
   )
 
-maybe_fromBool : Bool -> a -> Maybe a
-maybe_fromBool b v =
-  if b then Just v else Nothing
+getUuid : Model -> (Uuid, Model)
+getUuid model =
+  let
+    (v, newSeed) =
+      Random.step
+      --(Random.int Basics.minSafeInteger Basics.maxSafeInteger)
+      Uuid.generator
+      model.randomSeed
+    updatedModel =
+      { model | randomSeed = newSeed }
+  in
+    ( v, updatedModel )
+
+getUuid2 : Model -> (Uuid, Uuid, Model)
+getUuid2 model =
+  let
+    (a, m) = getUuid model
+    (b, m_) = getUuid m
+  in
+    ( a, b, m_ )
 
 conditionalList : List (a, Bool) -> List a
 conditionalList =

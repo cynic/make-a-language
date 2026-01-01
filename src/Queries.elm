@@ -8,6 +8,7 @@ module Queries exposing
     , packagesAndRefs
     , peekInteraction
     , resolutionDict
+    , unusedNodeId
     , viewsContainingPackage
     )
 import Automata.Data exposing (..)
@@ -140,3 +141,9 @@ packagesAffectedBy uuid model =
       else
         Nothing
     )
+
+unusedNodeId : AutomatonGraph -> NodeId
+unusedNodeId {graph} =
+  Graph.nodeIdRange graph
+  |> Maybe.map (Tuple.second >> (+) 1)
+  |> Maybe.withDefault 0

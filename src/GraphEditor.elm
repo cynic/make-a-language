@@ -3,8 +3,9 @@ import AutoDict
 import Automata.Data exposing (..)
 import Automata.DFA as DFA
 import AutoSet
+import Changes as C
 import Css
-import Dict
+import Dict exposing (Dict)
 import Force
 import Graph exposing (Graph, NodeContext, NodeId)
 import Html.Styled exposing (div, Html)
@@ -16,6 +17,7 @@ import Json.Encode as E
 import List.Extra as List
 import Math.Vector2 exposing (distance)
 import Maybe.Extra as Maybe
+import Queries as Q
 import Random.Pcg.Extended as Random
 import Set
 import TypedSvg exposing (circle, defs, g, marker, path, rect, svg, text_, title, tspan)
@@ -28,7 +30,6 @@ import Uuid exposing (Uuid)
 import VirtualDom
 import Automata.Debugging exposing (debugLog_)
 import Automata.Debugging exposing (debugAutomatonGraph)
-
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -268,6 +269,252 @@ computeGraphFully computer g =
 --   updateContextWithValue
 --     nodeCtx
 --     ( setXY (x + offsetX) (y + offsetY) nodeCtx.node.label )
+
+nodeDrawingForPackage : AutomatonGraph -> Uuid -> Dict NodeId NodeDrawingData
+nodeDrawingForPackage ag graphView_uuid =
+  let
+    disconnectedNodes =
+      DFA.identifyDisconnectedNodes ag
+    isSplittable : Graph.NodeContext Entity Connection -> Bool
+    isSplittable graphNode =
+      let
+        nonRecursive =
+          IntDict.filter (\k _ -> k /= graphNode.node.id) graphNode.incoming
+      in
+        IntDict.size nonRecursive > 1 ||
+        ( IntDict.findMin nonRecursive
+          |> Maybe.map (\(_, conn) -> AutoSet.size conn > 1)
+          |> Maybe.withDefault False
+        )
+  in
+    Graph.nodes ag.graph
+    |> List.map
+      (\node ->
+        let
+          nodeContext =
+            Graph.get node.id ag.graph
+        in
+          ( node.id
+          , { isDisconnected = Set.member node.id disconnectedNodes
+            , isTerminal =
+                Maybe.map isTerminalNode nodeContext
+                |> Maybe.withDefault False
+            , coordinates = Coordinate node.label.x node.label.y
+            , isRoot = node.id == ag.root
+            , canSplit =
+                Maybe.map isSplittable nodeContext
+                |> Maybe.withDefault False
+            , view_uuid = graphView_uuid
+            , isSelected = False
+            }
+          )
+      )
+    |> Dict.fromList
+
+identifyCardinalityViaContext : NodeId -> Graph.NodeContext Entity Connection -> Cardinality
+identifyCardinalityViaContext from to =
+  if to.node.id == from then
+    Recursive
+  else if Q.linkExistsInGraph to from then -- i.e. in opposite direction
+    Bidirectional
+  else
+    Unidirectional
+
+path_between : CoordinateLike a -> CoordinateLike b -> Cardinality -> PathBetweenReturn
+path_between sourceXY_orig destXY_orig cardinality =
+  {- we're doing a curved line, using a quadratic path.
+      So, let's make a triangle. The two points at the "base" are the
+      start and end of the connection ("source" and "target").  Now,
+      take two lines at an angle Θ from both sides, and where they
+      meet is our control point.  We can then adjust the angle "up" and
+      "down" until we are satisfied with the look.
+      
+      Of course, because the angles are equal, the length of the lines is
+      also equal.  So another equivalent way of going about it is by getting
+      the midpoint and then pushing a line "up", orthogonal to that midpoint,
+      and saying that this is the control point.  As the length of the line
+      increases, the angle increases too.
+  --}
+  let
+    nodeRadius = 7
+    radius_from = 7
+    radius_to = 5
+    sourceXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x - nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = sourceXY_orig.x, y = sourceXY_orig.y }
+    destXY =
+      case cardinality of
+        Recursive ->
+          { x = sourceXY_orig.x + nodeRadius
+          , y = sourceXY_orig.y
+          }
+        _ ->
+          { x = destXY_orig.x, y = destXY_orig.y }
+    d_y = sourceXY.y - destXY.y
+    d_x = sourceXY.x - destXY.x
+    orig_line_len = sqrt (d_x * d_x + d_y * d_y)
+    curvature =
+      case cardinality of
+        Bidirectional ->
+          1/e -- ± to ± length, and therefore curvature.  Sensible range is 0-1.
+        Unidirectional ->
+          0
+        Recursive ->
+          e
+    orthogonal_len =
+      curvature * orig_line_len
+    orthogonal_vector =
+      -- normalised
+      { x = (destXY.y - sourceXY.y) / orig_line_len
+      , y = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    parametric_direction_vector =
+      -- normalised
+      { y = (destXY.y - sourceXY.y) / orig_line_len
+      , x = (destXY.x - sourceXY.x) / orig_line_len
+      }
+    half_len = orig_line_len / 2
+    midPoint =
+      -- I can do this early because the midpoint should remain the midpoint,
+      -- no matter how I place the actual targets
+      { x = destXY.x - half_len * parametric_direction_vector.x
+      , y = destXY.y - half_len * parametric_direction_vector.y
+      }
+    -- with the midpoint, I can work out the control points.
+    control_point =
+      { x = midPoint.x + orthogonal_len * orthogonal_vector.x
+      , y = midPoint.y - orthogonal_len * orthogonal_vector.y
+      }
+    hypotenuse_len =
+      sqrt (half_len * half_len + orthogonal_len * orthogonal_len)
+    -- now, with the control point, I can make the source & target hypotenuse vectors
+    source_hypotenuse_vector =
+      -- normalised
+      { x = ( control_point.x - sourceXY.x ) / hypotenuse_len
+      , y = ( control_point.y - sourceXY.y ) / hypotenuse_len
+      }
+    dest_hypotenuse_vector =
+      { x = -( control_point.x - destXY.x ) / hypotenuse_len
+      , y = -( control_point.y - destXY.y ) / hypotenuse_len
+      }
+    shorten_source =
+      { x = sourceXY.x + source_hypotenuse_vector.x * radius_from
+      , y = sourceXY.y + source_hypotenuse_vector.y * radius_from
+      }
+    shorten_target =
+      -- the extra addition is for the stroke-width (which is 3px)
+      { x = destXY.x - dest_hypotenuse_vector.x * (radius_to * 2 + 8) --- parametric_direction_vector.x * 10
+      , y = destXY.y - dest_hypotenuse_vector.y * (radius_to * 2 + 8) --- parametric_direction_vector.y * 10
+      }
+    line_len =
+      let
+        dx = shorten_target.x - shorten_source.x
+        dy = shorten_target.y - shorten_source.y
+      in
+        sqrt (dx * dx + dy * dy)
+    -- control_point =
+    --   { x = sourceXY.x + hypotenuse_len * radius_offset_x
+    --   , y = sourceXY.y - hypotenuse_len * radius_offset_y
+    --   }
+    linePath =
+      case cardinality of
+        Recursive ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " c -14,-14 28,-14 " ++ String.fromFloat (nodeRadius * 2) ++ ",0"
+          --      ^    ^  ^   ^
+          --      a    b  c   d
+          -- to "raise" it, increase the numerical values of b and d (e.g. to -25 and -25).
+          -- to "widen" it, increase the numerical values of a and c (e.g. to -21 and 35).
+          -- increase/decrease numbers by the same amount to maintain symmetry.
+          -- the last two numbers give the offset for the destination.
+        _ ->
+          "M " ++ String.fromFloat (shorten_source.x)
+          ++ " " ++ String.fromFloat (shorten_source.y)
+          ++ " Q " ++ String.fromFloat control_point.x
+          ++ " " ++ String.fromFloat control_point.y
+          ++ " " ++ String.fromFloat (shorten_target.x)
+          ++ " " ++ String.fromFloat (shorten_target.y)
+    transition_coordinates =
+      { x = midPoint.x + (orthogonal_len / 2) * orthogonal_vector.x --+ control_vector.x / 2
+      , y = midPoint.y - (orthogonal_len / 2) * orthogonal_vector.y --+ control_vector.y / 2
+      }
+  in
+    { pathString = linePath
+    , transition_coordinates = transition_coordinates
+    , length = line_len
+    , control_point = control_point
+    , source_connection_point = shorten_source
+    , target_connection_point = shorten_target
+    }
+
+linkDrawingForEdge : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Connection -> PackageDict -> ( (NodeId, NodeId), LinkDrawingData )
+linkDrawingForEdge sourceNode destNode connection packages =
+  let
+    cardinality : Cardinality
+    cardinality =
+      identifyCardinalityViaContext sourceNode.node.id destNode
+  in
+    ( (sourceNode.node.id, destNode.node.id)
+    , { cardinality = cardinality
+      , executionData = Nothing
+      , graphReferenceDescriptions =
+          Q.descriptionsForConnection connection packages
+      , connection = connection
+      , pathBetween =
+          path_between
+            sourceNode.node.label
+            destNode.node.label
+            cardinality
+      }
+    )
+
+linkDrawingForPackage : AutomatonGraph -> PackageDict -> Dict (NodeId, NodeId) LinkDrawingData
+linkDrawingForPackage ag packages =
+  let
+    edgeContexts =
+      Graph.edges ag.graph
+      |> List.filterMap
+          (\edge ->
+            Maybe.andThen2
+              (\f t ->
+                -- this will happen when there is a "removed" edge,
+                -- but it hasn't been confirmed yet.
+                -- The "invisible" link will anchor with forces, rather
+                -- than having the disconnected nodes fly off into the
+                -- wild blue yonder…
+                if AutoSet.isEmpty edge.label then
+                  Nothing
+                else
+                  Just { sourceNode = f, destNode = t, label = edge.label })
+              (Graph.get edge.from ag.graph)
+              (Graph.get edge.to ag.graph)
+          )
+  in
+    edgeContexts
+    |> List.map
+        (\{sourceNode, destNode, label} ->
+          linkDrawingForEdge sourceNode destNode label packages
+        )
+    |> Dict.fromList
+
+recalculateLinksAndNodes : PackageDict -> GraphView -> GraphView
+recalculateLinksAndNodes packages graph_view =  
+  { graph_view
+    | drawingData =
+        let dd = graph_view.drawingData in
+        { dd
+          | link_drawing = linkDrawingForPackage graph_view.computation packages
+          , node_drawing = nodeDrawingForPackage graph_view.computation graph_view.id
+        }
+    , disconnectedNodes = DFA.identifyDisconnectedNodes graph_view.computation
+  }
+
 
 updateContextWithValue : NodeContext Entity Connection -> Entity -> NodeContext Entity Connection
 updateContextWithValue ({node} as nodeCtx) value =
@@ -1126,4 +1373,422 @@ viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) 
               Html.Styled.text ""
         else
           Html.Styled.text ""
-      ] 
+      ]
+
+selectSourceNode : Model -> Uuid -> Coordinate -> NodeId -> Model
+selectSourceNode model view_uuid host_coord node_id =
+  -- initially, you must click on a node to select it.
+  -- therefore, we are initially always looking at a recursive
+  -- connection to the same node!
+  AutoDict.get view_uuid model.graph_views
+  |> Maybe.andThen (.computation >> .graph >> Graph.get node_id)
+  |> Maybe.map
+    (\nodeContext ->
+      let
+        -- by default, the connection is recursive
+        connection =
+          IntDict.get node_id nodeContext.incoming
+          |> Maybe.withDefault (AutoSet.empty transitionToString)
+        linkDrawingData : LinkDrawingData
+        linkDrawingData =
+          { cardinality = Recursive
+          , graphReferenceDescriptions = AutoDict.empty Uuid.toString
+          , pathBetween =
+              path_between
+                nodeContext.node.label
+                nodeContext.node.label
+                Recursive
+          , executionData = Nothing
+          , connection = AutoSet.empty transitionToString
+          }
+      in
+        C.pushInteractionForStack (Just view_uuid)
+          ( ChoosingDestinationFor node_id
+              ( ExistingNode node_id connection )
+              host_coord
+          )
+          model
+          -- and now modify the drawing-data for that view
+        |> C.updateDrawingData view_uuid
+            (\drawingData ->
+              { drawingData
+                | tentative_link = Just (node_id, node_id)
+                , link_drawing =
+                    Dict.insert (node_id, node_id) linkDrawingData drawingData.link_drawing
+              }
+            )
+    )
+  |> Maybe.withDefault model
+
+switchFromExistingToPhantom : Uuid -> Bool -> NodeId -> GraphView -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromExistingToPhantom view_uuid old_conn_is_empty existing_id graph_view svg_coords host_coords sourceNodeContext model =
+  let
+    phantom_nodeid =
+      Q.unusedNodeId graph_view.computation
+    nodeData =
+      { isTerminal = True
+      , isDisconnected = False
+      , coordinates = svg_coords
+      , isRoot = False
+      , canSplit = False
+      , view_uuid = view_uuid
+      , isSelected = False
+      }
+    linkData = -- this is the new calculated link-path
+      { cardinality = Unidirectional
+      , graphReferenceDescriptions = AutoDict.empty Uuid.toString
+      , pathBetween = -- calculate the link path
+          path_between sourceNodeContext.node.label svg_coords Unidirectional
+      , executionData = Nothing
+      , connection = AutoSet.empty transitionToString
+      }
+  in
+    C.updateDrawingData view_uuid
+      (\drawingData ->
+        { drawingData
+          | node_drawing = Dict.insert phantom_nodeid nodeData drawingData.node_drawing
+          , link_drawing =
+              ( if old_conn_is_empty then
+                  Dict.remove (sourceNodeContext.node.id, existing_id) drawingData.link_drawing
+                else
+                  drawingData.link_drawing
+              )
+              -- and add the link path to `some_node`
+              |> Dict.insert (sourceNodeContext.node.id, phantom_nodeid) linkData
+          , tentative_link = Just (sourceNodeContext.node.id, phantom_nodeid)
+        }
+      )
+      model
+    -- we've made the changes, so set the interaction
+    |> C.replaceInteraction (Just view_uuid)
+        ( ChoosingDestinationFor sourceNodeContext.node.id
+            ( NewNode phantom_nodeid svg_coords )
+            host_coords
+        )
+
+phantomLinkDrawingForExisting : Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> LinkDrawingData
+phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model =
+  let
+    cardinality =
+      identifyCardinalityViaContext sourceNodeContext.node.id existingNodeContext
+    connection =
+      IntDict.get sourceNodeContext.node.id existingNodeContext.incoming
+      |> Maybe.withDefaultLazy (\() -> AutoSet.empty transitionToString)
+  in
+    { cardinality = cardinality
+    , graphReferenceDescriptions =
+        Q.descriptionsForConnection connection model.packages
+    , pathBetween =
+        path_between -- calculate the link path
+          sourceNodeContext.node.label
+          existingNodeContext.node.label
+          cardinality
+    , executionData = Nothing
+    , connection = connection
+    }
+
+switchFromPhantomToExisting : Uuid -> NodeId -> Coordinate -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext existingNodeContext model =
+  let
+    linkData = -- this is the new calculated link-path
+      phantomLinkDrawingForExisting sourceNodeContext existingNodeContext model
+  in
+    C.updateDrawingData view_uuid
+      (\drawingData ->
+        { drawingData
+          | node_drawing =
+              Dict.remove phantom_id drawingData.node_drawing
+          , link_drawing =
+              -- get rid of the old phantom link
+              Dict.remove (sourceNodeContext.node.id, phantom_id) drawingData.link_drawing
+              -- and add the link path to `some_node`
+              |> Dict.insert (sourceNodeContext.node.id, existingNodeContext.node.id) linkData
+          , tentative_link = Just (sourceNodeContext.node.id, existingNodeContext.node.id)
+        }
+      )
+      model
+    -- we've made the changes, so set the interaction
+    |> C.replaceInteraction (Just view_uuid)
+        ( ChoosingDestinationFor sourceNodeContext.node.id
+            ( ExistingNode existingNodeContext.node.id linkData.connection )
+            host_coords
+        )
+
+switchFromExistingToExisting : Uuid -> Bool -> NodeId -> Coordinate -> Graph.NodeContext Entity Connection -> Graph.NodeContext Entity Connection -> Model -> Model
+switchFromExistingToExisting view_uuid old_conn_is_empty old_existing host_coords sourceNodeContext nearbyNodeContext model =
+  let
+    linkData = -- this is the new calculated link-path
+      phantomLinkDrawingForExisting sourceNodeContext nearbyNodeContext model
+  in
+    C.updateDrawingData view_uuid
+      (\drawingData ->
+        { drawingData
+          | link_drawing =
+              -- get rid of the old phantom link, if necessary
+              ( if old_conn_is_empty then
+                  Dict.remove (sourceNodeContext.node.id, old_existing) drawingData.link_drawing
+                else
+                  drawingData.link_drawing
+              )
+              -- and add the link path to `some_node`
+              |> Dict.insert (sourceNodeContext.node.id, nearbyNodeContext.node.id) linkData
+          , tentative_link = Just (sourceNodeContext.node.id, nearbyNodeContext.node.id)
+        }
+      )
+      model
+    -- we've made the changes, so set the interaction
+    |> C.replaceInteraction (Just view_uuid)
+        ( ChoosingDestinationFor sourceNodeContext.node.id
+            ( ExistingNode nearbyNodeContext.node.id linkData.connection )
+            host_coords
+        )
+
+updatePhantomMovement : Uuid -> NodeId -> Coordinate -> Coordinate -> Graph.NodeContext Entity Connection -> Model -> Model
+updatePhantomMovement view_uuid phantom_id svg_coords host_coords sourceNodeContext model =
+  C.updateDrawingData view_uuid
+    (\drawingData ->
+        { drawingData
+          | node_drawing =
+              Dict.update phantom_id
+                (Maybe.map (\nodeData ->
+                  { nodeData | coordinates = svg_coords }
+                ))
+                drawingData.node_drawing
+          , link_drawing =
+              Dict.update (sourceNodeContext.node.id, phantom_id)
+                (Maybe.map (\linkData ->
+                  { linkData
+                    | pathBetween =
+                        path_between
+                          sourceNodeContext.node.label
+                          svg_coords
+                          Unidirectional
+                  }
+                ))
+                drawingData.link_drawing
+        }
+    )
+    model
+  |> C.replaceInteraction (Just view_uuid)
+    ( ChoosingDestinationFor sourceNodeContext.node.id (NewNode phantom_id svg_coords) host_coords )
+
+movePhantomNodeInView : Uuid -> GraphView -> Coordinate -> Model -> Model
+movePhantomNodeInView view_uuid graph_view svg_coord model =
+  -- in the event, the `x_` and `y_` have already been translated
+  -- into guest-viewport coordinates, accounting for pan information.
+  let
+    -- what is the destination of this link?
+    -- Sounds like a simple question: it's the phantom node, of course.  But when the
+    -- phantom node gets too close to a REAL node, then it should switch to that node;
+    -- and when it is far enough away, then it should switch back.
+    nearby_node_lockOnDistance : Float
+    nearby_node_lockOnDistance = 36 -- min distance before arrow inverts…
+
+    nearby_node_func : ((Graph.Node Entity -> Bool) -> List (Graph.Node Entity) -> b) -> Float -> Coordinate -> GraphView -> b
+    nearby_node_func f distance mouse { computation } =
+      -- a good distance value is nodeRadius + 9 = 7 + 9 = 16, for "locking on".
+      let
+        square_dist = distance * distance
+      in
+        f
+          (\node ->
+            let
+              dx = node.label.x - mouse.x
+              dy = node.label.y - mouse.y
+            in
+              -- Debug.log ("Checking (" ++ String.fromFloat node.label.x ++ ", " ++ String.fromFloat node.label.y ++ ") against (" ++ String.fromFloat mouse_x ++ ", " ++ String.fromFloat mouse_y ++ ")") () |> \_ ->
+              dx * dx + dy * dy <= square_dist -- 7 + 9 = 16
+          )
+          (Graph.nodes computation.graph)
+
+    nearby_node : Float -> Coordinate -> GraphView -> Maybe (Graph.Node Entity)
+    nearby_node =
+      nearby_node_func List.find
+
+    -- nearby_nodes : Float -> (Float, Float) -> GraphView -> List (Graph.Node Entity)
+    -- nearby_nodes =
+    --   nearby_node_func List.filter
+
+  in
+    -- first, let's find this thing.
+    case Q.peekInteraction (Just view_uuid) model.interactionsDict of
+      Just (ChoosingDestinationFor source (NewNode phantom_id _) host_coords) ->
+        -- okay, so there is a phantom node already there and active.
+        -- in the easiest case, we just need to move its (x,y) coordinates, and be done.
+        -- But if we are close enough to "lock on" to a nearby node, then we need to
+        -- change this interaction to reflect that instead.  So, which case do we
+        -- have?
+        case nearby_node nearby_node_lockOnDistance svg_coord graph_view of
+          Just nearbyNode ->
+            -- ooh, we're close to a lock-on node. Okay. Let's get rid of the phantom
+            -- node; then calculate the link path (might be straight or curved or recursive)
+            -- based on the node; and then get rid of the old link path, and put in the
+            -- new one.
+            -- Lastly, we set the interaction to the correct value.            
+            Maybe.map2
+              (\sourceNodeContext nearbyNodeContext ->
+                  switchFromPhantomToExisting view_uuid phantom_id host_coords sourceNodeContext nearbyNodeContext model
+              )
+              (Graph.get source graph_view.computation.graph)
+              (Graph.get nearbyNode.id graph_view.computation.graph)
+            |> Maybe.withDefault model
+          Nothing ->
+            -- great, there is no nearby node; just update the (x, y).
+            Maybe.map
+              (\sourceNodeContext ->
+                updatePhantomMovement view_uuid phantom_id svg_coord host_coords sourceNodeContext model
+              )
+              (Graph.get source graph_view.computation.graph)
+            |> Maybe.withDefault model
+      Just (ChoosingDestinationFor source (ExistingNode existing_node conn) host_coords) ->
+        -- here the situation is "reversed":
+        -- If I find a neighbour, and it is the existing neighbour, then I need do
+        -- nothing.
+        -- If I find a neighbour, and it is NOT the existing neighbour, then I need to
+        -- switch to it.
+        -- If I don't find a neighbour, then I must switch to a phantom node.
+        case nearby_node nearby_node_lockOnDistance svg_coord graph_view of
+          Just nearbyNode ->
+            if existing_node == nearbyNode.id then
+              -- no change needed.
+              model
+            else
+              -- switch to the new node.
+              Maybe.map2
+                (\sourceNodeContext nearbyNodeContext ->
+                    switchFromExistingToExisting view_uuid (AutoSet.isEmpty conn) existing_node host_coords sourceNodeContext nearbyNodeContext model
+                )
+                (Graph.get source graph_view.computation.graph)
+                (Graph.get nearbyNode.id graph_view.computation.graph)
+              |> Maybe.withDefault model -- no changes made.
+          Nothing ->
+            -- there is no nearby node; move from the existing node to a phantom node. 
+            Maybe.map
+              (\sourceNodeContext ->
+                switchFromExistingToPhantom view_uuid (AutoSet.isEmpty conn) existing_node graph_view svg_coord host_coords sourceNodeContext model)
+              (Graph.get source graph_view.computation.graph)
+            |> Maybe.withDefault model
+      _ ->
+        model
+
+movePhantomNode : Uuid -> Coordinate -> Model -> Model
+movePhantomNode view_uuid coord model =
+  AutoDict.get view_uuid model.graph_views
+  |> Maybe.map (\gv -> movePhantomNodeInView view_uuid gv coord model)
+  |> Maybe.withDefault model
+
+dragNode : Uuid -> Coordinate -> NodeId -> Model -> Model
+dragNode view_uuid svg_coord nodeId model =
+  C.updateGraphView view_uuid
+    (\gv ->
+      let
+        nodeContext = Graph.get nodeId gv.computation.graph
+        get_vertices getFan getDrawing =
+          Maybe.map
+            (\ctx ->
+              IntDict.toList (getFan ctx)
+              |> List.filterMap
+                (\(k, conn) ->
+                  Graph.get k gv.computation.graph
+                  |> Maybe.map (getDrawing conn ctx)
+                )
+            )
+            nodeContext
+          |> Maybe.withDefault []
+        vertices_in =
+          get_vertices .incoming (\conn otherCtx fanCtx -> linkDrawingForEdge fanCtx otherCtx conn model.packages)
+        vertices_out =
+          get_vertices .outgoing (\conn otherCtx fanCtx -> linkDrawingForEdge otherCtx fanCtx conn model.packages)
+      in
+        C.mapGraph
+          (Graph.update nodeId
+            (Maybe.map (\ctx ->
+              { ctx
+                | node =
+                    { id = nodeId
+                    , label =
+                        let e = ctx.node.label in
+                        { e | x = svg_coord.x, y = svg_coord.y }
+                    }
+              }
+            ))
+          )
+          gv
+        |> C.mapDrawingData
+          (\dd ->
+            { dd
+              | node_drawing =
+                  Dict.update nodeId
+                    (Maybe.map (\node ->
+                      { node | coordinates = svg_coord }
+                    ))
+                    dd.node_drawing
+              , link_drawing =
+                  List.foldl
+                    (\( (src, dest), data ) ->
+                      Dict.insert (src, dest) data
+                    )
+                    dd.link_drawing
+                    (vertices_in ++ vertices_out)
+            }
+          )
+    )
+    model
+
+removePhantomLink : Uuid -> NodeId -> NodeId -> Model -> Model
+removePhantomLink view_uuid source dest =
+  C.updateDrawingData view_uuid
+    (\drawingData ->
+      { drawingData
+        | link_drawing =
+            Dict.remove (source, dest) drawingData.link_drawing
+        , tentative_link = Nothing
+      }
+    )
+
+createNewGraphNode : Uuid -> NodeId -> Coordinate -> Model -> Model
+createNewGraphNode view_uuid node_id svg_coord =
+    C.updateGraphView view_uuid
+     (C.mapGraph
+        (Graph.insert
+            { node =
+                { id = node_id
+                , label =
+                    entity node_id NoEffect
+                    |> (\e -> { e | x = svg_coord.x, y = svg_coord.y })
+                }
+            , incoming = IntDict.empty
+            , outgoing = IntDict.empty
+            }
+        )
+     )
+
+cancelNewNodeCreation : Uuid -> Model -> Model
+cancelNewNodeCreation view_uuid model =
+  let
+    kill : NodeId -> NodeId -> Model -> Model
+    kill source dest model_ =
+      C.updateDrawingData view_uuid
+        (\drawingData ->
+          { drawingData
+            | node_drawing =
+                Dict.remove dest drawingData.node_drawing
+            , link_drawing =
+                Dict.remove (source, dest) drawingData.link_drawing
+            , tentative_link = Nothing
+          }
+        )
+        model_
+  in
+    case C.popInteraction (Just view_uuid) model of
+      Just (ChoosingDestinationFor source (NewNode dest _) _, model_) ->
+        kill source dest model_
+      Just (EditingConnection {source, dest, targetKind} _, model_) ->
+        if targetKind == PhantomNodeNewConnection then
+          kill source dest model_
+        else
+          Automata.Debugging.println "🚨 ERROR WHMD(MWOEI" -- how am I in this function, if there's no new node??
+          model
+      _ ->
+        Automata.Debugging.println "🚨 ERROR $DBMWMGYERCC" -- how am I in this function, if neither of these is cancelled??
+        model
