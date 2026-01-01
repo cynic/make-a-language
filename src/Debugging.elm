@@ -1,5 +1,5 @@
-module Automata.Debugging exposing (..)
-import Automata.Data exposing (..)
+module Debugging exposing (..)
+import Data exposing (..)
 import Graph exposing (Graph)
 import Html.Styled exposing (div, Html, text)
 import Html.Styled.Attributes as HA

@@ -2,11 +2,11 @@ module Encoding_tests exposing (..)
 import Test exposing (..)
 import Utility exposing (..)
 import Expect
-import Automata.Data exposing (NodeEffect(..), AcceptVia(..), Entity)
+import Data exposing (NodeEffect(..), AcceptVia(..), Entity)
 import Automata.DFA exposing (encodeAutomatonGraph, decodeAutomatonGraph)
 import Graph exposing (Node, Edge)
 import Json.Decode as D
-import Automata.Debugging exposing (debugAutomatonGraph)
+import Debugging exposing (debugAutomatonGraph)
 
 -- mkNode : Int -> Graph.Node Entity
 mkNode id =

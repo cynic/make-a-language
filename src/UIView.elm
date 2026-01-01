@@ -6,8 +6,8 @@ module UIView exposing
     , viewPackageDeletionWarning
     )
 import AutoDict
-import Automata.Data exposing (..)
-import Automata.Debugging exposing (..)
+import Data exposing (..)
+import Debugging exposing (..)
 import AutoSet
 import Basics.Extra exposing (..)
 import Css exposing (px)

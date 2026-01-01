@@ -3,8 +3,7 @@ module DFA_tests exposing (..)
 import Expect
 import Fuzz
 import Test exposing (..)
-import Automata.Data as D
-import Automata.Verification as D
+import Data as D
 import List.Extra as List
 import Automata.DFA
 import Automata.DFA exposing (toAutomatonGraph, union)
@@ -71,7 +70,7 @@ fromWords =
   List.foldl addString Nothing
   >> Maybe.withDefault (Automata.DFA.empty (Utility.dummyEntity 0))
   -- >> Maybe.map toGraph
-  -- >> Maybe.withDefault Automata.Data.empty
+  -- >> Maybe.withDefault Data.empty
 
 czech : List (List String) -> List String -> Expect.Expectation
 czech l expectedRecognized =
@@ -83,7 +82,7 @@ czech l expectedRecognized =
         dfa =
           -- D.algebraToDAWG <| D.wordsToAlgebra x
           fromWords x
-        minimality = D.minimality (toAutomatonGraph dfa)
+        minimality = Utility.minimality (toAutomatonGraph dfa)
         -- recognized = D.verifiedRecognizedWords (toAutomatonGraph Utility.dummy_uuid dfa)
       in
         -- if recognized /= expectedRecognized then

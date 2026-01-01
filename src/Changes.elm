@@ -18,7 +18,7 @@ module Changes exposing
   , updatePackageFromView
   )
 import AutoDict
-import Automata.Data exposing (..)
+import Data exposing (..)
 import Graph exposing (Graph(..))
 import List.Extra as List
 import Queries as Q

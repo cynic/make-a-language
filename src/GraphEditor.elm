@@ -20,8 +20,8 @@ module GraphEditor exposing
   , viewGraphReference
   )
 import AutoDict
-import Automata.Data exposing (..)
-import Automata.Debugging exposing (..)
+import Data exposing (..)
+import Debugging exposing (..)
 import Automata.DFA as DFA
 import AutoSet
 import Changes as C
@@ -260,8 +260,8 @@ computeGraphFully : (AutomatonGraph -> List (Force.Force NodeId)) -> AutomatonGr
 computeGraphFully computer g =
   let
     forceGraph =
-      toForceGraph (g {- |> Automata.Debugging.debugAutomatonGraph "Graph as received" -})
-      -- |> Automata.Debugging.debugAutomatonGraph "After toForceGraph"
+      toForceGraph (g {- |> Debugging.debugAutomatonGraph "Graph as received" -})
+      -- |> Debugging.debugAutomatonGraph "After toForceGraph"
     forces_ = computer forceGraph
     nodes = Graph.nodes forceGraph.graph
     simulation =
@@ -273,14 +273,14 @@ computeGraphFully computer g =
     resultingGraph =
       -- no changes to node-ids are made; only the spatial positions change.
       { forceGraph | graph = updateGraphWithList forceGraph.graph shiftedNodes }
-      -- |> Automata.Debugging.debugAutomatonGraph "After sim"
+      -- |> Debugging.debugAutomatonGraph "After sim"
   in
     -- no changes to node-ids are made; only the spatial positions change.
     { solvedGraph = resultingGraph
     , simulation = simulation
     , forces = forces_
     }
-    -- |> Automata.Debugging.debugAutomatonGraph "After sim"
+    -- |> Debugging.debugAutomatonGraph "After sim"
 
 -- updateNode : ( Float, Float ) -> ( Float, Float ) -> NodeContext Entity Connection -> NodeContext Entity Connection
 -- updateNode (offsetX, offsetY) (x, y) nodeCtx =
@@ -883,12 +883,12 @@ viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowligh
               [ d drawing_data.pathBetween.pathString
               , class ( "background" :: linkClass )
               ]
-              [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
+              [ {- title [] [ text <| Data.connectionToString edge.label ] -} ]
           , path
               [ d drawing_data.pathBetween.pathString
               , class ( "foreground" :: linkClass )
               ]
-              [ {- title [] [ text <| Automata.Data.connectionToString edge.label ] -} ]
+              [ {- title [] [ text <| Data.connectionToString edge.label ] -} ]
           , g
               [ class linkClass
               , properties.canSelectConnections
@@ -1805,8 +1805,8 @@ cancelNewNodeCreation view_uuid model =
         if targetKind == PhantomNodeNewConnection then
           kill source dest model_
         else
-          Automata.Debugging.println "🚨 ERROR WHMD(MWOEI" -- how am I in this function, if there's no new node??
+          Debugging.println "🚨 ERROR WHMD(MWOEI" -- how am I in this function, if there's no new node??
           model
       _ ->
-        Automata.Debugging.println "🚨 ERROR $DBMWMGYERCC" -- how am I in this function, if neither of these is cancelled??
+        Debugging.println "🚨 ERROR $DBMWMGYERCC" -- how am I in this function, if neither of these is cancelled??
         model

@@ -1,7 +1,7 @@
 module Automata.DFA exposing (..)
 import AutoDict
-import Automata.Data exposing (..)
-import Automata.Debugging exposing ( printAutomatonGraph, debugAutomatonGraph, printNodeContext, println, printFan, debugLog_, debugAutomatonGraphXY)
+import Data exposing (..)
+import Debugging exposing ( printAutomatonGraph, debugAutomatonGraph, printNodeContext, println, printFan, debugLog_, debugAutomatonGraphXY)
 import AutoSet
 import Basics.Extra exposing (..)
 import Css exposing (expanded)

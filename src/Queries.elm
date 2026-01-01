@@ -11,7 +11,7 @@ module Queries exposing
     , unusedNodeId
     , viewsContainingPackage
     )
-import Automata.Data exposing (..)
+import Data exposing (..)
 import AutoDict
 import AutoSet
 import Maybe.Extra as Maybe

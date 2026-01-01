@@ -1,16 +1,15 @@
 module Jsonify exposing (..)
 import Json.Encode as E
 import Json.Decode as D
--- import GraphEditor exposing (..)
-import Automata.Data exposing (..)
+import Data exposing (..)
 import Uuid
 import Time
 import Automata.DFA as DFA
 import TypedSvg exposing (g)
 import AutoDict
-import Uuid exposing (Uuid)
+import Uuid
 import List.Extra as List
-import Automata.Debugging exposing (debugLog_)
+import Debugging exposing (..)
 
 encodeTest : Test -> E.Value
 encodeTest { input, expectation } =

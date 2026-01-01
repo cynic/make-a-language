@@ -9,8 +9,8 @@ import Utility exposing (ag, dfa, ag_equals, dfa_equals, mkAutomatonGraph, uuid_
 import GraphEditor exposing (applyChangesToGraph)
 import AutoDict
 import Uuid
-import Automata.Data exposing (AutomatonGraph)
-import Automata.Data exposing (ResolutionDict)
+import Data exposing (AutomatonGraph)
+import Data exposing (ResolutionDict)
 import Graph exposing (NodeId)
 
 toAG_suite : Test

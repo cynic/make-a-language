@@ -69,7 +69,7 @@ modifyConnection source target newConn =
       }
   in
     rewriteLink
-    -- |> Automata.Debugging.debugGraph "[modifyConnection] After rewriteLink"
+    -- |> Debugging.debugGraph "[modifyConnection] After rewriteLink"
     >> fromAutomatonGraph
     -- |> debugDFA_ "[modifyConnection] After conversion to DFA"
     >> craaazy_extend

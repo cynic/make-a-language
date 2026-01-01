@@ -1,4 +1,4 @@
-module Automata.Data exposing (..)
+module Data exposing (..)
 import IntDict exposing (IntDict(..))
 import Set exposing (Set)
 import AutoSet
@@ -434,7 +434,7 @@ type alias GraphView =
 
 
 type alias Entity =
-  -- fits into the mould of Force.Entity AND Automata.Data.StateData.
+  -- fits into the mould of Force.Entity AND Data.StateData.
   -- I've annotated the fields to make it blindingly obvious what's
   -- from where…
   { x : Float -- F.E

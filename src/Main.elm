@@ -1,7 +1,7 @@
 module Main exposing (..)
 import AutoDict
-import Automata.Data exposing (..)
-import Automata.Debugging exposing (..)
+import Data exposing (..)
+import Debugging exposing (..)
 import Automata.DFA as DFA
 import AutoSet
 import Basics.Extra exposing (..)
@@ -73,7 +73,7 @@ init flags =
         seed0 = Random.initialSeed decoded.initialSeed decoded.extendedSeeds
         allPackagesList =
           decoded.packages
-          -- |> List.map (\v -> Automata.Debugging.debugAutomatonGraph "Loaded" v.model.computation |> \_ -> v)
+          -- |> List.map (\v -> Debugging.debugAutomatonGraph "Loaded" v.model.computation |> \_ -> v)
           |> List.map (\v -> ( v.packageIdentifier, v ))
         allPackagesDict =
           AutoDict.fromList Uuid.toString allPackagesList
