@@ -967,3 +967,27 @@ beginDeletionInteraction package_uuid affected package model =
       }
   in
     C.pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
+
+{-| Given host coordinates, translate them to guest-viewport coordinates -}
+translateHostCoordinates : Coordinate -> Coordinate -> GraphView -> Coordinate
+translateHostCoordinates host_coord mouse {host, guest, pan} =
+  let
+    ( pan_x, pan_y ) = pan
+    translate_dimension coord coord_host coord_guest dim_host dim_guest pan_ =
+      if coord <= coord_host then
+        coord_guest + pan_ -- on the (left/top) edge
+      else if coord >= coord_host + dim_host then
+        coord_guest + dim_guest + pan_ -- on the (right/bottom) edge
+      else
+        -- this is in the actual area
+        let
+          ratio = dim_guest / dim_host
+        in
+          (coord - coord_host) * ratio + coord_guest + pan_
+    translate_x =
+      translate_dimension mouse.x host_coord.x guest.x host.w guest.w pan_x
+    translate_y =
+      translate_dimension mouse.y host_coord.y guest.y host.h guest.h pan_y
+  in
+    { x = translate_x, y = translate_y }
+    -- |> Debug.log "Translated host coordinates"

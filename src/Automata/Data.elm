@@ -608,6 +608,17 @@ printableAcceptCondition v =
       |> String.left 6
       |> \s -> s ++ "…"
 
+isPassingTest : Test -> Maybe Bool
+isPassingTest test =
+  case test.result of
+    InternalError _ -> Nothing
+    Accepted -> Just <| test.expectation == ExpectAccepted
+    Rejected -> Just <| test.expectation == ExpectRejected
+    NoMatchingTransitions -> Just <| test.expectation == ExpectRejected
+
+isFailingTest : Test -> Maybe Bool
+isFailingTest = isPassingTest >> Maybe.map not
+
 truncate_uuid : Uuid -> String
 truncate_uuid uuid =
   (Uuid.toString uuid |> String.left 4) ++ "…"
