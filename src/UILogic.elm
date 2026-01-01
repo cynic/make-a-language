@@ -1,7 +1,7 @@
 module UILogic exposing (..)
 import AutoDict
 import Automata.Data exposing (..)
-import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY, debugGraph, debugLog_, println)
+import Automata.Debugging exposing (..)
 import Automata.DFA as DFA
 import AutoSet
 import Basics.Extra exposing (..)

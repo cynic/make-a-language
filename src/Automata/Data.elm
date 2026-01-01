@@ -10,7 +10,6 @@ import List.Extra
 import Color
 import Time
 import Random.Pcg.Extended as Random
-import Force
 import Binary
 import SHA
 import Dict exposing (Dict)

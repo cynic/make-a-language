@@ -7,71 +7,25 @@ module UIView exposing
     )
 import AutoDict
 import Automata.Data exposing (..)
-import Automata.Debugging exposing (debugAutomatonGraph, debugAutomatonGraphXY, debugGraph, debugLog_, println)
-import Automata.DFA as DFA
+import Automata.Debugging exposing (..)
 import AutoSet
 import Basics.Extra exposing (..)
-import Browser
-import Browser.Events as BE
-import Changes as C
 import Css exposing (px)
-import Dict exposing (Dict)
-import Force
-import Graph exposing (NodeId)
 import GraphEditor
-import Html.Styled exposing (button, div, h1, Html, input, li, p, span, text, textarea, toUnstyled, ul)
+import Html.Styled exposing (button, div, h1, Html, input, li, p, span, text, textarea, ul)
 import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
 import IntDict
-import Json.Decode as D
-import Json.Encode as E
 import Jsonify exposing (..)
 import List.Extra as List
 import Maybe.Extra as Maybe
-import Platform.Cmd as Cmd
 import Ports exposing (..)
 import Queries as Q
-import Random.Pcg.Extended as Random
-import Set
 import Svg.Styled exposing (svg)
 import Svg.Styled.Attributes
-import Task
-import Time
-import TypedSvg exposing (g)
+import TypedSvg
 import TypedSvg.Attributes
-import TypedSvg.Attributes.InPx exposing (x, y)
-import TypedSvg.Types exposing (Paint(..), AlignmentBaseline(..), FontWeight(..), AnchorAlignment(..) , Cursor(..), DominantBaseline(..), Transform(..), StrokeLinecap(..))
-import UILogic as UI
 import Uuid exposing (Uuid)
-
-debugViewDimensions : Bool
-debugViewDimensions = True
-
-debugElement : String -> String -> Html a
-debugElement otherClass s =
-  if debugViewDimensions then
-    div
-      [ HA.class "debug dimensions-parent" ]
-      [ div
-        [ HA.class <| "dimensions " ++ otherClass ]
-        [ text s ]
-      ]
-  else
-    div
-      []
-      []
-
-debugDimensions : Dimension -> Html a
-debugDimensions {w, h} =
-  debugElement "width height" (String.fromFloat w ++ "×" ++ String.fromFloat h)
-
-debugHeight : Float -> Html a
-debugHeight h =
-  debugElement "height" (String.fromFloat h)
-
-debugWidth : Float -> Html a
-debugWidth w =
-  debugElement "width" (String.fromFloat w)
 
 viewNavigatorsArea : Model -> Html Msg
 viewNavigatorsArea model =

@@ -1,6 +1,7 @@
 module Changes exposing
   ( deletePackageFromModel
   , linkGraphViewToPackage
+  , mapComputation
   , mapDrawingData
   , mapGraph
   , popInteraction
@@ -17,14 +18,10 @@ module Changes exposing
   , updatePackageFromView
   )
 import AutoDict
-import AutoSet
 import Automata.Data exposing (..)
-import Dict
-import Graph exposing (NodeId, Graph(..))
-import IntDict
+import Graph exposing (Graph(..))
 import List.Extra as List
 import Queries as Q
-import Set
 import Uuid exposing (Uuid)
 import Automata.DFA as DFA
 

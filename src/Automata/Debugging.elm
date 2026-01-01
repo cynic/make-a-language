@@ -1,6 +1,8 @@
 module Automata.Debugging exposing (..)
 import Automata.Data exposing (..)
 import Graph exposing (Graph)
+import Html.Styled exposing (div, Html, text)
+import Html.Styled.Attributes as HA
 import IntDict
 
 debug_log : String -> a -> a
@@ -68,3 +70,32 @@ debugLog_ s f a =
     transformed = f a
   in
     Debug.log s transformed |> \_ -> a
+
+debugViewDimensions : Bool
+debugViewDimensions = True
+
+debugElement : String -> String -> Html a
+debugElement otherClass s =
+  if debugViewDimensions then
+    div
+      [ HA.class "debug dimensions-parent" ]
+      [ div
+        [ HA.class <| "dimensions " ++ otherClass ]
+        [ text s ]
+      ]
+  else
+    div
+      []
+      []
+
+debugDimensions : Dimension -> Html a
+debugDimensions {w, h} =
+  debugElement "width height" (String.fromFloat w ++ "×" ++ String.fromFloat h)
+
+debugHeight : Float -> Html a
+debugHeight h =
+  debugElement "height" (String.fromFloat h)
+
+debugWidth : Float -> Html a
+debugWidth w =
+  debugElement "width" (String.fromFloat w)

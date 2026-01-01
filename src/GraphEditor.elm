@@ -1,6 +1,27 @@
-module GraphEditor exposing (..)
+module GraphEditor exposing
+  ( applyChangesToGraph
+  , cancelNewNodeCreation
+  , computeGraphFully
+  , coordinateForces
+  , createNewGraphNode
+  , dragNode
+  , linkDrawingForPackage
+  , movePhantomNode
+  , newnode_graphchange
+  , nodeDrawingForPackage
+  , panGraphView
+  , recalculateLinksAndNodes
+  , removeLink_graphchange
+  , removePhantomLink
+  , selectSourceNode
+  , spreadOutForces
+  , updateLink_graphchange
+  , viewGraph
+  , viewGraphReference
+  )
 import AutoDict
 import Automata.Data exposing (..)
+import Automata.Debugging exposing (..)
 import Automata.DFA as DFA
 import AutoSet
 import Changes as C
@@ -10,7 +31,6 @@ import Force
 import Graph exposing (Graph, NodeContext, NodeId)
 import Html.Styled exposing (div, Html)
 import Html.Styled.Attributes as HA
-import Html.Styled.Events as HE
 import IntDict
 import Json.Decode as D
 import Json.Encode as E
@@ -28,8 +48,6 @@ import TypedSvg.Events exposing (onClick)
 import TypedSvg.Types exposing (..)
 import Uuid exposing (Uuid)
 import VirtualDom
-import Automata.Debugging exposing (debugLog_)
-import Automata.Debugging exposing (debugAutomatonGraph)
 
   -- to add: Execute, Step, Stop
   -- also: when I make a change to the graph, set .execution to Nothing!
@@ -54,28 +72,28 @@ import Automata.Debugging exposing (debugAutomatonGraph)
 --       maxBuffer
 --       (bufferRatio * min w h)
 
-makeLinkForces : Graph Entity Connection -> Force.Force NodeId
-makeLinkForces graph =
-  Graph.fold
-    (\ctx acc ->
-      -- for all outgoing links that AREN'T recursive, create a Force.
-      let
-        outs = ctx.outgoing |> IntDict.filter (\k _ -> k /= ctx.node.id)
-      in
-        IntDict.toList outs
-        |> List.foldl
-          (\(k, v) forces_ ->
-            { source = ctx.node.id
-            , target = k
-            , distance = 80 -- 35-40 seems like a good distance
-            , strength = Just 1.0 -- * (toFloat <| Set.size v)
-            } :: forces_
-          )
-          acc
-    )
-    []
-    graph
-  |> Force.customLinks 3
+-- makeLinkForces : Graph Entity Connection -> Force.Force NodeId
+-- makeLinkForces graph =
+--   Graph.fold
+--     (\ctx acc ->
+--       -- for all outgoing links that AREN'T recursive, create a Force.
+--       let
+--         outs = ctx.outgoing |> IntDict.filter (\k _ -> k /= ctx.node.id)
+--       in
+--         IntDict.toList outs
+--         |> List.foldl
+--           (\(k, v) forces_ ->
+--             { source = ctx.node.id
+--             , target = k
+--             , distance = 80 -- 35-40 seems like a good distance
+--             , strength = Just 1.0 -- * (toFloat <| Set.size v)
+--             } :: forces_
+--           )
+--           acc
+--     )
+--     []
+--     graph
+--   |> Force.customLinks 3
 
 spreadOutForces : AutomatonGraph -> List (Force.Force NodeId)
 spreadOutForces g =
@@ -113,7 +131,7 @@ spreadOutForces g =
                   )
                 )
                 (seedy, link)
-          (go_right, seed2) =
+          (_, seed2) = -- first element is "go_right"
             Random.step (Random.bool) seed1
         in
           if ctx.node.id == root then
@@ -834,7 +852,7 @@ viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowligh
         transitionLabel : Svg Msg
         transitionLabel =
           case drawing_data.executionData of
-            Just {chosen} ->
+            Just _ ->
               g
                 -- … will maybe figure out recency later on, in sha Allah…
                 [ class [ "executed" ] ]
