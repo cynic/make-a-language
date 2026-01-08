@@ -58,6 +58,7 @@ type alias Flags =
 type NavigatorIcon
   = ComputationsIcon
   | TestsIcon
+  | DebugIcon
 
 type ToolIcon
   = TestingToolIcon
@@ -107,7 +108,7 @@ type Msg
   | StepBack
   | Run
   | ResetComputation
-  | ToggleDebugStep Int
+  | SelectDebugStep Int
   
 type alias PackageDict =
   AutoDict.Dict String Uuid GraphPackage
@@ -141,7 +142,7 @@ type InteractionState
   | ChoosingDestinationFor NodeId PossibleDestination Coordinate
   | EditingConnection ConnectionAlteration ConnectionEditorProperties -- should-delete-target-if-empty-connection
   -- | SimulatingForces (Force.State NodeId) (List (Force.Force NodeId)) AutomatonGraph
-  | Executing (List ExecutionData) ExecutionProperties
+  | Executing (List ExecutionData) (Maybe StepExpansion)
   | DeletingPackage Uuid DeletingPackageProperties
 
 type alias GraphPackage =
@@ -362,11 +363,6 @@ type alias PathBetweenReturn =
   , target_connection_point : Coordinate
   }
 
-type LinkHighlighting
-  = Phantom
-  | Highlight
-  | Lowlight
-
 type alias LinkDrawingData =
   { cardinality : Cardinality
   , pathBetween : PathBetweenReturn
@@ -512,9 +508,10 @@ type alias TransitionTakenData =
   , matching : Transition
   }
 
-type alias ExecutionProperties =
-  { expandedSteps : IntDict Uuid -- of GraphView
-  }
+type alias StepExpansion =
+  { expanded : List Uuid -- GraphView UUIDs. From `ExecutionData::debugging`.
+  , step : Int
+   }
 
   -- there can be multiple possible outcomes.
   -- 1. End of computation, with more input remaining.
@@ -533,7 +530,8 @@ type alias ExecutionData =
   { transitions : List TransitionTakenData
   , remainingData : List Char
   , currentNode : NodeId
-  , computation : AutomatonGraph
+  , computation : AutomatonGraph -- at the end of this step
+  , debugging : List (Uuid -> GraphView)
   , resolutionDict : ResolutionDict
   -- until we reach some form of resolution, this is `Nothing`.
   , finalResult : Maybe ExecutionResult

@@ -652,6 +652,15 @@ load s resolutionDict g =
     , remainingData = String.toList s
     , currentNode = initial.root
     , computation = initial
+    , debugging = []
+        -- [ (\uuid ->
+        --     initial
+        --   )
+        -- ,
+        --   (\uuid ->
+        --     g
+        --   )
+        -- ]
     , resolutionDict = resolutionDict
     , finalResult = Nothing
     , step = 0

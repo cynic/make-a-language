@@ -637,11 +637,11 @@ executing_edges data =
 step_execution : GraphView -> (List ExecutionData -> List ExecutionData) -> Test -> Model -> Model
 step_execution orig_graphview execution_function test model =
   let
-    (previously_executed, previous_props, interactionFunction) =
+    (previously_executed, previous_expansion, interactionFunction) =
       case Q.peekInteraction Nothing model.interactionsDict of
-        Just ( Executing results props ) ->
+        Just ( Executing results expansion ) ->
           ( results
-          , Just props
+          , Just expansion
           , \new_hx new_props ->
               C.replaceInteraction Nothing (Executing new_hx new_props)
           )
@@ -649,8 +649,8 @@ step_execution orig_graphview execution_function test model =
           ( DFA.load test.input (Q.resolutionDict model.packages) orig_graphview.computation
             |> List.singleton
           , Nothing
-          , \new_hx new_props ->
-              C.pushInteractionForStack Nothing (Executing new_hx new_props)
+          , \new_hx expansion ->
+              C.pushInteractionForStack Nothing (Executing new_hx expansion)
           )
     applied_step : List ExecutionData
     applied_step =
@@ -675,13 +675,10 @@ step_execution orig_graphview execution_function test model =
             (gv, executed_model)
         ) head_step
       |> Maybe.withDefault (orig_graphview, model_)
-    updated_props =
-      Maybe.withDefault
-        { expandedSteps = IntDict.empty
-        }
-        previous_props
+    updated_expansion =
+      Maybe.withDefault Nothing previous_expansion
   in
-    interactionFunction applied_step updated_props model__
+    interactionFunction applied_step updated_expansion model__
     |> C.setMainView graph_view.id
     |> UI.setProperties
 
@@ -982,6 +979,12 @@ update msg model =
       , Cmd.none
       )
 
+    SelectNavigation DebugIcon ->
+      ( UI.selectNavIcon DebugIcon model
+        |> UI.setProperties
+      , Cmd.none
+      )
+
     -- SelectNavigation _ ->
     --   Debug.todo "SelectNavigation _ not implemented."
 
@@ -1239,26 +1242,46 @@ update msg model =
         _ ->
           ( model, Cmd.none )
 
-    ToggleDebugStep n ->
+    SelectDebugStep n ->
       ( case Q.peekInteraction Nothing model.interactionsDict of
-          Just ( Executing results props ) ->
-            case IntDict.get n props.expandedSteps of
-              Just id ->
-                -- get rid of this view.
-                { model
-                  | graph_views = AutoDict.remove id model.graph_views
-                }
-                -- and now get rid of the expanded step
-                |> C.replaceInteraction Nothing
-                    (Executing results
-                      { props
-                        | expandedSteps =
-                            IntDict.remove n props.expandedSteps
-                      }
-                    )
-                |> UI.setProperties
-              Nothing ->
-                model
+          Just ( Executing results expansion ) ->
+            Maybe.map
+              (\item ->
+                let
+                  expand model_ =
+                      let
+                        (uuids, seed) =
+                          Random.step
+                            (Random.list (List.length item.debugging) Uuid.generator)
+                            model.randomSeed
+                        model__ =
+                          -- get rid of the old views.
+                          { model_ | randomSeed = seed }
+                          -- replace the interaction; we KNOW which UUIDs we'll be creating.
+                          |> C.replaceInteraction Nothing
+                            (Executing results (Just { expanded = uuids, step = n }))
+                      in
+                        -- and now expand the new views.
+                        List.zip uuids item.debugging
+                        |> List.map (\(uuid, f) -> f uuid)
+                        |> List.foldl C.upsertGraphView model__
+                        |> UI.setProperties
+                in
+                  case expansion of
+                    Just expanded ->
+                      if expanded.step == n then
+                        -- do nothing. Why should we? We've already got this expanded.
+                        model
+                      else
+                        -- get rid of the old views.
+                        { model | graph_views = List.foldl AutoDict.remove model.graph_views expanded.expanded }
+                        |> expand
+                    Nothing ->
+                      -- this is my first expansion.
+                      expand model
+              )
+              (List.getAt n results)
+            |> Maybe.withDefault model
           _ ->
             model
       , Cmd.none

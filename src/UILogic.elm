@@ -2,7 +2,7 @@ module UILogic exposing (..)
 import AutoDict
 import Data exposing (..)
 import Debugging exposing (..)
-import Automata.DFA as DFA
+-- import Automata.DFA as DFA
 import AutoSet
 import Basics.Extra exposing (..)
 import Browser

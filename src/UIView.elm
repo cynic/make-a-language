@@ -112,6 +112,16 @@ viewNavigatorsArea model =
                   )
                 |> Maybe.withDefault (text "")
               ]
+          , button
+              [ HA.classList
+                  [ ("navigation-icon debug-icon", True)
+                  , ("active", model.uiLayout.selected.sideBar == DebugIcon)
+                  ]
+              , HA.title "Debugging"
+              , (model.uiLayout.selected.sideBar /= DebugIcon)
+                |> thenPermitInteraction (HE.onClick (SelectNavigation DebugIcon))
+              ]
+              [ text "📟"]
           ]
     , if not model.uiLayout.open.sideBar then
         text ""
@@ -135,6 +145,8 @@ viewNavigatorsArea model =
                 |> Maybe.map (flip viewTestsSidebar model)
                 |> Maybe.withDefault
                   (div [ HA.class "error graph-not-loaded" ] [ text "⚠ No graph is loaded in the editor" ])
+              DebugIcon ->
+                div [] [ text "Not implemented yet" ]
           ]
     ]
 
@@ -469,28 +481,26 @@ viewTestingTool pkg test model =
             [ HA.class "step-graph" ]
             [ GraphEditor.viewGraph gv ]
         ]
-    html_execution_step props h =
+    html_execution_step expansion h =
       li
         [ HA.class "execution-step"
-        , HE.onClick (ToggleDebugStep h.step)
+        , HE.onClick (SelectDebugStep h.step)
         ]
-        [ case IntDict.get h.step props.expandedSteps of
-            Just gv_uuid ->
-              AutoDict.get gv_uuid model.graph_views
-              |> Maybe.map (flip html_expanded_step h)
-              |> Maybe.withDefaultLazy (\() -> html_summary_step h)
-            Nothing ->
-              html_summary_step h
+        [ div
+            [ HA.classList
+                [ ("selected-step", Maybe.isJust expansion) ]
+            ]
+            [ html_summary_step h ]
         ]
-    html_execution_steps props results =
+    html_execution_steps expansion results =
       ul
         [ HA.class "execution-steps" ]
-        ( List.map (html_execution_step props) results )
+        ( List.map (html_execution_step expansion) results )
   in
   div
     [ HA.class "tool-content testing" ]
     [ case Q.peekInteraction Nothing model.interactionsDict of
-        Just (Executing ((h::t) as results) props) ->
+        Just (Executing ((h::t) as results) expansion) ->
           div
             [ HA.class "step-through" ]
             ( case h.finalResult of
@@ -524,7 +534,7 @@ viewTestingTool pkg test model =
                                       [ text "Accepted" ]
                                   ]
                               ]
-                          , html_execution_steps props results
+                          , html_execution_steps expansion results
                           ]
                       Rejected ->
                         div
@@ -538,7 +548,7 @@ viewTestingTool pkg test model =
                                       [ text "Rejected" ]
                                   ]
                               ]
-                          , html_execution_steps props results
+                          , html_execution_steps expansion results
                           ]
                       NoMatchingTransitions ->
                         div
@@ -562,7 +572,7 @@ viewTestingTool pkg test model =
                                       ( html_remaining_data h.remainingData )
                                   ]
                               ]
-                          , html_execution_steps props results
+                          , html_execution_steps expansion results
                           ]
                       InternalError s ->
                         div
@@ -573,7 +583,7 @@ viewTestingTool pkg test model =
                                   [ HA.class "summary-sentence" ]
                                   [ text <| "💀 Internal Error!  " ++ s ]
                               ]
-                          , html_execution_steps props results
+                          , html_execution_steps expansion results
                           ]
                   ]
                 Nothing ->
@@ -607,7 +617,7 @@ viewTestingTool pkg test model =
                       ]
                   , div
                       [ HA.class "progress-area" ]
-                      [ html_execution_steps props results ]
+                      [ html_execution_steps expansion results ]
                   ]
             )
         _ ->

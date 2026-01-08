@@ -5,6 +5,7 @@
     "elm-test": "0.19.1-revision16",
     "elm-test-rs": "3.0.1-0",
     "elm-watch": "^1.2.3",
+    "sass-embedded": "^1.97.2",
     "serve": "^14.2.5",
     "vite": "^7.3.0",
     "vite-plugin-elm": "^3.0.1"
