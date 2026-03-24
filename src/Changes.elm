@@ -85,7 +85,7 @@ selectPackage uuid model =
     exists, create one before pushing.
 -}
 pushInteractionForStack : Maybe Uuid -> InteractionState -> Model -> Model
-pushInteractionForStack uuid interaction model =
+pushInteractionForStack key interaction model =
   let
     new_recent_number =
       AutoDict.values model.interactionsDict
@@ -95,7 +95,7 @@ pushInteractionForStack uuid interaction model =
   in
   { model
     | interactionsDict =
-        AutoDict.update uuid
+        AutoDict.update key
           ( Maybe.withDefault (0, [])
           >> (\(_, stack) -> Just (new_recent_number, interaction :: stack))
           )
@@ -106,25 +106,25 @@ pushInteractionForStack uuid interaction model =
     stack, then the stack disappears.
 -}
 popInteraction : Maybe Uuid -> Model -> Maybe (InteractionState, Model)
-popInteraction uuid model =
+popInteraction key model =
   -- annoyingly, I can't use .update for this because I want to _also_ return the head…
   -- so, in most cases, there are going to be two key lookups.
   -- Oh well!
 
   -- get the stack
-  case AutoDict.get uuid model.interactionsDict of
+  case AutoDict.get key model.interactionsDict of
     Just (_, [h]) ->
       -- println "One interaction on this stack; removing the stack itself."
       Just <|
         ( h
-        , { model | interactionsDict = AutoDict.remove uuid model.interactionsDict }
+        , { model | interactionsDict = AutoDict.remove key model.interactionsDict }
         )
     Just (r, h :: t) ->
       -- if it has something, pop, and also return an updated model
       -- println "More than one interaction on this stack; removing the topmost interaction."
       Just <|
         ( h
-        , { model | interactionsDict = AutoDict.insert uuid (r - 1, t) model.interactionsDict }
+        , { model | interactionsDict = AutoDict.insert key (r - 1, t) model.interactionsDict }
         )
     _ ->
       -- println "Was called to pop, but there's nothing to pop!"
@@ -135,15 +135,15 @@ popInteraction uuid model =
 popMostRecentInteraction : Model -> Maybe (Maybe Uuid, InteractionState, Model)
 popMostRecentInteraction model =
   Q.mostRecentInteraction model
-  |> Maybe.andThen (\(uuid, _) ->
-    popInteraction uuid model
-    |> Maybe.map (\(interaction, model_) -> (uuid, interaction, model_))
+  |> Maybe.andThen (\(key, _) ->
+    popInteraction key model
+    |> Maybe.map (\(interaction, model_) -> (key, interaction, model_))
   )
 
 replaceInteraction : Maybe Uuid -> InteractionState -> Model -> Model
-replaceInteraction uuid interaction model =
-  popInteraction uuid model
-  |> Maybe.map (\(_, model_) -> pushInteractionForStack uuid interaction model_)
+replaceInteraction key interaction model =
+  popInteraction key model
+  |> Maybe.map (\(_, model_) -> pushInteractionForStack key interaction model_)
   |> Maybe.withDefault model
 
 removeViews : List Uuid -> Model -> Model

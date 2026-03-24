@@ -151,7 +151,7 @@ viewNavigatorsArea model =
     ]
 
 viewTestsSidebar : GraphPackage -> Model -> Html Msg
-viewTestsSidebar pkg {properties} =
+viewTestsSidebar pkg {can} =
   let
     (expectAccept, expectReject) =
       AutoDict.toList pkg.tests
@@ -173,7 +173,7 @@ viewTestsSidebar pkg {properties} =
                         [ HA.classList
                             [ ("test-input", True)
                             , ("selected", key == pkg.currentTestKey)
-                            , ("disabled", not properties.canLoadTestInput)
+                            , ("disabled", not can.loadTestInput)
                             ]
                         , HA.title "Edit"
                         ]
@@ -192,24 +192,24 @@ viewTestsSidebar pkg {properties} =
               , ("passing", testStatus == Just False)
               , ("error", testStatus == Nothing)
               ]
-          , properties.canLoadTestInput
+          , can.loadTestInput
             |> thenPermitInteraction (HE.onClick (PackageMsg pkg.packageIdentifier <| SelectTest key))
           ]
           [ span
               [ HA.classList
                   [ ("test-input-container", True)
-                  , ("disabled", not properties.canLoadTestInput)
+                  , ("disabled", not can.loadTestInput)
                   ]
               , case test.result of
                   InternalError s -> HA.title s
                   _ -> HA.hidden False -- … pretty irrelevant. Which is what I want.
               ]
               [ text test.input ]
-          , if properties.canDeleteTestInput && not (key == pkg.currentTestKey) then
+          , if can.deleteTestInput && not (key == pkg.currentTestKey) then
               div
                 [ HA.classList
                     [ ("button", True)
-                    , ("disabled", not properties.canDeleteTestInput)
+                    , ("disabled", not can.deleteTestInput)
                     ]
                 , HA.title "Delete test"
                 , HE.onClick (PackageMsg pkg.packageIdentifier <| DeleteTestInput key)
@@ -224,7 +224,7 @@ viewTestsSidebar pkg {properties} =
       [ h1
           [ HA.class "sidebar-title" ]
           [ text "Test Inputs "
-          , if properties.canCreateTestInput then
+          , if can.createTestInput then
               button
                 [ HA.class "add-button"
                 , HA.title "Add new test"
@@ -275,7 +275,7 @@ viewComputationsSidebar model =
     [ h1
         [ HA.class "sidebar-title" ]
         [ text "Computations "
-        , if model.properties.canCreateNewPackage then
+        , if model.can.createNewPackage then
             button
               [ HA.class "add-button"
               , HA.title "Create new computation"
@@ -301,7 +301,7 @@ viewComputationsSidebar model =
                       (\pkg_uuid ->
                         div
                           [ HA.class "package"
-                          , graph_view.properties.canSelectPackage
+                          , graph_view.can.selectPackage
                             |> thenPermitInteraction (HE.onClick (PackageMsg pkg_uuid SelectPackage))
                           ]
                           [ GraphEditor.viewGraph graph_view
@@ -311,7 +311,7 @@ viewComputationsSidebar model =
                                 |> Maybe.withDefault "(no description)"
                                 |> text
                               ]
-                          , if graph_view.graphPackage == mainPkgUuid || not graph_view.properties.canDeletePackage then
+                          , if graph_view.graphPackage == mainPkgUuid || not graph_view.can.deletePackage then
                               text ""
                             else
                               div
@@ -381,7 +381,7 @@ viewSplitter zIdx movement model areaOpen =
       [ HA.classList
           [ ("splitter-separator " ++ movementClass, True)
           , ("dragging", topOfStack == Just (DraggingSplitter movement))
-          , ( "draggable", model.properties.canDragSplitter && areaOpen)
+          , ( "draggable", model.can.dragSplitter && areaOpen)
           ]
       , HA.css
           [ Css.zIndex (Css.int zIdx)

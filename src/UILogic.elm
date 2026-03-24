@@ -104,94 +104,94 @@ fitGraphViewToGraph graphView =
         graphView.computation.graph
   }
 
-nilMainProperties : MainUIProperties
-nilMainProperties =
-  { canEscape = False
-  , canDragSplitter = False
-  , canAcceptCharacters = False
-  , canSelectNewPackage = False
-  , canCreateNewPackage = False
-  , canLoadTestInput = False
-  , canDeleteTestInput = False
-  , canCreateTestInput = False
+nilMainCapabilities : MainUICapabilities
+nilMainCapabilities =
+  { escape = False
+  , dragSplitter = False
+  , acceptCharacters = False
+  , selectNewPackage = False
+  , createNewPackage = False
+  , loadTestInput = False
+  , deleteTestInput = False
+  , createTestInput = False
   }
 
-nilViewProperties : GraphViewProperties
-nilViewProperties =
-  { canSelectConnections = False
-  , canSelectEmptySpace = False
-  , canSelectNodes = False
-  , canSplitNodes = False
-  , canDragNodes = False
-  , canInspectRefs = False
-  , canPan = False
-  , canDeletePackage = False
-  , canSelectPackage = False
+nilViewCapabilities : GraphViewCapabilities
+nilViewCapabilities =
+  { selectConnections = False
+  , selectEmptySpace = False
+  , selectNodes = False
+  , splitNodes = False
+  , dragNodes = False
+  , inspectRefs = False
+  , pan = False
+  , deletePackage = False
+  , selectPackage = False
   }
 
-type alias GraphViewPropertySetter = GraphViewProperties
-type alias MainPropertySetter = MainUIProperties
+type alias GraphViewPropertySetter = GraphViewCapabilities
+type alias MainPropertySetter = MainUICapabilities
 
-setProperties : Model -> Model
-setProperties model =
+setCapabilities : Model -> Model
+setCapabilities model =
   let
-    setLocalProperties : GraphViewDict -> GraphViewDict
-    setLocalProperties =
+    setLocalCapabilities : GraphViewDict -> GraphViewDict
+    setLocalCapabilities =
       let
         whenSplittingNode : GraphViewPropertySetter
         whenSplittingNode =
-          { nilViewProperties
-            | canDragNodes = True
-            , canInspectRefs = True
-            , canPan = True
+          { nilViewCapabilities
+            | dragNodes = True
+            , inspectRefs = True
+            , pan = True
           } -- this is a message. the quick brown fox jumps over the lazy dog.
         whenDraggingNode : GraphViewPropertySetter
         whenDraggingNode =
-          { nilViewProperties | canPan = True }
+          { nilViewCapabilities | pan = True }
         whenDraggingSplitter : GraphViewPropertySetter
         whenDraggingSplitter =
-          nilViewProperties
+          nilViewCapabilities
         whenSourceNodeSelected : Uuid -> GraphViewPropertySetter
         whenSourceNodeSelected id =
-          { nilViewProperties
-            | canSelectEmptySpace = model.mainGraphView == id
-            , canSelectNodes = model.mainGraphView == id
-            , canSplitNodes = model.mainGraphView == id
-            , canDragNodes = model.mainGraphView == id
-            , canPan = True
+          { nilViewCapabilities
+            | selectEmptySpace = model.mainGraphView == id
+            , selectNodes = model.mainGraphView == id
+            , splitNodes = model.mainGraphView == id
+            , dragNodes = model.mainGraphView == id
+            , pan = True
           }
         whenEditingConnection : GraphViewPropertySetter
         whenEditingConnection =
-          { nilViewProperties
-            | canInspectRefs = True
-            , canPan = True
+          { nilViewCapabilities
+            | inspectRefs = True
+            , pan = True
           }
         whenExecuting : GraphViewPropertySetter
         whenExecuting =
-          { nilViewProperties
-            | canPan = True
-            , canDragNodes = True
+          { nilViewCapabilities
+            | pan = True
+            , dragNodes = True
           }
         otherwise : Uuid -> GraphViewPropertySetter
         otherwise id =
-          { nilViewProperties
-            | canSelectNodes = model.mainGraphView == id
-            , canSplitNodes = model.mainGraphView == id
-            , canDragNodes = model.mainGraphView == id
-            , canSelectConnections = model.mainGraphView == id
-            , canInspectRefs = True
-            , canPan = True
-            , canSelectPackage = List.member id model.computationsExplorer
-            , canDeletePackage = List.member id model.computationsExplorer
+          { nilViewCapabilities
+            | selectNodes = model.mainGraphView == id
+            , splitNodes = model.mainGraphView == id
+            , dragNodes = model.mainGraphView == id
+            , selectConnections = model.mainGraphView == id
+            , inspectRefs = True
+            , pan = True
+            , selectPackage = List.member id model.computationsExplorer
+            , deletePackage = List.member id model.computationsExplorer
           }
         whenDeletingPackage : GraphViewPropertySetter
         whenDeletingPackage =
-          { nilViewProperties | canPan = True }
+          { nilViewCapabilities | pan = True }
       in
         AutoDict.map
           (\k v ->
             { v
-              | properties =
+              | can =
                   case Q.peekInteraction (Just k) model.interactionsDict of
                     Just (SplittingNode _ _) ->
                       whenSplittingNode
@@ -208,61 +208,71 @@ setProperties model =
                     Just (DeletingPackage _ _) ->
                       whenDeletingPackage
                     Nothing ->
-                     otherwise v.id
+                      -- no local interaction here: but a *global*
+                      -- interaction still constrains what views may do.
+                      -- (DraggingSplitter is keyed `Nothing`, so without
+                      -- this check the all-false `whenDraggingSplitter`
+                      -- caps above could never apply.)
+                      case Q.mostRecentInteraction model of
+                        Just (_, DraggingSplitter _) ->
+                          whenDraggingSplitter
+
+                        _ ->
+                         otherwise v.id
             }
           )
-    setMainProperties : MainUIProperties
-    setMainProperties =
+    setMainCapabilities : MainUICapabilities
+    setMainCapabilities =
       let
         whenSplittingNode : MainPropertySetter
         whenSplittingNode =
-          { nilMainProperties
-            | canEscape = True
-            , canDragSplitter = True
-            , canAcceptCharacters = True
+          { nilMainCapabilities
+            | escape = True
+            , dragSplitter = True
+            , acceptCharacters = True
           }
         whenDraggingNode : MainPropertySetter
         whenDraggingNode =
-          { nilMainProperties | canEscape = True }
+          { nilMainCapabilities | escape = True }
         whenDraggingSplitter : MainPropertySetter
         whenDraggingSplitter =
-          nilMainProperties
+          nilMainCapabilities
         whenSourceNodeSelected : MainPropertySetter
         whenSourceNodeSelected =
-          { nilMainProperties
-            | canEscape = True
-            , canDragSplitter = True
-            , canSelectNewPackage = True
-            , canCreateNewPackage = True
+          { nilMainCapabilities
+            | escape = True
+            , dragSplitter = True
+            , selectNewPackage = True
+            , createNewPackage = True
           }
         whenEditingConnection : MainPropertySetter
         whenEditingConnection =
-          { nilMainProperties
-          | canEscape = True
-          , canAcceptCharacters = True
+          { nilMainCapabilities
+          | escape = True
+          , acceptCharacters = True
           }
         whenExecuting : MainPropertySetter
         whenExecuting =
-          { nilMainProperties
-          | canEscape = True
-          , canDragSplitter = True
-          , canLoadTestInput = True
-          , canDeleteTestInput = True
-          , canCreateTestInput = True
+          { nilMainCapabilities
+          | escape = True
+          , dragSplitter = True
+          , loadTestInput = True
+          , deleteTestInput = True
+          , createTestInput = True
           }
         otherwise : MainPropertySetter
         otherwise =
-          { nilMainProperties
-            | canDragSplitter = True
-            , canSelectNewPackage = True
-            , canCreateNewPackage = True
-            , canLoadTestInput = True
-            , canDeleteTestInput = True
-            , canCreateTestInput = True
+          { nilMainCapabilities
+            | dragSplitter = True
+            , selectNewPackage = True
+            , createNewPackage = True
+            , loadTestInput = True
+            , deleteTestInput = True
+            , createTestInput = True
           }
         whenDeletingPackage : MainPropertySetter
         whenDeletingPackage =
-          { nilMainProperties | canEscape = True }
+          { nilMainCapabilities | escape = True }
       in
         case Q.mostRecentInteraction model of
           Just (_, SplittingNode _ _) ->
@@ -283,8 +293,8 @@ setProperties model =
             otherwise
   in
     { model
-      | graph_views = setLocalProperties model.graph_views
-      , properties = setMainProperties
+      | graph_views = setLocalCapabilities model.graph_views
+      , can = setMainCapabilities
     }
 
 makeGraphView : Uuid -> GraphViewType -> Dimension -> Bool -> PackageDict -> AutomatonGraph -> GraphView
@@ -315,7 +325,7 @@ makeGraphView id viewType dim fitClosely packages ag =
     , pan = ( 0, 0 )
     , activePanDirection = Nothing
     , disconnectedNodes = Set.empty
-    , properties = nilViewProperties
+    , can = nilViewCapabilities
     , drawingData =
         { link_drawing = GraphEditor.linkDrawingForPackage computeResult.solvedGraph packages
         , node_drawing = GraphEditor.nodeDrawingForPackage computeResult.solvedGraph id
@@ -735,7 +745,7 @@ nodeSplitSwitch props key_uuid via ({left, right} as data) model =
           props
       )
       model
-    |> setProperties
+    |> setCapabilities
 
 handleConnectionEditorInput : Maybe Uuid -> String -> ConnectionAlteration -> ConnectionEditorProperties -> Model -> Model
 handleConnectionEditorInput key_uuid input alteration props model =
@@ -859,7 +869,7 @@ editConnection view_uuid {x,y} ({source, dest, connection} as alteration) model 
                 }
             )
       )
-  |> setProperties
+  |> setCapabilities
 
 startSplit : Uuid -> GraphView -> Graph.NodeContext Entity Connection -> Model -> Model
 startSplit uuid graph_view nodeContext model =
@@ -895,7 +905,7 @@ startSplit uuid graph_view nodeContext model =
           }
       )
     |> C.updateGraphView main_view.id (centerAndHighlight edges_in)
-    |> setProperties
+    |> setCapabilities
 
 beginDeletionInteraction : Uuid -> List Uuid -> GraphPackage -> Model -> Model
 beginDeletionInteraction package_uuid affected package model =
@@ -967,6 +977,9 @@ beginDeletionInteraction package_uuid affected package model =
       }
   in
     C.pushInteractionForStack Nothing (DeletingPackage package_uuid props) model___
+    -- without this, `can.escape` never becomes True and the deletion
+    -- interaction can only be confirmed, never cancelled.
+    |> setCapabilities
 
 {-| Given host coordinates, translate them to guest-viewport coordinates -}
 translateHostCoordinates : Coordinate -> Coordinate -> GraphView -> Coordinate

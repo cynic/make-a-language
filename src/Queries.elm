@@ -91,10 +91,10 @@ mostRecentInteraction model =
   AutoDict.toList model.interactionsDict
   |> List.maximumBy (Tuple.second >> Tuple.first)
   |> Maybe.andThen
-    (\(uuid, (_, interaction)) ->
+    (\(key, (_, interaction)) ->
       case interaction of
         [] -> Nothing
-        h::_ -> Just (uuid, h)
+        h::_ -> Just (key, h)
     )
 
 resolutionDict : PackageDict -> ResolutionDict

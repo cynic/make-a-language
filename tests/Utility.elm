@@ -1,7 +1,7 @@
 module Utility exposing
   ( ag, dfa, mkDFA_input, mkDFA, ag_equals, dfa_equals, dummyEntity
   , minimality, mkConn, mkAutomatonGraph, dummy_uuid, ag_cmp_and_equals
-  , uuid_from_int
+  , uuid_from_int, packageWithGraph
   )
 import Parser exposing (Parser, (|=), (|.))
 import Test exposing (..)
@@ -26,6 +26,7 @@ import Maybe.Extra
 import Dict
 import Uuid exposing (Uuid)
 import Random.Pcg.Extended as Random exposing (initialSeed, step)
+import Time
 
 type alias Partition = Set NodeId
 type alias HopcroftRecord =
@@ -178,6 +179,18 @@ mkDFA transitions finals =
 uuid_from_int : Int -> Uuid
 uuid_from_int i =
   initialSeed i [] |> step Uuid.generator |> Tuple.first
+
+{-| A `GraphPackage` with the given identifier, creation time (in millis,
+    for ordering), and computation.  No tests.
+-}
+packageWithGraph : Uuid -> Int -> AutomatonGraph -> GraphPackage
+packageWithGraph uuid createdMillis g =
+  { computation = g
+  , packageIdentifier = uuid
+  , created = Time.millisToPosix createdMillis
+  , currentTestKey = uuid_from_int 99
+  , tests = AutoDict.empty Uuid.toString
+  }
 
 mkConn : String -> Connection
 mkConn s =

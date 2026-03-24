@@ -15,6 +15,6 @@
     "hot": "pnpx concurrently \"pnpx elm-watch hot\" \"cd src && pnpx serve -p 1234\"",
     "hot-nonet": "npx concurrently \"npx elm-watch hot\" \"cd src && npx serve -p 1234\"",
     "benchmarks": "cd benchmarks && npx concurrently \"pnpx elm-watch hot\" \"pnpx serve -l 3001\"",
-    "test": "npx elm-test-rs"
+    "test": "sh scripts/test.sh"
   }
 }

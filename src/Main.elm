@@ -158,7 +158,7 @@ init flags =
       , uiConstants = constants
       , randomSeed = initialSeed
       , interactionsDict = AutoDict.empty (Maybe.map Uuid.toString >> Maybe.withDefault "")
-      , properties = UI.nilMainProperties
+      , can = UI.nilMainCapabilities
       , computationsExplorer = []
       }
     model =
@@ -178,7 +178,7 @@ init flags =
   in
     ( UI.selectNavIcon ComputationsIcon model
       |> UI.refreshComputationsList
-      |> UI.setProperties
+      |> UI.setCapabilities
     , Cmd.none
     )
 
@@ -210,7 +210,7 @@ update_graphview uuid ui_msg model =
       UI.calculate_host_coord uuid model node_host_coord nodeId
       |> Maybe.map (\host_coord ->
         ( C.pushInteractionForStack (Just uuid) (DraggingNode nodeId host_coord) model
-          |> UI.setProperties
+          |> UI.setCapabilities
         , Cmd.none
         )
       )
@@ -259,7 +259,7 @@ update_graphview uuid ui_msg model =
             UI.calculate_host_coord uuid model node_coord node_id
             |> Maybe.map (\host_coord ->
               GraphEditor.selectSourceNode model uuid host_coord node_id
-              |> UI.setProperties
+              |> UI.setCapabilities
             )
             |> Maybe.withDefault model
       , Cmd.none
@@ -278,10 +278,10 @@ update_graphview uuid ui_msg model =
       ( case Q.peekInteraction (Just uuid) model.interactionsDict of
           Just (DraggingNode node_id _) ->
             GraphEditor.dragNode uuid coord node_id model
-            |> UI.setProperties
+            |> UI.setCapabilities
           Just (ChoosingDestinationFor _ _ _) ->
             GraphEditor.movePhantomNode uuid coord model
-            |> UI.setProperties
+            |> UI.setCapabilities
           _ ->
             model
       , Cmd.none
@@ -289,7 +289,7 @@ update_graphview uuid ui_msg model =
 
     StopDraggingNode ->
       ( C.popInteraction (Just uuid) model
-        |> Maybe.map (Tuple.second >> UI.setProperties)
+        |> Maybe.map (Tuple.second >> UI.setCapabilities)
         |> Maybe.withDefault model
       , Cmd.none
       )
@@ -393,7 +393,7 @@ selectDestination view_uuid src possible_dest model =
       -- I've clicked on some kind of an empty space.  I'll want to create this node,
       -- and then proceed to edit the connection.
       GraphEditor.createNewGraphNode view_uuid phantom_id svg_coord model
-      -- editConnection will call UI.setProperties
+      -- editConnection will call UI.setCapabilities
       |> UI.editConnection (Just view_uuid) svg_coord
           { source = src
           , dest = phantom_id
@@ -414,7 +414,7 @@ selectDestination view_uuid src possible_dest model =
       in
         -- we already have a node selected, and now, an existing
         -- node is being selected as the destination.
-        -- editConnection will call UI.setProperties
+        -- editConnection will call UI.setCapabilities
         UI.editConnection (Just view_uuid) svg_coord
           { source = src
           , dest = dest_id
@@ -431,7 +431,7 @@ commitOrConfirm : Model -> (Model, Cmd Msg)
 commitOrConfirm model =
   -- What am I confirming?
   let
-    {- Take an AutomatonGraph and push it into tho Model. -}
+    {- Take an AutomatonGraph and push it into the Model. -}
     commit_change : GraphView -> AutomatonGraph -> Model -> Model
     commit_change graph_view ag model_ =
       let
@@ -442,7 +442,14 @@ commitOrConfirm model =
             , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
           }
         updated_model =
-          C.upsertGraphView (UI.fitGraphViewToGraph updated_view) model_
+          C.upsertGraphView
+            ( updated_view
+              -- the drawing data must follow the new computation, or the
+              -- canvas keeps rendering the pre-commit link/node state.
+              |> GraphEditor.recalculateLinksAndNodes model_.packages
+              |> UI.fitGraphViewToGraph
+            )
+            model_
       in
         UI.refreshComputationsList updated_model
     
@@ -456,10 +463,11 @@ commitOrConfirm model =
       let
         ag = GraphEditor.updateLink_graphchange src dest conn gv.computation
       in
+      -- note: `gv` is passed WITHOUT the updated computation, so that
+      -- commit_change pushes the *pre-commit* graph onto the undo buffer.
       commit_change
         { gv
-          | computation = ag
-          , drawingData =
+          | drawingData =
               let dd = gv.drawingData in
               { dd
                 | tentative_link = Nothing
@@ -470,16 +478,12 @@ commitOrConfirm model =
         ag model_
           
 
-    removeLink : NodeId -> NodeId -> GraphView -> Model -> Model
-    removeLink src dest gv model_ =
-      GraphEditor.removeLink_graphchange src dest gv.computation
-      |> \newGraph -> commit_change gv newGraph model_
-
   in
     case C.popMostRecentInteraction model of
       Just (Just gv_uuid, SplittingNode { to_split, left, right } {mainGraph}, model_) ->
         ( if AutoSet.isEmpty left || AutoSet.isEmpty right then
              C.removeViews [ mainGraph ] model_
+            |> UI.setCapabilities
           else
             AutoDict.get gv_uuid model_.graph_views
             |> Maybe.andThen
@@ -496,7 +500,7 @@ commitOrConfirm model =
                   |> commit_change gv newGraph
             )
             |> Maybe.withDefault model_
-            |> UI.setProperties
+            |> UI.setCapabilities
         , Cmd.none
         )
       Just (Just gv_uuid, EditingConnection ({ source, dest, connection, targetKind }) {mainGraph, referenceList}, model_) ->
@@ -512,15 +516,18 @@ commitOrConfirm model =
                     -- remove the 'dest' from the graph before confirming it as
                     -- the previous graph.
                     |> confirmPhantomNode source dest connection gv
-                    |> UI.setProperties
+                    |> UI.setCapabilities
                   ExistingNodeNewConnection ->
+                    -- there is no previous link to remove: this is a *new*
+                    -- connection between existing nodes, so it must be
+                    -- created with its edited transitions.
                     C.removeViews (mainGraph :: referenceList) model_
-                    |> removeLink source dest gv
-                    |> UI.setProperties
+                    |> updateExistingNode source dest connection gv
+                    |> UI.setCapabilities
                   ExistingNodeExistingConnection ->
                     C.removeViews (mainGraph :: referenceList) model_
                     |> updateExistingNode source dest connection gv
-                    |> UI.setProperties
+                    |> UI.setCapabilities
               )
             |> Maybe.withDefault model_
           , Cmd.none
@@ -531,7 +538,7 @@ commitOrConfirm model =
              C.removeViews (to_delete :: props.directViews ++ props.indirectViews) model_
             |> C.deletePackageFromModel to_delete
             |> UI.refreshComputationsList
-            |> UI.setProperties
+            |> UI.setCapabilities
         in
           ( updated_model
           , Ports.deleteFromStorage (Uuid.toString to_delete)
@@ -562,7 +569,7 @@ commitOrConfirm model =
                 updated_model =
                   C.updatePackageFromView model.mainGraphView model_
                   |> UI.refreshComputationsList
-                  |> UI.setProperties
+                  |> UI.setCapabilities
               in
                 ( updated_model
                 , gv.graphPackage
@@ -680,7 +687,7 @@ step_execution orig_graphview execution_function test model =
   in
     interactionFunction applied_step updated_expansion model__
     |> C.setMainView graph_view.id
-    |> UI.setProperties
+    |> UI.setCapabilities
 
 update_package : Uuid -> PackageMsg -> Model -> ( Model, Cmd Msg )
 update_package pkg_uuid msg model =
@@ -772,7 +779,7 @@ update_package pkg_uuid msg model =
               |>  C.removeViews [ model.mainGraphView ]
               |> C.setMainView gv.id
               |> C.selectPackage pkg.packageIdentifier
-              |> UI.setProperties
+              |> UI.setCapabilities
           )
         |> Maybe.withDefaultLazy
           (\() ->
@@ -802,7 +809,7 @@ update_package pkg_uuid msg model =
               Just ( Executing _ _ , model_ ) ->
                 -- stop executing, if I was executing.
                 -- I've got a different(?) test selected now!
-                ( model_
+                ( UI.setCapabilities model_
                 , persistPackage p
                 )
               _ ->
@@ -825,7 +832,7 @@ update_package pkg_uuid msg model =
               Just ( Executing _ _ , model_ ) ->
                 -- stop executing, if I was executing.
                 -- I've got a different(?) test selected now!
-                ( model_
+                ( UI.setCapabilities model_
                 , persistPackage p
                 )
               _ ->
@@ -922,14 +929,14 @@ update msg model =
             if shouldStop then -- do not, in fact, drag the splitter.
               model_
               |> UI.updateMainEditorDimensions
-              |> UI.setProperties
+              |> UI.setCapabilities
             else -- such a drag.
               { model
                 | uiLayout =
                     UI.dragSplitter coord movement model.uiConstants model.uiLayout
               }
               |> UI.updateMainEditorDimensions
-              |> UI.setProperties
+              |> UI.setCapabilities
           _ ->
             model
       , Cmd.none
@@ -969,19 +976,19 @@ update msg model =
     SelectNavigation ComputationsIcon ->
       ( UI.selectNavIcon ComputationsIcon model
         |> UI.refreshComputationsList
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
 
     SelectNavigation TestsIcon ->
       ( UI.selectNavIcon TestsIcon model
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
 
     SelectNavigation DebugIcon ->
       ( UI.selectNavIcon DebugIcon model
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
 
@@ -1003,6 +1010,9 @@ update msg model =
 
     OnResize dims ->
       ( UI.resizeViewport dims model
+        -- the graph views must follow the new areas: their `host` drives
+        -- both rendering and the client→SVG coordinate translation.
+        |> UI.updateMainEditorDimensions
       , Cmd.none
       )
 
@@ -1011,17 +1021,17 @@ update msg model =
           | uiLayout = UI.toggleAreaVisibility where_ model.uiLayout
         }
         |> UI.updateMainEditorDimensions
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
     StartDraggingSplitter movement ->
       ( C.pushInteractionForStack (Nothing) (DraggingSplitter movement) model
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
 
     Escape ->
-      ( if model.properties.canEscape then
+      ( if model.can.escape then
           case C.popMostRecentInteraction model of
             Nothing -> -- hmm, let's look at the local interactions of the main editor window.
               -- huh!  Looks like there's nothing to do!  So why was I called??
@@ -1029,20 +1039,21 @@ update msg model =
               model
             Just (Just uuid, ChoosingDestinationFor _ (NewNode _ _) _, _) ->
               GraphEditor.cancelNewNodeCreation uuid model -- this will pop, and also handle graph/UI changes too.
-              |> UI.setProperties
-            Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _) _, _) ->
-              GraphEditor.removePhantomLink uuid source dest model
+              |> UI.setCapabilities
+            Just (Just uuid, ChoosingDestinationFor source (ExistingNode dest _) _, model_) ->
+              GraphEditor.removePhantomLink uuid source dest model_
+              |> UI.setCapabilities
             Just (Just uuid, EditingConnection alteration {referenceList, mainGraph}, model_) ->
               UI.escapeConnectionEditor uuid alteration (mainGraph :: referenceList) model_ 
-              |> UI.setProperties
+              |> UI.setCapabilities
             Just (Just _, SplittingNode _ props, model_) ->
                C.removeViews [ props.mainGraph ] model_
-              |> UI.setProperties
+              |> UI.setCapabilities
             Just (Nothing, DeletingPackage _ {mainGraph, directViews, indirectViews}, model_) ->
                C.removeViews (mainGraph :: directViews ++ indirectViews) model_
-              |> UI.setProperties
+              |> UI.setCapabilities
             Just (_, _, model_) ->
-              UI.setProperties model_ -- yay, I could pop from the global
+              UI.setCapabilities model_ -- yay, I could pop from the global
         else
           model
       , Cmd.none
@@ -1075,10 +1086,14 @@ update msg model =
                           , redoBuffer = graph_view.computation :: graph_view.redoBuffer
                           , computation = h
                         }
+                        -- drawing data and viewport must follow the
+                        -- restored computation (as on commit)
+                        |> GraphEditor.recalculateLinksAndNodes model.packages
+                        |> UI.fitGraphViewToGraph
                 ))
                 model.graph_views
         }
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
 
@@ -1098,10 +1113,14 @@ update msg model =
                           , undoBuffer = graph_view.computation :: graph_view.redoBuffer
                           , computation = h
                         }
+                        -- drawing data and viewport must follow the
+                        -- restored computation (as on commit)
+                        |> GraphEditor.recalculateLinksAndNodes model.packages
+                        |> UI.fitGraphViewToGraph
                 ))
                 model.graph_views
         }
-        |> UI.setProperties
+        |> UI.setCapabilities
       , Cmd.none
       )
 
@@ -1143,7 +1162,7 @@ update msg model =
       in
         ( C.upsertGraphView gv model__
           |> UI.refreshComputationsList
-          |> UI.setProperties
+          |> UI.setCapabilities
         , persistPackage pkg
         )
 
@@ -1238,7 +1257,7 @@ update msg model =
     ResetComputation ->
       case C.popInteraction Nothing model of
         Just ( Executing _ _ , model_ ) ->
-          ( UI.setProperties model_, Cmd.none )
+          ( UI.setCapabilities model_, Cmd.none )
         _ ->
           ( model, Cmd.none )
 
@@ -1265,7 +1284,7 @@ update msg model =
                         List.zip uuids item.debugging
                         |> List.map (\(uuid, f) -> f uuid)
                         |> List.foldl C.upsertGraphView model__
-                        |> UI.setProperties
+                        |> UI.setCapabilities
                 in
                   case expansion of
                     Just expanded ->
@@ -1305,79 +1324,172 @@ update msg model =
 
 -- SUBSCRIPTIONS
 
+{-| The decoder that routes keyboard events to `Msg` values, given the
+    current model.  Extracted (and exposed) from `subscriptions` so that it
+    can be tested directly with synthetic event JSON: the routing rules —
+    which keys mean what in which interaction state, and which modifier
+    combinations are required — are business logic that update-simulation
+    tests cannot see.
+-}
+keyboardDecoder : Model -> D.Decoder Msg
+keyboardDecoder model =
+  D.map2
+    (\key ctrlPressed -> ( key, ctrlPressed ))
+    (D.field "key" D.string)
+    (D.field "ctrlKey" D.bool)
+  |> D.andThen
+    (\(key, ctrlPressed) ->
+      case String.toLower key of
+        "escape" ->
+          if model.can.escape then                        
+            case Q.mostRecentInteraction model of
+              Just (_, EditingConnection _ _) ->
+                if ctrlPressed then
+                  D.succeed Escape
+                else
+                  D.fail "Need to Ctrl-escape out of editing a connection"
+              Just (_, SplittingNode _ _) ->
+                if ctrlPressed then
+                  D.succeed Escape
+                else
+                  D.fail "Need to Ctrl-escape out of splitting a node"
+              _ ->
+                D.succeed Escape
+          else
+            D.fail "Escape not permitted at this point"
+        "enter" ->
+          case Q.mostRecentInteraction model of
+            Just (_, EditingConnection _ _) ->
+              if ctrlPressed then
+                D.succeed Confirm
+              else
+                D.fail "Need to Ctrl-enter to confirm editing a connection"
+            Just (_, SplittingNode _ _) ->
+              if ctrlPressed then
+                D.succeed Confirm
+              else
+                D.fail "Need to enter to confirm splitting a node"
+            _ ->
+              D.succeed Confirm
+        "z" ->
+          if ctrlPressed then
+            D.succeed Undo
+          else
+            D.fail "Need to Ctrl-z to undo"
+        "y" ->
+          if ctrlPressed then
+            D.succeed Redo
+          else
+            D.fail "Need to Ctrl-y to redo"
+        _ ->
+          D.fail "Untrapped"
+    )
+
+{-| Decoder for the pan payloads arriving from JavaScript via the `pan`
+    port — extracted (and exposed) for testing.
+-}
+panDecoder : D.Decoder Msg
+panDecoder =
+  D.map3 (\uuid pan_x pan_y -> GraphViewMsg uuid (Pan pan_x pan_y))
+    (D.field "uuid" Uuid.decoder)
+    (D.at [ "pan", "pan_x" ] D.int)
+    (D.at [ "pan", "pan_y" ] D.int)
+
+{-| Decoder for the stop-pan payloads arriving via the `stopPan` port —
+    extracted (and exposed) for testing.
+-}
+stopPanDecoder : D.Decoder Msg
+stopPanDecoder =
+  D.map (\uuid -> GraphViewMsg uuid StopPan) Uuid.decoder
+
+{-| The mouse-move and mouse-up decoders for splitter dragging — extracted
+    (and exposed) for testing.  Produces `Nothing` when no splitter drag is
+    in flight, so no splitter messages can be produced in other states.
+    Note the LeftRight offset: the navigator bar (48px) plus half the
+    splitter (8px) sit between the window edge and the sidebar edge.
+-}
+splitterDecoders : Model -> Maybe ( D.Decoder Msg, D.Decoder Msg )
+splitterDecoders model =
+  case Q.peekInteraction Nothing model.interactionsDict of
+    Just (DraggingSplitter LeftRight) ->
+      let
+        offset = -(48 + 8 / 2)
+        clientX =
+          D.field "clientX" D.float
+      in
+        Just
+          ( D.map ((+) offset >> DragSplitter False) clientX
+          , D.map ((+) offset >> DragSplitter True) clientX
+          )
+    Just (DraggingSplitter UpDown) ->
+      let
+        clientY =
+          D.field "clientY" D.float
+      in
+        Just
+          ( D.map (DragSplitter False) clientY
+          , D.map (DragSplitter True) clientY
+          )
+    _ ->
+      Nothing
+
+{-| The mouse-move decoder for an in-flight node interaction: client
+    coordinates are translated into SVG coordinates exactly once, via the
+    host coordinates stored on the interaction.  Extracted (and exposed)
+    for testing.
+-}
+nodeMoveDecoder : GraphView -> Coordinate -> Uuid -> D.Decoder Msg
+nodeMoveDecoder graph_view host_coords uuid =
+  D.map2
+    (\x y ->
+      GraphViewMsg uuid
+        (MoveNode (UI.translateHostCoordinates host_coords (Coordinate x y) graph_view))
+    )
+    (D.field "clientX" D.float)
+    (D.field "clientY" D.float)
+
+{-| The node-movement decoders for every in-flight node interaction:
+    (view uuid, mouse-move decoder, optional mouse-up decoder).  The
+    mouse-up decoder exists only during a node drag.  Extracted (and
+    exposed) for testing.
+-}
+nodeMoveDecoders : Model -> List ( Uuid, D.Decoder Msg, Maybe (D.Decoder Msg) )
+nodeMoveDecoders model =
+  AutoDict.toList model.interactionsDict
+  |> List.filterMap
+      (\( key, (_, stack) ) ->
+        case ( key, stack ) of
+          ( Just uuid, ChoosingDestinationFor _ _ host_coords :: _ ) ->
+            AutoDict.get uuid model.graph_views
+            |> Maybe.map (\gv -> ( uuid, nodeMoveDecoder gv host_coords uuid, Nothing ))
+          ( Just uuid, DraggingNode _ host_coords :: _ ) ->
+            AutoDict.get uuid model.graph_views
+            |> Maybe.map
+                (\gv ->
+                  ( uuid
+                  , nodeMoveDecoder gv host_coords uuid
+                  , Just (D.succeed (GraphViewMsg uuid StopDraggingNode))
+                  )
+                )
+          _ ->
+            Nothing
+      )
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
   let
     panSubscription =
       pan
-        ( D.decodeValue
-            ( D.map3 (\uuid pan_x pan_y -> Pan pan_x pan_y |> GraphViewMsg uuid)
-                (D.field "uuid" Uuid.decoder)
-                (D.at ["pan", "pan_x"] D.int)
-                (D.at ["pan", "pan_y"] D.int)
-            )
+        ( D.decodeValue panDecoder
           >> Result.withDefault (CrashWithMessage "Invalid pan message from JavaScript")
         )
     stopPanSubscription =
       stopPan
-        ( D.decodeValue
-            ( D.map (\uuid -> GraphViewMsg uuid StopPan) Uuid.decoder )
+        ( D.decodeValue stopPanDecoder
           >> Result.withDefault (CrashWithMessage "Invalid stop-pan message from JavaScript")
         )
     keyboardSubscription =
-      BE.onKeyDown
-        ( D.map2
-            (\key ctrlPressed -> ( key, ctrlPressed ))
-            (D.field "key" D.string)
-            (D.field "ctrlKey" D.bool)
-          |> D.andThen
-            (\(key, ctrlPressed) ->
-              case String.toLower key of
-                "escape" ->
-                  if model.properties.canEscape then                        
-                    case Q.mostRecentInteraction model of
-                      Just (_, EditingConnection _ _) ->
-                        if ctrlPressed then
-                          D.succeed Escape
-                        else
-                          D.fail "Need to Ctrl-escape out of editing a connection"
-                      Just (_, SplittingNode _ _) ->
-                        if ctrlPressed then
-                          D.succeed Escape
-                        else
-                          D.fail "Need to Ctrl-escape out of splitting a node"
-                      _ ->
-                        D.succeed Escape
-                  else
-                    D.fail "Escape not permitted at this point"
-                "enter" ->
-                  case Q.mostRecentInteraction model of
-                    Just (_, EditingConnection _ _) ->
-                      if ctrlPressed then
-                        D.succeed Confirm
-                      else
-                        D.fail "Need to Ctrl-enter to confirm editing a connection"
-                    Just (_, SplittingNode _ _) ->
-                      if ctrlPressed then
-                        D.succeed Confirm
-                      else
-                        D.fail "Need to enter to confirm splitting a node"
-                    _ ->
-                      D.succeed Confirm
-                "z" ->
-                  if ctrlPressed then
-                    D.succeed Undo
-                  else
-                    D.fail "Need to Ctrl-z to undo"
-                "y" ->
-                  if ctrlPressed then
-                    D.succeed Redo
-                  else
-                    D.fail "Need to Ctrl-y to redo"
-                _ ->
-                  D.fail "Untrapped"
-            )
-        )
+      BE.onKeyDown (keyboardDecoder model)
     resizeSubscription =
       BE.onResize
         (\w h ->
@@ -1385,53 +1497,21 @@ subscriptions model =
           -- |> Debug.log "Raw resize values"
         )
     splitterSubscriptions =
-      case Q.peekInteraction Nothing model.interactionsDict of
-        Just (DraggingSplitter LeftRight) ->
-          let
-            -- navigatorbarwidth + splitterwidth/2
-            offset = -(48 + 8 / 2)
-          in
-            [ BE.onMouseMove (D.map ((+) offset >> DragSplitter False) (D.field "clientX" D.float))
-            , BE.onMouseUp (D.map ((+) offset >> DragSplitter True) (D.field "clientX" D.float))
-            ]
-        Just (DraggingSplitter UpDown) ->
-          [ BE.onMouseMove (D.map (DragSplitter False) (D.field "clientY" D.float))
-          , BE.onMouseUp (D.map (DragSplitter True) (D.field "clientY" D.float))
+      case splitterDecoders model of
+        Just (moveDecoder, upDecoder) ->
+          [ BE.onMouseMove moveDecoder
+          , BE.onMouseUp upDecoder
           ]
-        _ ->
+        Nothing ->
           []
     nodeMoveSubscriptions =
-      let
-        createNodeMoveSubscription host_coords uuid =
-          AutoDict.get uuid model.graph_views
-          |> Maybe.map
-            (\graph_view ->
-                BE.onMouseMove
-                  ( D.map2
-                      (\x y ->
-                        MoveNode
-                          (graph_view |> UI.translateHostCoordinates host_coords (Coordinate x y))
-                        |> GraphViewMsg uuid
-                      )
-                      (D.field "clientX" D.float)
-                      (D.field "clientY" D.float)
-                  )
-            )
-          |> Maybe.withDefault Sub.none
-      in
-        AutoDict.toList model.interactionsDict
-        |> List.filterMap
-          (\(maybeUuid, (_, stack)) ->
-            case (maybeUuid, stack) of
-              (Just uuid, ChoosingDestinationFor _ _ host_coords :: _) ->
-                Just <| createNodeMoveSubscription host_coords uuid
-              (Just uuid, DraggingNode _ host_coords :: _) ->
-                Just <| Sub.batch 
-                  [ createNodeMoveSubscription host_coords uuid
-                  , BE.onMouseUp (D.succeed (GraphViewMsg uuid <| StopDraggingNode))
-                  ]
-              _ ->
-                Nothing
+      nodeMoveDecoders model
+      |> List.map
+          (\( _, moveDecoder, upDecoder ) ->
+            Sub.batch
+              (BE.onMouseMove moveDecoder
+                :: (upDecoder |> Maybe.map BE.onMouseUp |> Maybe.toList)
+              )
           )
   in
     Sub.batch

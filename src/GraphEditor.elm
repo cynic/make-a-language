@@ -1,16 +1,23 @@
 module GraphEditor exposing
   ( applyChangesToGraph
   , cancelNewNodeCreation
+  , characterTransitionClass
   , computeGraphFully
   , coordinateForces
   , createNewGraphNode
   , dragNode
+  , linkClassFor
+  , linkClickMsg
   , linkDrawingForPackage
   , movePhantomNode
   , newnode_graphchange
+  , nodeClassFor
+  , nodeClickDecoder
+  , nodeDragStartDecoder
   , nodeDrawingForPackage
   , panGraphView
   , recalculateLinksAndNodes
+  , referenceTransitionClass
   , removeLink_graphchange
   , removePhantomLink
   , selectSourceNode
@@ -43,6 +50,7 @@ import Set
 import TypedSvg exposing (circle, defs, g, marker, path, rect, svg, text_, title, tspan)
 import TypedSvg.Attributes exposing (class, d, dy, fill, id, orient, refX, refY, transform, viewBox)
 import TypedSvg.Attributes.InPx exposing (cx, cy, height, markerHeight, markerWidth, rx, ry, width, x, y)
+import Uuid exposing (Uuid)
 import TypedSvg.Core exposing (text, Svg)
 import TypedSvg.Events exposing (onClick)
 import TypedSvg.Types exposing (..)
@@ -246,7 +254,7 @@ toForceGraph g =
       }
   in
     { graph = Graph.mapContexts initializeNode g.graph
-    , description = Nothing
+    , description = g.description -- without this, every solved view loses its description (and the reference search can never filter)
     , root = g.root
     }
 
@@ -627,7 +635,7 @@ removeLink_graphchange src dest g =
   -- |> debugAutomatonGraph "[create_removal_graphchange] updated graph"
 
 panGraphView : Int -> Int -> GraphView -> GraphView
-panGraphView xMovement yMovement ({guest, pan, computation, properties} as graph_view) =
+panGraphView xMovement yMovement ({guest, pan, computation, can} as graph_view) =
   let
     ( pan_x, pan_y ) = pan
     -- this is a rectangle that is inset from the maximum bounds.
@@ -714,7 +722,7 @@ panGraphView xMovement yMovement ({guest, pan, computation, properties} as graph
             _ -> Nothing
         _ -> Nothing
   in
-    if properties.canPan && is_really_okay then
+    if can.pan && is_really_okay then
       { graph_view
         | pan = ( new_pan_x , new_pan_y )
         , activePanDirection = activePanDirection
@@ -797,6 +805,55 @@ linkLabelWidth connection =
     -- this is an estimate.
     sum_width + sum_gap
 
+{-| The class list of a link — extracted (like the decoders in
+    `Main.subscriptions`) so that it can be pinned by tests: SVG class
+    attributes cannot be matched by `Test.Html.Selector`, which only ever
+    consults the HTML `className` property.
+-}
+linkClassFor : DrawingData -> ( NodeId, NodeId ) -> List String
+linkClassFor { highlighted_links, tentative_link, lowlighted_links } ( from, to ) =
+  conditionalList
+    [ ( "link", True )
+    , ( "phantom", tentative_link == Just ( from, to ) )
+    , ( "highlight", Set.member ( from, to ) highlighted_links )
+    , ( "lowlight", Set.member ( to, from ) lowlighted_links )
+    ]
+
+{-| The class list of a node — see `linkClassFor` for why this is extracted.
+-}
+nodeClassFor : NodeId -> DrawingData -> NodeDrawingData -> List String
+nodeClassFor id { tentative_link } data =
+  conditionalList
+    [ ( "graph-node", True )
+    , ( "selected"
+      , Maybe.map (Tuple.first >> (==) id) tentative_link
+        |> Maybe.withDefault False
+      )
+    , ( "phantom"
+      , Maybe.map (Tuple.second >> (==) id) tentative_link
+        |> Maybe.withDefault False
+      )
+    , ( "disconnected", data.isDisconnected )
+    , ( "start", data.isRoot )
+    , ( "terminal", data.isTerminal )
+    ]
+
+finalityClass : Bool -> String
+finalityClass isFinal =
+  if isFinal then "final" else "nonfinal"
+
+{-| Classes of a character-transition label — extracted for testing.
+-}
+characterTransitionClass : Bool -> List String
+characterTransitionClass isFinal =
+  [ "transition", "text", finalityClass isFinal ]
+
+{-| Classes of a graph-reference-transition label — extracted for testing.
+-}
+referenceTransitionClass : Bool -> List String
+referenceTransitionClass isFinal =
+  [ "transition", "graph-reference", finalityClass isFinal ]
+
 viewLinkLabel : LinkDrawingData -> Svg Msg
 viewLinkLabel drawing_data =
   let
@@ -811,7 +868,7 @@ viewLinkLabel drawing_data =
           ( cur_x + char_width + gap
           , cur_y
           , ( g
-              [ class [ "transition", "text", if isFinal then "final" else "nonfinal" ] ]
+              [ class (characterTransitionClass isFinal) ]
               [ text_
                   [ x cur_x
                   , y cur_y
@@ -824,8 +881,7 @@ viewLinkLabel drawing_data =
           ( cur_x + badge_width + gap
           , cur_y
           , ( g
-                [ class [ "transition", "graph-reference", if isFinal then "final" else "nonfinal" ]
-                ]
+                [ class (referenceTransitionClass isFinal) ]
                 [ viewGraphReference uuid 2 cur_x (cur_y - 5)
                 , title
                     []
@@ -844,8 +900,19 @@ viewLinkLabel drawing_data =
     drawing_data.connection
   |> (\(_, _, elems) -> g [] elems)
 
+{-| The message produced by clicking a transition label ("connection
+    text") — extracted (and exposed) for testing.  `Nothing` when the view
+    does not permit connection selection.
+-}
+linkClickMsg : GraphViewCapabilities -> Uuid -> ( NodeId, NodeId ) -> Connection -> Coordinate -> Maybe Msg
+linkClickMsg can uuid ( from, to ) connection labelPosition =
+  if can.selectConnections then
+    Just (EditConnection labelPosition uuid from to connection)
+  else
+    Nothing
+
 viewLink : GraphView -> (NodeId, NodeId) -> DrawingData -> LinkDrawingData -> Svg Msg
-viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowlighted_links} drawing_data =
+viewLink {id, can} ((from, to) as edgeKey) ({highlighted_links, tentative_link, lowlighted_links} as drawingData) drawing_data =
       let
         x_ = drawing_data.pathBetween.transition_coordinates.x
         y_ = drawing_data.pathBetween.transition_coordinates.y
@@ -869,12 +936,7 @@ viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowligh
             Nothing ->
               viewLinkLabel drawing_data
         linkClass =
-          conditionalList
-            [ ( "link", True )
-            , ( "phantom", tentative_link == Just (from, to))
-            , ( "highlight", Set.member (from, to) highlighted_links )
-            , ( "lowlight", Set.member (to, from) lowlighted_links )
-            ]
+          linkClassFor drawingData edgeKey
       in
         g
           [ class [ "link-group" ] ]
@@ -891,12 +953,15 @@ viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowligh
               [ {- title [] [ text <| Data.connectionToString edge.label ] -} ]
           , g
               [ class linkClass
-              , properties.canSelectConnections
-                |> thenPermitSvgInteraction
-                    (onClick (EditConnection {x = x_, y = y_} id from to drawing_data.connection))
+              , case linkClickMsg can id ( from, to ) drawing_data.connection { x = x_, y = y_ } of
+                  Just msg ->
+                    onClick msg
+
+                  Nothing ->
+                    TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
               ]
               [ transitionLabel
-              , if properties.canSelectConnections then
+              , if can.selectConnections then
                   title [] [ text "Click to modify" ]
                 else
                   g [] []
@@ -944,25 +1009,55 @@ viewLink {id, properties} (from, to) {highlighted_links, tentative_link, lowligh
           --     []
           ]
 
-viewNode : GraphViewProperties -> NodeId -> DrawingData -> NodeDrawingData -> Svg Msg
-viewNode properties id {tentative_link} data =
+{-| The click decoder for a graph node — extracted (and exposed, with the
+    capability gate folded in) so that the routing rules can be tested with
+    synthetic event JSON: ctrl-click splits (when the node is splittable
+    and splitting is permitted); plain click selects the node (when
+    selection is permitted); otherwise the decoder fails and no message is
+    produced.
+-}
+nodeClickDecoder : NodeId -> GraphViewCapabilities -> NodeDrawingData -> D.Decoder Msg
+nodeClickDecoder id can data =
+  D.field "ctrlKey" D.bool
+  |> D.andThen
+      (\ctrlPressed ->
+        if ctrlPressed then
+          if data.canSplit && can.splitNodes then
+            D.succeed (GraphViewMsg data.view_uuid (StartSplit id))
+          else
+            D.fail "Unwanted event"
+        else if can.selectNodes then
+          D.map2
+            (\x y -> GraphViewMsg data.view_uuid (SelectNode id { x = x, y = y }))
+            (D.field "clientX" D.float)
+            (D.field "clientY" D.float)
+        else
+          D.fail "Unwanted event"
+      )
+
+{-| The mousedown decoder for a graph node — shift-mousedown starts a node
+    drag, when dragging is permitted; otherwise the decoder fails and no
+    message is produced.
+-}
+nodeDragStartDecoder : NodeId -> GraphViewCapabilities -> NodeDrawingData -> D.Decoder Msg
+nodeDragStartDecoder id can data =
+  D.field "shiftKey" D.bool
+  |> D.andThen
+      (\shiftPressed ->
+        if shiftPressed && can.dragNodes then
+          D.map2
+            (\x y -> GraphViewMsg data.view_uuid (StartDraggingNode id { x = x, y = y }))
+            (D.field "clientX" D.float)
+            (D.field "clientY" D.float)
+        else
+          D.fail "Unwanted event"
+      )
+
+viewNode : GraphViewCapabilities -> NodeId -> DrawingData -> NodeDrawingData -> Svg Msg
+viewNode can id drawingData data =
   let
     nodeClass =
-      conditionalList
-        [ ("graph-node", True)
-        , ("selected"
-          , Maybe.map (Tuple.first >> (==) id) tentative_link
-            |> Maybe.withDefault False
-          )
-        -- , ("current", data.exclusiveAttributes == Just DrawCurrentExecutionNode)
-        , ( "phantom"
-          , Maybe.map (Tuple.second >> (==) id) tentative_link
-            |> Maybe.withDefault False
-          )
-        , ("disconnected", data.isDisconnected)
-        , ("start", data.isRoot)
-        , ("terminal", data.isTerminal)
-        ]
+      nodeClassFor id drawingData data
 
     fewDP n = toFloat (round (n * 10)) / 10
 
@@ -975,17 +1070,17 @@ viewNode properties id {tentative_link} data =
         "Start of computation\n"
       else
         "") ++
-      (if properties.canDragNodes then
+      (if can.dragNodes then
           "Drag to reposition\n"
         else
           ""
       ) ++
-      (if data.canSplit && properties.canSplitNodes then
+      (if data.canSplit && can.splitNodes then
             "\nCtrl-click to split transitions"
           else
             ""
       ) ++
-      (if properties.canSelectNodes then
+      (if can.selectNodes then
         "\nClick to create or link a new transition"
       else
         ""
@@ -994,47 +1089,10 @@ viewNode properties id {tentative_link} data =
   in
     g
       [ class nodeClass
-      , if properties.canSelectNodes || (properties.canSplitNodes && data.canSplit) then
-          TypedSvg.Events.on "click"
-            (VirtualDom.Normal
-              ( D.field "ctrlKey" D.bool
-                |> D.andThen (\ctrlPressed ->
-                  if ctrlPressed then
-                    if data.canSplit && properties.canSplitNodes then
-                      D.succeed (GraphViewMsg data.view_uuid <| StartSplit id)
-                    else
-                        D.fail "Unwanted event"
-                  else if properties.canSelectNodes then
-                    D.map2
-                      (\x y -> GraphViewMsg data.view_uuid <| SelectNode id { x = x, y = y })
-                      (D.field "clientX" D.float)
-                      (D.field "clientY" D.float)
-                  else
-                    D.fail "Unwanted event"
-                )
-              )
-            )
-        else
-          TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
-      -- , (properties.canSplitNodes && data.canSplit)
-      --   |> thenPermitSvgInteraction (onClick <| StartSplit data.view_uuid id)
-      , if properties.canDragNodes then
-          TypedSvg.Events.on "mousedown"
-            (VirtualDom.Normal
-              ( D.field "shiftKey" D.bool
-                |> D.andThen (\shiftPressed ->
-                  if shiftPressed then
-                    D.map2
-                      (\x y -> GraphViewMsg data.view_uuid <| StartDraggingNode id {x = x, y = y})
-                      (D.field "clientX" D.float)
-                      (D.field "clientY" D.float)
-                  else
-                    D.fail "Unwanted event"
-                )
-              )
-            )
-        else
-          TypedSvg.Events.on "dummy" (VirtualDom.Normal <| D.fail "dummy event")
+      , TypedSvg.Events.on "click"
+          (VirtualDom.Normal (nodeClickDecoder id can data))
+      , TypedSvg.Events.on "mousedown"
+          (VirtualDom.Normal (nodeDragStartDecoder id can data))
       ]
       [ circle
           [ cx data.coordinates.x
@@ -1185,7 +1243,7 @@ viewMainSvgContent graph_view =
       |> List.map (\((from, to), data) -> viewLink graph_view (from, to) graph_view.drawingData data)
       |> g [ class [ "edges" ] ]
     , Dict.toList graph_view.drawingData.node_drawing
-      |> List.map (\(nodeId, data) -> viewNode graph_view.properties nodeId graph_view.drawingData data)
+      |> List.map (\(nodeId, data) -> viewNode graph_view.can nodeId graph_view.drawingData data)
       |> g [ class [ "nodes" ] ]
     ]
 
@@ -1263,7 +1321,7 @@ viewMainSvgContent graph_view =
 --     break (String.toList text) 0 [] []
 
 viewGraph : GraphView -> Html Msg
-viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) =
+viewGraph ({guest, host, can, id, pan, activePanDirection} as graphView) =
   let
     mkArrow : String -> String -> Html Msg
     mkArrow direction pathString =
@@ -1296,13 +1354,13 @@ viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) 
           , class
               ( conditionalList
                   [ ("graph", True)
-                  , ("can-select-nodes", properties.canSelectNodes)
-                  , ("can-select-connections", properties.canSelectConnections)
-                  , ("can-split-nodes", properties.canSplitNodes)
-                  , ("can-select-space", properties.canSelectEmptySpace)
+                  , ("can-select-nodes", can.selectNodes)
+                  , ("can-select-connections", can.selectConnections)
+                  , ("can-split-nodes", can.splitNodes)
+                  , ("can-select-space", can.selectEmptySpace)
                   ]
               )
-          , properties.canSelectEmptySpace
+          , can.selectEmptySpace
             |> thenPermitSvgInteraction (onClick (GraphViewMsg id SelectSpace))
           ] {- ++ interactivity -})
           [ -- this stuff is in the background.
@@ -1310,7 +1368,7 @@ viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) 
             -- this part is for debugging panning. If I uncomment it, I should also
             -- uncomment the corresponding code in viewMainSvgContent.
           , viewMainSvgContent graphView -- this is the "main" interactive frame, which will be zoomed, panned, etc.
-          , if not properties.canPan then
+          , if not can.pan then
               g [] []
             else
               g
@@ -1331,7 +1389,7 @@ viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) 
                             []
                           else
                             [ class [ "pan-reset" ]
-                            , properties.canPan
+                            , can.pan
                               |> thenPermitSvgInteraction (onClick (GraphViewMsg id ResetPan))
                             ]
                         )
@@ -1369,7 +1427,7 @@ viewGraph ({guest, host, properties, id, pan, activePanDirection} as graphView) 
                 ]
           ]
           |> Html.Styled.fromUnstyled
-      , if properties.canPan then
+      , if can.pan then
           case activePanDirection of
             Just ToTop ->
               mkArrow "top"           "M10 2 L2 18 L18 18 Z"

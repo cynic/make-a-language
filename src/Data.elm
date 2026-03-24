@@ -130,7 +130,7 @@ type alias Model =
   , uiConstants : UIConstants
   , randomSeed : Random.Seed
   , interactionsDict : InteractionsDict
-  , properties : MainUIProperties
+  , can : MainUICapabilities
   , computationsExplorer : List Uuid
   }
 
@@ -326,27 +326,27 @@ type alias UILayout =
     }
   }
 
-type alias MainUIProperties =
-  { canEscape : Bool
-  , canDragSplitter : Bool
-  , canAcceptCharacters : Bool
-  , canSelectNewPackage : Bool
-  , canCreateNewPackage : Bool
-  , canLoadTestInput : Bool
-  , canDeleteTestInput : Bool
-  , canCreateTestInput : Bool
+type alias MainUICapabilities =
+  { escape : Bool
+  , dragSplitter : Bool
+  , acceptCharacters : Bool
+  , selectNewPackage : Bool
+  , createNewPackage : Bool
+  , loadTestInput : Bool
+  , deleteTestInput : Bool
+  , createTestInput : Bool
   }
 
-type alias GraphViewProperties =
-  { canSelectConnections : Bool -- via click
-  , canSelectEmptySpace : Bool -- via click
-  , canSelectNodes : Bool -- via click
-  , canSplitNodes : Bool -- via ctrl-click
-  , canDragNodes : Bool -- via shift-drag
-  , canInspectRefs : Bool -- via shift-click
-  , canPan : Bool -- via hover
-  , canDeletePackage : Bool
-  , canSelectPackage: Bool
+type alias GraphViewCapabilities =
+  { selectConnections : Bool -- via click
+  , selectEmptySpace : Bool -- via click
+  , selectNodes : Bool -- via click
+  , splitNodes : Bool -- via ctrl-click
+  , dragNodes : Bool -- via shift-drag
+  , inspectRefs : Bool -- via shift-click
+  , pan : Bool -- via hover
+  , deletePackage : Bool
+  , selectPackage: Bool
   }
 
 type Cardinality
@@ -418,7 +418,7 @@ type alias GraphView =
   , pan : (Float, Float) -- panning offset, x and y
   , activePanDirection : Maybe ActivePanDirection
   , disconnectedNodes : Set NodeId
-  , properties : GraphViewProperties
+  , can : GraphViewCapabilities
   , drawingData : DrawingData
   , undoBuffer : List (AutomatonGraph)
   , redoBuffer : List (AutomatonGraph)
