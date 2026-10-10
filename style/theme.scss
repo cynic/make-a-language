@@ -10,6 +10,12 @@ $font-family-monospace: 'Fira Code', 'Cascadia Code', 'Roboto Mono', 'SF Mono', 
                      Consolas, 'Liberation Mono', Menlo, Courier, monospace;
 $font-family-serif: 'Palatino Linotype', 'Book Antiqua', Palatino, 'Times New Roman', serif;
 
+// Vertical headroom needed above the big { } brackets.  The bracket glyphs
+// (150px font, 0.75 line-height) paint ~23px above their own box, and the
+// surrounding .set-visualization scroll container clips at its top edge.
+// Used by connection-editor.scss and node-splitter.scss.
+$bracket-headroom: 26px;
+
 :root, [data-theme="dracula"] {
   // Dracula Theme
   --background: #282a36;

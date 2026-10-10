@@ -28,6 +28,9 @@
       justify-self: center;
       border: solid 2px var(--comment);
       overflow: clip;
+      // Cancel the row growth from the .set-visualization headroom below, so
+      // this circle keeps its vertical position.
+      margin-top: -(theme.$bracket-headroom);
     }
   }
   
@@ -40,7 +43,9 @@
     
     // ===== SET VISUALIZATION AREA =====
     & .set-visualization {
-      padding: 0;
+      // Top room so the scroll container's clip edge doesn't cut off the
+      // ascenders of the { } bracket glyphs (see $bracket-headroom).
+      padding: theme.$bracket-headroom 0 0;
       font-family: theme.$font-family-serif;
       align-self: center;
       // width: 100%;
