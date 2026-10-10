@@ -1923,6 +1923,7 @@ minimiseNodesByCombiningTransitions g_ =
         -- |> debugAutomatonGraph "[minimiseNodes] Initial graph"
       )
     -- |> debugAutomatonGraph "[minimiseNodes] Final graph"
+    |> mergeStatesWithIdenticalOutgoing
 
 toUnminimisedAutomatonGraph : DFARecord a -> AutomatonGraph
 toUnminimisedAutomatonGraph dfa =
@@ -1968,6 +1969,67 @@ toUnminimisedAutomatonGraph dfa =
         , description = Nothing
         , root = dfa.start -- |> Debug.log "[toUnminimisedAutomatonGraph] root"
         }
+
+{-| Merge states with identical behaviour: the same non-recursive outgoing
+    connections (same targets AND same transitions) and the same recursive
+    (self-loop) transitions.  Such states have identical right-languages,
+    so the merge is language-preserving.
+
+    This catches the halves of a redundant node-split, which
+    `minimiseNodesByCombiningTransitions` cannot express: its terminal
+    partition routes self-looping states into the T2 case-analysis, whose
+    extension/merge rules never fire for states whose entire behaviour is
+    a recursive self-loop.
+
+    Merging can enable further merges, so this iterates to a fixed point
+    (each merge removes one node, so it terminates).  The lower-id state
+    survives, deterministically.
+-}
+mergeStatesWithIdenticalOutgoing : AutomatonGraph -> AutomatonGraph
+mergeStatesWithIdenticalOutgoing ag =
+  let
+    connSignature : Connection -> List String
+    connSignature conn =
+      AutoSet.toList conn
+      |> List.map transitionToString
+      |> List.sort
+
+    signature : NodeContext Entity Connection -> ( List ( NodeId, List String ), List String )
+    signature ctx =
+      ( IntDict.toList ctx.outgoing
+        |> List.filter (\( k, _ ) -> k /= ctx.node.id)
+        |> List.map (\( k, conn ) -> ( k, connSignature conn ))
+        |> List.sortBy Tuple.first
+      , IntDict.get ctx.node.id ctx.outgoing
+        |> Maybe.withDefault (AutoSet.empty transitionToString)
+        |> connSignature
+      )
+
+    findIdenticalPair : List (NodeContext Entity Connection) -> Maybe ( NodeId, NodeId )
+    findIdenticalPair ctxs =
+      case ctxs of
+        [] ->
+          Nothing
+
+        (c :: rest) ->
+          case List.find (\d -> signature d == signature c) rest of
+            Just d ->
+              -- the lower id survives: deterministic, and preserves the
+              -- original node's position through a split round-trip
+              Just ( min c.node.id d.node.id, max c.node.id d.node.id )
+
+            Nothing ->
+              findIdenticalPair rest
+  in
+    case findIdenticalPair (Graph.nodeIds ag.graph |> List.filterMap (\n -> Graph.get n ag.graph)) of
+      Just ( keep, drop ) ->
+        -- shared merge machinery (incl. root fix-up); the fans are
+        -- redirected, so mirrors stay consistent
+        minimisation_merge keep drop ag
+        |> mergeStatesWithIdenticalOutgoing
+
+      Nothing ->
+        ag
 
 toAutomatonGraph : DFARecord a -> AutomatonGraph
 toAutomatonGraph dfa =

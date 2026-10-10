@@ -1,8 +1,10 @@
 module AutomatonGraph_tests exposing (..)
+import Expect
 import Test exposing (..)
 import Automata.DFA exposing
   ( fromAutomatonGraph, splitTerminalAndNonTerminal, nfaToDFA
   , fromAutomatonGraphHelper, minimiseNodesByCombiningTransitions
+  , mergeStatesWithIdenticalOutgoing
   , expand
   )
 import Utility exposing (ag, dfa, ag_equals, dfa_equals, mkAutomatonGraph, uuid_from_int)
@@ -404,3 +406,77 @@ node_expansion =
           (ag "0-0-1 0-!1!2-2 2-!1!2-2 2-!@1-3 3-!@1-3")
           (expanded_graph (ag "0-0-1 0-!@0-2 2-!@1-2") resolution 0 )
   ]
+
+{-| The identical-outgoing merge rule (`mergeStatesWithIdenticalOutgoing`,
+    now part of `minimiseNodesByCombiningTransitions`): self-looping
+    twins — which the T1/T2 case analysis cannot express — must merge;
+    diverged twins must not; and the minimiser must reach a fixed point
+    that leaves no identical-outgoing pair behind.  Relocated here from
+    `SplittingRoundTrip_tests.elm` (2026-10-10): engine-level properties
+    belong beside the engine's other minimisation tests.
+-}
+identicalOutgoing_suite : Test
+identicalOutgoing_suite =
+  let
+    twins =
+      ag "0-!x-1 0-!a!b-2 0-!c!d-3 2-!a!b-2 3-!a!b-3"
+
+    divergedTwins =
+      ag "0-!a!b-1 0-!c!d-2 1-!a!b-1 2-!e!f-2"
+
+    digitSplit =
+      ag "0-!0-1 0-!1!2!3!4-2 0-!5!6!7!8!9-3 2-!0!1!2!3!4!5!6!7!8!9-2 3-!0!1!2!3!4!5!6!7!8!9-3"
+
+    nodeCount g =
+      List.length (Graph.nodes g.graph)
+  in
+    describe "states with identical outgoing behaviour"
+      [ test "self-looping twins merge (the rule alone)" <|
+          \_ ->
+            ag_equals
+              (ag "0-!x-1 0-!a!b!c!d-2 2-!a!b-2")
+              (mergeStatesWithIdenticalOutgoing twins)
+      , test "…and the full minimiser merges them too" <|
+          \_ ->
+            ag_equals
+              (ag "0-!x-1 0-!a!b!c!d-2 2-!a!b-2")
+              (minimiseNodesByCombiningTransitions twins)
+      , test "diverged twins (different self-loops) are not merged" <|
+          \_ ->
+              Expect.all
+                [ \_ ->
+                    ag_equals divergedTwins (minimiseNodesByCombiningTransitions divergedTwins)
+                , \_ ->
+                    nodeCount (minimiseNodesByCombiningTransitions divergedTwins)
+                    |> Expect.equal 3
+                ]
+                  ()
+      , test "the digit-split analogue is fully restored" <|
+          \_ ->
+            ag_equals
+              (ag "0-!0-1 0-!1!2!3!4!5!6!7!8!9-2 2-!0!1!2!3!4!5!6!7!8!9-2")
+              (minimiseNodesByCombiningTransitions digitSplit)
+      , test "idempotence: minimising a minimised graph changes nothing" <|
+          \_ ->
+              let
+                m1 = minimiseNodesByCombiningTransitions digitSplit
+                m2 = minimiseNodesByCombiningTransitions m1
+              in
+                Expect.all
+                  [ \_ -> ag_equals m1 m2
+                  , \_ -> nodeCount m2 |> Expect.equal (nodeCount m1)
+                  ]
+                    ()
+      , test "merge-maximality: no identical-outgoing pair remains afterwards" <|
+          \_ ->
+              let
+                m = minimiseNodesByCombiningTransitions digitSplit
+              in
+                Expect.all
+                  [ \_ -> ag_equals m (mergeStatesWithIdenticalOutgoing m)
+                  , \_ ->
+                      nodeCount (mergeStatesWithIdenticalOutgoing m)
+                      |> Expect.equal (nodeCount m)
+                  ]
+                    ()
+      ]
