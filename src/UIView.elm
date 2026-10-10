@@ -922,7 +922,7 @@ viewConnectionEditor model connection editorData =
                         ]
                     , div
                         [ HA.class "instructions" ]
-                        ( case editorData.editingMode of
+                        (( case editorData.editingMode of
                             CharacterInput ->
                               [ div
                                   []
@@ -941,6 +941,15 @@ viewConnectionEditor model connection editorData =
                                   [ span [] [ text "Only computations with a matching description will be displayed.  Use the mouse to scroll and select computations.  Type «`» to switch back to character mode." ]
                                   ]
                               ]
+                         )
+                            ++ [ div
+                                    [ HA.class "shortcut-hints" ]
+                                    [ Html.Styled.node "kbd" [] [ text "Ctrl+Enter" ]
+                                    , text " confirms the connection changes · "
+                                    , Html.Styled.node "kbd" [] [ text "Ctrl+Escape" ]
+                                    , text " cancels the changes"
+                                    ]
+                               ]
                         )
                     ]
                 ]
@@ -1086,6 +1095,13 @@ viewNodeSplitInterface model {left, right} interfaceData =
                             [ div
                                 []
                                 [ span [] [ text "Typing a character will switch it from right to left, or vice-versa.  You can also click on items above, including computations, to switch their sides." ]
+                                ]
+                            , div
+                                [ HA.class "shortcut-hints" ]
+                                [ Html.Styled.node "kbd" [] [ text "Ctrl+Enter" ]
+                                , text " confirms the split changes · "
+                                , Html.Styled.node "kbd" [] [ text "Ctrl+Escape" ]
+                                , text " cancels the changes"
                                 ]
                             ]
                     ]

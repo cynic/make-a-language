@@ -146,6 +146,24 @@
   position: relative;
 }
 
+// ===== KEYBOARD SHORTCUT HINTS =====
+// Rendered under the help text in the connection editor / node splitter.
+.shortcut-hints {
+  margin-top: 6px;
+  color: var(--comment);
+  font-size: 0.85em;
+
+  kbd {
+    font-family: theme.$font-family-monospace;
+    font-size: 0.9em;
+    padding: 1px 6px;
+    background: var(--current-line);
+    border: 1px solid var(--comment);
+    border-radius: 4px;
+    color: var(--foreground);
+  }
+}
+
 rect.undo.current {
   stroke-width: 1.25;
   stroke: var(--comment);
