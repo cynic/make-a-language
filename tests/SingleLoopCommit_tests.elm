@@ -4,16 +4,6 @@ module SingleLoopCommit_tests exposing (suite)
     transitions of DIFFERENT finality — a character `t` (non-final) and a
     graph reference (final) — then committing it and letting the idle
     Confirm optimise it.
-
-    Pinned: the first commit produces exactly that graph
-    (`Edge 0->0 (!ref t)`).
-    Known bugs (tests skipped):
-    - #13: the optimising round-trip annihilates the reference version —
-      `splitTerminalAndNonTerminal` faithfully splits the mixed-finality
-      self-loop into a 3-node cross-wired loop, and `nfaToDFA` then
-      returns an EMPTY graph for that shape.
-    - #14: the characters-only variant loses just the self-loop (the node
-      survives as an isolated vertex).
 -}
 import AutoSet
 import Data exposing
@@ -101,7 +91,7 @@ type alias NodeId_ =
 
 suite : Test
 suite =
-  describe "A single recursive link with mixed-finality transitions"
+  describe "In a single recursive link with mixed-finality transitions"
     [ test "the UI flow commits a self-loop carrying {t non-final, ref final}" <|
         \_ ->
           let
@@ -118,15 +108,8 @@ suite =
                         ]))
               ]
                     ()
-    , describe "the optimising idle-Confirm (two known bugs, tests skipped)"
-        [ -- BUG #13: the round-trip annihilates this graph.  The exact
-          -- stage is `nfaToDFA`: `splitTerminalAndNonTerminal` faithfully
-          -- splits the mixed-finality self-loop into a 3-node cross-wired
-          -- loop, and nfaToDFA then returns an EMPTY graph for it.
-          -- Desired: the optimisation is language-preserving.
-          -- Un-skip when the engine is fixed.
-          Test.skip
-            (test "the optimisation preserves the mixed-finality self-loop (with reference)" <|
+    , describe "and when we do the optimising idle-Confirm"
+        [ test "the optimisation preserves the mixed-finality self-loop (with reference)" <|
                 \_ ->
                   let
                     committed = U.step (buildLoop ++ [ Confirm ]) loopModel
@@ -145,39 +128,33 @@ suite =
                       , \_ -> nodeIdsOf optimised |> Expect.equal [ 0 ]
                       ]
                         ()
-            )
-        , -- BUG #14: the characters-only variant loses just the loop
-          -- (the node survives as an isolated vertex), so the eater is the
-          -- same area but the annihilation is partial.  Un-skip when fixed.
-          Test.skip
-            (test "the optimisation preserves the mixed-finality characters-only self-loop" <|
-                \_ ->
-                  let
-                    flow =
-                      [ GraphViewMsg uid (SelectNode 0 { x = 195, y = 195 })
-                      , GraphViewMsg uid (SelectNode 0 { x = 195, y = 195 })
-                      , QuickInput "t"
-                      , QuickInput "t" -- t becomes final
-                      , QuickInput "u"
-                      ]
-                    fresh =
-                      U.defaultModel |> U.withGraph (GoldenGeometry.mkGraph [ ( 0, 100, 100 ) ] [])
-                    committed = U.step (flow ++ [ Confirm ]) fresh
-                    optimised = U.step (flow ++ [ Confirm, Confirm ]) fresh
-                  in
-                    Expect.all
-                      [ \_ ->
-                          U.mainView optimised
-                          |> Maybe.map .computation
-                          |> Maybe.map
-                              (Utility.ag_equals
-                                (U.mainView committed
-                                  |> Maybe.map .computation
-                                  |> Maybe.withDefault Data.empty))
-                          |> Maybe.withDefault (Expect.fail "no main view")
-                      , \_ -> committedLoop optimised |> Expect.notEqual [ "NO SELF-LOOP" ]
-                      ]
-                        ()
-            )
+        , test "the optimisation preserves the mixed-finality characters-only self-loop" <|
+            \_ ->
+              let
+                flowOf model =
+                  [ GraphViewMsg model.mainGraphView (SelectNode 0 { x = 195, y = 195 })
+                  , GraphViewMsg model.mainGraphView (SelectNode 0 { x = 195, y = 195 })
+                  , QuickInput "t"
+                  , QuickInput "t" -- t becomes final
+                  , QuickInput "u"
+                  ]
+                fresh =
+                  U.defaultModel |> U.withGraph (GoldenGeometry.mkGraph [ ( 0, 100, 100 ) ] [])
+                committed = U.step (flowOf fresh ++ [ Confirm ]) fresh
+                optimised = U.step (flowOf fresh ++ [ Confirm, Confirm ]) fresh
+              in
+                Expect.all
+                  [ \_ ->
+                      U.mainView optimised
+                      |> Maybe.map .computation
+                      |> Maybe.map
+                          (Utility.ag_equals
+                            (U.mainView committed
+                              |> Maybe.map .computation
+                              |> Maybe.withDefault Data.empty))
+                      |> Maybe.withDefault (Expect.fail "no main view")
+                  , \_ -> committedLoop optimised |> Expect.notEqual [ "NO SELF-LOOP" ]
+                  ]
+                    ()
         ]
     ]

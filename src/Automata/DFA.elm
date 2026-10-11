@@ -2025,6 +2025,7 @@ mergeStatesWithIdenticalOutgoing ag =
       Just ( keep, drop ) ->
         -- shared merge machinery (incl. root fix-up); the fans are
         -- redirected, so mirrors stay consistent
+        Debug.log "[mergeStatesWithIdenticalOutgoing] merging identical twins" ( keep, drop ) |> \_ ->
         minimisation_merge keep drop ag
         |> mergeStatesWithIdenticalOutgoing
 
@@ -2487,6 +2488,11 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         )
         columnDict
         outgoing
+        -- |> (\d ->
+        --     Debug.log "[nfaToDFA] column (via → (finality,destSet))"
+        --       (AutoDict.toList d |> List.map (\( v, ( f, s ) ) -> ( acceptConditionToString v, f, s )))
+        --     |> \_ -> d
+        --    )
 
     -- this is plausible here only because I have split terminal & non-terminal
     -- BEFORE this function is called.  Otherwise, it is probably nonsense…
@@ -2524,6 +2530,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
             -- |> List.map normalizeSet
             |> List.unique
             |> List.filter (\identifier -> not (Dict.member identifier table))
+            -- |> Debug.log "[nfaToDFA] new multi-state rows to create"
 
         -- Create new rows for these source-sets
         newTable =
@@ -2583,22 +2590,56 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                   (Dict.insert new_name v with_renamed_columns)
                   old_names
 
-    mergeIdenticalStates : List (StateIdentifier, b) -> Table -> Table
+    -- Merge a group of rows with identical cell values.  The survivor is a
+    -- NEW identifier denoting the UNION of the group's state-sets — the
+    -- subset-construction semantics: such rows represent the same DFA
+    -- state, and the merged state stands for all of them.  Every
+    -- reference to a merged identifier — in any row's columns — is
+    -- rewritten to the union identifier.  When the root is absorbed, its
+    -- id leads the union (deterministically, and so that the row can be
+    -- found again by containment — see `removeUnreachableStates`).
+    mergeIdenticalStates : List (StateIdentifier, Column) -> Table -> Table
     mergeIdenticalStates to_merge table =
-        case to_merge of
-          [] -> table -- nothing to merge! Also, impossible :-).
-          [_] -> table -- nothing to merge!
-          head::tail ->
-            let
-              sourceSets_to_merge =
-                List.map Tuple.first tail
-                |> Set.fromList
-                -- |> debugLog_ "[nfaToDFA] source-sets to merge" (Set.map stateIdentifierToString >> Debug.toString)
-              without_merged =
-                Set.foldl Dict.remove table sourceSets_to_merge
-                -- |> debugTable_ "[nfaToDFA] After removals"
-            in
-              rename (Tuple.first head) sourceSets_to_merge without_merged
+      case to_merge of
+        [] -> table -- nothing to merge! Also, impossible :-).
+        [_] -> table -- nothing to merge!
+        ((firstId, firstColumn) :: _) as rows ->
+          let
+            names =
+              List.map Tuple.first rows
+              |> Set.fromList
+              -- |> debugLog_ "[nfaToDFA] source-sets to merge" (Set.map stateIdentifierToString >> Debug.toString)
+            mergedIds =
+              List.concatMap (Tuple.first >> Tuple.second) rows
+              |> normalizeSet
+            unionId =
+              ( Tuple.first firstId
+              , if List.member g.root mergedIds then
+                  g.root :: List.filter ((/=) g.root) mergedIds
+                else
+                  mergedIds
+              )
+            rewrite column =
+              AutoDict.map
+                (\_ (( f, destSet ), label) ->
+                  let
+                    ident =
+                      if Set.member ( f, destSet ) names then
+                        unionId
+                      else
+                        ( f, destSet )
+                  in
+                    ( ident, label )
+                )
+                column
+          in
+            -- Debug.log "[nfaToDFA] union-merge: absorbing" (Debug.toString names) |> \_ ->
+            -- |> Debug.log "[nfaToDFA] union-merge: into" (Debug.toString unionId) |> \_ ->
+            Set.foldl Dict.remove table names
+            -- |> debugTable_ "[nfaToDFA] After removals"
+            |> Dict.map (\_ column -> rewrite column)
+            |> Dict.insert unionId (rewrite firstColumn)
+            -- |> debugTable_ "[nfaToDFA] After union-merge"
 
     mergedTable : Table
     mergedTable =
@@ -2650,10 +2691,18 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
     removeUnreachableStates : Table -> Table
     removeUnreachableStates table = -- not checked…
       let
+        -- The root may have been absorbed into a merged (union) row, so
+        -- find the row whose state-set CONTAINS the root.
         rootIdentifier =
-          Graph.get g.root g.graph
-          |> Maybe.map (\node -> (terminalityOf node, [node.node.id]))
-          |> Maybe.withDefaultLazy (\() -> (0, [g.root]) |> Debug.log "Y>YWYAT")
+          table
+            |> Dict.keys
+            |> List.find (\( _, idList ) -> List.member g.root idList)
+            |> Maybe.withDefault
+                ( Graph.get g.root g.graph
+                  |> Maybe.map (\node -> (terminalityOf node, [node.node.id]))
+                  |> Maybe.withDefault (0, [g.root])
+                )
+            -- |> Debug.log "[nfaToDFA] rootIdentifier (found by containment)"
         
         findReachable : List StateIdentifier -> Set StateIdentifier -> Set StateIdentifier
         findReachable worklist visited =
@@ -2676,6 +2725,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                 findReachable (rest ++ destinations) newVisited
 
         reachableStates = findReachable [rootIdentifier] Set.empty
+        -- |> Debug.log "[nfaToDFA] reachable states" (Set.toList >> Debug.toString)
       in
         table
         |> Dict.filter (\sourceSet _ -> Set.member sourceSet reachableStates)
@@ -2694,6 +2744,7 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
         renameMapping = 
           sourceSets
           |> List.indexedMap (\i (f, sourceList) -> ((f, sourceList), (f, [baseId + i])))
+          -- |> Debug.log "[nfaToDFA] rename mapping (multi-state rows → fresh ids)"
 
         renamedTable =
           List.foldl
@@ -2757,7 +2808,8 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
                 acc
                 columnDict
             _ ->
-              Debug.log "HDPY>DB" |> \_ ->
+              Debug.log "[nfaToDFA] unexpected multi-element source-set (SHOULD NEVER REACH HERE!)" sourceSet
+              |> \_ ->
               acc -- should never reach here!
         )
         Dict.empty
@@ -2767,8 +2819,41 @@ nfaToDFA g = -- use subset construction to convert an NFA to a DFA.
 
     newGraph =
       Graph.fromNodesAndEdges newGraphNodes newGraphEdges
+
+    -- The root must exist as a node with the right start identity.  If the
+    -- root's own row survives (the common case), nothing changes.  If the
+    -- root was absorbed into a merged union row, that row is renamed to a
+    -- fresh id — track it through the renaming mapping (whose keys still
+    -- carry the original state-sets) and make the fresh id the start.
+    rootRowSurvives =
+      Graph.get g.root g.graph
+      |> Maybe.map (\node -> Dict.member (terminalityOf node, [node.node.id]) finalTable)
+      |> Maybe.withDefault False
+
+    newRoot =
+      if rootRowSurvives then
+        g.root
+      else
+        let
+          multiElementKeys =
+            Dict.keys reachableTable
+            |> List.filter (\( _, list ) -> List.length list > 1)
+
+          baseId =
+            maxId g + 1
+        in
+          multiElementKeys
+          |> List.indexedMap (\i oldKey -> ( oldKey, baseId + i ))
+          |> List.findMap
+              (\( oldKey, freshId ) ->
+                if List.member g.root (Tuple.second oldKey) then
+                  Just freshId
+                else
+                  Nothing
+              )
+          |> Maybe.withDefault g.root
   in
-    { g | graph = newGraph }
+    { g | graph = newGraph, root = newRoot }
     -- |> debugAutomatonGraph "[nfaToDFA] Resulting graph"
 
 fromAutomatonGraphHelper : AutomatonGraph -> DFARecord {}
