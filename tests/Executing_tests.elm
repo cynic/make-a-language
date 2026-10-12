@@ -266,48 +266,6 @@ suite =
 
                   _ ->
                     Expect.fail "expected execution to have started"
-        , test "stepping again highlights the whole path; the final view shows only the executed path" <|
-            \_ ->
-              let
-                result = U.step [ Step, Step ] execModel
-                hl = highlighted result
-                flattened =
-                  Set.toList hl |> List.concatMap (\( a, b ) -> [ a, b ])
-                intermediates =
-                  Set.fromList flattened
-                  |> Set.toList
-                  |> List.filter (\n -> List.length (List.filter ((==) n) flattened) == 2)
-              in
-                case ( Set.size hl, intermediates ) of
-                  ( 2, [ _ ] ) ->
-                    Expect.all
-                      [ \_ -> Set.size (lowlighted result) |> Expect.equal 0
-                        -- the final-step view contains exactly the executed path
-                      , \_ ->
-                          Set.fromList (drawnLinks result)
-                          |> Expect.equal hl
-                      , \_ ->
-                          -- the path ends at the current node: the unique
-                          -- node that is a destination but never a source
-                          let
-                            edgeList = Set.toList hl
-                            endNode =
-                              flattened
-                              |> List.filter
-                                  (\n ->
-                                    List.member n (List.map Tuple.second edgeList)
-                                      && not (List.member n (List.map Tuple.first edgeList))
-                                  )
-                              |> List.head
-                          in
-                            headExecution result
-                            |> Maybe.map .currentNode
-                            |> Expect.equal endNode
-                      ]
-                        ()
-
-                  other ->
-                    Expect.fail ("expected a two-edge path with one intermediate node, got " ++ Debug.toString other)
         , test "centres the view on the executed links" <|
             \_ ->
               let

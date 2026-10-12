@@ -398,6 +398,10 @@ resolveTransitionFully start_id resolutionDict recursion_stack source_id source_
         unioned = union dfa dfa
         ag = toAutomatonGraph unioned
       in
+        -- Debug.log (dbg_prefix ++ "PROBE before round-trip") (printAutomatonGraph without_old_dests)
+        -- |> \_ -> Debug.log (dbg_prefix ++ "PROBE after fromAutomatonGraph") (printAutomatonGraph (toAutomatonGraph dfa))
+        -- |> \_ -> Debug.log (dbg_prefix ++ "PROBE after union") (printAutomatonGraph (toAutomatonGraph unioned))
+        -- |> \_ ->
         renumberAutomatonGraphFrom start_id ag
         |> Tuple.second
         |> debugAutomatonGraphXY (dbg_prefix ++ "Minimised, renumbered 'final'")
@@ -451,6 +455,58 @@ cull edges ag =
     ag
   |> removeDisconnectedNodes
 
+{-| Cull the given edges, EXCEPT:
+
+    1. those whose source is on the recorded path (any node we have
+       VISITED was, by definition, the source of a taken edge — so a
+       previously-taken edge can never land in a later not-taken list and
+       be pruned); and
+    2. those whose source may be revisited from `current`.
+-}
+cullUnlessRevisitable : NodeId -> List TransitionTakenData -> List (NodeId, NodeId) -> AutomatonGraph -> AutomatonGraph
+cullUnlessRevisitable current taken edges ag =
+  let
+    unreachable =
+      identifyDisconnectedNodes { ag | root = current }
+
+    visited =
+      takenNodesOf ag taken
+
+    ( dead, survivable ) =
+      List.partition
+        (\( src, _ ) ->
+          Set.member src unreachable && not (Set.member src visited)
+        )
+        edges
+  in
+    -- |> Debug.log "[cullUnlessRevisitable] pruning dead edges" dead
+    cull dead ag
+
+{-| The set of nodes on the recorded path, in the ids of the supplied
+    computation: replay the recorded transitions from the computation's
+    root.  Recorded ids drift are subject to renumbering, so the path
+    must be replayed rather than accumulated.
+-}
+takenNodesOf : AutomatonGraph -> List TransitionTakenData -> Set NodeId
+takenNodesOf computation transitions =
+  let
+    walk current acc remaining =
+      case remaining of
+        [] ->
+          Set.insert current acc
+
+        t :: rest ->
+          case Graph.get current computation.graph of
+            Nothing ->
+              Set.insert current acc
+
+            Just ctx ->
+              takeTransition t.matching ctx.outgoing computation
+              |> Maybe.map (\( next_ctx, _ ) -> walk next_ctx.node.id (Set.insert current acc) rest)
+              |> Maybe.withDefault (Set.insert current acc)
+  in
+    walk computation.root Set.empty transitions
+
 {-| Expand the selected `AutomatonGraph`, _and_ cull previously-taken transitions.
 
     Returns:
@@ -492,7 +548,7 @@ expand e resolutionDict current taken_record =
           ([], [], Maybe.combineFirst (Graph.get expanded.root expanded.graph, []))
       |> (\(a, b, c) -> (List.reverse a, b, Maybe.map Tuple.first c))
     culled =
-      cull edges_not_taken_previously expanded
+      cullUnlessRevisitable current taken_record edges_not_taken_previously expanded
   in
     -- debugLog_ "[expand] resolution-dict" (AutoDict.toList >> List.map (\(k, v) -> (truncate_uuid k, printAutomatonGraph v))) resolutionDict |> \_ ->
     ( culled, transitions_taken, currentNode )
@@ -584,7 +640,7 @@ oneTransition data =
                   current_transitions =
                     data.transitions ++ [TransitionTakenData newNode.node.id t]
                   ( advance_computation, actual_taken, renamed_node ) =
-                    cull not_taken_last data.computation
+                    cullUnlessRevisitable newNode.node.id current_transitions not_taken_last data.computation
                     |> \g -> expand g data.resolutionDict newNode.node.id current_transitions
                 in
                   case renamed_node of
@@ -594,6 +650,14 @@ oneTransition data =
                             Just <|
                               InternalError "Somehow, just expanding the computation without taking new paths has failed!!  What's going on here??"
                       }
+                      |> (\d ->
+                            Debug.log "[oneTransition] PROBE recorded transitions"
+                              (List.map (.matching >> transitionToString) current_transitions)
+                            |> \_ ->
+                            Debug.log "[oneTransition] PROBE state"
+                              ( "step=" ++ String.fromInt data.step ++ " remaining=" ++ String.fromList data.remainingData ++ " current=" ++ String.fromInt newNode.node.id )
+                            |> \_ -> d
+                         )
                     Just nodeCtx ->
                       { data
                         | transitions = actual_taken

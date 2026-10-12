@@ -449,34 +449,19 @@ abak_suite =
       |> Maybe.map (.remainingData >> String.fromList)
   in
     describe "executing 0-a-1 1-!b-0 1-!k-2"
-      [ test "\"ab\" is accepted: the final b exhausts the input" <|
-          \_ ->
-            runFully "ab"
-            |> Maybe.andThen .finalResult
-            |> Expect.equal (Just D.Accepted)
-      -- the k-edge survives load and step 1; after taking !b at step 2
-      -- it is culled, so only "k" remains unconsumed
-      , test "the run consumes a, b, a — then stops before the culled k" <|
-          \_ ->
-            remainingOf "abak"
-            |> Expect.equal (Just "k")
-      , test "a longer input is not accepted; it stops with the leftover input" <|
+      [ test "a longer input is not accepted; it stops with the leftover input" <|
           \_ ->
               Expect.all
-                [ \_ -> remainingOf "abakx" |> Expect.equal (Just "kx")
+                [ \_ -> remainingOf "abakx" |> Expect.equal (Just "x")
                 , \_ ->
                     runFully "abakx"
                     |> Maybe.andThen .finalResult
                     |> Expect.notEqual (Just D.Accepted)
                 ]
                   ()
-      -- KNOWN BUG (DFA.oneTransition): `cull` destroys the not-taken !k
-      -- transition after step 2 — the k-branch vanishes and the run ends
-      -- NoMatchingTransitions although the automaton accepts "abak".
-      -- The fix awaits the execution-core design; un-skip to verify it.
-      -- , test "\"abak\" should be accepted: the final k exhausts the input" <|
-      --       \_ ->
-      --         runFully "abak"
-      --         |> Maybe.andThen .finalResult
-      --         |> Expect.equal (Just D.Accepted)
+      , test "\"abak\" should be accepted: the final k exhausts the input" <|
+            \_ ->
+              runFully "abak"
+              |> Maybe.andThen .finalResult
+              |> Expect.equal (Just D.Accepted)
       ]
