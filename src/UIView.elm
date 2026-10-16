@@ -825,7 +825,7 @@ htmlForTransition {packages} {via, isFinal} =
           ( span
               [ HA.classList ( ("character", True) :: classes )
               ]
-              [ text <| String.fromChar c ]
+              [ text <| displayCharacter c ]
           )
       ViaGraphReference pkg_uuid ->
         AutoDict.get pkg_uuid packages

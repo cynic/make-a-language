@@ -594,6 +594,24 @@ thenPermitSvgInteraction event cond =
   else
     TypedSvg.Events.on "dummy" (VirtualDom.Normal <| Json.Decode.fail "dummy event")
 
+{-| How a character is *shown* in the UI — whitespace becomes a visible
+glyph, so that (e.g.) a space transition is not invisibly blank.
+
+Display-only!  Never use this for storage, round-tripping, or output;
+use `String.fromChar` (or `printableAcceptCondition`) for those.
+-}
+displayCharacter : Char -> String
+displayCharacter ch =
+  case ch of
+    ' ' ->
+      "\u{2423}" -- ␣ OPEN BOX; the standard visible-space symbol
+    '\t' ->
+      "\u{21E5}" -- ⇥ RIGHTWARDS ARROW TO BAR
+    '\n' ->
+      "\u{23CE}" -- ⏎ RETURN SYMBOL
+    _ ->
+      String.fromChar ch
+
 {-| Convert an AcceptVia to a printable-for-output string. -}
 printableAcceptCondition : AcceptVia -> String
 printableAcceptCondition v =

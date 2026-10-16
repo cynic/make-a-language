@@ -28,6 +28,8 @@ import IntDict
 import Queries as Q
 import Set
 import Test exposing (..)
+import Test.Html.Query as Query
+import Test.Html.Selector as Selector
 import UILibrary as U
 import Uuid exposing (Uuid)
 import Utility
@@ -201,6 +203,28 @@ suite =
               |> editedConnection
               |> Maybe.map (List.member (transitionToString finalA))
               |> Expect.equal (Just True)
+        ]
+    , describe "space transitions are visible, not blank"
+        [ test "typing a space adds a space transition" <|
+            \_ ->
+              U.step [ openEditor, QuickInput " " ] editModel
+              |> editedConnection
+              |> Maybe.map (List.member (transitionToString (Transition False (ViaCharacter ' '))))
+              |> Expect.equal (Just True)
+        , test "typing a space three times cycles it back off again" <|
+            \_ ->
+              U.step [ openEditor, QuickInput " ", QuickInput " ", QuickInput " " ] editModel
+              |> editedConnection
+              |> Expect.equal (Just [ transitionToString plainA ])
+        , test "the set display renders a space as ␣, not as blank" <|
+            \_ ->
+              -- open the editor on an empty connection, so that the space
+              -- we type is the only set item on display.
+              U.step1 (EditConnection { x = 50, y = 50 } uid 0 1 (Utility.mkConn "")) editModel
+              |> U.step1 (QuickInput " ")
+              |> U.query
+              |> Query.find [ Selector.class "set-item", Selector.class "character" ]
+              |> Query.has [ Selector.text "␣" ]
         ]
     , describe "committing the edit"
         [ test "confirm reflects the updated connection (final form) in the graph" <|

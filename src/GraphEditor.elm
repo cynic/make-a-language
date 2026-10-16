@@ -873,7 +873,7 @@ viewLinkLabel drawing_data =
                   [ x cur_x
                   , y cur_y
                   ]
-                  [ text <| String.fromChar ch ]
+                  [ text <| displayCharacter ch ]
               ]
             ) :: elems
           )
