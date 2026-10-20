@@ -203,6 +203,43 @@ persistPackage : GraphPackage -> Cmd Msg
 persistPackage =
   Ports.saveToStorage << encodeGraphPackage
 
+{-| Commit the staged changes in the main graph view into the `packages`
+    dictionary, and return the resulting package so that the caller can
+    persist it.  Returning the package (rather than re-looking it up from the
+    pre-commit model) keeps the saved value in sync with the UI.
+-}
+commitMainGraph : Model -> ( Model, Maybe GraphPackage )
+commitMainGraph model =
+  AutoDict.get model.mainGraphView model.graph_views
+  |> Maybe.map
+    (\gv ->
+      if List.isEmpty gv.undoBuffer then
+        ( model, Nothing ) -- …there is nothing for me to do!
+      else
+        let
+          without_undoredo =
+            { gv
+              -- clear the undo/redo buffers
+              | undoBuffer = []
+              , redoBuffer = []
+            }
+          model_ =
+            updateGraphInView
+              (GraphEditor.applyChangesToGraph)
+              without_undoredo
+              model
+          updated_model =
+            C.updatePackageFromView model.mainGraphView model_
+            |> UI.refreshComputationsList
+            |> UI.setCapabilities
+          package_to_persist =
+            gv.graphPackage
+            |> Maybe.andThen (\pkg_uuid -> AutoDict.get pkg_uuid updated_model.packages)
+        in
+          ( updated_model, package_to_persist )
+    )
+  |> Maybe.withDefault ( model, Nothing )
+
 update_graphview : Uuid -> GraphViewMsg -> Model -> ( Model, Cmd Msg )
 update_graphview uuid ui_msg model =
   case ui_msg of
@@ -546,39 +583,15 @@ commitOrConfirm model =
       _ ->
         -- _if_ there are things which are yet to be committed, in
         -- the main, then commit them here.
-        AutoDict.get model.mainGraphView model.graph_views
-        |> Maybe.map
-          (\gv ->
-            if List.isEmpty gv.undoBuffer then
-              ( model -- …there is nothing for me to do!
-              , Cmd.none
-              )
-            else
-              let
-                without_undoredo =
-                  { gv
-                    -- clear the undo/redo buffers
-                    | undoBuffer = []
-                    , redoBuffer = []
-                  }
-                model_ =
-                  updateGraphInView
-                    (GraphEditor.applyChangesToGraph)
-                    without_undoredo
-                    model
-                updated_model =
-                  C.updatePackageFromView model.mainGraphView model_
-                  |> UI.refreshComputationsList
-                  |> UI.setCapabilities
-              in
-                ( updated_model
-                , gv.graphPackage
-                  |> Maybe.andThen (\pkg_uuid -> AutoDict.get pkg_uuid model.packages)
-                  |> Maybe.map persistPackage
-                  |> Maybe.withDefault Cmd.none
-                )
+        let
+          ( updated_model, package_to_persist ) =
+            commitMainGraph model
+        in
+          ( updated_model
+          , package_to_persist
+            |> Maybe.map persistPackage
+            |> Maybe.withDefault Cmd.none
           )
-        |> Maybe.withDefault ( model, Cmd.none )
 
 deletePackage : GraphPackage -> Model -> ( Model, Cmd Msg )
 deletePackage package model =

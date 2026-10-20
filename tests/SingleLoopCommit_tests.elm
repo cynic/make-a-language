@@ -5,6 +5,7 @@ module SingleLoopCommit_tests exposing (suite)
     graph reference (final) — then committing it and letting the idle
     Confirm optimise it.
 -}
+import AutoDict
 import AutoSet
 import Data exposing
   ( AcceptVia(..)
@@ -22,6 +23,7 @@ import Expect
 import Graph
 import IntDict
 import GoldenGeometry
+import Main
 import Queries as Q
 import Test exposing (..)
 import UILibrary as U
@@ -73,7 +75,14 @@ connString conn =
 committedLoop : Model -> List String
 committedLoop m =
   U.mainView m
-  |> Maybe.andThen (.computation >> .graph >> Graph.get 0)
+  |> Maybe.map (.computation >> loopInGraph)
+  |> Maybe.withDefault [ "NO SELF-LOOP" ]
+
+
+{-| The transitions of node 0's self-loop, read straight from a computation. -}
+loopInGraph : Data.AutomatonGraph -> List String
+loopInGraph ag =
+  Graph.get 0 ag.graph
   |> Maybe.map (.incoming >> IntDict.get 0 >> Maybe.withDefault (AutoSet.empty transitionToString) >> connString)
   |> Maybe.withDefault [ "NO SELF-LOOP" ]
 
@@ -108,6 +117,38 @@ suite =
                         ]))
               ]
                     ()
+    , test "the idle-Confirm persists the post-commit computation, not the stale package" <|
+        \_ ->
+          let
+            -- The first Confirm closes the connection editor and stages the
+            -- change in the main view's undo buffer; the package dictionary
+            -- is still stale at this point.
+            staged = U.step (buildLoop ++ [ Confirm ]) loopModel
+            ( committed, package_to_persist ) = Main.commitMainGraph staged
+          in
+            case package_to_persist of
+              Just pkg ->
+                Expect.all
+                  [ \_ ->
+                      AutoDict.get pkg.packageIdentifier committed.packages
+                      |> Expect.equal (Just pkg)
+                  , \_ ->
+                      loopInGraph pkg.computation
+                      |> Expect.equal (committedLoop staged)
+                  , \_ ->
+                      loopInGraph pkg.computation
+                      |> Expect.notEqual [ "NO SELF-LOOP" ]
+                  ]
+                    ()
+              Nothing ->
+                Expect.fail "commitMainGraph returned no package to persist"
+    , test "an idle Confirm with nothing staged persists nothing" <|
+        \_ ->
+          let
+            ( _, package_to_persist ) = Main.commitMainGraph loopModel
+          in
+            package_to_persist
+            |> Expect.equal Nothing
     , describe "and when we do the optimising idle-Confirm"
         [ test "the optimisation preserves the mixed-finality self-loop (with reference)" <|
                 \_ ->

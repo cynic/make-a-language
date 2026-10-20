@@ -103,8 +103,15 @@ withGraph ag model =
       |> Maybe.withDefault (Dimension 452 392)
     gv =
       UI.makeGraphView model.mainGraphView Unsolved host False model.packages ag
+    -- Keep the main view's link to its package: production views are always
+    -- linked, and persistence (on commit) relies on that link.
+    linked_gv =
+      mainView model
+      |> Maybe.andThen .graphPackage
+      |> Maybe.map (\pkg_uuid -> C.linkGraphViewToPackage model.packages pkg_uuid gv)
+      |> Maybe.withDefault gv
   in
-    C.upsertGraphView gv model
+    C.upsertGraphView linked_gv model
     |> UI.setCapabilities
 
 
