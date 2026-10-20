@@ -5,6 +5,9 @@
     "elm-test": "0.19.1-revision16",
     "elm-test-rs": "3.0.1-0",
     "elm-watch": "^1.2.3",
+    "@elm-tooling/elm-language-server": "^2.10.0",
+    "elm-format": "^0.8.8",
+    "elm-review": "^2.13.5",
     "sass-embedded": "^1.97.2",
     "serve": "^14.2.5",
     "vite": "^7.3.0",
@@ -16,5 +19,14 @@
     "hot-nonet": "npx concurrently \"npx elm-watch hot\" \"cd src && npx serve -p 1234\"",
     "benchmarks": "cd benchmarks && npx concurrently \"pnpx elm-watch hot\" \"pnpx serve -l 3001\"",
     "test": "sh scripts/test.sh"
+  },
+  "dependencies": {
+  },
+  "allowScripts": {
+    "@parcel/watcher@2.6.0": true,
+    "elm@0.19.1-6": true,
+    "elm-format@0.8.8": true,
+    "elm-test-rs@3.0.1-0": true,
+    "esbuild@0.27.2": true
   }
 }

@@ -1,10 +1,5 @@
-ignoredBuiltDependencies:
-  - esbuild
-
-onlyBuiltDependencies:
-  - '@parcel/watcher'
-  - '@swc/core'
-  - elm
-  - elm-test-rs
-  - lmdb
-  - msgpackr-extract
+allowBuilds:
+  elm: true
+  elm-format: true
+  elm-test-rs: true
+  esbuild: true
