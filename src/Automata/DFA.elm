@@ -730,6 +730,22 @@ load s resolutionDict g =
     , step = 0
     }
 
+{-| The result of running `input` against `graph`, resolving any graph
+    references through `resolutionDict`.
+-}
+resultForInput : String -> ResolutionDict -> AutomatonGraph -> ExecutionResult
+resultForInput input resolutionDict graph =
+  load input resolutionDict graph
+  |> run
+  |> List.head
+  |> Maybe.andThen .finalResult
+  |> Maybe.withDefault (InternalError "no result received from test execution")
+
+{-| Recompute a test's result against the supplied graph and resolutions. -}
+recomputeTest : ResolutionDict -> AutomatonGraph -> Test -> Test
+recomputeTest resolutionDict graph test =
+  { test | result = resultForInput test.input resolutionDict graph }
+
 removeDisconnectedNodes : AutomatonGraph -> AutomatonGraph
 removeDisconnectedNodes g =
   { g

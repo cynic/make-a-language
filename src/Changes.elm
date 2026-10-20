@@ -175,30 +175,30 @@ updatePackageFromView gv_uuid model =
   |> Maybe.andThen (\graph_view ->
     graph_view.graphPackage
     |> Maybe.map (\pkg_uuid ->
-      { model
-        | packages =
-            AutoDict.update pkg_uuid
-              (Maybe.map (\pkg ->
-                { pkg
-                  | computation = graph_view.computation
-                  -- run the tests
-                  , tests =
-                      AutoDict.map
-                        (\_ entry ->
-                          { entry
-                            | result =
-                                DFA.load entry.input (Q.resolutionDict model.packages) graph_view.computation
-                                |> DFA.run
-                                |> List.head
-                                |> Maybe.andThen .finalResult
-                                |> Maybe.withDefault (InternalError "no result received from test execution")
-                          }
-                        )
-                        pkg.tests
-                }
-              ))
-              model.packages
-      }
+      case AutoDict.get pkg_uuid model.packages of
+        Nothing ->
+          model -- the view points at a package that no longer exists.
+        Just pkg ->
+          let
+            committed_pkg =
+              { pkg | computation = graph_view.computation }
+            -- Put the committed computation into the package dictionary
+            -- *before* recomputing tests: a test may resolve a graph
+            -- reference back to this very package, and must see the new
+            -- graph rather than the pre-commit one.
+            packages_with_commit =
+              AutoDict.insert pkg_uuid committed_pkg model.packages
+            resolution =
+              Q.resolutionDict packages_with_commit
+            updated_pkg =
+              { committed_pkg
+                | tests =
+                    AutoDict.map
+                      (\_ entry -> DFA.recomputeTest resolution committed_pkg.computation entry)
+                      committed_pkg.tests
+              }
+          in
+            { model | packages = AutoDict.insert pkg_uuid updated_pkg packages_with_commit }
     )
   )
   |> Maybe.withDefault model -- do nothing; there is no GV, or no link, or no package.

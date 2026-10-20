@@ -718,22 +718,14 @@ update_package pkg_uuid msg model =
                   { test
                     | input = s
                     , result =
-                        DFA.load s (Q.resolutionDict model.packages) p.computation
-                        |> DFA.run
-                        |> List.head
-                        |> Maybe.andThen .finalResult
-                        |> Maybe.withDefault (InternalError "no result")
+                        DFA.resultForInput s (Q.resolutionDict model.packages) p.computation
                   }
                 )
               >> Maybe.orElse
                 (Just { input = s
                   , expectation = ExpectAccepted
                   , result =
-                      DFA.load s (Q.resolutionDict model.packages) p.computation
-                      |> DFA.run
-                      |> List.head
-                      |> Maybe.andThen .finalResult
-                      |> Maybe.withDefault (InternalError "no result")
+                      DFA.resultForInput s (Q.resolutionDict model.packages) p.computation
                   })
             )
             p.tests
