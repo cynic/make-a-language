@@ -24,6 +24,7 @@ import Dict
 import Expect
 import Graph
 import Graph exposing (NodeId)
+import GraphEditor
 import IntDict
 import Queries as Q
 import Set
@@ -370,6 +371,63 @@ suite =
                 Expect.all
                   [ \_ -> edgeConnection result 0 1 |> Expect.equal [ transitionToString plainA ]
                   , \_ -> edgeConnection result 1 1 |> Expect.equal [ transitionToString (Transition False (ViaCharacter 'c')) ]
+                  ]
+                    ()
+        , test "after confirming a recursive connection, the node is no longer selected" <|
+            \_ ->
+              -- The reported UI flow: on a fresh graph, click the sole node
+              -- twice (self-destination), type a transition, and confirm.
+              -- The transient tentative link must not survive the commit.
+              let
+                base =
+                  U.defaultModel
+                    |> U.withGraph (U.graphWithNodes [ ( 0, 0, 0 ) ])
+                    |> U.mapMainView
+                        (\gv ->
+                          { gv
+                            | host = { w = 190, h = 190 }
+                            , guest = { x = -95, y = -95, w = 190, h = 190 }
+                            , pan = ( 0, 0 )
+                          }
+                        )
+                chainUid =
+                  base.mainGraphView
+                result =
+                  U.step
+                    [ GraphViewMsg chainUid (SelectNode 0 { x = 95, y = 95 })
+                    , GraphViewMsg chainUid (SelectNode 0 { x = 95, y = 95 })
+                    , QuickInput "x"
+                    , Confirm
+                    ]
+                    base
+              in
+                Expect.all
+                  [ \_ ->
+                      edgeConnection result 0 0
+                      |> Expect.equal [ transitionToString (Transition False (ViaCharacter 'x')) ]
+                  , \_ ->
+                      U.mainView result
+                      |> Maybe.map (.drawingData >> .tentative_link)
+                      |> Expect.equal (Just Nothing)
+                  , \_ ->
+                      U.mainView result
+                      |> Maybe.map
+                          (\gv ->
+                            gv.drawingData.node_drawing
+                            |> Dict.get 0
+                            |> Maybe.map (GraphEditor.nodeClassFor 0 gv.drawingData)
+                            |> Maybe.withDefault []
+                            |> List.member "selected"
+                          )
+                      |> Expect.equal (Just False)
+                  , \_ ->
+                      U.mainView result
+                      |> Maybe.map
+                          (\gv ->
+                            GraphEditor.linkClassFor gv.drawingData ( 0, 0 )
+                            |> List.member "phantom"
+                          )
+                      |> Expect.equal (Just False)
                   ]
                     ()
         ]

@@ -478,6 +478,7 @@ commitOrConfirm model =
             , undoBuffer = graph_view.computation :: graph_view.undoBuffer
             , redoBuffer = [] -- when we make a new change, the redo-buffer disappears; we're not storing a tree!
           }
+          |> C.mapDrawingData (\dd -> { dd | tentative_link = Nothing })
         updated_model =
           C.upsertGraphView
             ( updated_view
